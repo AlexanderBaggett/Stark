@@ -112,8 +112,8 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       hello-world `--emit-exe` 22.2s -> 7.6s; heavy dictionary program
       92.5s -> 65.2s. Package image byte-identical and archive symbol-set
       identical to sequential builds; all gates green.
-- [x] Binary package image load path (design tracked in
-      [../Self-host-Prep/20-package-image-format.md](../Self-host-Prep/20-package-image-format.md)).
+- [x] Binary package image load path (design documented in
+      [Package Images](PackageImage.md)).
       The host compiler now emits and loads a binary `.starkpkg` container
       (STARKPKG magic + version + Brotli-compressed canonical JSON payload) by
       default; `--package-image-json` opts into the indented JSON sidecar and

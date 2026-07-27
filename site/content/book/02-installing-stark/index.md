@@ -10,8 +10,11 @@ next = "/book/03-hello-stark/"
 # Installing Stark and Building Programs
 
 Stark is distributed as a relocatable SDK archive. The compiler executable,
-root `sdk.json`, bundled libraries, native payloads, licenses, and toolchain are
-one installation unit. Public commands live in the archive's `bin` directory.
+root `sdk.json`, System and official Vendor libraries, native payloads, examples,
+licenses, and compiler-private backend are one installation unit. Public
+commands live in the archive's `bin` directory. The archive follows Odin's
+distribution boundary: it carries compiler-version-sensitive dependencies, but
+uses the documented host development layer for final native linking.
 
 The website [Getting Started](/getting-started/) page tracks current
 prerequisites, installation details, and first-run checks outside the book
@@ -69,13 +72,15 @@ binary, use that checkout's launcher in place of `stark`.
 
 ## Step 2: Check The Compiler
 
-Validate the compiler, SDK packages, toolchain, and host prerequisites:
+Validate the compiler, SDK packages, compiler-private backend, and host
+prerequisites:
 
 ```bash
-stark doctor
+stark doctor --strict
 ```
 
-Then ask for command help with `stark --help`.
+Plain `stark doctor` prints an informational report; `--strict` is the install
+and release-integrity check. Then ask for command help with `stark --help`.
 
 ## Step 3: Compile One File Directly
 
@@ -125,6 +130,11 @@ dependencies. An application can `import Vendor.Raylib` without adding Raylib
 to `[dependencies]`, configuring `STARK_PATH`, or repeating native linker facts.
 The package owns its archive, runtime files, and ordered link metadata.
 
+The SDK's `bin` directory contains the Stark commands, not a flat copy of every
+native library. Vendor payloads remain under their owning package, such as
+`vendor/dist/<sdk-target>/native/raylib/`, and `sdk.json` supplies their
+relocation-safe paths and checksums.
+
 The application manifest remains an ordinary executable manifest with no
 Raylib dependency entry; the source selects the SDK package by importing it:
 
@@ -136,6 +146,13 @@ module Game
 `pkg-config`, source paths, and custom native fallback tables remain package
 author tools for non-SDK native packages; they are not normal installation
 steps for an official vendor package.
+
+If an official import reports missing native metadata, or a native call links
+but small struct values such as Raylib colors are corrupt, run
+`stark doctor --strict`, clean the project, and verify `command -v stark` on
+macOS/Linux or `Get-Command stark` in PowerShell. Repair or replace the complete
+SDK rather than adding host search paths: the compiler, package image, Stark
+archive, and native payload are one ABI-coherent unit.
 
 ## Step 6: Let Manifests Own Build Facts
 

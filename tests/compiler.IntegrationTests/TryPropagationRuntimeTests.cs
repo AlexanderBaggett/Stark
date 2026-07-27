@@ -4,7 +4,7 @@ namespace compiler.IntegrationTests;
 
 /// <summary>
 /// End-to-end runtime behavior of the `try` error-propagation expression and the `from`
-/// enum funnel under the v2 role model (docs/Self-host-Prep/11-error-propagation.md):
+/// enum funnel under the v2 role model (docs/Userfacing/LanguageReference.md):
 /// propagatable types are any two-variant enums carrying the innate `[Ok]`/`[Err]` role
 /// attributes — never recognized by type name and never by stdlib identity. Covers
 /// success/failure paths, cross-family `from` conversion (including stdlib `IOResult`

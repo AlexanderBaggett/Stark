@@ -7,6 +7,18 @@ on:
         description: Release tag or candidate label, for example v1.0.0-rc.1.
         required: true
         default: v0.0.0-rc.0
+      ref:
+        description: Git branch, tag, or full commit SHA to resolve once and build immutably.
+        required: true
+        default: main
+      commit:
+        description: Optional expected full commit SHA; required to publish unless ref is already a full SHA.
+        required: false
+        default: ""
+      targets:
+        description: "all, or a comma-separated subset of release-enabled target IDs for diagnostic builds."
+        required: true
+        default: all
       draft:
         description: Create the GitHub release as a draft.
         type: boolean
@@ -17,73 +29,278 @@ on:
         type: boolean
         required: true
         default: true
+      publish:
+        description: Create/update a GitHub release after quality, build, and install-smoke jobs pass.
+        type: boolean
+        required: true
+        default: false
   push:
     tags:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
 
 jobs:
+  prepare:
+    name: Validate release configuration
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.release_plan.outputs.matrix }}
+      version: ${{ steps.release_plan.outputs.version }}
+      source_ref: ${{ steps.release_plan.outputs.source_ref }}
+      commit_sha: ${{ steps.release_plan.outputs.commit_sha }}
+      target_ids: ${{ steps.release_plan.outputs.target_ids }}
+      publish: ${{ steps.release_plan.outputs.publish }}
+      draft: ${{ steps.release_plan.outputs.draft }}
+      prerelease: ${{ steps.release_plan.outputs.prerelease }}
+      build_configuration_sha256: ${{ steps.release_plan.outputs.build_configuration_sha256 }}
+      build_plan_sha256: ${{ steps.release_plan.outputs.build_plan_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          fetch-depth: 1
+
+      - name: Resolve source commit
+        id: source
+        shell: bash
+        run: echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup exact .NET SDK from global.json
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate request and generate immutable release plan
+        id: release_plan
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+          INPUT_TARGETS: ${{ inputs.targets }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          & dotnet $env:RELEASE_TOOLS_DLL prepare-release `
+            --event-name $env:GITHUB_EVENT_NAME `
+            --resolved-commit "${{ steps.source.outputs.commit_sha }}" `
+            --github-ref $env:GITHUB_REF `
+            --github-ref-name $env:GITHUB_REF_NAME `
+            --github-sha $env:GITHUB_SHA `
+            --input-version $env:INPUT_VERSION `
+            --input-ref $env:INPUT_REF `
+            --input-commit $env:INPUT_COMMIT `
+            --input-targets $env:INPUT_TARGETS `
+            --input-publish $env:INPUT_PUBLISH `
+            --input-draft $env:INPUT_DRAFT `
+            --input-prerelease $env:INPUT_PRERELEASE `
+            --require-release-tool `
+            --plan-output artifacts/release-plan.json `
+            --github-output $env:GITHUB_OUTPUT `
+            2>&1 | Tee-Object -FilePath artifacts/release-prepare.log
+          if ($LASTEXITCODE -ne 0) { throw "Release plan preparation failed." }
+          & ./scripts/get-release-configuration-identity.ps1 -Root . -OutputPath artifacts/release-configuration-identity.json
+          $configuration = Get-Content -LiteralPath artifacts/release-configuration-identity.json -Raw | ConvertFrom-Json
+          if ([int]$configuration.schemaVersion -ne 1 -or [string]$configuration.identityKind -cne "stark-release-configuration") { throw "Invalid release configuration identity." }
+          "build_configuration_sha256=$([string]$configuration.sha256)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "build_plan_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath artifacts/release-plan.json).Hash.ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload immutable release plan and prepare diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-plan-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/release-plan.json
+            artifacts/release-configuration-identity.json
+            artifacts/release-prepare.log
+          if-no-files-found: warn
+
+  quality:
+    name: Qualify release source
+    runs-on: ubuntu-24.04
+    needs: prepare
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Setup exact .NET SDK from global.json
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+
+      - name: Run mandatory repository quality gate
+        shell: pwsh
+        run: >
+          ./scripts/run-release-quality-gate.ps1
+          -RepositoryRoot .
+          -OutputDir artifacts/quality
+
+      - name: Upload quality diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-gate-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/quality
+          if-no-files-found: warn
+
   build:
     name: Build ${{ matrix.asset_suffix }}
     runs-on: ${{ matrix.os }}
+    needs: [prepare, quality]
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            rid: linux-x64
-            asset_suffix: linux-x64
-            archive_kind: targz
-            stdlib_library: libSystem.a
-            target_triple: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            rid: win-x64
-            asset_suffix: windows-x64
-            archive_kind: zip
-            stdlib_library: System.lib
-            target_triple: x86_64-pc-windows-msvc
-          - os: macos-15
-            rid: osx-arm64
-            asset_suffix: macos-arm64
-            archive_kind: targz
-            stdlib_library: libSystem.a
-            target_triple: arm64-apple-macosx11.0.0
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: ${{ matrix.dotnet_version }}
+
+      - name: Verify exact .NET SDK
+        shell: pwsh
+        run: |
+          $actualVersion = [string](& dotnet --version)
+          if ($LASTEXITCODE -ne 0 -or $actualVersion.Trim() -cne "${{ matrix.dotnet_version }}") {
+            throw "Release requires exact .NET SDK '${{ matrix.dotnet_version }}'; setup selected '$($actualVersion.Trim())'."
+          }
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          key: ${{ runner.os }}-${{ matrix.rid }}-nuget-${{ hashFiles('global.json', 'src/compiler.csproj', 'src/packages.*.lock.json', 'eng/release/NuGet.config', 'eng/release/dependencies.json', 'eng/release/managed-license-evidence.json') }}
           restore-keys: |
-            ${{ runner.os }}-nuget-
+            ${{ runner.os }}-${{ matrix.rid }}-nuget-
 
-      - name: Restore
-        run: dotnet restore Stark.slnx
+      - name: Restore exact managed dependency graph
+        shell: pwsh
+        run: |
+          $nugetLockFile = [System.IO.Path]::GetFullPath("${{ matrix.nuget_lock_file }}")
+          & dotnet restore src/compiler.csproj `
+            -r "${{ matrix.rid }}" `
+            --configfile "${{ matrix.nuget_config }}" `
+            --use-lock-file `
+            --locked-mode `
+            --lock-file-path $nugetLockFile `
+            -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }}
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact locked restore failed for ${{ matrix.rid }}."
+          }
+          $dotnetVersion = [string](& dotnet --version)
+          & dotnet $env:RELEASE_TOOLS_DLL validate-managed-restore `
+            --root . `
+            --rid "${{ matrix.rid }}" `
+            --assets src/obj/project.assets.json `
+            --dotnet-version $dotnetVersion.Trim() `
+            --restore-only `
+            --output "artifacts/managed-restore-preflight-${{ matrix.asset_suffix }}.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Managed restore validation failed for ${{ matrix.rid }}."
+          }
+
+      - name: Prepare exact managed license inventory
+        shell: pwsh
+        run: >
+          & dotnet $env:RELEASE_TOOLS_DLL
+          prepare-managed-licenses
+          --root .
+          --target-id ${{ matrix.target_id }}
+          --assets src/obj/project.assets.json
+          --output-root artifacts/managed-licenses/${{ matrix.asset_suffix }}
+
+      - name: Cache checksum-verified release build-tool downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: artifacts/release-build-tool-cache
+          key: release-build-tools-${{ runner.os }}-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'scripts/resolve-release-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
+
+      - name: Acquire pinned release build tools
+        id: build_tools
+        shell: pwsh
+        run: |
+          $toolRoot = [System.IO.Path]::GetFullPath("artifacts/release-build-tools/${{ matrix.asset_suffix }}")
+          & ./scripts/acquire-release-build-tools.ps1 `
+            -TargetId "${{ matrix.target_id }}" `
+            -OutputDir $toolRoot `
+            -CacheDir "artifacts/release-build-tool-cache/${{ matrix.asset_suffix }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL
+
+          $manifestPath = Join-Path $toolRoot "manifest.json"
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          if ([int]$manifest.schemaVersion -ne 1 -or
+              [string]$manifest.purpose -cne "build-time-only" -or
+              [string]$manifest.targetId -cne "${{ matrix.target_id }}" -or
+              [string]$manifest.redistribution -cne "not-in-release-sdk") {
+            throw "Acquired build-tool manifest has an unexpected identity or redistribution policy."
+          }
+          $rootPrefix = [System.IO.Path]::TrimEndingDirectorySeparator($toolRoot) + [System.IO.Path]::DirectorySeparatorChar
+          foreach ($toolName in @("cmake", "ninja")) {
+            $relativePath = [string]$manifest.tools.$toolName.path
+            if ([string]::IsNullOrWhiteSpace($relativePath) -or
+                [System.IO.Path]::IsPathRooted($relativePath) -or
+                $relativePath.Contains("\") -or
+                $relativePath.Split('/').Where({ $_ -in @("", ".", "..") }).Count -ne 0) {
+              throw "Acquired $toolName path '$relativePath' is not portable."
+            }
+            $toolPath = [System.IO.Path]::GetFullPath((Join-Path $toolRoot $relativePath))
+            if (-not $toolPath.StartsWith($rootPrefix, [StringComparison]::Ordinal) -or
+                -not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+              throw "Acquired $toolName path '$relativePath' escapes or is missing."
+            }
+            "$($toolName)_path=$toolPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
 
       - name: Publish compiler
         shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: >
           dotnet publish src/compiler.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained true
+          --no-restore
+          -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }}
           -p:PublishSingleFile=false
           -p:InformationalVersion=$env:RELEASE_VERSION
           -p:IncludeSourceRevisionInInformationalVersion=false
@@ -95,11 +312,14 @@ jobs:
         run: >
           ./scripts/acquire-llvm-toolchain.ps1
           -AssetSuffix ${{ matrix.asset_suffix }}
+          -ManifestPath ${{ matrix.llvm_manifest }}
           -OutputDir artifacts/toolchain/${{ matrix.asset_suffix }}
+          -CMakePath "${{ steps.build_tools.outputs.cmake_path }}"
+          -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}"
 
       - name: Build standard library package
         run: >
-          dotnet run --project src --
+          dotnet run --no-restore --project src --
           stdlib/src/System.stark
           --emit-lib
           --target ${{ matrix.target_triple }}
@@ -107,34 +327,58 @@ jobs:
           --toolchain-dir artifacts/toolchain/${{ matrix.asset_suffix }}
           -o artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}
 
-      - name: Prepare pinned Raylib release input
+      - name: Prepare pinned official Vendor release input
         shell: pwsh
         run: >
-          ./scripts/prepare-raylib-release-input.ps1
+          ./scripts/prepare-vendor-release-input.ps1
           -AssetSuffix ${{ matrix.asset_suffix }}
           -TargetTriple ${{ matrix.target_triple }}
           -OutputVendorRoot artifacts/vendor/${{ matrix.asset_suffix }}
           -StdlibPackageDir artifacts/stdlib/${{ matrix.asset_suffix }}
+          -RaylibManifestPath ${{ matrix.raylib_manifest }}
           -ToolchainDir artifacts/toolchain/${{ matrix.asset_suffix }}
+          -CMakePath "${{ steps.build_tools.outputs.cmake_path }}"
+          -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}"
 
       - name: Package release archive
         id: package
         shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: >
           ./scripts/package-release.ps1
           -Version $env:RELEASE_VERSION
           -AssetSuffix ${{ matrix.asset_suffix }}
           -PublishDir artifacts/publish/${{ matrix.asset_suffix }}
           -StdlibPackageDir artifacts/stdlib/${{ matrix.asset_suffix }}
+          -ManagedLicenseDir artifacts/managed-licenses/${{ matrix.asset_suffix }}
           -VendorRoot artifacts/vendor/${{ matrix.asset_suffix }}
           -ToolchainDir artifacts/toolchain/${{ matrix.asset_suffix }}
+          -ReleaseToolsPath "$env:RELEASE_TOOLS_DLL"
           -RuntimeIdentifier ${{ matrix.rid }}
           -TargetTriple ${{ matrix.target_triple }}
-          -CommitSha $env:GITHUB_SHA
+          -CommitSha $env:RELEASE_COMMIT
           -OutputDir artifacts/release
           -ArchiveKind ${{ matrix.archive_kind }}
+          -LlvmVersion ${{ matrix.llvm_version }}
+          -BuildConfigurationSha256 "${{ needs.prepare.outputs.build_configuration_sha256 }}"
+          -BuildPlanSha256 "${{ needs.prepare.outputs.build_plan_sha256 }}"
+
+      - name: Validate staged SDK completeness
+        shell: pwsh
+        run: |
+          $logPath = "artifacts/release/stage-validation-${{ matrix.asset_suffix }}.log"
+          try {
+            & dotnet $env:RELEASE_TOOLS_DLL validate-stage `
+              --sdk-root "artifacts/release/stage/stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}" `
+              --target-id "${{ matrix.target_id }}" `
+              --output "artifacts/release/stage-validation-${{ matrix.asset_suffix }}.json" `
+              2>&1 | Tee-Object -FilePath $logPath
+            if ($LASTEXITCODE -ne 0) {
+              throw "Release stage validation exited with code $LASTEXITCODE."
+            }
+          } catch {
+            $_ | Out-String | Add-Content -LiteralPath $logPath
+            throw
+          }
 
       - name: Smoke packaged release archive
         shell: pwsh
@@ -144,91 +388,264 @@ jobs:
           -TargetTriple "${{ matrix.target_triple }}"
           -IsolatePath
 
-      - name: Upload release archive artifact
-        uses: actions/upload-artifact@v4
+      - name: Validate packaged managed dependency closure
+        shell: pwsh
+        run: |
+          $dotnetVersion = [string](& dotnet --version)
+          & dotnet $env:RELEASE_TOOLS_DLL validate-managed-restore `
+            --root . `
+            --rid "${{ matrix.rid }}" `
+            --assets src/obj/project.assets.json `
+            --dotnet-version $dotnetVersion.Trim() `
+            --candidate-sdk-root "artifacts/release/stage/stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}" `
+            --output "artifacts/managed-dependencies-${{ matrix.asset_suffix }}.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged managed dependency validation failed for ${{ matrix.rid }}."
+          }
+
+      - name: Audit packaged native dependency closure
+        if: ${{ always() && steps.package.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $logPath = "artifacts/release/native-dependencies-${{ matrix.asset_suffix }}.log"
+          try {
+            & ./scripts/audit-release-native-dependencies.ps1 `
+              -SdkRoot "artifacts/release/stage/stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}" `
+              -OutputPath "artifacts/release/native-dependencies-${{ matrix.asset_suffix }}.json" `
+              -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
+              2>&1 | Tee-Object -FilePath $logPath
+          } catch {
+            $_ | Out-String | Add-Content -LiteralPath $logPath
+            throw
+          }
+
+      - name: Bind public evidence to the exact release candidate
+        shell: pwsh
+        run: >
+          & dotnet $env:RELEASE_TOOLS_DLL
+          candidate-evidence
+          --bind
+          --archive "${{ steps.package.outputs.archive_path }}"
+          --sdk-root "artifacts/release/stage/stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}"
+          --managed-report "artifacts/managed-dependencies-${{ matrix.asset_suffix }}.json"
+          --native-report "artifacts/release/native-dependencies-${{ matrix.asset_suffix }}.json"
+          --stage-report "artifacts/release/stage-validation-${{ matrix.asset_suffix }}.json"
+
+      - name: Upload restore diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-${{ matrix.asset_suffix }}
+          name: release-build-evidence-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/managed-restore-preflight-${{ matrix.asset_suffix }}.json
+          if-no-files-found: warn
+
+      - name: Upload release candidate and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/release/stark-*
+            artifacts/release/native-dependencies-*.json
+            artifacts/release/native-dependencies-*.log
+            artifacts/release/stage-validation-*.json
+            artifacts/release/stage-validation-*.log
+            artifacts/managed-dependencies-*.json
             !artifacts/release/stage/**
-          if-no-files-found: error
+          if-no-files-found: warn
 
   publish:
     name: Publish GitHub release
-    runs-on: ubuntu-latest
-    needs: install-smoke
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    needs: [prepare, quality, install-smoke]
+    if: ${{ needs.prepare.result == 'success' && needs.quality.result == 'success' && needs['install-smoke'].result == 'success' && needs.prepare.outputs.publish == 'true' }}
+    permissions:
+      contents: write
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
-      - name: Download release archive artifacts
-        uses: actions/download-artifact@v4
+      - name: Checkout immutable release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Setup exact .NET SDK from global.json
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Download release archive artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-candidate-*-attempt-${{ github.run_attempt }}
           path: artifacts/downloaded
           merge-multiple: true
 
-      - name: Generate aggregate checksums
+      - name: Select public assets and generate aggregate checksums
         shell: pwsh
-        run: |
-          $files = Get-ChildItem -LiteralPath artifacts/downloaded -File |
-            Where-Object { $_.Name -notlike "*.sha256" -and $_.Name -ne "SHA256SUMS.txt" } |
-            Sort-Object Name
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
-            "$hash  $($file.Name)"
-          }
-          Set-Content -LiteralPath artifacts/downloaded/SHA256SUMS.txt -Value $lines -Encoding ascii
+        run: >
+          ./scripts/prepare-release-public-assets.ps1
+          -InputDirectory artifacts/downloaded
+          -OutputDirectory artifacts/public-release-assets
+          -ExpectedVersion "$env:RELEASE_VERSION"
+          -ExpectedSourceCommit "${{ needs.prepare.outputs.commit_sha }}"
+          -ExpectedConfigurationSha256 "${{ needs.prepare.outputs.build_configuration_sha256 }}"
+          -ExpectedReleasePlanSha256 "${{ needs.prepare.outputs.build_plan_sha256 }}"
+          -ExpectedTargets "${{ needs.prepare.outputs.target_ids }}"
+          -ReleaseToolsPath "$env:RELEASE_TOOLS_DLL"
+
+      - name: Bind source and reconcile draft release assets
+        id: reconcile_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          & dotnet $env:RELEASE_TOOLS_DLL
+          reconcile-github-release
+          --mode prune
+          --tag "$env:RELEASE_VERSION"
+          --expected-commit "${{ needs.prepare.outputs.commit_sha }}"
+          --desired-directory artifacts/public-release-assets
+          --upload-directory artifacts/release-assets-to-upload
+          --output artifacts/publication/prune.json
+          --github-output "$env:GITHUB_OUTPUT"
 
       - name: Create or update GitHub release
-        uses: softprops/action-gh-release@v2
+        id: publish_release
+        if: ${{ steps.reconcile_release.outputs.release_action_required == 'true' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ needs.prepare.outputs.commit_sha }}
           name: Stark ${{ env.RELEASE_VERSION }}
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(env.RELEASE_VERSION, '-') }}
+          draft: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           generate_release_notes: true
-          files: artifacts/downloaded/*
+          fail_on_unmatched_files: true
+          overwrite_files: false
+          files: artifacts/release-assets-to-upload/*
+
+      - name: Verify exact published asset inventory
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          & dotnet $env:RELEASE_TOOLS_DLL
+          reconcile-github-release
+          --mode verify
+          --tag "$env:RELEASE_VERSION"
+          --expected-commit "${{ needs.prepare.outputs.commit_sha }}"
+          --desired-directory artifacts/public-release-assets
+          --output artifacts/publication/verify.json
+
+      - name: Configure verified release metadata and visibility
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          & dotnet $env:RELEASE_TOOLS_DLL
+          reconcile-github-release
+          --mode configure
+          --tag "$env:RELEASE_VERSION"
+          --expected-commit "${{ needs.prepare.outputs.commit_sha }}"
+          --desired-directory artifacts/public-release-assets
+          --desired-draft "${{ needs.prepare.outputs.draft }}"
+          --prerelease "${{ needs.prepare.outputs.prerelease }}"
+          --release-name "Stark $env:RELEASE_VERSION"
+          --output artifacts/publication/configure.json
+
+      - name: Retain publication reconciliation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: publication-evidence-attempt-${{ github.run_attempt }}
+          path: artifacts/publication
+          if-no-files-found: warn
 
   install-smoke:
     name: Install smoke ${{ matrix.asset_suffix }}
     runs-on: ${{ matrix.os }}
-    needs: build
+    needs: [prepare, build]
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            asset_suffix: linux-x64
-            target_triple: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            asset_suffix: windows-x64
-            target_triple: x86_64-pc-windows-msvc
-          - os: macos-15
-            asset_suffix: macos-arm64
-            target_triple: arm64-apple-macosx11.0.0
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
 
       - name: Download candidate release archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-${{ matrix.asset_suffix }}
+          name: release-candidate-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
           path: smoke
 
-      - name: Smoke downloaded release archive
+      - name: Re-run archive smoke on downloaded candidate
         shell: pwsh
         run: |
-          $archive = Get-ChildItem -LiteralPath smoke -File |
+          New-Item -ItemType Directory -Force -Path artifacts/install-smoke | Out-Null
+          $logPath = "artifacts/install-smoke/archive-smoke-${{ matrix.asset_suffix }}.log"
+          $archives = @(Get-ChildItem -LiteralPath smoke -File -Recurse |
             Where-Object { $_.Name -like "stark-*-${{ matrix.asset_suffix }}*" -and $_.Extension -ne ".sha256" } |
-            Select-Object -First 1
-          if (-not $archive) {
-            throw "Release archive was not downloaded."
+            Sort-Object FullName)
+          if ($archives.Count -ne 1) {
+            throw "Expected exactly one downloaded release archive, found $($archives.Count)."
+          }
+          $archive = $archives[0]
+
+          try {
+            & ./scripts/smoke-release-archive.ps1 `
+              -ArchivePath $archive.FullName `
+              -TargetTriple "${{ matrix.target_triple }}" `
+              -IsolatePath `
+              2>&1 | Tee-Object -FilePath $logPath
+          } catch {
+            $_ | Out-String | Add-Content -LiteralPath $logPath
+            throw
           }
 
-          ./scripts/smoke-release-archive.ps1 `
-            -ArchivePath $archive.FullName `
-            -TargetTriple "${{ matrix.target_triple }}" `
-            -IsolatePath
+      - name: Qualify archive-local installer lifecycle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/install-smoke | Out-Null
+          $logPath = "artifacts/install-smoke/installer-lifecycle-${{ matrix.asset_suffix }}.log"
+          $archives = @(Get-ChildItem -LiteralPath smoke -File -Recurse |
+            Where-Object { $_.Name -like "stark-*-${{ matrix.asset_suffix }}*" -and $_.Extension -ne ".sha256" } |
+            Sort-Object FullName)
+          if ($archives.Count -ne 1) {
+            throw "Expected exactly one downloaded release archive, found $($archives.Count)."
+          }
+          $archive = $archives[0]
+
+          try {
+            & ./scripts/smoke-release-install.ps1 `
+              -ArchivePath $archive.FullName `
+              -TargetTriple "${{ matrix.target_triple }}" `
+              -ReportPath "artifacts/install-smoke/installer-lifecycle-${{ matrix.asset_suffix }}.json" `
+              -DiagnosticsDir "artifacts/install-smoke/installer-lifecycle-${{ matrix.asset_suffix }}" `
+              2>&1 | Tee-Object -FilePath $logPath
+          } catch {
+            $_ | Out-String | Add-Content -LiteralPath $logPath
+            throw
+          }
+
+      - name: Upload install-smoke diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: install-smoke-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
+          path: artifacts/install-smoke
+          if-no-files-found: warn

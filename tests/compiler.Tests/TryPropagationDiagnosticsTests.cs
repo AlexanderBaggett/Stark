@@ -4,7 +4,7 @@ namespace compiler.Tests;
 
 /// <summary>
 /// Type-checking contract for the `try` error-propagation expression under the v2 role
-/// model (docs/Self-host-Prep/11-error-propagation.md): propagatable types are any
+/// model (docs/Userfacing/LanguageReference.md): propagatable types are any
 /// two-variant enums carrying the innate `[Ok]`/`[Err]` role attributes — never
 /// recognized by type name and never by stdlib identity. Covers the accepted shapes
 /// (same-error, cross-family + `from` funnel, unit failures), the position rule, and

@@ -20,6 +20,12 @@ param(
 
     [string] $CompilerProject = "src/compiler.csproj",
 
+    [string] $VendorCatalogPath = "eng/release/vendor-packages.json",
+
+    [string] $ContributionManifestPath = "",
+
+    [switch] $ContributorMode,
+
     [switch] $Force
 )
 
@@ -96,7 +102,9 @@ function Assert-NoReparsePointPath {
 function Assert-SafeOutputRoot {
     param(
         [Parameter(Mandatory = $true)]
-        [string] $Path
+        [string] $Path,
+
+        [switch] $SharedContributor
     )
 
     $candidate = [System.IO.Path]::TrimEndingDirectorySeparator(
@@ -138,20 +146,36 @@ function Assert-SafeOutputRoot {
     if (Test-Path -LiteralPath $candidate) {
         $priorManifest = Join-Path $candidate "release-input.json"
         if (-not (Test-Path -LiteralPath $priorManifest -PathType Leaf)) {
-            throw "Existing output vendor root '$candidate' is not a recognized Raylib release-input directory. Remove it explicitly or choose a fresh path."
+            throw "Existing output vendor root '$candidate' is not a recognized Stark Vendor release-input directory. Remove it explicitly or choose a fresh path."
         }
 
         try {
             $prior = Get-Content -LiteralPath $priorManifest -Raw | ConvertFrom-Json
-            if ([int]$prior.schemaVersion -ne 1 -or
-                -not [string]::Equals(
+            $isLegacyRaylib = [int]$prior.schemaVersion -eq 1 -and
+                $null -ne $prior.raylib -and
+                [string]::Equals(
                     [string]$prior.raylib.assetSuffix,
                     $AssetSuffix,
-                    [StringComparison]::Ordinal)) {
+                    [StringComparison]::Ordinal)
+            $isUnifiedVendor = [int]$prior.schemaVersion -eq 2 -and
+                [string]::Equals(
+                    [string]$prior.manifestKind,
+                    "stark-vendor-release-input",
+                    [StringComparison]::Ordinal) -and
+                $null -ne $prior.target -and
+                [string]::Equals(
+                    [string]$prior.target.assetSuffix,
+                    $AssetSuffix,
+                    [StringComparison]::Ordinal) -and
+                [string]::Equals(
+                    [string]$prior.target.targetTriple,
+                    $TargetTriple,
+                    [StringComparison]::Ordinal)
+            if (-not $isUnifiedVendor -and ($SharedContributor -or -not $isLegacyRaylib)) {
                 throw "manifest identity mismatch"
             }
         } catch {
-            throw "Existing output vendor root '$candidate' has an invalid or mismatched release-input.json; refusing recursive replacement."
+            throw "Existing output vendor root '$candidate' has an invalid or mismatched release-input.json; refusing to write package artifacts."
         }
     }
 }
@@ -164,6 +188,13 @@ function Get-RequiredProperty {
         [Parameter(Mandatory = $true)]
         [string] $Name
     )
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if (-not $Object.Contains($Name)) {
+            throw "Required JSON/object property '$Name' was not found."
+        }
+        return $Object[$Name]
+    }
 
     $property = $Object.PSObject.Properties |
         Where-Object { $_.Name -eq $Name } |
@@ -210,6 +241,37 @@ function Get-ArrayValues {
     return @($Value)
 }
 
+function Get-OrdinalSortedStrings {
+    param([object[]] $Values = @())
+
+    $set = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    $caseInsensitive = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($value in @($Values)) {
+        if (-not $caseInsensitive.Add([string]$value) -or -not $set.Add([string]$value)) {
+            throw "Duplicate or case-colliding ordinal string '$value'."
+        }
+    }
+    return @($set)
+}
+
+function Get-OrdinalSortedObjects {
+    param(
+        [object[]] $Values = @(),
+        [Parameter(Mandatory = $true)][string] $PropertyName
+    )
+
+    $map = [System.Collections.Generic.SortedDictionary[string, object]]::new([StringComparer]::Ordinal)
+    $caseInsensitive = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($value in @($Values)) {
+        $key = [string](Get-RequiredProperty -Object $value -Name $PropertyName)
+        if (-not $caseInsensitive.Add($key) -or $map.ContainsKey($key)) {
+            throw "Duplicate or case-colliding ordinal $PropertyName '$key'."
+        }
+        $map.Add($key, $value)
+    }
+    return @($map.Values)
+}
+
 function Assert-Sha256 {
     param(
         [Parameter(Mandatory = $true)]
@@ -239,7 +301,8 @@ function Copy-DirectoryContents {
     )
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    foreach ($item in (Get-ChildItem -LiteralPath $Source -Force | Sort-Object Name)) {
+    $sourceItems = @(Get-OrdinalSortedObjects -Values @(Get-ChildItem -LiteralPath $Source -Force) -PropertyName "Name")
+    foreach ($item in $sourceItems) {
         $target = Join-Path $Destination $item.Name
         if ($item.PSIsContainer) {
             Copy-DirectoryContents -Source $item.FullName -Destination $target
@@ -315,7 +378,7 @@ function Get-FileManifest {
     )
 
     $files = @()
-    foreach ($file in (Get-ChildItem -LiteralPath $Root -File -Recurse | Sort-Object FullName)) {
+    foreach ($file in (Get-ChildItem -LiteralPath $Root -File -Recurse)) {
         $relativePath = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
         $files += [ordered]@{
             path = $relativePath
@@ -324,7 +387,50 @@ function Get-FileManifest {
         }
     }
 
-    return $files
+    return @(Get-OrdinalSortedObjects -Values $files -PropertyName "path")
+}
+
+function Write-DeterministicJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [object] $Value,
+
+        [int] $Depth = 12
+    )
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    [System.IO.File]::WriteAllText(
+        $Path,
+        $json + "`n",
+        [System.Text.UTF8Encoding]::new($false))
+}
+
+function New-FileDescriptor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [string] $Kind = "file"
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Raylib release artifact '$Path' does not exist."
+    }
+
+    $file = Get-Item -LiteralPath $Path
+    return [ordered]@{
+        kind = $Kind
+        path = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+        bytes = [int64]$file.Length
+        sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+    }
 }
 
 $manifestFullPath = Resolve-RepositoryPath -Path $ManifestPath
@@ -332,6 +438,12 @@ $outputRoot = Resolve-RepositoryPath -Path $OutputVendorRoot
 $cacheRoot = Resolve-RepositoryPath -Path $CacheDir
 $compilerProjectPath = Resolve-RepositoryPath -Path $CompilerProject
 $stdlibPackageRoot = Resolve-RepositoryPath -Path $StdlibPackageDir
+$vendorCatalogFullPath = Resolve-RepositoryPath -Path $VendorCatalogPath
+$contributionManifestFullPath = if ([string]::IsNullOrWhiteSpace($ContributionManifestPath)) {
+    $null
+} else {
+    Resolve-RepositoryPath -Path $ContributionManifestPath
+}
 $toolchainPath = if ([string]::IsNullOrWhiteSpace($ToolchainDir)) {
     $null
 } else {
@@ -344,6 +456,23 @@ if (-not (Test-Path -LiteralPath $manifestFullPath -PathType Leaf)) {
 
 if (-not (Test-Path -LiteralPath $compilerProjectPath -PathType Leaf)) {
     throw "Stage0 compiler project '$compilerProjectPath' does not exist."
+}
+
+if ($ContributorMode -and $null -eq $contributionManifestFullPath) {
+    throw "Raylib contributor mode requires -ContributionManifestPath. The unified orchestrator owns release-input.json."
+}
+
+if (-not $ContributorMode -and $null -ne $contributionManifestFullPath) {
+    throw "-ContributionManifestPath is valid only with -ContributorMode."
+}
+
+if (-not $ContributorMode -and -not (Test-Path -LiteralPath $vendorCatalogFullPath -PathType Leaf)) {
+    throw "Vendor package catalog '$vendorCatalogFullPath' does not exist."
+}
+
+if ($null -ne $contributionManifestFullPath -and
+    (Test-IsSameOrDescendantPath -Path $contributionManifestFullPath -Root $outputRoot)) {
+    throw "Raylib contribution manifest '$contributionManifestFullPath' must be outside the shared Vendor artifact root."
 }
 
 if (-not (Test-Path -LiteralPath $stdlibPackageRoot -PathType Container) `
@@ -414,24 +543,51 @@ if (-not (Test-Path -LiteralPath $payloadRoot -PathType Container)) {
 }
 
 $repositoryVendorRoot = Join-Path $repositoryRoot "vendor"
-Assert-SafeOutputRoot -Path $outputRoot
+Assert-SafeOutputRoot -Path $outputRoot -SharedContributor:$ContributorMode
 
-if (Test-Path -LiteralPath $outputRoot) {
-    Remove-Item -LiteralPath $outputRoot -Recurse -Force
+if (-not $ContributorMode) {
+    if (Test-Path -LiteralPath $outputRoot) {
+        Remove-Item -LiteralPath $outputRoot -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+} elseif (-not (Test-Path -LiteralPath $outputRoot -PathType Container)) {
+    throw "Unified Vendor output root '$outputRoot' does not exist. The orchestrator must create and mark it before invoking contributors."
 }
 
-New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $stagedVendorSourceRoot = Join-Path $outputRoot "src/Vendor"
+$ownedSourceFile = Join-Path $stagedVendorSourceRoot "Raylib.stark"
+$ownedSourceDirectory = Join-Path $stagedVendorSourceRoot "Raylib"
+$ownedRaymathSourceFile = Join-Path $stagedVendorSourceRoot "Raymath.stark"
+$ownedRlglSourceFile = Join-Path $stagedVendorSourceRoot "Rlgl.stark"
+foreach ($ownedPath in @($ownedSourceFile, $ownedSourceDirectory, $ownedRaymathSourceFile, $ownedRlglSourceFile)) {
+    if (Test-Path -LiteralPath $ownedPath) {
+        Remove-Item -LiteralPath $ownedPath -Recurse -Force
+    }
+}
+
 Copy-RequiredFile `
     -Source (Join-Path $repositoryVendorRoot "src/Vendor/Raylib.stark") `
-    -Destination (Join-Path $stagedVendorSourceRoot "Raylib.stark")
+    -Destination $ownedSourceFile
 Copy-DirectoryContents `
     -Source (Join-Path $repositoryVendorRoot "src/Vendor/Raylib") `
-    -Destination (Join-Path $stagedVendorSourceRoot "Raylib")
+    -Destination $ownedSourceDirectory
+Copy-RequiredFile `
+    -Source (Join-Path $repositoryVendorRoot "src/Vendor/Raymath.stark") `
+    -Destination $ownedRaymathSourceFile
+Copy-RequiredFile `
+    -Source (Join-Path $repositoryVendorRoot "src/Vendor/Rlgl.stark") `
+    -Destination $ownedRlglSourceFile
 
 $targetDist = Join-Path $outputRoot (Join-Path "dist" $AssetSuffix)
 $nativeRaylibRoot = Join-Path $targetDist "native/raylib"
 $raylibLicenseRoot = Join-Path $outputRoot "licenses/Raylib"
+foreach ($ownedDirectory in @($nativeRaylibRoot, $raylibLicenseRoot)) {
+    if (Test-Path -LiteralPath $ownedDirectory) {
+        Remove-Item -LiteralPath $ownedDirectory -Recurse -Force
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $nativeRaylibRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $raylibLicenseRoot | Out-Null
 
@@ -466,17 +622,24 @@ Set-Content -LiteralPath (Join-Path $nativeRaylibRoot "VERSION.md") -Value $vers
 
 $starkLibraryFile = [string] (Get-RequiredProperty -Object $platform -Name "starkLibraryFile")
 $starkLibraryPath = Join-Path $targetDist $starkLibraryFile
+$packageImagePath = [System.IO.Path]::ChangeExtension($starkLibraryPath, ".starkpkg")
+foreach ($ownedArtifact in @($starkLibraryPath, $packageImagePath)) {
+    if (Test-Path -LiteralPath $ownedArtifact) {
+        Remove-Item -LiteralPath $ownedArtifact -Force
+    }
+}
+
 $compilerArguments = @(
     "run",
     "--project", $compilerProjectPath,
     "--no-restore",
     "--",
-    (Join-Path $repositoryVendorRoot "src/Vendor/Raylib.stark"),
+    $ownedSourceFile,
     "--emit-lib",
     # Release inputs must be closed over staged package identities. A developer's
     # STARK_PATH may contain repository source that would otherwise shadow System.
     "--no-stark-path",
-    "-I", (Join-Path $repositoryVendorRoot "src"),
+    "-I", (Join-Path $outputRoot "src"),
     "-I", $stdlibPackageRoot,
     "-o", $starkLibraryPath,
     "--target", $expectedTargetTriple,
@@ -502,7 +665,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Stage0 failed to build the Raylib package for '$expectedTargetTriple'."
 }
 
-$packageImagePath = [System.IO.Path]::ChangeExtension($starkLibraryPath, ".starkpkg")
 if (-not (Test-Path -LiteralPath $starkLibraryPath -PathType Leaf)) {
     throw "Stage0 did not emit the expected Stark Raylib archive '$starkLibraryPath'."
 }
@@ -586,6 +748,161 @@ if (@(Get-ArrayValues -Value $pkgConfigPackages).Count -ne 0) {
     throw "Generated Raylib release package must not depend on pkg-config."
 }
 
+# Package ownership is namespace-rooted: Vendor.Raylib owns only itself and
+# Vendor.Raylib.*. Vendor.Raymath and Vendor.Rlgl therefore remain separate
+# package identities, even though all three bindings come from the pinned
+# Raylib upstream release. Build the siblings against the just-staged Raylib
+# package so their dependency identity and native link closure flow transitively
+# without duplicating Raylib's native payload.
+$siblingDefinitions = @(
+    [pscustomobject]@{
+        Id = "Vendor.Raymath"
+        SourceName = "Raymath.stark"
+        LibraryStem = "VendorRaymath"
+        LicenseName = "Raymath"
+        ExpectedDependencies = @("System", "Vendor.Raylib")
+        ExpectedNativeLibraries = @("m")
+    },
+    [pscustomobject]@{
+        Id = "Vendor.Rlgl"
+        SourceName = "Rlgl.stark"
+        LibraryStem = "VendorRlgl"
+        LicenseName = "Rlgl"
+        ExpectedDependencies = @("Vendor.Raylib")
+        ExpectedNativeLibraries = @()
+    }
+)
+$siblingPackageBuilds = @()
+foreach ($definition in $siblingDefinitions) {
+    $siblingLibraryFile = if ($AssetSuffix -eq "windows-x64") {
+        "$($definition.LibraryStem).lib"
+    } else {
+        "lib$($definition.LibraryStem).a"
+    }
+    $siblingSourcePath = Join-Path $stagedVendorSourceRoot $definition.SourceName
+    $siblingLibraryPath = Join-Path $targetDist $siblingLibraryFile
+    $siblingPackageImagePath = [System.IO.Path]::ChangeExtension($siblingLibraryPath, ".starkpkg")
+    foreach ($ownedArtifact in @($siblingLibraryPath, $siblingPackageImagePath)) {
+        if (Test-Path -LiteralPath $ownedArtifact) {
+            Remove-Item -LiteralPath $ownedArtifact -Force
+        }
+    }
+
+    $siblingCompilerArguments = @(
+        "run",
+        "--project", $compilerProjectPath,
+        "--no-restore",
+        "--",
+        $siblingSourcePath,
+        "--emit-lib",
+        "--no-stark-path",
+        "-I", $targetDist,
+        "-I", $stdlibPackageRoot,
+        "-o", $siblingLibraryPath,
+        "--target", $expectedTargetTriple,
+        "--package-profile", "release"
+    )
+    if ($null -ne $toolchainPath) {
+        $siblingCompilerArguments += @("--toolchain-dir", $toolchainPath)
+    }
+
+    & dotnet @siblingCompilerArguments
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Test-Path -LiteralPath $siblingLibraryPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $siblingPackageImagePath -PathType Leaf)) {
+        throw "Stage0 failed to build sibling Raylib package '$($definition.Id)' for '$expectedTargetTriple'."
+    }
+
+    $siblingInspectionPath = Join-Path $workRoot ($definition.LibraryStem + ".starkpkg.json")
+    & dotnet run --project $compilerProjectPath --no-restore -- inspect-pkg $siblingPackageImagePath --format json -o $siblingInspectionPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Stage0 failed to inspect sibling Raylib package '$($definition.Id)'."
+    }
+    $siblingInspection = Get-Content -LiteralPath $siblingInspectionPath -Raw | ConvertFrom-Json
+    $siblingModules = @($siblingInspection.Modules | ForEach-Object { [string]$_.ModuleName })
+    if (-not [string]::Equals([string]$siblingInspection.RootModule, $definition.Id, [StringComparison]::Ordinal) -or
+        -not [string]::Equals([string]$siblingInspection.LibraryFileName, $siblingLibraryFile, [StringComparison]::Ordinal) -or
+        $siblingModules.Count -ne 1 -or
+        -not [string]::Equals($siblingModules[0], $definition.Id, [StringComparison]::Ordinal) -or
+        $null -eq $siblingInspection.Target -or
+        -not [string]::Equals([string]$siblingInspection.Target.Triple, $expectedTargetTriple, [StringComparison]::Ordinal) -or
+        $null -eq $siblingInspection.BuildProfile -or
+        -not [string]::Equals([string]$siblingInspection.BuildProfile.Name, "release", [StringComparison]::Ordinal)) {
+        throw "Sibling Raylib package '$($definition.Id)' does not preserve its exact module, archive, target, and release-profile identity."
+    }
+
+    $identity = Get-OptionalProperty -Object $siblingInspection -Name "Identity"
+    $identityDependencies = if ($null -eq $identity) { @() } else {
+        @(Get-ArrayValues -Value (Get-OptionalProperty -Object $identity -Name "Dependencies"))
+    }
+    $dependencyPackageIds = @($identityDependencies | ForEach-Object { [string]$_.PackageId })
+    $sortedDependencyPackageIds = @(Get-OrdinalSortedStrings -Values $dependencyPackageIds)
+    $expectedDependencyPackageIds = @(Get-OrdinalSortedStrings -Values $definition.ExpectedDependencies)
+    if (($sortedDependencyPackageIds -join "`n") -cne ($expectedDependencyPackageIds -join "`n")) {
+        throw "Sibling Raylib package '$($definition.Id)' dependency identities [$($sortedDependencyPackageIds -join ', ')] do not exactly match direct imported package identities [$($expectedDependencyPackageIds -join ', ')]."
+    }
+
+    $siblingNativeDependencies = Get-OptionalProperty -Object $siblingInspection -Name "NativeDependencies"
+    if ($null -ne $siblingNativeDependencies) {
+        foreach ($propertyName in @("Sources", "IncludeDirectories", "LibraryDirectories", "LinkArguments", "PkgConfigPackages")) {
+            if (@(Get-ArrayValues -Value (Get-OptionalProperty -Object $siblingNativeDependencies -Name $propertyName)).Count -ne 0) {
+                throw "Sibling Raylib package '$($definition.Id)' duplicates direct native metadata '$propertyName'; it must use Vendor.Raylib transitively."
+            }
+        }
+    }
+    $actualNativeLibraries = if ($null -eq $siblingNativeDependencies) { @() } else {
+        @((Get-ArrayValues -Value (Get-OptionalProperty -Object $siblingNativeDependencies -Name "Libraries")) | ForEach-Object { [string]$_ })
+    }
+    $actualNativeLibraries = @(Get-OrdinalSortedStrings -Values $actualNativeLibraries)
+    $expectedNativeLibraries = @(Get-OrdinalSortedStrings -Values $definition.ExpectedNativeLibraries)
+    if (($actualNativeLibraries -join "`n") -cne ($expectedNativeLibraries -join "`n")) {
+        throw "Sibling Raylib package '$($definition.Id)' compiler-inferred logical native libraries [$($actualNativeLibraries -join ', ')] do not match expected imported/intrinsic facts [$($expectedNativeLibraries -join ', ')]."
+    }
+
+    $siblingLicenseRoot = Join-Path $outputRoot ("licenses/" + $definition.LicenseName)
+    if (Test-Path -LiteralPath $siblingLicenseRoot) {
+        Remove-Item -LiteralPath $siblingLicenseRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $siblingLicenseRoot | Out-Null
+    $siblingLicensePath = Join-Path $siblingLicenseRoot "LICENSE"
+    Copy-RequiredFile -Source (Join-Path $payloadRoot "LICENSE") -Destination $siblingLicensePath
+
+    $siblingProvenancePath = Join-Path $siblingLicenseRoot "PROVENANCE.json"
+    $siblingProvenance = [ordered]@{
+        schemaVersion = 1
+        packageId = $definition.Id
+        raylibVersion = [string]$manifest.raylibVersion
+        sourceIdentity = "tag:$([string]$manifest.releaseTag)"
+        releaseUrl = [string]$manifest.releaseUrl
+        license = [string]$manifest.license
+        target = [ordered]@{
+            id = $AssetSuffix
+            targetTriple = $expectedTargetTriple
+            packageProfile = "release"
+        }
+        dependencyPackageIds = $sortedDependencyPackageIds
+        compilerInferredNativeLibraries = $actualNativeLibraries
+        package = [ordered]@{
+            rootModule = [string]$siblingInspection.RootModule
+            image = [System.IO.Path]::GetRelativePath($outputRoot, $siblingPackageImagePath).Replace('\', '/')
+            imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $siblingPackageImagePath).Hash.ToLowerInvariant()
+            library = [System.IO.Path]::GetRelativePath($outputRoot, $siblingLibraryPath).Replace('\', '/')
+            librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $siblingLibraryPath).Hash.ToLowerInvariant()
+        }
+    }
+    Write-DeterministicJson -Path $siblingProvenancePath -Value $siblingProvenance -Depth 10
+
+    $siblingPackageBuilds += [pscustomobject]@{
+        Definition = $definition
+        Inspection = $siblingInspection
+        Modules = $siblingModules
+        LibraryPath = $siblingLibraryPath
+        PackageImagePath = $siblingPackageImagePath
+        LicensePath = $siblingLicensePath
+        ProvenancePath = $siblingProvenancePath
+    }
+}
+
 $provenance = [ordered]@{
     schemaVersion = 1
     raylibVersion = [string] $manifest.raylibVersion
@@ -608,7 +925,7 @@ $provenance = [ordered]@{
         imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $packageImagePath).Hash.ToLowerInvariant()
         library = [System.IO.Path]::GetRelativePath($outputRoot, $starkLibraryPath).Replace('\', '/')
         librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $starkLibraryPath).Hash.ToLowerInvariant()
-        modules = @($moduleNames | Sort-Object)
+        modules = @(Get-OrdinalSortedStrings -Values $moduleNames)
     }
     nativePayload = [ordered]@{
         library = [System.IO.Path]::GetRelativePath($outputRoot, (Join-Path $nativeRaylibRoot $nativeLibraryFile)).Replace('\', '/')
@@ -618,16 +935,146 @@ $provenance = [ordered]@{
 }
 
 $provenancePath = Join-Path $nativeRaylibRoot "PROVENANCE.json"
-$provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $provenancePath -Encoding utf8
+Write-DeterministicJson -Path $provenancePath -Value $provenance -Depth 8
 
-$releaseInputManifest = [ordered]@{
-    schemaVersion = 1
-    targetTriple = $expectedTargetTriple
-    raylib = $provenance
-    files = Get-FileManifest -Root $outputRoot
+$nativeArtifacts = @()
+foreach ($file in (Get-ChildItem -LiteralPath $nativeRaylibRoot -File -Recurse)) {
+    $kind = if ($file.Name -match '(?i)^(LICENSE|LICENCE|COPYING|NOTICE)(\..*)?$') {
+        "license"
+    } elseif ($file.Name -eq "PROVENANCE.json") {
+        "provenance"
+    } elseif ($file.Extension -in @(".h", ".hpp")) {
+        "header"
+    } elseif ($file.Extension -in @(".a", ".lib")) {
+        "static-library"
+    } elseif ($file.Extension -in @(".dll", ".dylib") -or $file.Name -match '(?i)\.so(?:\..+)?$') {
+        "runtime-library"
+    } else {
+        "documentation"
+    }
+
+    $nativeArtifacts += New-FileDescriptor -Root $outputRoot -Path $file.FullName -Kind $kind
 }
-$releaseInputManifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $outputRoot "release-input.json") -Encoding utf8
 
-Write-Host "Prepared pinned Raylib $($manifest.raylibVersion) release input for $AssetSuffix at $outputRoot"
+$licenseFiles = @()
+foreach ($licensePath in @(
+    (Join-Path $nativeRaylibRoot "LICENSE"),
+    (Join-Path $raylibLicenseRoot "LICENSE"))) {
+    $licenseDescriptor = New-FileDescriptor -Root $outputRoot -Path $licensePath -Kind "license"
+    $licenseFiles += [ordered]@{
+        path = [string]$licenseDescriptor.path
+        bytes = [int64]$licenseDescriptor.bytes
+        sha256 = [string]$licenseDescriptor.sha256
+    }
+}
+$licenseFiles = @(Get-OrdinalSortedObjects -Values $licenseFiles -PropertyName "path")
+$provenanceDescriptor = New-FileDescriptor -Root $outputRoot -Path $provenancePath -Kind "provenance"
+$packageEntry = [ordered]@{
+    id = "Vendor.Raylib"
+    version = [string]$manifest.raylibVersion
+    sourceIdentity = "tag:$([string]$manifest.releaseTag)"
+    target = [ordered]@{
+        id = $AssetSuffix
+        targetTriple = $expectedTargetTriple
+    }
+    package = [ordered]@{
+        rootModule = [string]$inspection.RootModule
+        image = [System.IO.Path]::GetRelativePath($outputRoot, $packageImagePath).Replace('\', '/')
+        imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $packageImagePath).Hash.ToLowerInvariant()
+        library = [System.IO.Path]::GetRelativePath($outputRoot, $starkLibraryPath).Replace('\', '/')
+        librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $starkLibraryPath).Hash.ToLowerInvariant()
+        modules = @(Get-OrdinalSortedStrings -Values $moduleNames)
+    }
+    nativePayload = [ordered]@{
+        artifacts = @(Get-OrdinalSortedObjects -Values $nativeArtifacts -PropertyName "path")
+        licenseFiles = @($licenseFiles)
+    }
+    provenance = [ordered]@{
+        path = [string]$provenanceDescriptor.path
+        bytes = [int64]$provenanceDescriptor.bytes
+        sha256 = [string]$provenanceDescriptor.sha256
+    }
+}
+$packageEntries = @($packageEntry)
+foreach ($siblingBuild in $siblingPackageBuilds) {
+    $siblingLicenseDescriptor = New-FileDescriptor -Root $outputRoot -Path $siblingBuild.LicensePath -Kind "license"
+    $siblingProvenanceDescriptor = New-FileDescriptor -Root $outputRoot -Path $siblingBuild.ProvenancePath -Kind "provenance"
+    $packageEntries += [ordered]@{
+        id = [string]$siblingBuild.Definition.Id
+        version = [string]$manifest.raylibVersion
+        sourceIdentity = "tag:$([string]$manifest.releaseTag)"
+        target = [ordered]@{
+            id = $AssetSuffix
+            targetTriple = $expectedTargetTriple
+        }
+        package = [ordered]@{
+            rootModule = [string]$siblingBuild.Inspection.RootModule
+            image = [System.IO.Path]::GetRelativePath($outputRoot, $siblingBuild.PackageImagePath).Replace('\', '/')
+            imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $siblingBuild.PackageImagePath).Hash.ToLowerInvariant()
+            library = [System.IO.Path]::GetRelativePath($outputRoot, $siblingBuild.LibraryPath).Replace('\', '/')
+            librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $siblingBuild.LibraryPath).Hash.ToLowerInvariant()
+            modules = @(Get-OrdinalSortedStrings -Values $siblingBuild.Modules)
+        }
+        nativePayload = [ordered]@{
+            artifacts = @()
+            licenseFiles = @([ordered]@{
+                path = [string]$siblingLicenseDescriptor.path
+                bytes = [int64]$siblingLicenseDescriptor.bytes
+                sha256 = [string]$siblingLicenseDescriptor.sha256
+            })
+        }
+        provenance = [ordered]@{
+            path = [string]$siblingProvenanceDescriptor.path
+            bytes = [int64]$siblingProvenanceDescriptor.bytes
+            sha256 = [string]$siblingProvenanceDescriptor.sha256
+        }
+    }
+}
+$packageEntries = @(Get-OrdinalSortedObjects -Values $packageEntries -PropertyName "id")
+
+if ($ContributorMode) {
+    $contribution = [ordered]@{
+        schemaVersion = 1
+        targetId = $AssetSuffix
+        targetTriple = $expectedTargetTriple
+        packages = @($packageEntries)
+    }
+    Write-DeterministicJson -Path $contributionManifestFullPath -Value $contribution -Depth 12
+} else {
+    $catalog = Get-Content -LiteralPath $vendorCatalogFullPath -Raw | ConvertFrom-Json
+    $stagedCatalogPath = Join-Path $outputRoot "catalog/vendor-packages.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stagedCatalogPath) | Out-Null
+    Copy-Item -LiteralPath $vendorCatalogFullPath -Destination $stagedCatalogPath -Force
+    $catalogRelativePath = [System.IO.Path]::GetRelativePath($outputRoot, $stagedCatalogPath).Replace('\', '/')
+    $releaseInputManifest = [ordered]@{
+        schemaVersion = 2
+        manifestKind = "stark-vendor-release-input"
+        state = "ready"
+        target = [ordered]@{
+            id = $AssetSuffix
+            assetSuffix = $AssetSuffix
+            runtimeIdentifier = [string]$platform.runtimeIdentifier
+            targetTriple = $expectedTargetTriple
+            operatingSystem = [string]$platform.hostOperatingSystem
+            architecture = [string]$platform.hostArchitecture
+        }
+        catalog = [ordered]@{
+            id = [string](Get-RequiredProperty -Object $catalog -Name "catalogId")
+            path = $catalogRelativePath
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedCatalogPath).Hash.ToLowerInvariant()
+        }
+        packages = @($packageEntries)
+        # release-input.json intentionally excludes itself: a manifest cannot
+        # contain its own stable cryptographic digest.
+        files = @(Get-FileManifest -Root $outputRoot | Where-Object { $_.path -ne "release-input.json" })
+    }
+    Write-DeterministicJson -Path (Join-Path $outputRoot "release-input.json") -Value $releaseInputManifest -Depth 14
+}
+
+if ($ContributorMode) {
+    Write-Host "Contributed pinned Raylib $($manifest.raylibVersion) release input for $AssetSuffix at $contributionManifestFullPath"
+} else {
+    Write-Host "Prepared pinned Raylib $($manifest.raylibVersion) standalone release input for $AssetSuffix at $outputRoot"
+}
 Write-Host "Generated $packageImagePath"
 Write-Host "Generated $starkLibraryPath"

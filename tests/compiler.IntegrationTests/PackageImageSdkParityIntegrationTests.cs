@@ -211,8 +211,6 @@ public sealed class PackageImageSdkParityIntegrationTests
         var systemLibraryPath = Path.Combine(packageDirectory.FullName, NativeLibraryFileName("SystemBase"));
         var usedLibraryPath = Path.Combine(packageDirectory.FullName, NativeLibraryFileName("VendorUsed"));
         var unusedLibraryPath = Path.Combine(packageDirectory.FullName, NativeLibraryFileName("VendorUnused"));
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
-
         try
         {
             await File.WriteAllTextAsync(
@@ -293,13 +291,12 @@ public sealed class PackageImageSdkParityIntegrationTests
                     unusedImagePath,
                     unusedLibraryPath));
 
-            await CreateAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
-            var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+            var toolchainDirectory = Directory.CreateDirectory(Path.Combine(tempDirectory.FullName, "toolchain"));
+            var toolchainBinDirectory = Directory.CreateDirectory(Path.Combine(toolchainDirectory.FullName, "bin"));
+            await CreateAppendCaptureClangAsync(toolchainBinDirectory.FullName, clangLogPath);
+            var lldPath = Path.Combine(toolchainBinDirectory.FullName, "ld.lld");
             await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
             MakeExecutable(lldPath);
-            Environment.SetEnvironmentVariable(
-                "PATH",
-                $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
 
             var deadStripArgument = OperatingSystem.IsMacOS()
                 ? "-Wl,-dead_strip"
@@ -312,6 +309,7 @@ public sealed class PackageImageSdkParityIntegrationTests
                     "--emit-exe",
                     "--sdk-root", sdkRoot.FullName,
                     "--no-stark-path",
+                    "--toolchain-dir", toolchainDirectory.FullName,
                     $"--link-arg={deadStripArgument}",
                     "-o", executablePath
                 ],
@@ -345,7 +343,6 @@ public sealed class PackageImageSdkParityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
             TryDelete(tempDirectory);
         }
     }

@@ -64,6 +64,38 @@
         "lib/libLLVM*"
       ]
     },
+    "linux-arm64": {
+      "runtimeIdentifier": "linux-arm64",
+      "archive": {
+        "name": "LLVM-22.1.8-Linux-ARM64.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz",
+        "sha256": "805efad2bb91cb4967fa569e0881d10c0f69c04461cf671cccbae19f547acc34",
+        "size": 1771004928,
+        "signature": {
+          "name": "LLVM-22.1.8-Linux-ARM64.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz.sig",
+          "sha256": "c50a5c6a6369d9ff454404327683bcc4ab5ea0dfd320bfe36e281bc93905021d",
+          "size": 119
+        },
+        "attestation": {
+          "name": "LLVM-22.1.8-Linux-ARM64.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz.jsonl",
+          "sha256": "c5c1c6cff134da1a651e32f4c0e0645c8beff53d418186d3849427d062d161a2",
+          "size": 10741
+        }
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [
+        "lib/libLLVM*"
+      ]
+    },
     "windows-x64": {
       "runtimeIdentifier": "win-x64",
       "archive": {
@@ -96,6 +128,124 @@
       "requiredPatterns": [
         "bin/LLVM*.dll",
         "lib/LLVM*.lib"
+      ]
+    },
+    "windows-arm64": {
+      "runtimeIdentifier": "win-arm64",
+      "archive": {
+        "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz",
+        "sha256": "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1",
+        "size": 737955068,
+        "signature": {
+          "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.sig",
+          "sha256": "dfa38469129d9a4f7148a8a585867127dc3af0b56b63b42a9af9fb469aef0d4d",
+          "size": 119
+        },
+        "attestation": {
+          "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.jsonl",
+          "sha256": "2fd9ded42558d54766a667971fa9a50f60acb6e9d1458b7a88e1f36e20002b4b",
+          "size": 11297
+        }
+      },
+      "requiredTools": [
+        "bin/clang.exe",
+        "bin/clang++.exe",
+        "bin/lld-link.exe",
+        "bin/lld.exe",
+        "bin/llvm-ar.exe",
+        "bin/llvm-lib.exe",
+        "bin/llvm-ranlib.exe"
+      ],
+      "requiredPatterns": [
+        "bin/LLVM*.dll",
+        "lib/LLVM*.lib"
+      ]
+    },
+    "macos-x64": {
+      "runtimeIdentifier": "osx-x64",
+      "sourceBuild": {
+        "hostOperatingSystem": "macos",
+        "hostArchitecture": "x64",
+        "minimumDeploymentTarget": "11.0",
+        "generator": "Ninja",
+        "configuration": "Release",
+        "optimization": "O3",
+        "lto": "Thin",
+        "cmakeVersion": "3.31.6",
+        "ninjaVersion": "1.12.1",
+        "sourceSubdirectory": "llvm",
+        "projects": [
+          "clang",
+          "lld"
+        ],
+        "targetsToBuild": [
+          "AArch64",
+          "X86"
+        ],
+        "buildTarget": "install/strip",
+        "sourceDateEpoch": 0,
+        "maxParallelCompileJobs": 8,
+        "parallelLinkJobs": 1,
+        "cmakeOptions": [
+          "-DBUILD_SHARED_LIBS=OFF",
+          "-DCLANG_INCLUDE_DOCS=OFF",
+          "-DCLANG_INCLUDE_TESTS=OFF",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_OSX_ARCHITECTURES=x86_64",
+          "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+          "-DLLVM_APPEND_VC_REV=OFF",
+          "-DLLVM_BUILD_BENCHMARKS=OFF",
+          "-DLLVM_BUILD_EXAMPLES=OFF",
+          "-DLLVM_BUILD_LLVM_DYLIB=OFF",
+          "-DLLVM_BUILD_TESTS=OFF",
+          "-DLLVM_ENABLE_ASSERTIONS=OFF",
+          "-DLLVM_ENABLE_BINDINGS=OFF",
+          "-DLLVM_ENABLE_CURL=OFF",
+          "-DLLVM_ENABLE_EH=OFF",
+          "-DLLVM_ENABLE_LIBEDIT=OFF",
+          "-DLLVM_ENABLE_LIBXML2=OFF",
+          "-DLLVM_ENABLE_LTO=Thin",
+          "-DLLVM_ENABLE_PIC=ON",
+          "-DLLVM_ENABLE_RTTI=OFF",
+          "-DLLVM_ENABLE_ZLIB=OFF",
+          "-DLLVM_ENABLE_ZSTD=OFF",
+          "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+          "-DLLVM_INCLUDE_DOCS=OFF",
+          "-DLLVM_INCLUDE_EXAMPLES=OFF",
+          "-DLLVM_INCLUDE_TESTS=OFF",
+          "-DLLVM_LINK_LLVM_DYLIB=OFF"
+        ]
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/ld64.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [],
+      "hardlinkAliases": [
+        {
+          "path": "bin/clang++",
+          "target": "bin/clang"
+        },
+        {
+          "path": "bin/ld.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/ld64.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/llvm-ranlib",
+          "target": "bin/llvm-ar"
+        }
       ]
     },
     "macos-arm64": {

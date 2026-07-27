@@ -1,0 +1,288 @@
+{
+  "$schema": "archive-content.schema.json",
+  "schemaVersion": 1,
+  "topLevelDirectory": "asset-base-name",
+  "repositoryContent": {
+    "forbiddenExtensions": [
+      ".a",
+      ".bc",
+      ".dll",
+      ".dylib",
+      ".exe",
+      ".lib",
+      ".o",
+      ".obj",
+      ".pdb",
+      ".so",
+      ".starkpkg"
+    ],
+    "trees": [
+      {
+        "id": "documentation-user-facing",
+        "source": "docs/Userfacing",
+        "destination": "docs/Userfacing",
+        "includeExtensions": [".md"],
+        "includeFiles": []
+      },
+      {
+        "id": "documentation-standard-library",
+        "source": "docs/StandardLibrary",
+        "destination": "docs/StandardLibrary",
+        "includeExtensions": [".md"],
+        "includeFiles": []
+      },
+      {
+        "id": "documentation-linked-internals",
+        "source": "docs/Internals",
+        "destination": "docs/Internals",
+        "includeExtensions": [],
+        "includeFiles": [
+          "DynamicMemoryAllocation.md",
+          "LanguageInternals.md",
+          "PackageImage.md",
+          "SdkLayoutAndResolution.md"
+        ]
+      },
+      {
+        "id": "release-qualified-examples",
+        "source": "examples",
+        "destination": "examples",
+        "includeExtensions": [
+          ".args",
+          ".c",
+          ".gltf",
+          ".md",
+          ".sh",
+          ".stark",
+          ".toml"
+        ],
+        "includeFiles": []
+      }
+    ]
+  },
+  "nativeBinaryPolicy": {
+    "approvedRoots": ["bin", "stdlib", "toolchain", "vendor"]
+  },
+  "entries": [
+    {
+      "id": "compiler-unix",
+      "path": "bin/stark",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "compiler",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"],
+      "description": "Canonical Stage0 command for Unix hosts."
+    },
+    {
+      "id": "compiler-windows",
+      "path": "bin/stark.exe",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "compiler",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": ["windows-x64", "windows-arm64"],
+      "description": "Canonical Stage0 command for Windows hosts."
+    },
+    {
+      "id": "compiler-runtime",
+      "path": "bin",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "compiler",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Self-contained .NET runtime and managed compiler dependency closure."
+    },
+    {
+      "id": "sdk-manifest",
+      "path": "sdk.json",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "sdk",
+      "mode": "0644",
+      "checksumClass": "metadata",
+      "targets": "all",
+      "description": "Relocatable module/package ownership and native-link contract."
+    },
+    {
+      "id": "release-manifest",
+      "path": "release.json",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "metadata",
+      "targets": "all",
+      "description": "Release identity, provenance, compatibility, and archive inventory."
+    },
+    {
+      "id": "release-file-checksums",
+      "path": "release-files.sha256",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "metadata",
+      "targets": "all",
+      "description": "Archive-local SHA-256 inventory verified before installation."
+    },
+    {
+      "id": "standard-library",
+      "path": "stdlib",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "system",
+      "mode": "0755",
+      "checksumClass": "sdk-sha256",
+      "targets": "all",
+      "description": "System source, templates, package image, and target-native archive."
+    },
+    {
+      "id": "vendor-catalog",
+      "path": "vendor",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "vendor-catalog",
+      "mode": "0755",
+      "checksumClass": "sdk-sha256",
+      "targets": "all",
+      "description": "Complete target-advertised official Vendor source, images, native payloads, licenses, and metadata."
+    },
+    {
+      "id": "private-backend",
+      "path": "toolchain/llvm-22.1.8",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "private-backend",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Allowlisted compiler-private LLVM backend runtime, licenses, and provenance."
+    },
+    {
+      "id": "licenses",
+      "path": "licenses",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "release",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Stark and third-party license and notice files."
+    },
+    {
+      "id": "examples",
+      "path": "examples",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "documentation",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Offline release-qualified core and Vendor examples."
+    },
+    {
+      "id": "documentation",
+      "path": "docs",
+      "pathType": "tree",
+      "kind": "directory",
+      "owner": "documentation",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Offline user-facing reference documentation."
+    },
+    {
+      "id": "readme",
+      "path": "README.md",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "documentation",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Archive-local orientation and quick start."
+    },
+    {
+      "id": "install-manual",
+      "path": "INSTALL.md",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "documentation",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Complete manual installation and host-prerequisite guide."
+    },
+    {
+      "id": "release-command-contract",
+      "path": "release-commands.json",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": "all",
+      "description": "Machine-readable executable contract for README and INSTALL quick-start commands."
+    },
+    {
+      "id": "installer-unix",
+      "path": "install.sh",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"],
+      "description": "Optional Unix installer."
+    },
+    {
+      "id": "uninstaller-unix",
+      "path": "uninstall.sh",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0755",
+      "checksumClass": "release-sha256",
+      "targets": ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"],
+      "description": "Optional Unix uninstaller."
+    },
+    {
+      "id": "installer-windows",
+      "path": "install.ps1",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": ["windows-x64", "windows-arm64"],
+      "description": "Optional Windows installer."
+    },
+    {
+      "id": "uninstaller-windows",
+      "path": "uninstall.ps1",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "release-sha256",
+      "targets": ["windows-x64", "windows-arm64"],
+      "description": "Optional Windows uninstaller."
+    },
+    {
+      "id": "release-summary",
+      "path": "RELEASE.txt",
+      "pathType": "exact",
+      "kind": "file",
+      "owner": "release",
+      "mode": "0644",
+      "checksumClass": "metadata",
+      "targets": "all",
+      "description": "Human-readable release identity and host requirements."
+    }
+  ]
+}

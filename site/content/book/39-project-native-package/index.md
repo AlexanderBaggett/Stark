@@ -191,6 +191,9 @@ struct plus `ffi(c)` on the declaration is the matching ABI contract. The
 compiler lowers those aggregate parameters and returns through the target C ABI
 carrier shape, so use `[LinkName]` directly for raylib-style `Vector2`,
 `Vector3`, `Vector4`, `Rectangle`, and similar C-layout structs.
+Parameter and result carriers are independent target facts. On AArch64
+AAPCS64, an integer-like four-byte struct such as Raylib `Color` uses an `i64`
+parameter carrier and an exact `i32` return carrier.
 
 ## Step 4: Add A Boring Native Shim
 
@@ -242,6 +245,11 @@ Use that shape only when the native side stores a plain function pointer and
 the callback's requirements are satisfied by the registration call.
 
 ## Step 5: Put Native Build Settings In The Manifest
+
+This section is for authoring a custom/source native package. An official
+`Vendor.*` package in a release SDK already contains its target-native payload
+and ordered link facts, indexed and checksummed by `sdk.json`; applications do
+not repeat this manifest metadata or run `pkg-config`.
 
 Native requirements belong in `Stark.toml`:
 

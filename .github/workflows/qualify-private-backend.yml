@@ -1,0 +1,253 @@
+name: Qualify compiler-private backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git branch, tag, or full commit SHA to resolve once and qualify immutably.
+        required: true
+        default: main
+      commit:
+        description: Optional expected full commit SHA. Qualification fails if the resolved ref differs.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualify-private-backend-macos-x64
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  TARGET_ID: macos-x64
+  TARGET_RID: osx-x64
+  TARGET_TRIPLE: x86_64-apple-macosx11.0.0
+
+jobs:
+  qualify-macos-x64:
+    name: Qualify pinned LLVM 22.1.8 macOS x64 build
+    runs-on: macos-15-intel
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout requested source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Bind qualification to one immutable commit
+        shell: pwsh
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          $resolvedCommit = [string](& git rev-parse HEAD)
+          if ($LASTEXITCODE -ne 0 -or $resolvedCommit -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve the checked-out source to a full commit SHA."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:EXPECTED_COMMIT) -and
+              ($env:EXPECTED_COMMIT -cnotmatch '^[0-9a-f]{40}$' -or
+               $resolvedCommit -cne $env:EXPECTED_COMMIT)) {
+            throw "Resolved commit '$resolvedCommit' does not match expected commit '$env:EXPECTED_COMMIT'."
+          }
+          "QUALIFICATION_COMMIT=$resolvedCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup exact .NET SDK from global.json
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+
+      - name: Verify native Intel host and exact .NET SDK
+        shell: pwsh
+        run: |
+          if (-not $IsMacOS) { throw "macos-x64 qualification requires macOS." }
+          $architecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
+          if ($architecture -cne "x64") { throw "macos-x64 qualification requires a native x64 process; found '$architecture'." }
+          $requiredVersion = [string](Get-Content -LiteralPath global.json -Raw | ConvertFrom-Json).sdk.version
+          $actualVersion = ([string](& dotnet --version)).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne $requiredVersion) {
+            throw "Qualification requires exact .NET SDK '$requiredVersion'; setup selected '$actualVersion'."
+          }
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate the complete release configuration
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/qualification | Out-Null
+          & dotnet $env:RELEASE_TOOLS_DLL validate-config --root . --include-planned 2>&1 |
+            Tee-Object -FilePath artifacts/qualification/configuration.log
+          if ($LASTEXITCODE -ne 0) { throw "Release configuration validation failed." }
+          & ./scripts/get-release-configuration-identity.ps1 `
+            -Root . `
+            -OutputPath artifacts/qualification/release-configuration-identity.json
+
+      - name: Cache checksum-verified build-tool downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: artifacts/release-build-tool-cache
+          key: private-backend-build-tools-macos-x64-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'scripts/resolve-release-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
+
+      - name: Acquire pinned CMake and Ninja
+        id: build_tools
+        shell: pwsh
+        run: |
+          $toolRoot = [System.IO.Path]::GetFullPath("artifacts/release-build-tools/macos-x64")
+          & ./scripts/acquire-release-build-tools.ps1 `
+            -TargetId $env:TARGET_ID `
+            -OutputDir $toolRoot `
+            -CacheDir artifacts/release-build-tool-cache/macos-x64 `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL
+          if ($LASTEXITCODE -ne 0) { throw "Pinned release build-tool acquisition failed." }
+
+          $manifest = Get-Content -LiteralPath (Join-Path $toolRoot "manifest.json") -Raw | ConvertFrom-Json
+          if ([int]$manifest.schemaVersion -ne 1 -or
+              [string]$manifest.purpose -cne "build-time-only" -or
+              [string]$manifest.targetId -cne $env:TARGET_ID -or
+              [string]$manifest.redistribution -cne "not-in-release-sdk") {
+            throw "Acquired build-tool manifest has an unexpected identity or redistribution policy."
+          }
+          foreach ($toolName in @("cmake", "ninja")) {
+            $relativePath = [string]$manifest.tools.$toolName.path
+            $toolPath = [System.IO.Path]::GetFullPath((Join-Path $toolRoot $relativePath))
+            if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+              throw "Pinned $toolName executable '$relativePath' is missing."
+            }
+            "$($toolName)_path=$toolPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Cache checksum-verified LLVM source inputs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: artifacts/llvm-cache
+          key: llvm-source-input-22.1.8-macos-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+
+      - name: Build the pinned optimized LLVM private backend from source
+        shell: pwsh
+        run: |
+          & ./scripts/acquire-llvm-toolchain.ps1 `
+            -AssetSuffix $env:TARGET_ID `
+            -ManifestPath scripts/llvm-22.1.8-assets.json `
+            -OutputDir artifacts/toolchain/macos-x64 `
+            -CacheDir artifacts/llvm-cache `
+            -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
+            -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
+            2>&1 | Tee-Object -FilePath artifacts/qualification/llvm-source-build.log
+          if ($LASTEXITCODE -ne 0) { throw "Pinned LLVM source build failed." }
+
+      - name: Qualify backend closure, native dependencies, and optimized determinism
+        shell: pwsh
+        run: |
+          & dotnet $env:RELEASE_TOOLS_DLL qualify-private-backend `
+            --root . `
+            --target-id $env:TARGET_ID `
+            --toolchain-root artifacts/toolchain/macos-x64 `
+            --output artifacts/qualification/private-backend-report.json `
+            2>&1 | Tee-Object -FilePath artifacts/qualification/private-backend-qualification.log
+          if ($LASTEXITCODE -ne 0) { throw "Compiler-private backend qualification failed." }
+
+      - name: Restore exact Stage0 dependency graph
+        shell: pwsh
+        run: |
+          & dotnet restore src/compiler.csproj `
+            -r $env:TARGET_RID `
+            --configfile eng/release/NuGet.config `
+            --use-lock-file `
+            --locked-mode `
+            --lock-file-path src/packages.osx-x64.lock.json `
+            -p:RuntimeFrameworkVersion=10.0.10
+          if ($LASTEXITCODE -ne 0) { throw "Exact Stage0 restore failed." }
+
+      - name: Publish native Stage0 and build optimized System
+        shell: pwsh
+        run: |
+          & dotnet publish src/compiler.csproj `
+            -c Release `
+            -r $env:TARGET_RID `
+            --self-contained true `
+            --no-restore `
+            -p:RuntimeFrameworkVersion=10.0.10 `
+            -p:PublishSingleFile=false `
+            -p:InformationalVersion="qualification-$env:QUALIFICATION_COMMIT" `
+            -p:IncludeSourceRevisionInInformationalVersion=false `
+            -p:WriteCompilerLauncherToRepoRoot=false `
+            -o artifacts/stage0/macos-x64
+          if ($LASTEXITCODE -ne 0) { throw "Native Stage0 publish failed." }
+
+          New-Item -ItemType Directory -Force -Path artifacts/stdlib/macos-x64 | Out-Null
+          & ./artifacts/stage0/macos-x64/stark `
+            stdlib/src/System.stark `
+            --emit-lib `
+            --target $env:TARGET_TRIPLE `
+            --package-profile release `
+            --toolchain-dir artifacts/toolchain/macos-x64 `
+            -o artifacts/stdlib/macos-x64/libSystem.a `
+            2>&1 | Tee-Object -FilePath artifacts/qualification/system-build.log
+          if ($LASTEXITCODE -ne 0) { throw "Native Stage0 could not build the optimized System package." }
+
+      - name: Compile and run an external-style Hello World
+        shell: pwsh
+        run: |
+          & ./artifacts/stage0/macos-x64/stark `
+            examples/hello.stark `
+            --emit-exe `
+            --target $env:TARGET_TRIPLE `
+            --package-profile release `
+            --toolchain-dir artifacts/toolchain/macos-x64 `
+            -I artifacts/stdlib/macos-x64 `
+            -o artifacts/qualification/hello `
+            2>&1 | Tee-Object -FilePath artifacts/qualification/hello-build.log
+          if ($LASTEXITCODE -ne 0) { throw "Native Stage0 could not compile Hello World with the qualified backend." }
+
+          $helloOutput = @(& ./artifacts/qualification/hello 2>&1)
+          if ($LASTEXITCODE -ne 0 -or ($helloOutput -join "`n").Trim() -cne "Hello, World!") {
+            throw "Qualified Hello World execution failed: $($helloOutput -join [Environment]::NewLine)"
+          }
+          $systemPath = [System.IO.Path]::GetFullPath("artifacts/stdlib/macos-x64/libSystem.a")
+          $helloPath = [System.IO.Path]::GetFullPath("artifacts/qualification/hello")
+          $archiveMembers = @(& ./artifacts/toolchain/macos-x64/bin/llvm-ar t $systemPath)
+          if ($LASTEXITCODE -ne 0 -or $archiveMembers.Count -eq 0) {
+            throw "Qualified System archive is empty or unreadable."
+          }
+          [ordered]@{
+            schemaVersion = 1
+            evidenceKind = "stark-stage0-private-backend-smoke"
+            status = "passed"
+            commit = $env:QUALIFICATION_COMMIT
+            targetId = $env:TARGET_ID
+            targetTriple = $env:TARGET_TRIPLE
+            packageProfile = "release"
+            systemArchive = [ordered]@{
+              bytes = (Get-Item -LiteralPath $systemPath).Length
+              sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $systemPath).Hash.ToLowerInvariant()
+              members = @($archiveMembers)
+            }
+            helloExecutable = [ordered]@{
+              bytes = (Get-Item -LiteralPath $helloPath).Length
+              sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helloPath).Hash.ToLowerInvariant()
+              output = ($helloOutput -join "`n").Trim()
+            }
+          } | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath artifacts/qualification/stage0-smoke-report.json -Encoding utf8
+
+      - name: Upload qualification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-backend-macos-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/qualification
+            artifacts/toolchain/macos-x64/manifest.json
+            artifacts/toolchain/macos-x64/provenance
+            artifacts/toolchain/macos-x64/licenses
+            artifacts/release-build-tools/macos-x64/manifest.json
+          if-no-files-found: warn
+          retention-days: 30

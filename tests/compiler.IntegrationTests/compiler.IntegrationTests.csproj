@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/compiler.csproj" />
+    <ProjectReference Include="../../eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

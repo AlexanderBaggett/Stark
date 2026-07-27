@@ -1,0 +1,15 @@
+import Vendor.GLFW
+module GlfwBundledRuntimeSmoke
+
+export fn i32[min max] main()
+{
+    stack Version version = GetVersion();
+    ClearEvents();
+
+    if (version.Major != 3 || version.Minor != 4 || DroppedEventCount() != 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}

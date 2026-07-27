@@ -4,8 +4,6 @@ The user facing Stark language. This document defines the source level contract:
 
 Lower level compiler strategy and optimizer rationale live in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
-[Roadmap.md](../Internals/Roadmap.md) tracks milestone ordering and work sequencing.
-
 ## 1. Design Goals
 
 Stark is a performance first systems language.
@@ -49,15 +47,13 @@ for example, imports such as `import Vendor.Raylib`, `import Vendor.SQLite`,
 `import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.Miniaudio`,
 `import Vendor.STB.Image`, or `import Vendor.Cgltf` bring bundled native
 binding surfaces into scope.
-Project builds discover `Vendor` artifacts beside `System` artifacts: first
-from the active stage, then target-specific repo `vendor/dist/<target-triple>`
-package images plus flat `vendor/dist` fallback package images or `vendor/src`
-source, then an installed compiler bundle. User commands can still pass
-`-I vendor/dist`; package-image resolution filters target-named subdirectories
-to the active target so a Linux native payload is not selected for a Windows
-build. Native-backed vendor packages carry their link metadata, so machine-local
-include/library paths belong in `Stark.user.toml` or user config rather than in
-source.
+In an installed SDK, `System.*` and official `Vendor.*` imports resolve through
+the exact ownership index in `sdk.json`. Applications do not list these packages
+in `[dependencies]`, pass `-I vendor/dist`, set `STARK_PATH`, install the native
+library separately, or invoke `pkg-config`. A development SDK can declare
+repository source/package roots explicitly for compiler work. Native discovery
+and machine-local paths belong only to custom/source packages and their user
+configuration, not to an application consuming an official SDK package.
 
 ### 2.1 Comments
 
@@ -130,6 +126,13 @@ Visibility does not apply to locals, statements, or expressions.
 
 Interop packages can describe the native source files and native libraries they require so downstream users can build with ordinary Stark commands.
 
+Official `Vendor.*` packages in a release SDK are already built for that SDK's
+target. Their checksummed package images, Stark archives, native payloads, and
+ordered link facts are indexed by `sdk.json`; application authors use only the
+import and ordinary `stark build`/`stark run` commands. The CLI and discovery
+forms below are package-author and source-development surfaces for custom
+native-backed packages, not installation instructions for `Vendor.Raylib`.
+
 The current package author surface is CLI metadata:
 
 ```bash
@@ -158,9 +161,15 @@ compiler vendor/src/Vendor/Raylib.stark --emit-lib \
   --native-library raylib
 ```
 
-If a named native library cannot be found during the final native link, the build reports the missing library and suggests installing it or adding its directory with `-L` or `--native-library-dir`.
+If a named native library cannot be found during a custom/source package link,
+the build reports the missing library and suggests installing it or adding its
+directory with `-L` or `--native-library-dir`.
 
-If a package owned `pkg-config` dependency cannot be resolved, the build names the package and suggests installing the native package, setting `PKG_CONFIG_PATH`, or using explicit native metadata.
+If a custom/source package's `pkg-config` dependency cannot be resolved, the
+build names the package and suggests installing the native package, setting
+`PKG_CONFIG_PATH`, or using explicit native metadata. An installed official SDK
+package instead reports an SDK-integrity error and must not search the host for
+a replacement.
 
 Native dependency declarations are for explicit FFI and package interop. They do not make those dependencies part of Stark's standard library runtime profile.
 
@@ -1698,6 +1707,14 @@ u8 G; u8 B; u8 A; }` uses one integer carrier. Larger or target-unclassifiable
 aggregates use the target ABI's indirect form. Binding authors should use a C
 shim only when the native signature needs real adaptation, not just because a
 C struct is passed or returned by value.
+
+The parameter and return carrier are separate target ABI facts. On AArch64
+AAPCS64, a non-HFA/HVA integer-like aggregate of up to 8 bytes uses a rounded
+`i64` parameter carrier but an exact-width return carrier; therefore a four-byte
+Raylib `Color` is passed as `i64` and returned as `i32`. Integer-like aggregates
+from 9 through 16 bytes use `[2 x i64]`, and larger values are indirect.
+Homogeneous floating-point/vector aggregates use their own target
+classification and are not covered by this integer-like rule.
 
 ```stark
 [StructLayout(C)]

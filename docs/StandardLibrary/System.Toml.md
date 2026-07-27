@@ -219,10 +219,9 @@ and parse/emit failures (`Toml from TomlError`), so nothing is swallowed:
 ## Supported subset
 
 `System.Toml` currently implements the staged manifest subset of TOML. This is
-tracked as temporary implementation work in
-[`21-system-toml.md`](../Self-host-Prep/21-system-toml.md), not the design
-target. Unsupported syntax is reported as a span-carrying diagnostic, never
-silently accepted.
+temporary implementation scope, not the design target. Unsupported syntax is
+reported as a span-carrying diagnostic, never silently accepted; the list below
+is the public contract for this release.
 
 Parses today:
 
@@ -310,8 +309,7 @@ public fn System.Toml.TomlFileResult<System.Text.OwnedAscii> ProjectName(ascii p
   emitter determinism, round-trip idempotence, and the file helpers.
 - The parser implements the staged manifest subset; the remaining TOML 1.x
   surface (multiline strings, floats, date-times, arrays of tables, non-decimal
-  integers, and `\U` escapes) is tracked in
-  [`21-system-toml.md`](../Self-host-Prep/21-system-toml.md#7-work-items).
+  integers, and `\U` escapes) is not yet part of the supported library surface.
 - Typed manifest decoding for the self-hosted project driver (replacing the
   host-style `SimpleToml` handling) is still future work; `System.Toml` is the
   library it will build on.

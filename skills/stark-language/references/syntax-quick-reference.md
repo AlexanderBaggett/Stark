@@ -155,8 +155,9 @@ structurally, generic templates carry conditional requirements, generic
 instantiations substitute concrete arguments, raw pointers and `storeborrow`
 deny both laws by default, and compiler-known `System.Threading.Atomic*` types
 receive both laws by intrinsic grant. Call-site enforcement and thread-boundary
-diagnostics are tracked in `docs/Self-host-Prep/14-thread-safety-laws.md` and are
-not complete yet.
+diagnostics are specified in
+`docs/Userfacing/LanguageReference.md`; remaining compiler work is tracked in
+`docs/Self-host-Prep/TASKS.md`.
 
 ## Traits And Associated Types
 

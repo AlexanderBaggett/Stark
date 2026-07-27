@@ -50,6 +50,6 @@ compatibility surfaces. The audit allowlists:
 - `System/C.stark`: the C string compatibility surface (`CStr`, `OwnedCStr`,
   `ForeignOwnedCStr`, `CStringDisposer`) — exposing C-shaped pointers is this
   module's purpose (see
-  [../Self-host-Prep/18-ffi-c-strings.md](../Self-host-Prep/18-ffi-c-strings.md)).
+  [System.C](../StandardLibrary/System.C.md)).
 
 Everything else must keep raw pointers out of `public` declarations.

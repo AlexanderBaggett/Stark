@@ -258,7 +258,7 @@ internal unsafe fn rawmutptr<i8[min max]> StartThreadPayload<T>(ThreadPayloadEnt
     return handle;
 }
 
-// Atomic types (docs/Self-host-Prep/12-atomics.md): the safe-sharing primitive for
+// Atomic types (docs/StandardLibrary/System.Threading.md): the safe-sharing primitive for
 // threads. One type per Stark integer width plus AtomicBool; every operation is a
 // single indivisible seq-cst action. RMW operations return the PREVIOUS value;
 // arithmetic wraps on overflow (two's complement, like the wrapping operators).

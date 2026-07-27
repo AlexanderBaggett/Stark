@@ -5,7 +5,7 @@ using Stark.Compiler;
 namespace compiler.IntegrationTests;
 
 // Conformance harness for the test-progress streaming protocol
-// (docs/Self-host-Prep/30-test-progress-streaming.md §3). The fixture projects
+// (docs/Internals/TestProgressProtocol.md §3). The fixture projects
 // and golden transcripts under tests/fixtures/test-progress are the normative
 // artifacts for the stage0/stage1 contract: the runner-level goldens must stay
 // byte-stable, and the stage1 port is expected to reproduce them verbatim.

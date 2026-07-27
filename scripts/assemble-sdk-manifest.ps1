@@ -24,9 +24,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # Assemble only compiler-verified, relocatable artifacts into the runtime SDK
-# contract. System is mandatory; vendor packages are an allowlist derived from
-# target compatibility, complete package/native payloads, and unique module
-# ownership. The staged compiler remains the source of truth for package facts.
+# contract. System is mandatory; the schema-2 vendor release input is a closed
+# package/file declaration rather than a best-effort allowlist. Every declared
+# package must match the staged package image and its native payload exactly.
+# The staged compiler remains the source of truth for package, target, native,
+# dependency, and optimization facts carried by each package image.
 
 function Get-JsonPropertyValue {
     param(
@@ -44,7 +46,9 @@ function Get-JsonPropertyValue {
         return $null
     }
 
-    return $property.Value
+    # Unary comma keeps a JSON array as one property value while crossing the
+    # PowerShell pipeline. Array-specific helpers decide when to enumerate it.
+    return ,$property.Value
 }
 
 function Get-JsonArray {
@@ -60,6 +64,135 @@ function Get-JsonArray {
     }
 
     return @($value)
+}
+
+function Get-RequiredJsonPropertyValue {
+    param(
+        [object] $InputObject,
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $value = Get-JsonPropertyValue -InputObject $InputObject -Name $Name
+    if ($null -eq $value) {
+        throw "$Label is missing required property '$Name'."
+    }
+
+    return ,$value
+}
+
+function Get-RequiredJsonString {
+    param(
+        [object] $InputObject,
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $value = Get-RequiredJsonPropertyValue -InputObject $InputObject -Name $Name -Label $Label
+    if ($value -isnot [string] `
+        -or [string]::IsNullOrWhiteSpace($value) `
+        -or $value -cne $value.Trim()) {
+        throw "$Label property '$Name' must be a nonempty, trimmed string."
+    }
+
+    return [string]$value
+}
+
+function Get-RequiredJsonArray {
+    param(
+        [object] $InputObject,
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $value = Get-RequiredJsonPropertyValue -InputObject $InputObject -Name $Name -Label $Label
+    if ($value -isnot [System.Array]) {
+        throw "$Label property '$Name' must be a JSON array."
+    }
+
+    return ,([object[]]@($value))
+}
+
+function Assert-ExactJsonProperties {
+    param(
+        [object] $InputObject,
+        [Parameter(Mandatory = $true)]
+        [string[]] $Names,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    if ($null -eq $InputObject -or $InputObject -isnot [pscustomobject]) {
+        throw "$Label must be a JSON object."
+    }
+
+    $actual = @(Get-OrdinalSortedStrings -Values @($InputObject.PSObject.Properties.Name))
+    $expected = @(Get-OrdinalSortedStrings -Values @($Names))
+    if (($actual -join "`n") -cne ($expected -join "`n")) {
+        throw "$Label properties '$($actual -join ', ')' do not match schema properties '$($expected -join ', ')'."
+    }
+}
+
+function Assert-SortedUniqueStrings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]] $Values,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $previous = $null
+    foreach ($value in $Values) {
+        if ($value -isnot [string] `
+            -or [string]::IsNullOrWhiteSpace($value) `
+            -or $value -cne $value.Trim()) {
+            throw "$Label must contain only nonempty, trimmed strings."
+        }
+
+        if ($null -ne $previous `
+            -and [System.StringComparer]::Ordinal.Compare($previous, [string]$value) -ge 0) {
+            throw "$Label must be strictly ordinal-sorted and duplicate-free."
+        }
+
+        $previous = [string]$value
+    }
+}
+
+function Get-OrdinalSortedStrings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]] $Values
+    )
+
+    $items = [System.Collections.Generic.List[string]]::new()
+    foreach ($value in $Values) {
+        $items.Add([string]$value)
+    }
+
+    $items.Sort([System.StringComparer]::Ordinal)
+    return [string[]]$items.ToArray()
+}
+
+function Get-OrdinalSortedUniqueStrings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]] $Values
+    )
+
+    $items = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($value in $Values) {
+        [void]$items.Add([string]$value)
+    }
+
+    return [string[]]@($items)
 }
 
 function ConvertTo-SdkRelativePath {
@@ -502,10 +635,10 @@ function Test-PackageTargetCompatibility {
 function Get-PackageModuleNames {
     param([object] $Inspection)
 
-    return @(Get-JsonArray -InputObject $Inspection -Name "Modules" `
+    $moduleNames = @(Get-JsonArray -InputObject $Inspection -Name "Modules" `
         | ForEach-Object { [string](Get-JsonPropertyValue -InputObject $_ -Name "ModuleName") } `
-        | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } `
-        | Sort-Object -Unique)
+        | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    return @(Get-OrdinalSortedUniqueStrings -Values $moduleNames)
 }
 
 function Get-PackageImportedModuleNames {
@@ -527,7 +660,7 @@ function Get-PackageImportedModuleNames {
         }
     }
 
-    return @($imports | Sort-Object -Unique)
+    return @(Get-OrdinalSortedUniqueStrings -Values $imports)
 }
 
 function Get-PackageNativeDescriptor {
@@ -542,8 +675,10 @@ function Get-PackageNativeDescriptor {
     )
 
     $artifacts = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
-    $includeDirectories = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
-    $libraryDirectories = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
+    $includeDirectories = [System.Collections.Generic.List[string]]::new()
+    $includeDirectorySet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $libraryDirectories = [System.Collections.Generic.List[string]]::new()
+    $libraryDirectorySet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $runtimeFiles = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
     $licenseFiles = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
 
@@ -569,8 +704,16 @@ function Get-PackageNativeDescriptor {
             -Value ([string]$includeDirectory) `
             -Label "package '$PackageId' native include directory" `
             -PathType Container
-        $includeDirectories.Add((ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $resolvedDirectory -Label "package '$PackageId' native include directory")) | Out-Null
-        foreach ($includeFile in (Get-ChildItem -LiteralPath $resolvedDirectory -File -Recurse | Sort-Object FullName)) {
+        $relativeDirectory = ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $resolvedDirectory -Label "package '$PackageId' native include directory"
+        if (-not $includeDirectorySet.Add($relativeDirectory)) {
+            throw "package '$PackageId' contains duplicate native include directory '$relativeDirectory'"
+        }
+        $includeDirectories.Add($relativeDirectory)
+        $includeFilePaths = @(Get-OrdinalSortedStrings -Values @(
+            Get-ChildItem -LiteralPath $resolvedDirectory -File -Recurse | ForEach-Object { $_.FullName }
+        ))
+        foreach ($includeFilePath in $includeFilePaths) {
+            $includeFile = Get-Item -LiteralPath $includeFilePath
             $artifacts.Add((ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $includeFile.FullName -Label "package '$PackageId' native include file")) | Out-Null
         }
     }
@@ -583,7 +726,11 @@ function Get-PackageNativeDescriptor {
             -Label "package '$PackageId' native library directory" `
             -PathType Container
         $resolvedLibraryDirectories += $resolvedDirectory
-        $libraryDirectories.Add((ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $resolvedDirectory -Label "package '$PackageId' native library directory")) | Out-Null
+        $relativeDirectory = ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $resolvedDirectory -Label "package '$PackageId' native library directory"
+        if (-not $libraryDirectorySet.Add($relativeDirectory)) {
+            throw "package '$PackageId' contains duplicate native library directory '$relativeDirectory'"
+        }
+        $libraryDirectories.Add($relativeDirectory)
     }
 
     $libraries = @(Get-JsonArray -InputObject $NativeDependencies -Name "Libraries" | ForEach-Object { [string]$_ })
@@ -600,7 +747,11 @@ function Get-PackageNativeDescriptor {
 
     $packagedNativeLibraries = @()
     foreach ($resolvedDirectory in $resolvedLibraryDirectories) {
-        foreach ($file in (Get-ChildItem -LiteralPath $resolvedDirectory -File -Recurse | Sort-Object FullName)) {
+        $libraryFilePaths = @(Get-OrdinalSortedStrings -Values @(
+            Get-ChildItem -LiteralPath $resolvedDirectory -File -Recurse | ForEach-Object { $_.FullName }
+        ))
+        foreach ($libraryFilePath in $libraryFilePaths) {
+            $file = Get-Item -LiteralPath $libraryFilePath
             foreach ($library in $libraries) {
                 $escapedLibrary = [System.Text.RegularExpressions.Regex]::Escape($library)
                 if ($file.Name -match "(?i)^(?:lib)?$escapedLibrary(?:\.(?:a|lib|dylib|dll)|\.so(?:\..+)?)$") {
@@ -642,10 +793,9 @@ function Get-PackageNativeDescriptor {
         }
     }
 
-    $checksumPaths = @(
-        @($artifacts) + @($runtimeFiles) + @($licenseFiles) |
-            Sort-Object -Unique
-    )
+    $checksumPaths = @(Get-OrdinalSortedUniqueStrings -Values @(
+        @($artifacts) + @($runtimeFiles) + @($licenseFiles)
+    ))
     $fileChecksums = @($checksumPaths | ForEach-Object {
         $relativePath = [string]$_
         $absolutePath = Join-Path $SdkRoot ($relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
@@ -728,7 +878,11 @@ function New-StagedPackageCandidate {
         }
     }
 
-    $dependencies = @($dependencies | Sort-Object Id)
+    $orderedDependencies = @()
+    foreach ($dependencyId in (Get-OrdinalSortedStrings -Values @($dependencies | ForEach-Object { $_.Id }))) {
+        $orderedDependencies += @($dependencies | Where-Object { $_.Id -ceq $dependencyId })[0]
+    }
+    $dependencies = @($orderedDependencies)
 
     $candidateTarget = Get-JsonPropertyValue -InputObject $inspection -Name "Target"
     $targetReason = ""
@@ -798,41 +952,626 @@ function New-StagedPackageCandidate {
     }
 }
 
-function Get-VendorPackageVersions {
+function Resolve-VendorManifestFile {
     param(
         [Parameter(Mandatory = $true)]
-        [string] $VendorDist
+        [string] $VendorRoot,
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
     )
 
-    $versions = [System.Collections.Generic.Dictionary[string, string]]::new(
-        [System.StringComparer]::Ordinal)
-    $vendorRoot = Split-Path -Parent $VendorDist
+    if ([string]::IsNullOrWhiteSpace($Path) `
+        -or $Path -cne $Path.Trim() `
+        -or [System.IO.Path]::IsPathRooted($Path) `
+        -or $Path.Contains('\', [System.StringComparison]::Ordinal)) {
+        throw "$Label path '$Path' must be a nonempty, canonical, forward-slash vendor-root-relative path."
+    }
+
+    $segments = @($Path.Split('/'))
+    if ($segments.Count -eq 0 `
+        -or @($segments | Where-Object { $_ -in @("", ".", "..") }).Count -ne 0) {
+        throw "$Label path '$Path' contains an empty or traversal segment."
+    }
+
+    $canonicalRoot = [System.IO.Path]::GetFullPath($VendorRoot)
+    $absolutePath = [System.IO.Path]::GetFullPath((Join-Path $canonicalRoot $Path))
+    $relativePath = [System.IO.Path]::GetRelativePath($canonicalRoot, $absolutePath).Replace('\', '/')
+    if ($relativePath -cne $Path `
+        -or [System.IO.Path]::IsPathRooted($relativePath) `
+        -or $relativePath -eq ".." `
+        -or $relativePath.StartsWith("../", [System.StringComparison]::Ordinal)) {
+        throw "$Label path '$Path' is not a canonical path inside vendor root '$canonicalRoot'."
+    }
+
+    if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
+        throw "$Label path '$Path' is missing from vendor root '$canonicalRoot'."
+    }
+
+    $item = Get-Item -LiteralPath $absolutePath -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Label path '$Path' is a reparse point; release inputs must contain regular files."
+    }
+
+    return $absolutePath
+}
+
+function Get-VendorRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $VendorRoot,
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $canonicalRoot = [System.IO.Path]::GetFullPath($VendorRoot)
+    $canonicalPath = [System.IO.Path]::GetFullPath($Path)
+    $relativePath = [System.IO.Path]::GetRelativePath($canonicalRoot, $canonicalPath).Replace('\', '/')
+    if ([System.IO.Path]::IsPathRooted($relativePath) `
+        -or $relativePath -eq ".." `
+        -or $relativePath.StartsWith("../", [System.StringComparison]::Ordinal)) {
+        throw "$Label '$canonicalPath' is outside vendor root '$canonicalRoot'."
+    }
+
+    return $relativePath
+}
+
+function Get-ValidatedVendorFileEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Entry,
+        [Parameter(Mandatory = $true)]
+        [string] $VendorRoot,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    Assert-ExactJsonProperties -InputObject $Entry -Names @("path", "bytes", "sha256") -Label $Label
+    $path = Get-RequiredJsonString -InputObject $Entry -Name "path" -Label $Label
+    $sha256 = Get-RequiredJsonString -InputObject $Entry -Name "sha256" -Label $Label
+    if ($sha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "$Label SHA-256 '$sha256' must be 64 lowercase hexadecimal characters."
+    }
+
+    $bytesValue = Get-RequiredJsonPropertyValue -InputObject $Entry -Name "bytes" -Label $Label
+    if ($bytesValue -isnot [byte] `
+        -and $bytesValue -isnot [uint16] `
+        -and $bytesValue -isnot [uint32] `
+        -and $bytesValue -isnot [uint64] `
+        -and $bytesValue -isnot [sbyte] `
+        -and $bytesValue -isnot [int16] `
+        -and $bytesValue -isnot [int32] `
+        -and $bytesValue -isnot [int64]) {
+        throw "$Label property 'bytes' must be a nonnegative JSON integer."
+    }
+
+    $bytes = [int64]$bytesValue
+    if ($bytes -lt 0) {
+        throw "$Label property 'bytes' must be nonnegative."
+    }
+
+    $absolutePath = Resolve-VendorManifestFile -VendorRoot $VendorRoot -Path $path -Label $Label
+    $file = Get-Item -LiteralPath $absolutePath -Force
+    if ($file.Length -ne $bytes) {
+        throw "$Label '$path' has $($file.Length) bytes, not declared size $bytes."
+    }
+
+    $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash.ToLowerInvariant()
+    if ($actualSha256 -cne $sha256) {
+        throw "$Label '$path' failed SHA-256 validation."
+    }
+
+    return [pscustomobject]@{
+        Path = $path
+        AbsolutePath = $absolutePath
+        Bytes = $bytes
+        Sha256 = $sha256
+    }
+}
+
+function Get-ReferencedVendorFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.Dictionary[string, object]] $FilesByPath,
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [string] $Label,
+        [string] $Sha256 = "",
+        [Nullable[int64]] $Bytes = $null
+    )
+
+    if (-not $FilesByPath.ContainsKey($Path)) {
+        throw "$Label path '$Path' is absent from the schema-2 release-input files inventory."
+    }
+
+    $file = $FilesByPath[$Path]
+    if (-not [string]::IsNullOrWhiteSpace($Sha256) -and $file.Sha256 -cne $Sha256) {
+        throw "$Label path '$Path' SHA-256 does not match the files inventory."
+    }
+
+    if ($null -ne $Bytes -and $file.Bytes -ne [int64]$Bytes) {
+        throw "$Label path '$Path' byte count does not match the files inventory."
+    }
+
+    return $file
+}
+
+function Read-VendorReleaseInput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $VendorDist,
+        [Parameter(Mandatory = $true)]
+        [string] $AssetSuffix,
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedTargetTriple
+    )
+
+    if (-not (Test-Path -LiteralPath $VendorDist -PathType Container)) {
+        throw "Release SDK assembly requires vendor staging directory '$VendorDist'."
+    }
+
+    $vendorRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $VendorDist))
     $releaseInputPath = Join-Path $vendorRoot "release-input.json"
     if (-not (Test-Path -LiteralPath $releaseInputPath -PathType Leaf)) {
-        return $versions
+        throw "Release SDK assembly requires schema-2 Vendor manifest '$releaseInputPath'."
     }
 
     try {
-        $releaseInput = Get-Content -LiteralPath $releaseInputPath -Raw | ConvertFrom-Json
-        if ([int](Get-JsonPropertyValue -InputObject $releaseInput -Name "schemaVersion") -ne 1) {
-            throw "unsupported schema"
+        $releaseInput = Get-Content -LiteralPath $releaseInputPath -Raw | ConvertFrom-Json -Depth 100
+        Assert-ExactJsonProperties `
+            -InputObject $releaseInput `
+            -Names @("schemaVersion", "manifestKind", "state", "target", "catalog", "packages", "files") `
+            -Label "Vendor release-input manifest"
+        $schemaVersion = Get-RequiredJsonPropertyValue -InputObject $releaseInput -Name "schemaVersion" -Label "Vendor release-input manifest"
+        if (($schemaVersion -isnot [int] -and $schemaVersion -isnot [long]) `
+            -or [int64]$schemaVersion -ne 2) {
+            throw "Vendor release-input manifest schemaVersion must be integer 2."
         }
 
-        $raylib = Get-JsonPropertyValue -InputObject $releaseInput -Name "raylib"
-        $package = Get-JsonPropertyValue -InputObject $raylib -Name "package"
-        $packageId = [string](Get-JsonPropertyValue -InputObject $package -Name "rootModule")
-        $packageVersion = [string](Get-JsonPropertyValue -InputObject $raylib -Name "raylibVersion")
-        if ([string]::IsNullOrWhiteSpace($packageId) -or
-            [string]::IsNullOrWhiteSpace($packageVersion)) {
-            throw "missing package identity/version"
+        if ((Get-RequiredJsonString -InputObject $releaseInput -Name "manifestKind" -Label "Vendor release-input manifest") -cne "stark-vendor-release-input") {
+            throw "Vendor release-input manifestKind must be 'stark-vendor-release-input'."
         }
 
-        $versions.Add($packageId.Trim(), $packageVersion.Trim())
+        if ((Get-RequiredJsonString -InputObject $releaseInput -Name "state" -Label "Vendor release-input manifest") -cne "ready") {
+            throw "Vendor release-input manifest must be in the fail-closed 'ready' state."
+        }
+
+        $target = Get-RequiredJsonPropertyValue -InputObject $releaseInput -Name "target" -Label "Vendor release-input manifest"
+        Assert-ExactJsonProperties `
+            -InputObject $target `
+            -Names @("id", "assetSuffix", "runtimeIdentifier", "targetTriple", "operatingSystem", "architecture") `
+            -Label "Vendor release-input target"
+        $targetId = Get-RequiredJsonString -InputObject $target -Name "id" -Label "Vendor release-input target"
+        $targetAssetSuffix = Get-RequiredJsonString -InputObject $target -Name "assetSuffix" -Label "Vendor release-input target"
+        $runtimeIdentifier = Get-RequiredJsonString -InputObject $target -Name "runtimeIdentifier" -Label "Vendor release-input target"
+        $targetTriple = Get-RequiredJsonString -InputObject $target -Name "targetTriple" -Label "Vendor release-input target"
+        $targetOperatingSystem = Get-RequiredJsonString -InputObject $target -Name "operatingSystem" -Label "Vendor release-input target"
+        $targetArchitecture = Get-RequiredJsonString -InputObject $target -Name "architecture" -Label "Vendor release-input target"
+        if ($targetId -cne $AssetSuffix -or $targetAssetSuffix -cne $AssetSuffix) {
+            throw "Vendor release-input target id/assetSuffix '$targetId'/'$targetAssetSuffix' do not match release asset '$AssetSuffix'."
+        }
+
+        if ($targetTriple -cne $ExpectedTargetTriple) {
+            throw "Vendor release-input target '$targetTriple' does not exactly match staged System package target '$ExpectedTargetTriple'."
+        }
+
+        $expectedOperatingSystem = Get-NormalizedTargetOperatingSystem -Triple $ExpectedTargetTriple
+        $normalizedTargetArchitecture = Get-NormalizedTargetArchitecture -Triple $ExpectedTargetTriple
+        $expectedArchitecture = if ($normalizedTargetArchitecture -ceq "x86_64") {
+            "x64"
+        } else {
+            $normalizedTargetArchitecture
+        }
+        if ($targetOperatingSystem -cne $expectedOperatingSystem `
+            -or $targetArchitecture -cne $expectedArchitecture) {
+            throw "Vendor release-input target OS/architecture '$targetOperatingSystem/$targetArchitecture' do not match '$expectedOperatingSystem/$expectedArchitecture'."
+        }
+
+        $expectedRuntimeIdentifier = switch ($AssetSuffix) {
+            "linux-x64" { "linux-x64" }
+            "linux-arm64" { "linux-arm64" }
+            "windows-x64" { "win-x64" }
+            "windows-arm64" { "win-arm64" }
+            "macos-x64" { "osx-x64" }
+            "macos-arm64" { "osx-arm64" }
+            default { throw "Release asset '$AssetSuffix' has no supported runtime identifier mapping." }
+        }
+        if ($runtimeIdentifier -cne $expectedRuntimeIdentifier) {
+            throw "Vendor release-input runtime identifier '$runtimeIdentifier' does not match release asset '$AssetSuffix' expected runtime '$expectedRuntimeIdentifier'."
+        }
+
+        $filesByPath = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+        $caseInsensitivePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $previousFilePath = $null
+        $fileEntries = Get-RequiredJsonArray -InputObject $releaseInput -Name "files" -Label "Vendor release-input manifest"
+        if ($fileEntries.Count -eq 0) {
+            throw "Vendor release-input files inventory must not be empty."
+        }
+
+        foreach ($entry in $fileEntries) {
+            $file = Get-ValidatedVendorFileEntry -Entry $entry -VendorRoot $vendorRoot -Label "Vendor release-input file"
+            if ($file.Path -ceq "release-input.json") {
+                throw "Vendor release-input files inventory must exclude release-input.json because it cannot hash itself."
+            }
+
+            if ($null -ne $previousFilePath `
+                -and [System.StringComparer]::Ordinal.Compare($previousFilePath, $file.Path) -ge 0) {
+                throw "Vendor release-input files inventory must be strictly ordinal-sorted and duplicate-free."
+            }
+
+            if (-not $caseInsensitivePaths.Add($file.Path) -or $filesByPath.ContainsKey($file.Path)) {
+                throw "Vendor release-input files inventory contains duplicate or case-colliding path '$($file.Path)'."
+            }
+
+            $filesByPath.Add($file.Path, $file)
+            $previousFilePath = $file.Path
+        }
+
+        foreach ($item in (Get-ChildItem -LiteralPath $vendorRoot -Recurse -Force)) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $relativeItemPath = Get-VendorRelativePath -VendorRoot $vendorRoot -Path $item.FullName -Label "Vendor payload entry"
+                throw "Vendor payload entry '$relativeItemPath' is a reparse point; release inputs must be self-contained."
+            }
+        }
+
+        $actualFilePaths = @(Get-ChildItem -LiteralPath $vendorRoot -File -Recurse -Force `
+            | Where-Object { -not [string]::Equals($_.FullName, $releaseInputPath, [System.StringComparison]::OrdinalIgnoreCase) } `
+            | ForEach-Object { Get-VendorRelativePath -VendorRoot $vendorRoot -Path $_.FullName -Label "Vendor payload file" })
+        $actualFiles = @(Get-OrdinalSortedStrings -Values $actualFilePaths)
+        $declaredFiles = @(Get-OrdinalSortedStrings -Values @($filesByPath.Keys))
+        if (($actualFiles -join "`n") -cne ($declaredFiles -join "`n")) {
+            throw "Vendor release-input files inventory does not exactly match the staged vendor file set."
+        }
+
+        $catalog = Get-RequiredJsonPropertyValue -InputObject $releaseInput -Name "catalog" -Label "Vendor release-input manifest"
+        Assert-ExactJsonProperties -InputObject $catalog -Names @("id", "path", "sha256") -Label "Vendor release-input catalog"
+        $catalogId = Get-RequiredJsonString -InputObject $catalog -Name "id" -Label "Vendor release-input catalog"
+        $catalogPath = Get-RequiredJsonString -InputObject $catalog -Name "path" -Label "Vendor release-input catalog"
+        $catalogSha256 = Get-RequiredJsonString -InputObject $catalog -Name "sha256" -Label "Vendor release-input catalog"
+        if ($catalogId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or $catalogSha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw "Vendor release-input catalog identity or SHA-256 is invalid."
+        }
+
+        [void](Get-ReferencedVendorFile -FilesByPath $filesByPath -Path $catalogPath -Sha256 $catalogSha256 -Label "Vendor catalog")
+
+        $packageEntries = Get-RequiredJsonArray -InputObject $releaseInput -Name "packages" -Label "Vendor release-input manifest"
+        if ($packageEntries.Count -eq 0) {
+            throw "Vendor release-input packages array must not be empty."
+        }
+
+        $packages = @()
+        $packagesById = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+        $caseInsensitivePackageIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $ownedPayloadPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $allowedArtifactKinds = [System.Collections.Generic.HashSet[string]]::new(
+            [string[]]@("header", "static-library", "runtime-library", "native-source", "documentation", "license", "provenance"),
+            [System.StringComparer]::Ordinal)
+        $previousPackageId = $null
+        foreach ($entry in $packageEntries) {
+            Assert-ExactJsonProperties `
+                -InputObject $entry `
+                -Names @("id", "version", "sourceIdentity", "target", "package", "nativePayload", "provenance") `
+                -Label "Vendor release-input package"
+            $packageId = Get-RequiredJsonString -InputObject $entry -Name "id" -Label "Vendor release-input package"
+            $packageVersion = Get-RequiredJsonString -InputObject $entry -Name "version" -Label "Vendor release-input package '$packageId'"
+            $sourceIdentity = Get-RequiredJsonString -InputObject $entry -Name "sourceIdentity" -Label "Vendor release-input package '$packageId'"
+            if ($packageId -cnotmatch '^Vendor(?:\.[A-Za-z0-9][A-Za-z0-9_]*)+$') {
+                throw "Vendor release-input package ID '$packageId' is not a canonical official Vendor package ID."
+            }
+
+            if ($packageVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$' `
+                -or $sourceIdentity.Contains("`n", [System.StringComparison]::Ordinal) `
+                -or $sourceIdentity.Contains("`r", [System.StringComparison]::Ordinal)) {
+                throw "Vendor release-input package '$packageId' has an invalid version or source identity."
+            }
+
+            if ($null -ne $previousPackageId `
+                -and [System.StringComparer]::Ordinal.Compare($previousPackageId, $packageId) -ge 0) {
+                throw "Vendor release-input packages must be strictly ordinal-sorted by ID and duplicate-free."
+            }
+
+            if (-not $caseInsensitivePackageIds.Add($packageId) -or $packagesById.ContainsKey($packageId)) {
+                throw "Vendor release-input contains duplicate or case-colliding package ID '$packageId'."
+            }
+
+            $packageTarget = Get-RequiredJsonPropertyValue -InputObject $entry -Name "target" -Label "Vendor release-input package '$packageId'"
+            Assert-ExactJsonProperties -InputObject $packageTarget -Names @("id", "targetTriple") -Label "Vendor release-input package '$packageId' target"
+            $packageTargetId = Get-RequiredJsonString -InputObject $packageTarget -Name "id" -Label "Vendor release-input package '$packageId' target"
+            $packageTargetTriple = Get-RequiredJsonString -InputObject $packageTarget -Name "targetTriple" -Label "Vendor release-input package '$packageId' target"
+            if ($packageTargetId -cne $targetId -or $packageTargetTriple -cne $targetTriple) {
+                throw "Vendor release-input package '$packageId' target does not exactly match the release-input target."
+            }
+
+            $package = Get-RequiredJsonPropertyValue -InputObject $entry -Name "package" -Label "Vendor release-input package '$packageId'"
+            Assert-ExactJsonProperties `
+                -InputObject $package `
+                -Names @("rootModule", "image", "imageSha256", "library", "librarySha256", "modules") `
+                -Label "Vendor release-input package '$packageId' package image"
+            $rootModule = Get-RequiredJsonString -InputObject $package -Name "rootModule" -Label "Vendor release-input package '$packageId' package image"
+            $imagePath = Get-RequiredJsonString -InputObject $package -Name "image" -Label "Vendor release-input package '$packageId' package image"
+            $imageSha256 = Get-RequiredJsonString -InputObject $package -Name "imageSha256" -Label "Vendor release-input package '$packageId' package image"
+            $libraryPath = Get-RequiredJsonString -InputObject $package -Name "library" -Label "Vendor release-input package '$packageId' package image"
+            $librarySha256 = Get-RequiredJsonString -InputObject $package -Name "librarySha256" -Label "Vendor release-input package '$packageId' package image"
+            if ($rootModule -cne $packageId) {
+                throw "Vendor release-input package '$packageId' package root '$rootModule' does not match its ID."
+            }
+
+            if ($imageSha256 -cnotmatch '^[0-9a-f]{64}$' -or $librarySha256 -cnotmatch '^[0-9a-f]{64}$') {
+                throw "Vendor release-input package '$packageId' image/library SHA-256 is invalid."
+            }
+
+            $imageFile = Get-ReferencedVendorFile -FilesByPath $filesByPath -Path $imagePath -Sha256 $imageSha256 -Label "Vendor package '$packageId' image"
+            $libraryFile = Get-ReferencedVendorFile -FilesByPath $filesByPath -Path $libraryPath -Sha256 $librarySha256 -Label "Vendor package '$packageId' library"
+            if (-not $imagePath.EndsWith(".starkpkg", [System.StringComparison]::Ordinal) `
+                -or (-not $libraryPath.EndsWith(".a", [System.StringComparison]::Ordinal) `
+                    -and -not $libraryPath.EndsWith(".lib", [System.StringComparison]::Ordinal))) {
+                throw "Vendor release-input package '$packageId' image/library file names are not supported release artifacts."
+            }
+
+            foreach ($payloadPath in @($imagePath, $libraryPath)) {
+                if (-not $ownedPayloadPaths.Add($payloadPath)) {
+                    throw "Vendor release-input payload path '$payloadPath' is owned by more than one package artifact."
+                }
+            }
+
+            foreach ($packageArtifact in @($imageFile, $libraryFile)) {
+                $distRelativePath = [System.IO.Path]::GetRelativePath(
+                    [System.IO.Path]::GetFullPath($VendorDist),
+                    [System.IO.Path]::GetFullPath($packageArtifact.AbsolutePath)).Replace('\', '/')
+                if ([System.IO.Path]::IsPathRooted($distRelativePath) `
+                    -or $distRelativePath -eq ".." `
+                    -or $distRelativePath.StartsWith("../", [System.StringComparison]::Ordinal)) {
+                    throw "Vendor release-input package '$packageId' artifact '$($packageArtifact.Path)' is outside vendor dist '$VendorDist'."
+                }
+            }
+
+            $modules = Get-RequiredJsonArray -InputObject $package -Name "modules" -Label "Vendor release-input package '$packageId' package image"
+            if ($modules.Count -eq 0) {
+                throw "Vendor release-input package '$packageId' must declare at least one module."
+            }
+
+            Assert-SortedUniqueStrings -Values $modules -Label "Vendor release-input package '$packageId' modules"
+            if (@($modules | Where-Object { [string]$_ -ceq $rootModule }).Count -ne 1) {
+                throw "Vendor release-input package '$packageId' modules do not contain its root module exactly once."
+            }
+
+            $nativePayload = Get-RequiredJsonPropertyValue -InputObject $entry -Name "nativePayload" -Label "Vendor release-input package '$packageId'"
+            Assert-ExactJsonProperties -InputObject $nativePayload -Names @("artifacts", "licenseFiles") -Label "Vendor release-input package '$packageId' native payload"
+            $nativeArtifacts = @()
+            $nativeArtifactPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $previousNativeArtifactPath = $null
+            foreach ($nativeArtifact in (Get-RequiredJsonArray -InputObject $nativePayload -Name "artifacts" -Label "Vendor release-input package '$packageId' native payload")) {
+                Assert-ExactJsonProperties -InputObject $nativeArtifact -Names @("kind", "path", "bytes", "sha256") -Label "Vendor release-input package '$packageId' native artifact"
+                $kind = Get-RequiredJsonString -InputObject $nativeArtifact -Name "kind" -Label "Vendor release-input package '$packageId' native artifact"
+                if (-not $allowedArtifactKinds.Contains($kind)) {
+                    throw "Vendor release-input package '$packageId' native artifact kind '$kind' is unsupported."
+                }
+
+                $path = Get-RequiredJsonString -InputObject $nativeArtifact -Name "path" -Label "Vendor release-input package '$packageId' native artifact"
+                $sha256 = Get-RequiredJsonString -InputObject $nativeArtifact -Name "sha256" -Label "Vendor release-input package '$packageId' native artifact"
+                $bytesValue = Get-RequiredJsonPropertyValue -InputObject $nativeArtifact -Name "bytes" -Label "Vendor release-input package '$packageId' native artifact"
+                if ($bytesValue -isnot [int] -and $bytesValue -isnot [long]) {
+                    throw "Vendor release-input package '$packageId' native artifact '$path' bytes must be an integer."
+                }
+
+                $bytes = [int64]$bytesValue
+                if ($bytes -lt 0 -or $sha256 -cnotmatch '^[0-9a-f]{64}$') {
+                    throw "Vendor release-input package '$packageId' native artifact '$path' size or SHA-256 is invalid."
+                }
+
+                if ($null -ne $previousNativeArtifactPath `
+                    -and [System.StringComparer]::Ordinal.Compare($previousNativeArtifactPath, $path) -ge 0) {
+                    throw "Vendor release-input package '$packageId' native artifacts must be strictly ordinal-sorted by path."
+                }
+
+                if (-not $nativeArtifactPaths.Add($path) -or -not $ownedPayloadPaths.Add($path)) {
+                    throw "Vendor release-input package '$packageId' native artifact path '$path' is duplicate, case-colliding, or multiply owned."
+                }
+
+                $file = Get-ReferencedVendorFile -FilesByPath $filesByPath -Path $path -Sha256 $sha256 -Bytes $bytes -Label "Vendor package '$packageId' native artifact"
+                $nativeArtifacts += [pscustomobject]@{ Kind = $kind; File = $file }
+                $previousNativeArtifactPath = $path
+            }
+
+            $licenseFiles = @()
+            $licensePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $previousLicensePath = $null
+            foreach ($licenseEntry in (Get-RequiredJsonArray -InputObject $nativePayload -Name "licenseFiles" -Label "Vendor release-input package '$packageId' native payload")) {
+                Assert-ExactJsonProperties -InputObject $licenseEntry -Names @("path", "bytes", "sha256") -Label "Vendor release-input package '$packageId' license file"
+                $path = Get-RequiredJsonString -InputObject $licenseEntry -Name "path" -Label "Vendor release-input package '$packageId' license file"
+                $sha256 = Get-RequiredJsonString -InputObject $licenseEntry -Name "sha256" -Label "Vendor release-input package '$packageId' license file"
+                $bytesValue = Get-RequiredJsonPropertyValue -InputObject $licenseEntry -Name "bytes" -Label "Vendor release-input package '$packageId' license file"
+                if ($bytesValue -isnot [int] -and $bytesValue -isnot [long]) {
+                    throw "Vendor release-input package '$packageId' license file '$path' bytes must be an integer."
+                }
+
+                $bytes = [int64]$bytesValue
+                if ($bytes -lt 0 -or $sha256 -cnotmatch '^[0-9a-f]{64}$') {
+                    throw "Vendor release-input package '$packageId' license file '$path' size or SHA-256 is invalid."
+                }
+
+                if ($null -ne $previousLicensePath `
+                    -and [System.StringComparer]::Ordinal.Compare($previousLicensePath, $path) -ge 0) {
+                    throw "Vendor release-input package '$packageId' license files must be strictly ordinal-sorted by path."
+                }
+
+                if (-not $licensePaths.Add($path)) {
+                    throw "Vendor release-input package '$packageId' license file path '$path' is duplicate or case-colliding."
+                }
+
+                $licenseFiles += Get-ReferencedVendorFile -FilesByPath $filesByPath -Path $path -Sha256 $sha256 -Bytes $bytes -Label "Vendor package '$packageId' license file"
+                $previousLicensePath = $path
+            }
+
+            if ($licenseFiles.Count -eq 0) {
+                throw "Vendor release-input package '$packageId' must declare at least one license evidence file."
+            }
+
+            $provenance = Get-RequiredJsonPropertyValue -InputObject $entry -Name "provenance" -Label "Vendor release-input package '$packageId'"
+            Assert-ExactJsonProperties -InputObject $provenance -Names @("path", "bytes", "sha256") -Label "Vendor release-input package '$packageId' provenance"
+            $provenancePath = Get-RequiredJsonString -InputObject $provenance -Name "path" -Label "Vendor release-input package '$packageId' provenance"
+            $provenanceSha256 = Get-RequiredJsonString -InputObject $provenance -Name "sha256" -Label "Vendor release-input package '$packageId' provenance"
+            $provenanceBytesValue = Get-RequiredJsonPropertyValue -InputObject $provenance -Name "bytes" -Label "Vendor release-input package '$packageId' provenance"
+            if (($provenanceBytesValue -isnot [int] -and $provenanceBytesValue -isnot [long]) `
+                -or [int64]$provenanceBytesValue -lt 0 `
+                -or $provenanceSha256 -cnotmatch '^[0-9a-f]{64}$') {
+                throw "Vendor release-input package '$packageId' provenance size or SHA-256 is invalid."
+            }
+
+            $provenanceFile = Get-ReferencedVendorFile `
+                -FilesByPath $filesByPath `
+                -Path $provenancePath `
+                -Sha256 $provenanceSha256 `
+                -Bytes ([int64]$provenanceBytesValue) `
+                -Label "Vendor package '$packageId' provenance"
+
+            $releasePackage = [pscustomobject]@{
+                Id = $packageId
+                Version = $packageVersion
+                SourceIdentity = $sourceIdentity
+                TargetId = $packageTargetId
+                TargetTriple = $packageTargetTriple
+                RootModule = $rootModule
+                Image = $imageFile
+                Library = $libraryFile
+                Modules = [string[]]@($modules)
+                NativeArtifacts = [object[]]$nativeArtifacts
+                LicenseFiles = [object[]]$licenseFiles
+                Provenance = $provenanceFile
+            }
+            $packages += $releasePackage
+            $packagesById.Add($packageId, $releasePackage)
+            $previousPackageId = $packageId
+        }
+
+        return [pscustomobject]@{
+            Path = $releaseInputPath
+            VendorRoot = $vendorRoot
+            TargetId = $targetId
+            TargetTriple = $targetTriple
+            Packages = [object[]]$packages
+            PackagesById = $packagesById
+            FilesByPath = $filesByPath
+        }
     } catch {
         throw "Vendor release-input manifest '$releaseInputPath' is invalid: $($_.Exception.Message)"
     }
+}
 
-    return $versions
+function Merge-ReleaseInputLicensesIntoNativeDescriptor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $SdkRoot,
+        [Parameter(Mandatory = $true)]
+        [object] $Native,
+        [Parameter(Mandatory = $true)]
+        [object] $ReleasePackage
+    )
+
+    $licenseFiles = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($path in @($Native.licenseFiles)) {
+        [void]$licenseFiles.Add([string]$path)
+    }
+
+    foreach ($license in @($ReleasePackage.LicenseFiles)) {
+        $sdkRelativePath = ConvertTo-SdkRelativePath `
+            -SdkRoot $SdkRoot `
+            -Path $license.AbsolutePath `
+            -Label "package '$($ReleasePackage.Id)' release-input license"
+        [void]$licenseFiles.Add($sdkRelativePath)
+    }
+
+    $checksumPaths = @(Get-OrdinalSortedUniqueStrings -Values @(
+        @($Native.artifacts) + @($Native.runtimeFiles) + @($licenseFiles)
+    ))
+    $fileChecksums = @($checksumPaths | ForEach-Object {
+        $relativePath = [string]$_
+        $absolutePath = Join-Path $SdkRoot ($relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+        if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
+            throw "package '$($ReleasePackage.Id)' native checksum input '$absolutePath' is missing or is not a file"
+        }
+
+        [ordered]@{
+            path = $relativePath
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash.ToLowerInvariant()
+        }
+    })
+
+    $Native.licenseFiles = [object[]]@($licenseFiles)
+    $Native.fileChecksums = [object[]]$fileChecksums
+}
+
+function Assert-VendorCandidateMatchesReleaseInput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $SdkRoot,
+        [Parameter(Mandatory = $true)]
+        [string] $VendorRoot,
+        [Parameter(Mandatory = $true)]
+        [object] $Candidate,
+        [Parameter(Mandatory = $true)]
+        [object] $ReleasePackage
+    )
+
+    if ($Candidate.Id -cne $ReleasePackage.Id) {
+        throw "Declared Vendor package '$($ReleasePackage.Id)' image identifies itself as '$($Candidate.Id)'."
+    }
+
+    $candidateTargetTriple = [string](Get-JsonPropertyValue -InputObject $Candidate.Target -Name "Triple")
+    if ($candidateTargetTriple -cne $ReleasePackage.TargetTriple) {
+        throw "Vendor package '$($Candidate.Id)' image target '$candidateTargetTriple' does not match release-input target '$($ReleasePackage.TargetTriple)'."
+    }
+
+    $candidateImagePath = Get-VendorRelativePath -VendorRoot $VendorRoot -Path $Candidate.ImagePath -Label "Vendor package '$($Candidate.Id)' image"
+    $candidateLibraryPath = Get-VendorRelativePath -VendorRoot $VendorRoot -Path $Candidate.LibraryPath -Label "Vendor package '$($Candidate.Id)' library"
+    if ($candidateImagePath -cne $ReleasePackage.Image.Path `
+        -or $candidateLibraryPath -cne $ReleasePackage.Library.Path) {
+        throw "Vendor package '$($Candidate.Id)' image/library paths do not match release-input artifacts."
+    }
+
+    $imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Candidate.ImagePath).Hash.ToLowerInvariant()
+    $librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Candidate.LibraryPath).Hash.ToLowerInvariant()
+    if ($imageSha256 -cne $ReleasePackage.Image.Sha256 `
+        -or $librarySha256 -cne $ReleasePackage.Library.Sha256) {
+        throw "Vendor package '$($Candidate.Id)' image/library hashes do not match release-input artifacts."
+    }
+
+    $candidateModules = @(Get-OrdinalSortedUniqueStrings -Values @($Candidate.Modules))
+    if (($candidateModules -join "`n") -cne (@($ReleasePackage.Modules) -join "`n")) {
+        throw "Vendor package '$($Candidate.Id)' module set does not match release-input package metadata."
+    }
+
+    $candidateNativeArtifactPaths = @($Candidate.Native.artifacts | ForEach-Object {
+        $absolutePath = Join-Path $SdkRoot ([string]$_).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+        Get-VendorRelativePath -VendorRoot $VendorRoot -Path $absolutePath -Label "Vendor package '$($Candidate.Id)' native artifact"
+    })
+    $candidateNativeArtifacts = @(Get-OrdinalSortedUniqueStrings -Values $candidateNativeArtifactPaths)
+    $releaseNativeArtifacts = @(Get-OrdinalSortedUniqueStrings -Values @(
+        $ReleasePackage.NativeArtifacts | ForEach-Object { $_.File.Path }
+    ))
+    if (($candidateNativeArtifacts -join "`n") -cne ($releaseNativeArtifacts -join "`n")) {
+        throw "Vendor package '$($Candidate.Id)' package-image native artifact set does not exactly match release-input nativePayload.artifacts."
+    }
+
+    $releaseLicensePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($license in @($ReleasePackage.LicenseFiles)) {
+        [void]$releaseLicensePaths.Add($license.Path)
+    }
+
+    foreach ($sdkRelativePath in @($Candidate.Native.licenseFiles)) {
+        $absolutePath = Join-Path $SdkRoot ([string]$sdkRelativePath).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+        $vendorRelativePath = Get-VendorRelativePath -VendorRoot $VendorRoot -Path $absolutePath -Label "Vendor package '$($Candidate.Id)' native license"
+        if (-not $releaseLicensePaths.Contains($vendorRelativePath)) {
+            throw "Vendor package '$($Candidate.Id)' package image discovers license '$vendorRelativePath' that release-input does not declare."
+        }
+    }
+
+    Merge-ReleaseInputLicensesIntoNativeDescriptor -SdkRoot $SdkRoot -Native $Candidate.Native -ReleasePackage $ReleasePackage
+    $Candidate.Version = $ReleasePackage.Version
 }
 
 function Write-StagedSdkManifest {
@@ -848,7 +1587,11 @@ function Write-StagedSdkManifest {
     )
 
     $compilerCompatibility = Get-StagedCompilerCompatibility -CompilerPath $CompilerPath
-    $stdlibImages = @(Get-ChildItem -LiteralPath $StdlibDist -File -Recurse -Filter "*.starkpkg" | Sort-Object FullName)
+    $stdlibImagePaths = @(Get-OrdinalSortedStrings -Values @(
+        Get-ChildItem -LiteralPath $StdlibDist -File -Recurse -Filter "*.starkpkg" |
+            ForEach-Object { $_.FullName }
+    ))
+    $stdlibImages = @($stdlibImagePaths | ForEach-Object { Get-Item -LiteralPath $_ })
     if ($stdlibImages.Count -eq 0) {
         throw "Standard library staging directory '$StdlibDist' contains no .starkpkg image."
     }
@@ -879,157 +1622,143 @@ function Write-StagedSdkManifest {
         -IsRequired
 
     $effectiveTargetTriple = [string](Get-JsonPropertyValue -InputObject $expectedTarget -Name "Triple")
-    if (-not [string]::IsNullOrWhiteSpace($TargetTriple)) {
-        $requestedArchitecture = Get-NormalizedTargetArchitecture -Triple $TargetTriple
-        $requestedOs = Get-NormalizedTargetOperatingSystem -Triple $TargetTriple
-        if ($requestedArchitecture -cne (Get-NormalizedTargetArchitecture -Triple $effectiveTargetTriple) `
-            -or $requestedOs -cne (Get-NormalizedTargetOperatingSystem -Triple $effectiveTargetTriple)) {
-            throw "Staged System package target '$effectiveTargetTriple' does not match requested release target '$TargetTriple'."
-        }
+    if (-not [string]::IsNullOrWhiteSpace($TargetTriple) `
+        -and $TargetTriple -cne $effectiveTargetTriple) {
+        throw "Staged System package target '$effectiveTargetTriple' does not exactly match requested release target '$TargetTriple'."
     }
 
-    $vendorPackageVersions = Get-VendorPackageVersions -VendorDist $VendorDist
+    $vendorReleaseInput = Read-VendorReleaseInput `
+        -VendorDist $VendorDist `
+        -AssetSuffix $AssetSuffix `
+        -ExpectedTargetTriple $effectiveTargetTriple
+    $discoveredVendorImages = @(Get-OrdinalSortedStrings -Values @(
+        Get-ChildItem -LiteralPath $VendorDist -File -Recurse -Filter "*.starkpkg" |
+            ForEach-Object { [System.IO.Path]::GetFullPath($_.FullName) }
+    ))
+    $declaredVendorImages = @(Get-OrdinalSortedStrings -Values @(
+        $vendorReleaseInput.Packages |
+            ForEach-Object { [System.IO.Path]::GetFullPath($_.Image.AbsolutePath) }
+    ))
+    if (($discoveredVendorImages -join "`n") -cne ($declaredVendorImages -join "`n")) {
+        throw "Staged Vendor package image set does not exactly match the schema-2 release-input package declarations."
+    }
+
     $candidatePackages = @($systemCandidate)
-    if (Test-Path -LiteralPath $VendorDist -PathType Container) {
-        foreach ($image in (Get-ChildItem -LiteralPath $VendorDist -File -Recurse -Filter "*.starkpkg" | Sort-Object FullName)) {
-            try {
-                $candidate = New-StagedPackageCandidate `
-                    -SdkRoot $SdkRoot `
-                    -CompilerPath $CompilerPath `
-                    -ImagePath $image.FullName `
-                    -ExpectedTarget $expectedTarget
-                if (-not $candidate.Id.StartsWith("Vendor.", [System.StringComparison]::Ordinal)) {
-                    Write-Warning "SDK omitted '$($candidate.ImageRelativePath)': package identity '$($candidate.Id)' is not in the official Vendor namespace."
-                    continue
-                }
-
-                if ($vendorPackageVersions.ContainsKey($candidate.Id)) {
-                    $candidate.Version = $vendorPackageVersions[$candidate.Id]
-                }
-
-                $candidatePackages += $candidate
-            } catch {
-                $imageRelativePath = ConvertTo-SdkRelativePath -SdkRoot $SdkRoot -Path $image.FullName -Label "vendor package image"
-                Write-Warning "SDK omitted '$imageRelativePath': $($_.Exception.Message)"
-            }
-        }
+    foreach ($releasePackage in @($vendorReleaseInput.Packages)) {
+        $candidate = New-StagedPackageCandidate `
+            -SdkRoot $SdkRoot `
+            -CompilerPath $CompilerPath `
+            -ImagePath $releasePackage.Image.AbsolutePath `
+            -ExpectedTarget $expectedTarget
+        Assert-VendorCandidateMatchesReleaseInput `
+            -SdkRoot $SdkRoot `
+            -VendorRoot $vendorReleaseInput.VendorRoot `
+            -Candidate $candidate `
+            -ReleasePackage $releasePackage
+        $candidatePackages += $candidate
     }
 
-    $selectedPackages = @($systemCandidate)
-    $ownedModules = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
-    foreach ($module in $systemCandidate.Modules) {
-        $ownedModules.Add($module, $systemCandidate.Id)
-    }
-
-    foreach ($candidate in ($candidatePackages `
+    $declaredPackageIds = @(Get-OrdinalSortedStrings -Values @(
+        $vendorReleaseInput.Packages | ForEach-Object { $_.Id }
+    ))
+    $candidatePackageIds = @(Get-OrdinalSortedStrings -Values @($candidatePackages `
         | Where-Object { -not $_.IsRequired } `
-        | Sort-Object @{ Expression = "Id"; Ascending = $true }, @{ Expression = "ImageRelativePath"; Ascending = $true })) {
-        if ($selectedPackages.Id -contains $candidate.Id) {
-            Write-Warning "SDK omitted '$($candidate.ImageRelativePath)': package '$($candidate.Id)' already has a selected target artifact."
-            continue
-        }
-
-        $duplicates = @($candidate.Modules | Where-Object { $ownedModules.ContainsKey($_) })
-        if ($duplicates.Count -ne 0) {
-            $duplicateSummary = ($duplicates | Select-Object -First 5) -join ", "
-            if ($duplicates.Count -gt 5) {
-                $duplicateSummary += ", ..."
-            }
-
-            Write-Warning "SDK omitted '$($candidate.ImageRelativePath)': package '$($candidate.Id)' duplicates module ownership ($duplicateSummary). Rebuild it with source-owned package emission before advertising it."
-            continue
-        }
-
-        $selectedPackages += $candidate
-        foreach ($module in $candidate.Modules) {
-            $ownedModules.Add($module, $candidate.Id)
-        }
+        | ForEach-Object { $_.Id }))
+    if (($candidatePackageIds -join "`n") -cne ($declaredPackageIds -join "`n")) {
+        throw "Compiler-inspected Vendor package ID set does not exactly match the schema-2 release-input package IDs."
     }
 
-    $removedPackage = $true
-    while ($removedPackage) {
-        $removedPackage = $false
-        $ownedModules.Clear()
-        foreach ($package in $selectedPackages) {
-            foreach ($module in $package.Modules) {
-                $ownedModules[$module] = $package.Id
-            }
-        }
-
-        foreach ($package in @($selectedPackages | Where-Object { -not $_.IsRequired })) {
-            $missingOfficialImports = @($package.ImportedModules | Where-Object {
-                ($_.StartsWith("System", [System.StringComparison]::Ordinal) `
-                    -or $_.StartsWith("Vendor.", [System.StringComparison]::Ordinal)) `
-                    -and -not $ownedModules.ContainsKey($_)
-            })
-            if ($missingOfficialImports.Count -ne 0) {
-                Write-Warning "SDK omitted '$($package.ImageRelativePath)': package '$($package.Id)' imports unavailable official modules ($($missingOfficialImports -join ', '))."
-                $selectedPackages = @($selectedPackages | Where-Object { $_ -ne $package })
-                $removedPackage = $true
-            }
-        }
-    }
-
-    $ownedModules.Clear()
+    $selectedPackages = @($candidatePackages)
+    $selectedPackagesById = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
     foreach ($package in $selectedPackages) {
+        if ($selectedPackagesById.ContainsKey($package.Id)) {
+            throw "SDK package ID '$($package.Id)' is declared by more than one package image."
+        }
+
+        $selectedPackagesById.Add($package.Id, $package)
+    }
+    $selectedPackageIds = @(Get-OrdinalSortedStrings -Values @($selectedPackagesById.Keys))
+    $ownedModules = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
+    foreach ($packageId in $selectedPackageIds) {
+        $package = $selectedPackagesById[$packageId]
         foreach ($module in $package.Modules) {
-            $ownedModules[$module] = $package.Id
+            if ($ownedModules.ContainsKey($module)) {
+                throw "SDK package '$($package.Id)' duplicates module ownership '$module' already held by '$($ownedModules[$module])'."
+            }
+
+            $ownedModules.Add($module, $package.Id)
         }
     }
 
-    $packageFormatVersions = @($selectedPackages.PackageFormatVersion | Sort-Object -Unique)
+    foreach ($package in $selectedPackages) {
+        $missingOfficialImports = @($package.ImportedModules | Where-Object {
+            $isOfficial = $_ -ceq "System" `
+                -or $_.StartsWith("System.", [System.StringComparison]::Ordinal) `
+                -or $_.StartsWith("Vendor.", [System.StringComparison]::Ordinal)
+            $isOfficial -and -not $ownedModules.ContainsKey($_)
+        })
+        if ($missingOfficialImports.Count -ne 0) {
+            throw "SDK package '$($package.Id)' imports unavailable official modules ($($missingOfficialImports -join ', '))."
+        }
+    }
+
+    $packageFormatVersionSet = [System.Collections.Generic.HashSet[uint32]]::new()
+    foreach ($package in $selectedPackages) {
+        [void]$packageFormatVersionSet.Add([uint32]$package.PackageFormatVersion)
+    }
+    $packageFormatVersions = @($packageFormatVersionSet)
     if ($packageFormatVersions.Count -ne 1) {
         throw "Selected SDK packages use incompatible binary package format versions: $($packageFormatVersions -join ', ')."
     }
 
-    $modules = @($ownedModules.GetEnumerator() `
-        | Sort-Object Key `
-        | ForEach-Object { [ordered]@{ name = $_.Key; package = $_.Value } })
-    $packages = @($selectedPackages `
-        | Sort-Object Id `
-        | ForEach-Object {
-            $package = $_
-            $derivedDependencyIds = @($package.ImportedModules `
-                | Where-Object { $ownedModules.ContainsKey($_) -and $ownedModules[$_] -cne $package.Id } `
-                | ForEach-Object { $ownedModules[$_] } `
-                | Sort-Object -Unique)
-            $declaredDependencyIds = @($package.Dependencies | ForEach-Object { $_.Id } | Sort-Object -Unique)
-            if (($derivedDependencyIds -join "`n") -cne ($declaredDependencyIds -join "`n")) {
-                throw "package '$($package.Id)' dependency identity set '$($declaredDependencyIds -join ', ')' does not match its cross-package import set '$($derivedDependencyIds -join ', ')'"
+    $modules = @((Get-OrdinalSortedStrings -Values @($ownedModules.Keys)) | ForEach-Object {
+        [ordered]@{ name = $_; package = $ownedModules[$_] }
+    })
+    $packages = @()
+    foreach ($packageId in $selectedPackageIds) {
+        $package = $selectedPackagesById[$packageId]
+        $derivedDependencyIds = @(Get-OrdinalSortedUniqueStrings -Values @($package.ImportedModules `
+            | Where-Object { $ownedModules.ContainsKey($_) -and $ownedModules[$_] -cne $package.Id } `
+            | ForEach-Object { $ownedModules[$_] }))
+        $declaredDependencyIds = @(Get-OrdinalSortedUniqueStrings -Values @(
+            $package.Dependencies | ForEach-Object { $_.Id }
+        ))
+        if (($derivedDependencyIds -join "`n") -cne ($declaredDependencyIds -join "`n")) {
+            throw "package '$($package.Id)' dependency identity set '$($declaredDependencyIds -join ', ')' does not match its cross-package import set '$($derivedDependencyIds -join ', ')'"
+        }
+
+        $dependencyManifests = @($package.Dependencies | ForEach-Object {
+            $dependency = $_
+            if (-not $selectedPackagesById.ContainsKey($dependency.Id)) {
+                throw "package '$($package.Id)' dependency '$($dependency.Id)' is not uniquely present in the selected SDK package set"
+            }
+            $selectedDependency = $selectedPackagesById[$dependency.Id]
+
+            if ($selectedDependency.ApiHash -cne $dependency.ApiHash `
+                -or $selectedDependency.ContentHash -cne $dependency.ContentHash) {
+                throw "package '$($package.Id)' dependency '$($dependency.Id)' API/content identity does not match the selected package image"
             }
 
-            $dependencyManifests = @($package.Dependencies | ForEach-Object {
-                $dependency = $_
-                $selectedDependency = @($selectedPackages | Where-Object { $_.Id -ceq $dependency.Id })
-                if ($selectedDependency.Count -ne 1) {
-                    throw "package '$($package.Id)' dependency '$($dependency.Id)' is not uniquely present in the selected SDK package set"
-                }
-
-                if ($selectedDependency[0].ApiHash -cne $dependency.ApiHash `
-                    -or $selectedDependency[0].ContentHash -cne $dependency.ContentHash) {
-                    throw "package '$($package.Id)' dependency '$($dependency.Id)' API/content identity does not match the selected package image"
-                }
-
-                [ordered]@{
-                    id = $dependency.Id
-                    apiHash = $dependency.ApiHash
-                    contentHash = $dependency.ContentHash
-                }
-            })
             [ordered]@{
-                id = $package.Id
-                version = $package.Version
-                profile = $package.Profile
-                image = $package.ImageRelativePath
-                library = $package.LibraryRelativePath
-                apiHash = $package.ApiHash
-                contentHash = $package.ContentHash
-                imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.ImagePath).Hash.ToLowerInvariant()
-                librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.LibraryPath).Hash.ToLowerInvariant()
-                dependencies = [object[]]$dependencyManifests
-                native = $package.Native
+                id = $dependency.Id
+                apiHash = $dependency.ApiHash
+                contentHash = $dependency.ContentHash
             }
         })
+        $packages += [ordered]@{
+            id = $package.Id
+            version = $package.Version
+            profile = $package.Profile
+            image = $package.ImageRelativePath
+            library = $package.LibraryRelativePath
+            apiHash = $package.ApiHash
+            contentHash = $package.ContentHash
+            imageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.ImagePath).Hash.ToLowerInvariant()
+            librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.LibraryPath).Hash.ToLowerInvariant()
+            dependencies = [object[]]$dependencyManifests
+            native = $package.Native
+        }
+    }
 
     $targetTriple = [string](Get-JsonPropertyValue -InputObject $expectedTarget -Name "Triple")
     $targetDataLayout = [string](Get-JsonPropertyValue -InputObject $expectedTarget -Name "DataLayout")

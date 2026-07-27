@@ -1,0 +1,123 @@
+import Vendor.SQLite
+module SQLiteBundledOptionalSmoke
+
+fn bool TextResultIsNonEmpty(SQLiteTextResult result)
+{
+    switch (result)
+    {
+        case SQLiteTextResult.Err(var error):
+            return false;
+        case SQLiteTextResult.Ok(var text):
+            return !text.IsEmpty();
+    }
+}
+
+export fn i32[min max] main()
+{
+    // Exit codes deliberately identify the missing/broken optional family in
+    // release diagnostics. The bundled release enables all of these features.
+    if (!CArrayBindAvailable())
+    {
+        return 10;
+    }
+    if (!CArrayBindV2Available())
+    {
+        return 11;
+    }
+    if (!NormalizedSqlAvailable())
+    {
+        return 12;
+    }
+    if (!StatementScanStatusAvailable())
+    {
+        return 13;
+    }
+    if (!StatementScanStatusV2Available())
+    {
+        return 14;
+    }
+    if (!SnapshotAvailable())
+    {
+        return 15;
+    }
+
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return 20;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            stack i32[min max][3] valuesStorage = { 1, 2, 3 };
+            stack i32[min max][] values = valuesStorage;
+
+            switch (Prepare(database, "SELECT sum(value) FROM carray(?);"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 21;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    if (BindCArrayInt32V2(statement, 1, values) != SQLiteStatusResult.Ok)
+                    {
+                        return 22;
+                    }
+                    switch (Step(statement))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (ColumnInt(statement, 0) != 6)
+                            {
+                                return 23;
+                            }
+                        default:
+                            return 24;
+                    }
+                    if (Finalize(statement) != SQLiteStatusResult.Ok)
+                    {
+                        return 25;
+                    }
+            }
+
+            switch (Prepare(database, "SELECT 1 UNION ALL SELECT 2;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 30;
+                case SQLiteStatementResult.Ok(var scanStatementValue):
+                    stack mut Statement scanStatement = scanStatementValue;
+                    if (!TextResultIsNonEmpty(NormalizedSql(scanStatement, 128)))
+                    {
+                        return 31;
+                    }
+                    switch (Step(scanStatement))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (ColumnInt(scanStatement, 0) != 1)
+                            {
+                                return 32;
+                            }
+                        default:
+                            return 33;
+                    }
+                    StatementScanStatusI64(
+                        scanStatement,
+                        0,
+                        SQLITE_SCANSTAT_NLOOP,
+                        SQLITE_SCANSTAT_COMPLEX);
+                    if (ResetStatementScanStatus(scanStatement) != SQLiteStatusResult.Ok)
+                    {
+                        return 34;
+                    }
+                    if (Finalize(scanStatement) != SQLiteStatusResult.Ok)
+                    {
+                        return 35;
+                    }
+            }
+
+            // In-memory databases are not in WAL mode, so only availability
+            // and safe entry into the real bundled snapshot symbol are asserted.
+            GetSnapshot(database, "main");
+            if (Close(database) != SQLiteStatusResult.Ok)
+            {
+                return 40;
+            }
+            return 0;
+    }
+}

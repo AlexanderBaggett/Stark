@@ -1,7 +1,7 @@
 module ProgressConformance
 
 // Conformance fixture for the test-progress streaming protocol
-// (docs/Self-host-Prep/30-test-progress-streaming.md §3, task T30.4).
+// (docs/Internals/TestProgressProtocol.md §3).
 // The goldens/ transcripts next to this project are normative: a passing
 // fact, a failing fact, a platform-skipped fact, a three-row theory, two
 // collections, and exactly ten generated entries so the final counter is

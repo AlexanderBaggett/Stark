@@ -62,7 +62,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         bool includeContractAttributes)
     {
-        if (!parameter.IsExpandedDirectParameter)
+        if (!parameter.HasDistinctLlvmParameterCarriers)
         {
             return [RenderDirectArgument(abiFunction, parameter, argument, parameterEffects, includeContractAttributes)];
         }
@@ -285,11 +285,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string tempPrefix,
         string? materializedValueName = null)
     {
-        if (!parameter.IsExpandedDirectParameter)
+        if (!parameter.HasDistinctLlvmParameterCarriers)
         {
             return MaterializeSourceValueFromCAbiCarrier(
                 $"%{EscapeIdentifier(parameter.LlvmName)}",
                 parameter.LlvmType,
+                sourceType,
+                resultName,
+                tempPrefix,
+                materializedValueName);
+        }
+
+        if (parameter.EffectiveLlvmParameterTypes.Count == 1)
+        {
+            return MaterializeSourceValueFromCAbiCarrier(
+                $"%{EscapeIdentifier(parameter.LlvmName)}",
+                parameter.EffectiveLlvmParameterTypes[0],
                 sourceType,
                 resultName,
                 tempPrefix,

@@ -3,7 +3,7 @@ module Compiler.Mir.Model
 
 
 // A first slice of the self-hosted compiler's MIR (mid-level IR), built on the
-// `Compiler.Ir` typed-handle substrate (docs/Self-host-Prep/24). Instructions live
+// `Compiler.Ir` typed-handle substrate (docs/Internals/IrMemoryAndFactModel.md). Instructions live
 // in a dense `IrTable<MirInstruction>` the caller owns directly; each instruction's
 // result is named by a `MirValueId` (its 1-based table index), and operands are
 // raw 1-based value indices into the same table.

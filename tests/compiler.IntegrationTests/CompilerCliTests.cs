@@ -265,7 +265,7 @@ public sealed class CompilerCliTests
         Assert.Contains("Inputs and Outputs:", text);
         Assert.Contains("Targeting and Native Toolchain:", text);
         Assert.Contains("Compiler Logs:", text);
-        Assert.Contains("doctor         Inspect compiler, runtime, target, toolchain, SDK, stdlib, and vendor setup", text);
+        Assert.Contains("doctor         Inspect compiler, private backend, host development layer, SDK, stdlib, and vendor setup", text);
         Assert.Contains("--target-cpu <cpu>", text);
         Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--relocation-model <default|static|pic|pie>", text);
@@ -332,6 +332,11 @@ public sealed class CompilerCliTests
         Assert.Contains("target:", text, StringComparison.Ordinal);
         Assert.Contains("triple: x86_64-unknown-linux-gnu", text, StringComparison.Ordinal);
         Assert.Contains("c data model: LP64", text, StringComparison.Ordinal);
+        Assert.Contains("compiler-private backend:", text, StringComparison.Ordinal);
+        Assert.Contains("mode: stage0-textual-llvm", text, StringComparison.Ordinal);
+        Assert.Contains("host development layer:", text, StringComparison.Ordinal);
+        Assert.Contains("name: linux-native", text, StringComparison.Ordinal);
+        Assert.Contains("A supported Clang/native development environment", text, StringComparison.Ordinal);
         Assert.Contains("toolchain:", text, StringComparison.Ordinal);
         Assert.Contains("libLLVM:", text, StringComparison.Ordinal);
         Assert.Contains("clang:", text, StringComparison.Ordinal);
@@ -373,16 +378,53 @@ public sealed class CompilerCliTests
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.Contains(
-                "note: libLLVM: libLLVM is not bundled, but the active Stage0 textual LLVM backend does not require it",
+                "note: compiler backend: the active Stage0 textual LLVM backend does not require libLLVM",
                 stdout.ToString(),
                 StringComparison.Ordinal);
-            Assert.DoesNotContain("warning: libLLVM:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("warning: compiler backend: the compiler-private libLLVM runtime is missing", stdout.ToString(), StringComparison.Ordinal);
         }
         finally
         {
             Environment.SetEnvironmentVariable("STARK_LLVM_LIB", originalLlvmLibrary);
             Cleanup(tempDirectory);
         }
+    }
+
+    [Fact]
+    public async Task DoctorJsonSeparatesCompilerBackendFromHostDevelopmentLayer()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                "doctor",
+                "--format",
+                "json",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--target-data-layout",
+                "e-m:e-p270:32:32-p271:32:32-p272:64:64-p:64:64-i64:64-f80:128-n8:16:32:64-S128"
+            ],
+            new StringReader(string.Empty),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        using var document = JsonDocument.Parse(stdout.ToString());
+        var root = document.RootElement;
+        var backend = root.GetProperty("compilerBackend");
+        Assert.Equal("stage0-textual-llvm", backend.GetProperty("mode").GetString());
+        Assert.Contains(
+            backend.GetProperty("tools").EnumerateArray(),
+            tool => tool.GetProperty("role").GetString() == "clang");
+
+        var host = root.GetProperty("hostDevelopment");
+        Assert.Equal("linux-native", host.GetProperty("name").GetString());
+        Assert.Contains("system ABI libraries", host.GetProperty("requirement").GetString(), StringComparison.Ordinal);
+        Assert.Equal("linker", host.GetProperty("linker").GetProperty("role").GetString());
     }
 
     [Fact]
@@ -465,6 +507,47 @@ public sealed class CompilerCliTests
         finally
         {
             Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public void NativeToolchainResolverDoesNotSubstitutePathForReleasePrivateBackend()
+    {
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
+        var originalClang = Environment.GetEnvironmentVariable("STARK_CLANG");
+        var originalArchiver = Environment.GetEnvironmentVariable("STARK_ARCHIVER");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-toolchain-release-path-");
+
+        try
+        {
+            var ambientToolchain = CreateFakeToolchain(tempDirectory.FullName, "ambient");
+            var ambientBin = Path.Combine(ambientToolchain, "bin");
+            Environment.SetEnvironmentVariable("PATH", ambientBin);
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", null);
+            Environment.SetEnvironmentVariable("STARK_CLANG", null);
+            Environment.SetEnvironmentVariable("STARK_ARCHIVER", null);
+
+            var resolved = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                AllowAmbientCompilerBackendFallback: false));
+
+            Assert.Equal(NativeToolchainResolutionSource.Missing, resolved.Clang.Source);
+            Assert.Equal(NativeToolchainResolutionSource.Missing, resolved.Archiver.Source);
+            Assert.Equal(NativeToolchainResolutionSource.Missing, resolved.Lld.Source);
+
+            // Final host-link discovery is deliberately independent. A release
+            // may use the documented host development layer, while its private
+            // compiler backend must come from the SDK or an explicit override.
+            Assert.Equal(NativeToolchainResolutionSource.Path, resolved.Linker.Source);
+            Assert.Equal(Path.Combine(ambientBin, ToolFileName("clang")), resolved.Linker.Path);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Environment.SetEnvironmentVariable("STARK_CLANG", originalClang);
+            Environment.SetEnvironmentVariable("STARK_ARCHIVER", originalArchiver);
             Cleanup(tempDirectory);
         }
     }

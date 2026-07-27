@@ -28,8 +28,11 @@ dotnet run --project ../src -- build http-get
 The `standard-library` manifest builds through the project driver and is the
 recommended quick check for examples that use `System.*` modules.
 
-`raylib` and `breakout` require Raylib to be available through `pkg-config` or
-through a local native path configured in `Stark.user.toml` or
+`breakout` imports the official `Vendor.Raylib` package from the active SDK and
+needs no Raylib installation, `pkg-config`, dependency entry, or local native
+path. The separate `raylib` project is a binding-author/source-package example;
+building that project itself requires Raylib through `pkg-config` or a local
+native path configured in `Stark.user.toml` or
 `~/.config/stark/config.toml`.
 
 ## `hello.stark`
@@ -242,9 +245,17 @@ dotnet run --project src -- examples/breakout/BreakoutCore.stark --emit-exe -o e
 
 First playable Raylib Breakout shell. It keeps the scope intentionally small: a keyboard/mouse controlled paddle, a bouncing ball, fixed colored bricks, brick destruction, and score text.
 
-Install Raylib for `pkg-config`, or set `RAYLIB_SRC_DIR` to a local Raylib
-source directory, then let the helper script build the bundled
-`Vendor.Raylib` package image and compile Breakout from it:
+With an installed SDK, the ordinary project commands consume its bundled
+`Vendor.Raylib` package directly:
+
+```bash
+stark build breakout
+stark run breakout
+```
+
+The repository helper below is for contributors rebuilding the Vendor package
+from source before compiling Breakout. That workflow requires Raylib through
+`pkg-config`, a bundled contributor payload, or `RAYLIB_SRC_DIR`:
 
 ```bash
 bash examples/breakout/run-raylib.sh
@@ -255,7 +266,10 @@ bash examples/breakout/run-raylib.sh
 
 Raylib 6.0 binding surface for future graphical examples. The bindings are split into `Vendor.Raylib.Core`, `Vendor.Raylib.Shapes`, `Vendor.Raylib.Textures`, `Vendor.Raylib.Text`, `Vendor.Raylib.Models`, `Vendor.Raylib.Audio`, and `Vendor.Raylib.Types`. Direct Raylib calls bind with `[LinkName("...")]`; C-layout aggregates such as `Vector2`, `Rectangle`, and `Color` pass through Stark's C ABI carrier lowering without a Raylib-specific C shim. `examples/raylib/VendorRaylibSafeApis.stark` shows the preferred safe wrappers for owned text/data, resource owners, typed enum carriers, callbacks, `raymath`, and `rlgl`.
 
-See `vendor/build-raylib-package.sh` for the local Raylib package build command. It emits the native-backed package under `vendor/dist/<target-triple>/`, while examples can keep using `-I vendor/dist`.
+See `vendor/build-raylib-package.sh` for the contributor package build command.
+It emits the native-backed package under `vendor/dist/<target-triple>/`. Direct
+`-I vendor/dist` commands below exercise low-level source/package development;
+normal SDK applications resolve the official package through `sdk.json`.
 
 ```bash
 ./stark examples/raylib/VendorRaylibSafeApis.stark --check --no-stark-path -I vendor/dist -I stdlib/src

@@ -2,6 +2,9 @@
   <Folder Name="/src/">
     <Project Path="src/compiler.csproj" />
   </Folder>
+  <Folder Name="/eng/release/">
+    <Project Path="eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/compiler.Tests/compiler.Tests.csproj" />
     <Project Path="tests/compiler.PipelineTests/compiler.PipelineTests.csproj" />

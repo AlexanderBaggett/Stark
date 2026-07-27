@@ -591,13 +591,14 @@ internal static class LlvmSpecializationEmissionPlanner
                 SourceType: parameter.Type,
                 LlvmType: kind == AbiParameterKind.Direct
                     ? hasFfiParameterClassification
-                        ? ffiParameterTypes![0]
+                        ? ffiParameterClassification!.LlvmType
                         : SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
                 Kind: kind,
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression,
                 LlvmParameterTypes: kind == AbiParameterKind.Direct
-                    && ffiParameterTypes is { Count: > 1 }
+                    && ffiParameterTypes is { Count: > 0 }
+                    && (ffiParameterTypes.Count > 1 || ffiParameterTypes[0] != ffiParameterClassification!.LlvmType)
                     ? ffiParameterTypes
                     : null));
         }

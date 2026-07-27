@@ -89,7 +89,9 @@ static void *stark_sqlite_find_symbol(const char *name)
 
 static stark_sqlite_normalized_sql_fn stark_sqlite_lookup_normalized_sql(void)
 {
-#if defined(__GNUC__) && !defined(_WIN32)
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_NORMALIZE)
+    return sqlite3_normalized_sql;
+#elif defined(__GNUC__) && !defined(_WIN32)
     if (sqlite3_normalized_sql != 0)
     {
         return sqlite3_normalized_sql;
@@ -101,7 +103,9 @@ static stark_sqlite_normalized_sql_fn stark_sqlite_lookup_normalized_sql(void)
 
 static stark_sqlite_stmt_scanstatus_fn stark_sqlite_lookup_stmt_scanstatus(void)
 {
-#if defined(__GNUC__) && !defined(_WIN32)
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_STMT_SCANSTATUS)
+    return sqlite3_stmt_scanstatus;
+#elif defined(__GNUC__) && !defined(_WIN32)
     if (sqlite3_stmt_scanstatus != 0)
     {
         return sqlite3_stmt_scanstatus;
@@ -113,7 +117,9 @@ static stark_sqlite_stmt_scanstatus_fn stark_sqlite_lookup_stmt_scanstatus(void)
 
 static stark_sqlite_stmt_scanstatus_v2_fn stark_sqlite_lookup_stmt_scanstatus_v2(void)
 {
-#if defined(__GNUC__) && !defined(_WIN32)
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_STMT_SCANSTATUS)
+    return sqlite3_stmt_scanstatus_v2;
+#elif defined(__GNUC__) && !defined(_WIN32)
     if (sqlite3_stmt_scanstatus_v2 != 0)
     {
         return sqlite3_stmt_scanstatus_v2;
@@ -125,7 +131,9 @@ static stark_sqlite_stmt_scanstatus_v2_fn stark_sqlite_lookup_stmt_scanstatus_v2
 
 static stark_sqlite_stmt_scanstatus_reset_fn stark_sqlite_lookup_stmt_scanstatus_reset(void)
 {
-#if defined(__GNUC__) && !defined(_WIN32)
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_STMT_SCANSTATUS)
+    return sqlite3_stmt_scanstatus_reset;
+#elif defined(__GNUC__) && !defined(_WIN32)
     if (sqlite3_stmt_scanstatus_reset != 0)
     {
         return sqlite3_stmt_scanstatus_reset;
@@ -137,37 +145,65 @@ static stark_sqlite_stmt_scanstatus_reset_fn stark_sqlite_lookup_stmt_scanstatus
 
 static stark_sqlite_snapshot_get_fn stark_sqlite_lookup_snapshot_get(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_SNAPSHOT)
+    return sqlite3_snapshot_get;
+#else
     return (stark_sqlite_snapshot_get_fn)stark_sqlite_find_symbol("sqlite3_snapshot_get");
+#endif
 }
 
 static stark_sqlite_snapshot_open_fn stark_sqlite_lookup_snapshot_open(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_SNAPSHOT)
+    return sqlite3_snapshot_open;
+#else
     return (stark_sqlite_snapshot_open_fn)stark_sqlite_find_symbol("sqlite3_snapshot_open");
+#endif
 }
 
 static stark_sqlite_snapshot_free_fn stark_sqlite_lookup_snapshot_free(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_SNAPSHOT)
+    return sqlite3_snapshot_free;
+#else
     return (stark_sqlite_snapshot_free_fn)stark_sqlite_find_symbol("sqlite3_snapshot_free");
+#endif
 }
 
 static stark_sqlite_snapshot_cmp_fn stark_sqlite_lookup_snapshot_cmp(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_SNAPSHOT)
+    return sqlite3_snapshot_cmp;
+#else
     return (stark_sqlite_snapshot_cmp_fn)stark_sqlite_find_symbol("sqlite3_snapshot_cmp");
+#endif
 }
 
 static stark_sqlite_snapshot_recover_fn stark_sqlite_lookup_snapshot_recover(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_SNAPSHOT)
+    return sqlite3_snapshot_recover;
+#else
     return (stark_sqlite_snapshot_recover_fn)stark_sqlite_find_symbol("sqlite3_snapshot_recover");
+#endif
 }
 
 static stark_sqlite_carray_bind_fn stark_sqlite_lookup_carray_bind(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_CARRAY)
+    return sqlite3_carray_bind;
+#else
     return (stark_sqlite_carray_bind_fn)stark_sqlite_find_symbol("sqlite3_carray_bind");
+#endif
 }
 
 static stark_sqlite_carray_bind_v2_fn stark_sqlite_lookup_carray_bind_v2(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(SQLITE_ENABLE_CARRAY)
+    return sqlite3_carray_bind_v2;
+#else
     return (stark_sqlite_carray_bind_v2_fn)stark_sqlite_find_symbol("sqlite3_carray_bind_v2");
+#endif
 }
 
 static stark_sqlite_mutex_assert_fn stark_sqlite_lookup_mutex_held(void)
@@ -182,17 +218,29 @@ static stark_sqlite_mutex_assert_fn stark_sqlite_lookup_mutex_notheld(void)
 
 static stark_sqlite_win32_set_directory_fn stark_sqlite_lookup_win32_set_directory(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(_WIN32)
+    return sqlite3_win32_set_directory;
+#else
     return (stark_sqlite_win32_set_directory_fn)stark_sqlite_find_symbol("sqlite3_win32_set_directory");
+#endif
 }
 
 static stark_sqlite_win32_set_directory8_fn stark_sqlite_lookup_win32_set_directory8(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(_WIN32)
+    return sqlite3_win32_set_directory8;
+#else
     return (stark_sqlite_win32_set_directory8_fn)stark_sqlite_find_symbol("sqlite3_win32_set_directory8");
+#endif
 }
 
 static stark_sqlite_win32_set_directory16_fn stark_sqlite_lookup_win32_set_directory16(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES) && defined(_WIN32)
+    return sqlite3_win32_set_directory16;
+#else
     return (stark_sqlite_win32_set_directory16_fn)stark_sqlite_find_symbol("sqlite3_win32_set_directory16");
+#endif
 }
 
 const char *stark_sqlite_version_variable(void)
@@ -202,12 +250,20 @@ const char *stark_sqlite_version_variable(void)
 
 static char **stark_sqlite_lookup_temp_directory(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES)
+    return &sqlite3_temp_directory;
+#else
     return (char **)stark_sqlite_find_symbol("sqlite3_temp_directory");
+#endif
 }
 
 static char **stark_sqlite_lookup_data_directory(void)
 {
+#if defined(STARK_SQLITE_BUNDLED_FEATURES)
+    return &sqlite3_data_directory;
+#else
     return (char **)stark_sqlite_find_symbol("sqlite3_data_directory");
+#endif
 }
 
 static int stark_sqlite_set_directory_variable(char **slot, int *owned, const char *value)

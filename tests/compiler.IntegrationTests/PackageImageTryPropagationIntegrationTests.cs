@@ -3,7 +3,7 @@ using Stark.Compiler;
 namespace compiler.IntegrationTests;
 
 /// <summary>
-/// End-to-end coverage for EP15 (docs/Self-host-Prep/11-error-propagation.md): `try`
+/// End-to-end coverage for package-image error propagation (docs/Userfacing/LanguageReference.md): `try`
 /// error propagation across the package-image boundary. The `[Ok]`/`[Err]` variant roles
 /// and `from` funnels declared in a producing package must survive `--emit-lib` package
 /// publication and load back so that downstream packages can `try` imported enums

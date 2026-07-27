@@ -392,6 +392,14 @@ The error names the next step in plain English: install the native package, set
 a config value such as `native.paths.acme-image`, or pick a different local
 path. An official SDK package instead validates its bundled native artifact and
 checksum and reports an SDK-integrity diagnostic when the archive is damaged.
+It never continues into custom-package discovery or substitutes a host library;
+run `stark doctor --strict` and repair the SDK as one installation unit.
+
+The public SDK `bin` directory contains Stark commands and their runtime support,
+not every native library. Official native payloads remain under their owning
+package, for example
+`vendor/dist/<sdk-target>/native/raylib/libraylib.a`, and `sdk.json` supplies
+the relative paths and ordered framework/library arguments to the linker.
 
 ## Output Layout
 

@@ -6,7 +6,7 @@ import System.IO.File
 module System.Toml
 
 // Reusable TOML reader for Stark manifests, tools, tests, and user code (the
-// blessed parser per docs/Self-host-Prep/21-system-toml.md). The document is a
+// blessed parser per docs/StandardLibrary/System.Toml.md). The document is a
 // flat node table with parent links and decoded text storage, mirroring
 // System.Json's proven shape, plus line/column spans on every node.
 //

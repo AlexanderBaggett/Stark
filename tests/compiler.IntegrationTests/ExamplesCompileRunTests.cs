@@ -583,10 +583,44 @@ public sealed class ExamplesCompileRunTests
             vendorImportDirectory,
             stdlibImportDirectory);
 
-        await CheckSourceAsync(
-            Path.Combine(raylibImportDirectory, "VendorRaylibSafeApis.stark"),
-            Path.Combine(repositoryRoot, "vendor", "dist"),
-            stdlibImportDirectory);
+        var packageDirectory = Directory.CreateTempSubdirectory("stark-raylib-package-check-");
+        try
+        {
+            var packageImagePath = Path.Combine(packageDirectory.FullName, "libVendorRaylib.starkpkg");
+            var packageLibraryFileName = OperatingSystem.IsWindows()
+                ? "VendorRaylib.lib"
+                : "libVendorRaylib.a";
+            var packageStdout = new StringWriter();
+            var packageStderr = new StringWriter();
+            var packageExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(vendorImportDirectory, "Vendor", "Raylib.stark"),
+                    "--emit-pkg",
+                    "--package-library-file", packageLibraryFileName,
+                    "--package-profile", "release",
+                    "--sdk-root", repositoryRoot,
+                    "--no-stark-path",
+                    "-I", vendorImportDirectory,
+                    "-o", packageImagePath
+                ],
+                new StringReader(string.Empty),
+                packageStdout,
+                packageStderr);
+            Assert.True(
+                packageExitCode == 0,
+                packageStdout + Environment.NewLine + packageStderr);
+            await File.WriteAllBytesAsync(
+                Path.Combine(packageDirectory.FullName, packageLibraryFileName),
+                []);
+
+            await CheckSourceAsync(
+                Path.Combine(raylibImportDirectory, "VendorRaylibSafeApis.stark"),
+                packageDirectory.FullName);
+        }
+        finally
+        {
+            Cleanup(packageDirectory);
+        }
     }
 
     [Fact]
@@ -3261,7 +3295,13 @@ public sealed class ExamplesCompileRunTests
 
     private static async Task CheckSourceAsync(string sourcePath, params string[] importDirectories)
     {
-        var args = new List<string> { sourcePath, "--check" };
+        var args = new List<string>
+        {
+            sourcePath,
+            "--check",
+            "--sdk-root", FindRepositoryRoot(),
+            "--no-stark-path"
+        };
         foreach (var importDirectory in importDirectories)
         {
             args.Add("-I");
@@ -3277,7 +3317,13 @@ public sealed class ExamplesCompileRunTests
             stdout,
             stderr);
 
-        Assert.Equal(0, exitCode);
+        Assert.True(
+            exitCode == 0,
+            $"Source check failed for '{sourcePath}'."
+            + Environment.NewLine
+            + stdout
+            + Environment.NewLine
+            + stderr);
         Assert.Contains("Check succeeded.", stdout.ToString());
         AssertCompilerLogsEmitted(stderr.ToString());
     }

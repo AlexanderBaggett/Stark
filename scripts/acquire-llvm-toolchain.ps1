@@ -8,6 +8,10 @@ param(
 
     [string] $CacheDir = "artifacts/llvm-cache",
 
+    [string] $CMakePath = "",
+
+    [string] $NinjaPath = "",
+
     [switch] $Force
 )
 
@@ -378,6 +382,24 @@ function Get-ArrayValues {
     return @($Value)
 }
 
+function Get-SortedUniqueStrings {
+    param(
+        [object[]] $Values = @()
+    )
+
+    $unique = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($value in $Values) {
+        $text = [string] $value
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            [void] $unique.Add($text.Replace('\', '/'))
+        }
+    }
+
+    [string[]] $result = @($unique)
+    [Array]::Sort($result, [StringComparer]::Ordinal)
+    return $result
+}
+
 function Assert-Sha256 {
     param(
         [Parameter(Mandatory = $true)]
@@ -578,21 +600,11 @@ function Copy-Pattern {
     $copied = @()
     foreach ($item in ($matches | Sort-Object FullName)) {
         $relativePath = [System.IO.Path]::GetRelativePath($SourceRoot, $item.FullName).Replace('\', '/')
-        $destination = Join-Path $DestinationRoot $relativePath
-        if (-not (Test-IsSameOrDescendantPath -Path $destination -Root $DestinationRoot)) {
-            throw "LLVM pattern match '$($item.FullName)' escapes '$DestinationRoot'."
-        }
-
-        Assert-NoReparsePointPath -Path $destination -Label "LLVM output path"
-
-        if ($item.PSIsContainer) {
-            Copy-DirectoryContents -Source $item.FullName -Destination $destination
-        } else {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-            Copy-Item -LiteralPath $item.FullName -Destination $destination -Force
-        }
-
-        $copied += $relativePath
+        $copied += Copy-RelativePath `
+            -SourceRoot $SourceRoot `
+            -DestinationRoot $DestinationRoot `
+            -RelativePath $relativePath `
+            -Required $true
     }
 
     return $copied
@@ -681,7 +693,7 @@ function Get-OutputFileManifest {
     )
 
     $files = @()
-    foreach ($file in (Get-ChildItem -LiteralPath $Root -File -Recurse | Sort-Object FullName)) {
+    foreach ($file in (Get-ChildItem -LiteralPath $Root -File -Recurse -Force | Sort-Object FullName)) {
         $relativePath = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
         $files += [ordered]@{
             path = $relativePath
@@ -692,6 +704,110 @@ function Get-OutputFileManifest {
 
     return $files
 }
+
+function Test-IsDevelopmentOnlyPattern {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Pattern
+    )
+
+    $normalized = $Pattern.Replace('\', '/').ToLowerInvariant()
+    return $normalized.StartsWith("include/", [StringComparison]::Ordinal) `
+        -or $normalized.StartsWith("share/", [StringComparison]::Ordinal) `
+        -or $normalized.Contains("/cmake/") `
+        -or $normalized.Contains("/pkgconfig/") `
+        -or $normalized.EndsWith(".a", [StringComparison]::Ordinal) `
+        -or $normalized.EndsWith(".lib", [StringComparison]::Ordinal)
+}
+
+function Assert-CompilerPrivateBackendClosure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root,
+
+        [string[]] $RequiredTools = @(),
+
+        [string[]] $RequiredPatternMatches = @(),
+
+        [string[]] $CompilerResourceRoots = @()
+    )
+
+    $exactRuntimePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in @($RequiredTools) + @($RequiredPatternMatches)) {
+        [void] $exactRuntimePaths.Add(([string] $path).Replace('\', '/'))
+    }
+
+    $normalizedResourceRoots = @(Get-SortedUniqueStrings -Values $CompilerResourceRoots)
+    foreach ($file in (Get-ChildItem -LiteralPath $Root -File -Recurse -Force | Sort-Object FullName)) {
+        $relativePath = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+        if ($relativePath -eq $ownerMarkerName `
+            -or $relativePath.StartsWith("licenses/", [StringComparison]::Ordinal) `
+            -or $relativePath.StartsWith("provenance/", [StringComparison]::Ordinal) `
+            -or $exactRuntimePaths.Contains($relativePath)) {
+            continue
+        }
+
+        $isCompilerResource = $false
+        foreach ($resourceRoot in $normalizedResourceRoots) {
+            if ($relativePath.StartsWith($resourceRoot + "/", [StringComparison]::Ordinal)) {
+                $isCompilerResource = $true
+                break
+            }
+        }
+
+        if ($isCompilerResource) {
+            continue
+        }
+
+        throw "Compiler-private backend closure contains undeclared file '$relativePath'. Full LLVM development trees must not enter a Stark release."
+    }
+}
+
+function Write-DeterministicJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [object] $Value,
+
+        [int] $Depth = 10
+    )
+
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    [System.IO.File]::WriteAllText(
+        $Path,
+        $json + [Environment]::NewLine,
+        [System.Text.UTF8Encoding]::new($false))
+}
+
+function ConvertTo-LlvmAssetDescriptor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Asset
+    )
+
+    return [ordered]@{
+        name = [string] $Asset.name
+        url = [string] $Asset.url
+        sha256 = [string] $Asset.sha256
+        size = [int64] $Asset.size
+        signature = [ordered]@{
+            name = [string] $Asset.signature.name
+            url = [string] $Asset.signature.url
+            sha256 = [string] $Asset.signature.sha256
+            size = [int64] $Asset.signature.size
+        }
+        attestation = [ordered]@{
+            name = [string] $Asset.attestation.name
+            url = [string] $Asset.attestation.url
+            sha256 = [string] $Asset.attestation.sha256
+            size = [int64] $Asset.attestation.size
+        }
+    }
+}
+
+. (Join-Path $PSScriptRoot "llvm-source-build.ps1")
 
 Assert-PortablePathSegment -Value $AssetSuffix -Name "Asset suffix"
 
@@ -723,15 +839,24 @@ if ($null -eq $platformProperty) {
 }
 
 $platform = $platformProperty.Value
-$archive = Get-JsonProperty -Object $platform -Name "archive"
+$archiveProperty = $platform.PSObject.Properties["archive"]
+$sourceBuildProperty = $platform.PSObject.Properties["sourceBuild"]
+if (($null -eq $archiveProperty) -eq ($null -eq $sourceBuildProperty)) {
+    throw "LLVM platform '$AssetSuffix' must declare exactly one of archive or sourceBuild."
+}
+$archive = if ($null -eq $archiveProperty) { $null } else { $archiveProperty.Value }
+$sourceBuild = if ($null -eq $sourceBuildProperty) { $null } else { $sourceBuildProperty.Value }
+$acquisitionKind = if ($null -eq $sourceBuild) { "upstream-archive" } else { "pinned-source-build" }
 $llvmVersion = [string] (Get-JsonProperty -Object $manifest -Name "llvmVersion")
 
-foreach ($asset in @(
-    $archive,
-    $archive.signature,
-    $archive.attestation,
+$assetDescriptors = @(
+    $manifest.sourceArchive,
     $manifest.sourceArchive.signature,
-    $manifest.sourceArchive.attestation)) {
+    $manifest.sourceArchive.attestation)
+if ($null -ne $archive) {
+    $assetDescriptors += @($archive, $archive.signature, $archive.attestation)
+}
+foreach ($asset in $assetDescriptors) {
     Assert-PortablePathSegment -Value ([string] $asset.name) -Name "LLVM asset filename"
 }
 
@@ -742,9 +867,15 @@ Assert-NoReparsePointPath -Path $cacheRoot -Label "LLVM cache directory"
 $assetCacheRoot = Get-ContainedChildPath -Root $cacheRoot -Child $AssetSuffix -Name "LLVM platform cache directory"
 New-Item -ItemType Directory -Force -Path $assetCacheRoot | Out-Null
 Assert-NoReparsePointPath -Path $assetCacheRoot -Label "LLVM platform cache directory"
-$archivePath = Save-Asset -Asset $archive -DestinationDirectory $assetCacheRoot
-Save-Asset -Asset $archive.signature -DestinationDirectory $assetCacheRoot | Out-Null
-Save-Asset -Asset $archive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
+$archivePath = $null
+$sourceArchivePath = $null
+if ($null -ne $archive) {
+    $archivePath = Save-Asset -Asset $archive -DestinationDirectory $assetCacheRoot
+    Save-Asset -Asset $archive.signature -DestinationDirectory $assetCacheRoot | Out-Null
+    Save-Asset -Asset $archive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
+} else {
+    $sourceArchivePath = Save-Asset -Asset $manifest.sourceArchive -DestinationDirectory $assetCacheRoot
+}
 Save-Asset -Asset $manifest.sourceArchive.signature -DestinationDirectory $assetCacheRoot | Out-Null
 Save-Asset -Asset $manifest.sourceArchive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
 
@@ -775,36 +906,73 @@ New-Item -ItemType Directory -Path $stageRoot | Out-Null
 Write-OwnerMarker -Directory $stageRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot -Token $operationToken
 
 try {
-
-    tar -xf $archivePath -C $extractRoot
+    $extractionInput = if ($null -eq $sourceArchivePath) { $archivePath } else { $sourceArchivePath }
+    tar -xf $extractionInput -C $extractRoot
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to extract '$archivePath'."
+        throw "Failed to extract '$extractionInput'."
     }
 
-    $payloadRoot = Get-ExtractedRoot -ExtractDirectory $extractRoot
+    $extractedRoot = Get-ExtractedRoot -ExtractDirectory $extractRoot
+    $sourceBuildEvidence = $null
+    if ($null -eq $sourceBuild) {
+        $payloadRoot = $extractedRoot
+    } else {
+        $sourceBuildResult = Invoke-LlvmPinnedSourceBuild `
+            -SourceBuild $sourceBuild `
+            -ExtractedSourceRoot $extractedRoot `
+            -WorkRoot $workRoot `
+            -CMakePath $CMakePath `
+            -NinjaPath $NinjaPath
+        $payloadRoot = [string]$sourceBuildResult.PayloadRoot
+        $sourceBuildEvidence = $sourceBuildResult.Evidence
+    }
 
     Assert-NoReparsePointPath -Path $stageRoot -Label "LLVM output staging directory"
 
-    $platformCopiedRoots = $platform.PSObject.Properties["copiedRoots"]
-    $copiedRootValues = if ($null -eq $platformCopiedRoots) {
-        Get-ArrayValues -Value $manifest.copiedRoots
+    # The upstream archive is only an acquisition input. Do not copy its broad
+    # bin/lib/include/share roots: Stark publishes a compiler-private runtime,
+    # not an LLVM development SDK. Clang's versioned resource directory is the
+    # sole recursive runtime root needed by Stage0's textual-LLVM/C compilation
+    # path unless a future per-platform manifest explicitly narrows it further.
+    $compilerResourceProperty = $platform.PSObject.Properties["compilerResourceRoots"]
+    $compilerResourceRootValues = if ($null -eq $compilerResourceProperty) {
+        @("lib/clang")
     } else {
-        Get-ArrayValues -Value $platformCopiedRoots.Value
+        Get-ArrayValues -Value $compilerResourceProperty.Value
     }
-    $copiedRoots = @()
-    foreach ($root in $copiedRootValues) {
-        $copiedRoots += Copy-RelativePath -SourceRoot $payloadRoot -DestinationRoot $stageRoot -RelativePath ([string] $root) -Required $true
+    $compilerResourceRoots = @()
+    foreach ($root in $compilerResourceRootValues) {
+        $compilerResourceRoots += Copy-RelativePath `
+            -SourceRoot $payloadRoot `
+            -DestinationRoot $stageRoot `
+            -RelativePath ([string] $root) `
+            -Required $true
     }
+    $compilerResourceRoots = @(Get-SortedUniqueStrings -Values $compilerResourceRoots)
 
     $requiredTools = @()
     foreach ($tool in (Get-ArrayValues -Value $platform.requiredTools)) {
         $requiredTools += Copy-RelativePath -SourceRoot $payloadRoot -DestinationRoot $stageRoot -RelativePath ([string] $tool) -Required $true
     }
+    $requiredTools = @(Get-SortedUniqueStrings -Values $requiredTools)
 
     $requiredPatternMatches = @()
+    $excludedDevelopmentPatterns = @()
     foreach ($pattern in (Get-ArrayValues -Value $platform.requiredPatterns)) {
-        $requiredPatternMatches += Copy-Pattern -SourceRoot $payloadRoot -DestinationRoot $stageRoot -Pattern ([string] $pattern) -Required $true
+        $patternText = [string] $pattern
+        if (Test-IsDevelopmentOnlyPattern -Pattern $patternText) {
+            $excludedDevelopmentPatterns += $patternText
+            continue
+        }
+
+        $requiredPatternMatches += Copy-Pattern `
+            -SourceRoot $payloadRoot `
+            -DestinationRoot $stageRoot `
+            -Pattern $patternText `
+            -Required $true
     }
+    $requiredPatternMatches = @(Get-SortedUniqueStrings -Values $requiredPatternMatches)
+    $excludedDevelopmentPatterns = @(Get-SortedUniqueStrings -Values $excludedDevelopmentPatterns)
 
     $hardlinkProperty = $platform.PSObject.Properties["hardlinkAliases"]
     $hardlinkAliases = Convert-ToVerifiedHardLinkAliases `
@@ -813,72 +981,87 @@ try {
 
     $provenanceRoot = Join-Path $stageRoot "provenance"
     New-Item -ItemType Directory -Force -Path $provenanceRoot | Out-Null
-    Copy-Item -LiteralPath (Join-Path $assetCacheRoot $archive.signature.name) -Destination (Join-Path $provenanceRoot $archive.signature.name) -Force
-    Copy-Item -LiteralPath (Join-Path $assetCacheRoot $archive.attestation.name) -Destination (Join-Path $provenanceRoot $archive.attestation.name) -Force
+    if ($null -ne $archive) {
+        Copy-Item -LiteralPath (Join-Path $assetCacheRoot $archive.signature.name) -Destination (Join-Path $provenanceRoot $archive.signature.name) -Force
+        Copy-Item -LiteralPath (Join-Path $assetCacheRoot $archive.attestation.name) -Destination (Join-Path $provenanceRoot $archive.attestation.name) -Force
+    }
     Copy-Item -LiteralPath (Join-Path $assetCacheRoot $manifest.sourceArchive.signature.name) -Destination (Join-Path $provenanceRoot $manifest.sourceArchive.signature.name) -Force
     Copy-Item -LiteralPath (Join-Path $assetCacheRoot $manifest.sourceArchive.attestation.name) -Destination (Join-Path $provenanceRoot $manifest.sourceArchive.attestation.name) -Force
 
     $licenseRoot = Join-Path $stageRoot "licenses"
     New-Item -ItemType Directory -Force -Path $licenseRoot | Out-Null
     $licenseFiles = @()
+    $licenseSourceRoots = @([pscustomobject]@{ Root = $payloadRoot; Prefix = "" })
+    if ($null -ne $sourceBuild) {
+        $licenseSourceRoots += [pscustomobject]@{ Root = $extractedRoot; Prefix = "source" }
+    }
     foreach ($pattern in (Get-ArrayValues -Value $manifest.licenseFilePatterns)) {
-        foreach ($file in (Get-ChildItem -LiteralPath $payloadRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ([string] $pattern) } | Sort-Object FullName)) {
-            $relativePath = [System.IO.Path]::GetRelativePath($payloadRoot, $file.FullName).Replace('\', '/')
-            $destination = Join-Path $licenseRoot $relativePath
-            if (-not (Test-IsSameOrDescendantPath -Path $destination -Root $licenseRoot)) {
-                throw "LLVM license file '$($file.FullName)' escapes '$licenseRoot'."
-            }
+        foreach ($licenseSource in $licenseSourceRoots) {
+            foreach ($file in (Get-ChildItem -LiteralPath $licenseSource.Root -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ([string] $pattern) } | Sort-Object FullName)) {
+                $sourceRelativePath = [System.IO.Path]::GetRelativePath($licenseSource.Root, $file.FullName).Replace('\', '/')
+                $relativePath = if ([string]::IsNullOrWhiteSpace($licenseSource.Prefix)) {
+                    $sourceRelativePath
+                } else {
+                    "$($licenseSource.Prefix)/$sourceRelativePath"
+                }
+                $destination = Join-Path $licenseRoot $relativePath
+                if (-not (Test-IsSameOrDescendantPath -Path $destination -Root $licenseRoot)) {
+                    throw "LLVM license file '$($file.FullName)' escapes '$licenseRoot'."
+                }
 
-            Assert-NoReparsePointPath -Path $destination -Label "LLVM license output path"
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
-            $licenseFiles += $relativePath
+                Assert-NoReparsePointPath -Path $destination -Label "LLVM license output path"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+                Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+                $licenseFiles += $relativePath
+            }
         }
     }
 
     Assert-OwnedDirectory -Directory $stageRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot -Token $operationToken
     Write-PortableOutputOwnerMarker -Directory $stageRoot
 
+    $licenseFiles = @(Get-SortedUniqueStrings -Values $licenseFiles)
+    Assert-CompilerPrivateBackendClosure `
+        -Root $stageRoot `
+        -RequiredTools $requiredTools `
+        -RequiredPatternMatches $requiredPatternMatches `
+        -CompilerResourceRoots $compilerResourceRoots
+
+    $runtimeClosureFiles = @(Get-OutputFileManifest -Root $stageRoot)
+    [int64] $runtimeClosureBytes = 0
+    foreach ($entry in $runtimeClosureFiles) {
+        $runtimeClosureBytes += [int64] $entry.bytes
+    }
+
     $toolchainManifest = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
+        payloadKind = "stark-compiler-private-backend"
         llvmVersion = $llvmVersion
         releaseTag = [string] $manifest.releaseTag
         releaseUrl = [string] $manifest.releaseUrl
         assetSuffix = $AssetSuffix
         runtimeIdentifier = [string] $platform.runtimeIdentifier
-        binaryArchive = [ordered]@{
-            name = [string] $archive.name
-            url = [string] $archive.url
-            sha256 = [string] $archive.sha256
-            size = [int64] $archive.size
-            signature = [ordered]@{
-                name = [string] $archive.signature.name
-                url = [string] $archive.signature.url
-                sha256 = [string] $archive.signature.sha256
-                size = [int64] $archive.signature.size
-            }
-            attestation = [ordered]@{
-                name = [string] $archive.attestation.name
-                url = [string] $archive.attestation.url
-                sha256 = [string] $archive.attestation.sha256
-                size = [int64] $archive.attestation.size
-            }
-        }
-        sourceArchive = [ordered]@{
-            name = [string] $manifest.sourceArchive.name
-            url = [string] $manifest.sourceArchive.url
-            sha256 = [string] $manifest.sourceArchive.sha256
-            size = [int64] $manifest.sourceArchive.size
-        }
-        copiedRoots = $copiedRoots
+        acquisitionKind = $acquisitionKind
+        binaryArchive = if ($null -eq $archive) { $null } else { ConvertTo-LlvmAssetDescriptor -Asset $archive }
+        sourceArchive = ConvertTo-LlvmAssetDescriptor -Asset $manifest.sourceArchive
+        sourceBuild = $sourceBuildEvidence
+        compilerResourceRoots = $compilerResourceRoots
         requiredTools = $requiredTools
         requiredPatternMatches = $requiredPatternMatches
+        excludedDevelopmentPatterns = $excludedDevelopmentPatterns
         hardlinkAliases = $hardlinkAliases
         licenseFiles = $licenseFiles
-        files = Get-OutputFileManifest -Root $stageRoot
+        runtimeClosure = [ordered]@{
+            fileCount = $runtimeClosureFiles.Count
+            logicalBytes = $runtimeClosureBytes
+            files = $runtimeClosureFiles
+        }
     }
 
-    $toolchainManifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $stageRoot "manifest.json") -Encoding utf8
+    Write-DeterministicJson `
+        -Path (Join-Path $stageRoot "manifest.json") `
+        -Value $toolchainManifest `
+        -Depth 12
 
     Assert-OwnedDirectory -Directory $stageRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot
     Assert-NoReparsePointPath -Path $outputRoot -Label "LLVM output directory"

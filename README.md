@@ -92,13 +92,13 @@ Different parts of the repository need different tools.
 
 | Area | Required tools |
 | --- | --- |
-| Build and test the compiler | .NET SDK 10.0.x |
-| Emit LLVM, object files, executables, or libraries | .NET SDK 10.0.x, `clang`, and a native linker toolchain |
+| Build and test the compiler | Exact .NET SDK 10.0.302 selected by `global.json` |
+| Emit LLVM, object files, executables, or libraries | .NET SDK 10.0.302, `clang`, and a native linker toolchain |
 | Emit static Stark libraries | `clang` plus `llvm-ar`/`ar` on Unix-like systems, or `llvm-lib`/`lib` on Windows |
-| Run Stark/C/Rust benchmarks | .NET SDK 10.0.x, `clang`, `rustc`, and a Unix-like shell |
+| Run Stark/C/Rust benchmarks | .NET SDK 10.0.302, `clang`, `rustc`, and a Unix-like shell |
 | Build the website | pinned Hugo v0.160.1 at `tools/hugo/hugo` |
 | Deploy the website | site build requirements, `rsync`, `ssh`, and Caddy on the server |
-| Regenerate parser files | Java plus the `antlr4` command |
+| Regenerate parser files | Java and `curl`; the script acquires the checksum-pinned ANTLR generator |
 | Native-backed examples built from source | whatever the source package declares, commonly `pkg-config` or OpenSSL; official release-SDK vendor packages carry their advertised native payloads |
 
 The compiler shells out to `clang` for host target detection and native output.
@@ -144,10 +144,18 @@ Compile the program through the generated repository development SDK:
 
 `dotnet build` writes a local `sdk.json` and makes `./stark` select it. Installed
 releases use the same manifest contract with a conventional layout: extract the
-complete archive, add its `bin` directory to `PATH`, and run `stark doctor`. The
-root-level `./stark` launcher is a repository development convenience, not the
-installed release layout. See
+complete archive, add its `bin` directory to `PATH`, and run
+`stark doctor --strict`. Like Odin, the release carries its compiler-private
+backend, System library, complete target-advertised Vendor collection, examples,
+and reference files; it relies only on the documented host development layer
+for final native linkage. The root-level `./stark` launcher is a repository
+development convenience, not the installed release layout. See
 [Installing the Stark SDK](docs/Userfacing/InstallingTheStarkSdk.md).
+
+Official `Vendor.*` packages are target-specific SDK assets: an application can
+`import Vendor.Raylib` without a dependency entry, native search flags,
+`STARK_PATH`, or `pkg-config`. The SDK keeps each native payload under its
+owning package rather than flattening it into `bin`.
 
 No `-I`, `STARK_PATH`, or standard-library dependency is required. Contributors
 who invoke the compiler DLL without the generated launcher can select the same
@@ -204,6 +212,9 @@ printf 'module Demo\nexport fn i32[min max] main() { return 1; }\n' \
 ```
 
 Search paths:
+
+These are low-level development/custom-package options. Installed `System.*`
+and official `Vendor.*` packages resolve through `sdk.json` instead.
 
 - `-I <dir>` or `--search-dir <dir>` adds Stark source/package search roots.
 - `STARK_PATH` adds search roots split with the platform path separator.
@@ -453,8 +464,11 @@ Regenerate after grammar edits:
 ./scripts/regenerate-parser.sh
 ```
 
-This requires Java and the `antlr4` command on `PATH`. CI verifies that
-generated parser files are up to date.
+This requires Java and `curl`. The script downloads and checksum-verifies the
+exact ANTLR 4.13.1 generator into the user cache, then records only the stable
+`Stark.g4` grammar path in generated output. Set `JAVA` to a Java executable or
+`ANTLR4_JAR` to an already-downloaded artifact when needed. CI verifies that
+generated parser files are aligned with the pinned 4.13.1 runtime.
 
 ## Script Reference
 
@@ -502,8 +516,21 @@ Stark currently has:
 - a benchmark harness with Stark, C, and Rust rows for performance work;
 - a Hugo documentation site backed by repository docs and checked examples.
 
-Binary release packaging is automated for Linux and Windows through the GitHub
-Actions release workflow. macOS packaging remains tied to the future macOS
-standard-library backend work. Until tagged artifacts are published, treat the
-docs, tests, and checked examples as the source of truth for the implemented
+The GitHub Actions release workflow currently enables Linux x64, Windows x64,
+and macOS arm64 candidate rows from the repository-owned release manifest.
+Linux arm64, Windows arm64, and macOS x64 are recorded as planned rows and stay
+disabled until their private backend, complete Vendor catalog, installer, and
+native qualification gates pass. Until tagged artifacts are published, treat
+the docs, tests, and checked examples as the source of truth for the implemented
 surface.
+
+## Contributing, Security, and Releases
+
+- [Contributing](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Security Policy](./SECURITY.md)
+- [GitHub Releases](https://github.com/AlexanderBaggett/Stark/releases), the
+  authoritative public changelog and release-note history
+
+Third-party components retain their own license and notice files. Stark source
+and original project content are covered by the repository's [MIT License](./LICENSE).

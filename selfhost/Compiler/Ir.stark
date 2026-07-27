@@ -5,7 +5,7 @@ import System.Text
 module Compiler.Ir
 
 // The self-hosted compiler's IR memory model: typed handle indices into dense
-// tables (docs/Self-host-Prep/24). Each IR id is a DISTINCT value type wrapping a
+// tables (docs/Internals/IrMemoryAndFactModel.md). Each IR id is a DISTINCT value type wrapping a
 // compact 1-based index (0 is the invalid/null sentinel), so a `MirValueId` can
 // never be passed where a `TypeId` is expected — handles are not interchangeable
 // integers. They are small Copyable values, freely copied and stored in fact side
