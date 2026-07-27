@@ -864,9 +864,9 @@ on the target cost model.
         chains.
   - [x] Run existing SSA cleanup and constant propagation after the rewrite so
         dead intermediate arithmetic and newly-created constants disappear.
-  - [x] Keep the pass disabled at no-optimization levels where preserving the
-        source-shaped debug experience is more important than generated code
-        quality.
+  - [x] Obsolete: the pass was formerly disabled at no-optimization levels;
+        optimization levels have since been removed and the pass now always
+        runs.
 
 ### Linear Add/Sub Folding
 
@@ -1057,15 +1057,14 @@ on the target cost model.
       the selected exponent lowering is cheaper.
 - [x] Check native optimized output lets LLVM choose target-specific
       shift/add/`lea` forms where profitable.
-      The x64 native codegen regression compiles a folded `x + x + x` body at
-      `-O3`, disassembles the object file, and verifies LLVM selected a
+      The x64 native codegen regression compiles a folded `x + x + x` body,
+      disassembles the object file, and verifies LLVM selected a
       `lea`-style target instruction without a runtime call.
 - [x] Confirm exponent lowering does not turn small hot expressions into slower
       runtime calls.
-- [x] Confirm `-O0` behavior remains debuggable if this pass is disabled at
-      no-optimization levels.
-      The pass is disabled for both `O0` and `Og`; the current regression checks
-      the debug-optimized `Og` path remains source-shaped.
+- [x] Obsolete: optimization levels were removed; the compiler has a single
+      always-optimized mode, so there is no no-optimization path to keep
+      debuggable.
 - [x] Confirm optimized builds do not regress existing SSA cleanup, constant
       propagation, value numbering, or LLVM emission tests.
       Focused SSA and LLVM emission regressions pass after the pipeline hook.

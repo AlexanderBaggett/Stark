@@ -1,0 +1,8 @@
+[project]
+name = "sqlite"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "TaskReport.stark"
+output = "sqlite-task-report"

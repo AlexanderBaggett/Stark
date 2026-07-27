@@ -1,0 +1,771 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.StorageSelectors
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedAssignments
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallMemberDependencies
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedConversions
+import Compiler.Typing.TypedEnumLayouts
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloads
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIdentifiers
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedIndexing
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedLocals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedReturnModel
+import Compiler.Typing.TypedReturns
+import Compiler.Typing.TypedSignatures
+import Compiler.Typing.TypedSwitchPatternModel
+import Compiler.Typing.TypedSwitchPatterns
+import System.Memory
+module Compiler.Typing.TypedPipeline
+
+public fn ParseResult<TypedFunctionSignatureTable> BuildTypedFunctionSignatures(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedFunctionSignature(table, source, stream, item.KeywordToken, TypedSignatureOwnerKind.TopLevelFunction, 0, 0))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedFunctionSignatureTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedMemberFunctionSignaturesForDeclaration(table, source, stream, item))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedFunctionSignatureTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedFunctionSignatureTable>.Ok(table);
+}
+
+public fn ParseResult<TypedGlobalDeclarationTable> BuildTypedGlobalDeclarations(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedGlobalDeclarationTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (TypedGlobalDeclarationKindIsGlobal(item.Kind))
+        {
+            switch (AppendTypedGlobalDeclaration(table, source, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return ParseResult<TypedGlobalDeclarationTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedGlobalDeclarationTable>.Ok(table);
+}
+
+public fn ParseResult<TypedStorageSelectorTable> BuildTypedStorageSelectors(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedStorageSelectorTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedStorageSelectorFromGlobalDeclaration(table, stream, item, (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedStorageSelectorTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedStorageSelectorsForFunction(table, stream, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedStorageSelectorTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedStorageSelectorsForMemberFunctions(table, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedStorageSelectorTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedStorageSelectorTable>.Ok(table);
+}
+
+public fn ParseResult<TypedFieldDeclarationTable> BuildTypedStructRecordFields(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFieldDeclarationTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (TypedFieldDeclarationKindOwnsFields(item.Kind))
+        {
+            switch (AppendTypedFieldsForDeclaration(table, source, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return ParseResult<TypedFieldDeclarationTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedFieldDeclarationTable>.Ok(table);
+}
+
+public fn ParseResult<TypedEnumPayloadTable> BuildTypedEnumPayloads(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedEnumPayloadTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum)
+        {
+            switch (AppendTypedEnumPayloadsForDeclaration(table, source, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return ParseResult<TypedEnumPayloadTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedEnumPayloadTable>.Ok(table);
+}
+
+public fn ParseResult<TypedEnumLayoutTable> BuildTypedEnumLayouts(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedEnumPayloadTable payloads = new();
+    switch (BuildTypedEnumPayloads(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return ParseResult<TypedEnumLayoutTable>.Err(payloadError);
+        case ParseResult<TypedEnumPayloadTable>.Ok(var builtPayloads):
+            payloads = builtPayloads;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedEnumLayoutTable>.Err(fieldError);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedEnumLayoutTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum)
+        {
+            switch (AppendTypedEnumLayoutRowsForDeclaration(table, source, stream, item, (u32[0 max])index, declarations, fields, payloads))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return ParseResult<TypedEnumLayoutTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedEnumLayoutTable>.Ok(table);
+}
+
+public fn ParseResult<TypedLocalDeclarationTable> BuildTypedLocalDeclarations(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedLocalDeclarationTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedLocalDeclarationsForFunction(
+                table,
+                source,
+                stream,
+                (u32[0 max])index,
+                0,
+                item.KeywordToken,
+                TypedLocalDeclarationOwnerKind.TopLevelFunction,
+                0))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedLocalDeclarationTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedMemberLocalDeclarationsForDeclaration(table, source, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedLocalDeclarationTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedLocalDeclarationTable>.Ok(table);
+}
+
+public fn ParseResult<TypedLiteralExpressionTable> BuildTypedLiteralExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedLiteralExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedLiteralExpressionsFromGlobalDeclaration(table, source, stream, item, (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedLiteralExpressionTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedLiteralExpressionsForFunction(table, source, stream, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedLiteralExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedLiteralExpressionsForMemberFunctions(table, source, stream, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedLiteralExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedLiteralExpressionTable>.Ok(table);
+}
+
+public fn ParseResult<TypedIdentifierExpressionTable> BuildTypedIdentifierExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedGlobalDeclarationTable globals = new();
+    switch (BuildTypedGlobalDeclarations(source, stream, declarations))
+    {
+        case ParseResult<TypedGlobalDeclarationTable>.Err(var globalError):
+            return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedGlobalDeclarationTable>.Ok(var builtGlobals):
+            globals = builtGlobals;
+    }
+
+    stack mut TypedLocalDeclarationTable locals = new();
+    switch (BuildTypedLocalDeclarations(source, stream, declarations))
+    {
+        case ParseResult<TypedLocalDeclarationTable>.Err(var localError):
+            return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLocalDeclarationTable>.Ok(var builtLocals):
+            locals = builtLocals;
+    }
+
+    stack mut TypedIdentifierExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedIdentifiersFromGlobalDeclaration(
+            table,
+            source,
+            stream,
+            declarations,
+            signatures,
+            globals,
+            item,
+            (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedIdentifiersForFunction(
+                table,
+                source,
+                stream,
+                declarations,
+                signatures,
+                globals,
+                locals,
+                (u32[0 max])index,
+                0,
+                item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedIdentifiersForMemberFunctions(
+                table,
+                source,
+                stream,
+                declarations,
+                signatures,
+                globals,
+                locals,
+                item,
+                (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedIdentifierExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedIdentifierExpressionTable>.Ok(table);
+}
+
+public fn ParseResult<TypedSwitchPatternTables> BuildTypedSwitchPatternTables(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedEnumLayoutTable layouts = new();
+    switch (BuildTypedEnumLayouts(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            layouts = builtLayouts;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    return BuildTypedSwitchPatternTablesFromDependencies(source, stream, declarations, identifiers, layouts, fields);
+}
+
+public fn ParseResult<TypedSwitchAggregatePatternTable> BuildTypedSwitchAggregatePatterns(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedEnumLayoutTable layouts = new();
+    switch (BuildTypedEnumLayouts(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            layouts = builtLayouts;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    return BuildTypedSwitchAggregatePatternsFromDependenciesWithFields(source, stream, declarations, identifiers, layouts, fields);
+}
+
+public fn ParseResult<TypedCallExpressionTable> BuildTypedCallExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    return ParseResult<TypedCallExpressionTable>.Ok(calls);
+}
+
+public fn ParseResult<TypedMemberExpressionTable> BuildTypedMemberExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedMemberExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedMemberExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedMemberExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedMemberExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedMemberExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    return ParseResult<TypedMemberExpressionTable>.Ok(members);
+}
+
+public fn ParseResult<TypedIndexExpressionTable> BuildTypedIndexExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    return BuildTypedIndexExpressionsFromDependencies(source, stream, declarations, identifiers, calls, members);
+}
+
+public fn ParseResult<TypedConversionExpressionTable> BuildTypedConversionExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    stack mut TypedIndexExpressionTable indexes = new();
+    switch (BuildTypedIndexExpressionsFromDependencies(source, stream, declarations, identifiers, calls, members))
+    {
+        case ParseResult<TypedIndexExpressionTable>.Err(var indexError):
+            return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIndexExpressionTable>.Ok(var builtIndexes):
+            indexes = builtIndexes;
+    }
+
+    return BuildTypedConversionExpressionsFromDependencies(source, stream, declarations, literals, identifiers, calls, members, indexes);
+}
+
+public fn ParseResult<TypedAssignmentExpressionTable> BuildTypedAssignmentExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    stack mut TypedIndexExpressionTable indexes = new();
+    switch (BuildTypedIndexExpressionsFromDependencies(source, stream, declarations, identifiers, calls, members))
+    {
+        case ParseResult<TypedIndexExpressionTable>.Err(var indexError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIndexExpressionTable>.Ok(var builtIndexes):
+            indexes = builtIndexes;
+    }
+
+    stack mut TypedConversionExpressionTable conversions = new();
+    switch (BuildTypedConversionExpressionsFromDependencies(source, stream, declarations, literals, identifiers, calls, members, indexes))
+    {
+        case ParseResult<TypedConversionExpressionTable>.Err(var conversionError):
+            return ParseResult<TypedAssignmentExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedConversionExpressionTable>.Ok(var builtConversions):
+            conversions = builtConversions;
+    }
+
+    return BuildTypedAssignmentExpressionsFromDependencies(source, stream, declarations, literals, identifiers, calls, members, indexes, conversions);
+}
+
+public fn ParseResult<TypedReturnExpressionTable> BuildTypedReturnExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtSignatures):
+            signatures = builtSignatures;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedLiteralExpressionTable literals = new();
+    switch (BuildTypedLiteralExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literals = builtLiterals;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedCallExpressionTable calls = new();
+    stack mut TypedMemberExpressionTable members = new();
+    if (!BuildTypedMemberCallDependencyTables(source, stream, declarations, signatures, fields, literals, identifiers, calls, members))
+    {
+        return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+    }
+
+    stack mut TypedIndexExpressionTable indexes = new();
+    switch (BuildTypedIndexExpressionsFromDependencies(source, stream, declarations, identifiers, calls, members))
+    {
+        case ParseResult<TypedIndexExpressionTable>.Err(var indexError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIndexExpressionTable>.Ok(var builtIndexes):
+            indexes = builtIndexes;
+    }
+
+    stack mut TypedConversionExpressionTable conversions = new();
+    switch (BuildTypedConversionExpressionsFromDependencies(source, stream, declarations, literals, identifiers, calls, members, indexes))
+    {
+        case ParseResult<TypedConversionExpressionTable>.Err(var conversionError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedConversionExpressionTable>.Ok(var builtConversions):
+            conversions = builtConversions;
+    }
+
+    stack mut TypedAssignmentExpressionTable assignments = new();
+    switch (BuildTypedAssignmentExpressionsFromDependencies(source, stream, declarations, literals, identifiers, calls, members, indexes, conversions))
+    {
+        case ParseResult<TypedAssignmentExpressionTable>.Err(var assignmentError):
+            return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedAssignmentExpressionTable>.Ok(var builtAssignments):
+            assignments = builtAssignments;
+    }
+
+    return BuildTypedReturnExpressionsFromDependencies(source, stream, declarations, signatures, literals, identifiers, calls, members, indexes, conversions, assignments);
+}

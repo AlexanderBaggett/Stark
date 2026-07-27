@@ -14,6 +14,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             fn void Consume(Box value)
@@ -53,6 +57,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             fn void Consume(Box value)
@@ -125,6 +133,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Name
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             struct Container
@@ -262,6 +274,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             fn void Consume(Box value)
@@ -374,6 +390,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -408,6 +428,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -445,6 +469,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -483,6 +511,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -534,6 +566,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -586,6 +622,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -641,6 +681,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -677,6 +721,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             enum Token
@@ -827,6 +875,10 @@ public sealed class OwnershipRoadmapRegressionTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             fn i32[min max] Run()
@@ -851,6 +903,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             struct Pair
@@ -953,6 +1009,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Payload
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             struct Pair
@@ -1537,6 +1597,10 @@ public sealed class OwnershipRoadmapRegressionTests
             struct Token
             {
                 ascii Text;
+
+                drop
+                {
+                }
             }
 
             fn void Run()

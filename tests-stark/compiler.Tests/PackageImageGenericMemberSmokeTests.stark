@@ -1,0 +1,47 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageGenericMemberSmokeTests
+
+// Ported from PackageImageGenericMemberSmokeTests.GenericInstanceMemberCallBindsThroughPackageImage.
+internal fn bool GenericInstanceMemberCallBindsThroughPackageImageImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer library, publishes it to a
+    // .starkpkg package image (PackageImageBuilder), inspects the serialized generic
+    // template (TypedBody/MemberCalls), round-trips the manifest JSON, deletes the
+    // Facade source, then re-imports Facade into a Demo consumer through a
+    // FileSystemModuleResolver and lowers to MIR ("lower-mir"), asserting STK9999 is
+    // absent and the MIR contains a "Facade_ReadCell" function. The Stark test helpers
+    // cannot model package-image construction, manifest round-tripping, module
+    // resolvers, filesystem effects, the consumer compile, or MIR-node inspection, so
+    // this is reduced to lowering the published Facade producer library (the generic
+    // struct with an instance member plus the generic free function whose body calls
+    // it) through the MIR-lowering stage and asserting it succeeds, which is the
+    // precondition for the serialized typed template body and member-call facts to
+    // exist and rebind.
+    stack mut LlvmCompile compiled = CompileMir(
+        "pkgimg-generic-instance-member-call-binds",
+        raw"""
+module Facade
+
+public struct Cell<T>
+{
+    public i32[min max] Value;
+
+    public finite law i32[min max] Read(borrow Cell<T> self)
+    {
+        return self.Value;
+    }
+}
+
+public finite law i32[min max] ReadCell<T>(i32[min max] seed)
+{
+    stack Cell<T> cell = new Cell<T>()
+    {
+        Value = seed
+    };
+
+    return cell.Read();
+}
+""");
+    return Succeeds(compiled);
+}

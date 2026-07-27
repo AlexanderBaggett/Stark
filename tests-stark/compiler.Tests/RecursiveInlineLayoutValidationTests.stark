@@ -1,0 +1,108 @@
+import CompilerTestSupport
+import System.Testing
+module RecursiveInlineLayoutValidationTests
+
+// Ported from tests/compiler.Tests/RecursiveInlineLayoutValidationTests.cs.
+
+internal fn bool DirectRecursiveStructFieldIsRejectedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "recursive-layout-direct-struct",
+            raw"""
+module Demo
+
+struct Node
+{
+    Node Next;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3056", "Node.Next")
+            && AnyDiagnosticMessageContains(compiled, "Node -> Node");
+    }
+}
+
+internal fn bool MutuallyRecursiveStructFieldsAreRejectedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "recursive-layout-mutual-structs",
+            raw"""
+module Demo
+
+struct A
+{
+    B Next;
+}
+
+struct B
+{
+    A Prev;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3056", "A -> B -> A")
+            && AnyDiagnosticMessageContains(compiled, "A.Next")
+            && AnyDiagnosticMessageContains(compiled, "B.Prev");
+    }
+}
+
+internal fn bool RecursiveEnumPayloadIsRejectedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "recursive-layout-enum-payload",
+            raw"""
+module Demo
+
+enum List
+{
+    Empty,
+    Cons(List),
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3056", "List -> List")
+            && AnyDiagnosticMessageContains(compiled, "List.Cons#0");
+    }
+}
+
+internal fn bool GenericInlineRecursionAtUseSiteIsRejectedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "recursive-layout-generic-use-site",
+            raw"""
+module Demo
+
+struct Box<T>
+{
+    T Value;
+}
+
+struct Node
+{
+    Box<Node> Boxed;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3056", "Box<Node>")
+            && AnyDiagnosticMessageContains(compiled, "Node.Boxed")
+            && AnyDiagnosticMessageContains(compiled, "Box<Node>.Value");
+    }
+}
+
+internal fn bool PointerAndDynamicSelfReferencesAreAllowedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "recursive-layout-indirect-fields",
+            raw"""
+module Demo
+
+struct Node
+{
+    rawmutptr<Node> Next;
+    dynamic Node Children;
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3056");
+    }
+}

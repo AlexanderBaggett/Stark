@@ -1,5 +1,893 @@
+import System.C
+import System.IO
+import System.IO.Path
+import System.Memory
 import System.Runtime.Platform
+import System.Text
 module System.Process
+
+public enum ProcessError
+{
+    InvalidArgument,
+    TooLarge,
+    CString from System.C.CStringError,
+    IO from System.IO.IOError,
+    Memory from System.Memory.MemoryError,
+    Platform(i32[min max]),
+}
+
+public enum ProcessStatus
+{
+    [Ok] Ok,
+    [Err] Err(ProcessError),
+}
+
+public enum ProcessResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(ProcessError),
+}
+
+public enum ProcessOption<T>
+{
+    [Ok] Some(T),
+    [Err] None,
+}
+
+public struct ProcessOutput
+{
+    i32[min max] ExitCode;
+    bool TimedOut;
+    internal dynamic i8[min max] StdoutBytes;
+    internal dynamic i8[min max] StderrBytes;
+
+    ProcessOutput()
+    {
+        self.ExitCode = -1;
+        self.TimedOut = false;
+        self.StdoutBytes = new();
+        self.StderrBytes = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StdoutLength(borrow ProcessOutput self)
+    {
+        return self.StdoutBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StderrLength(borrow ProcessOutput self)
+    {
+        return self.StderrBytes.Length;
+    }
+
+    public finite law retborrow i8[min max][] StdoutSlice(borrow ProcessOutput self)
+    {
+        return self.StdoutBytes[0, self.StdoutBytes.Length];
+    }
+
+    public finite law retborrow i8[min max][] StderrSlice(borrow ProcessOutput self)
+    {
+        return self.StderrBytes[0, self.StderrBytes.Length];
+    }
+
+    public inline finite law bool WasTimedOut(borrow ProcessOutput self)
+    {
+        return self.TimedOut;
+    }
+}
+
+public struct ProcessArguments
+{
+    internal dynamic System.Text.OwnedAscii Items;
+
+    ProcessArguments()
+    {
+        self.Items = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ProcessArguments self)
+    {
+        return self.Items.Length;
+    }
+
+    public finite law retborrow System.Text.OwnedAscii[] AsSlice(borrow ProcessArguments self)
+    {
+        return self.Items[0, self.Items.Length];
+    }
+
+    // Byte-exact comparison of one argument against an ascii literal; used
+    // by generated test runners to match collection filters.
+    public finite bool ArgumentEquals(borrow ProcessArguments self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.Items.Length)
+        {
+            return false;
+        }
+
+        stack i64[min max] signedLength = System.Text.AsciiLength(expected);
+        if (signedLength < 0)
+        {
+            return false;
+        }
+
+        stack System.Text.OwnedAscii[] items = self.AsSlice();
+        if (items[index].Length() != (u64[0 2 ** 63 - 1])signedLength)
+        {
+            return false;
+        }
+
+        stack i8[min max][] bytes = items[index].AsSlice();
+        unsafe
+        {
+            stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+            if (expectedData == null)
+            {
+                return signedLength == 0;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < bytes.Length; offset += 1)
+            {
+                if (bytes[offset] != *(&expectedData[offset]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
+public struct ProcessCommand
+{
+    internal System.C.OwnedCStr Executable;
+    internal dynamic System.C.OwnedCStr Arguments;
+    internal bool HasWorkingDirectory;
+    internal System.C.OwnedCStr WorkingDirectory;
+
+    ProcessCommand()
+    {
+        self.Executable = new();
+        self.Arguments = new();
+        self.HasWorkingDirectory = false;
+        self.WorkingDirectory = new();
+    }
+
+    public fn ProcessStatus AddArgument(mut borrow ProcessCommand self, ascii argument)
+    {
+        stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(argument);
+        switch (prepared)
+        {
+            case ProcessResult<System.C.OwnedCStr>.Err(var error):
+                return ProcessStatus.Err(error);
+            case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+                if (!self.Arguments.TryReserve(1))
+                {
+                    return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+                }
+
+                init self.Arguments[self.Arguments.Length] = value;
+                return ProcessStatus.Ok;
+        }
+    }
+
+    public fn ProcessStatus SetWorkingDirectory(mut borrow ProcessCommand self, ascii path)
+    {
+        stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(path);
+        switch (prepared)
+        {
+            case ProcessResult<System.C.OwnedCStr>.Err(var error):
+                return ProcessStatus.Err(error);
+            case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+                self.WorkingDirectory = value;
+                self.HasWorkingDirectory = true;
+                return ProcessStatus.Ok;
+        }
+    }
+}
+
+internal inline finite law ProcessError FromMemoryError(System.Memory.MemoryError error)
+{
+    return ProcessError.Memory(error);
+}
+
+internal inline finite law ProcessError FromCStringError(System.C.CStringError error)
+{
+    return ProcessError.CString(error);
+}
+
+internal inline finite law ProcessError FromIOError(System.IO.IOError error)
+{
+    return ProcessError.IO(error);
+}
+
+internal fn ProcessResult<System.C.OwnedCStr> PrepareCString(ascii text)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> result = System.C.FromAscii(text);
+    switch (result)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessResult<System.C.OwnedCStr>.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var value):
+            return ProcessResult<System.C.OwnedCStr>.Ok(value);
+    }
+}
+
+internal inline finite law i32[min max] DecodeExitStatus(i32[min max] status)
+{
+    stack i32[min max] signal = status & 127;
+    if (signal == 0)
+    {
+        return (status >> 8) & 255;
+    }
+
+    return 128 + signal;
+}
+
+internal unsafe fn ProcessResult<i64[min max]> StartTimeoutDeadline(u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack i64[min max] now = System.Runtime.Platform.MonotonicMilliseconds();
+    if (now < 0)
+    {
+        return ProcessResult<i64[min max]>.Err(ProcessError.Platform((i32[min max])now));
+    }
+
+    return ProcessResult<i64[min max]>.Ok(now + (i64[min max])timeoutMilliseconds);
+}
+
+internal unsafe fn i32[min max] RemainingTimeoutMilliseconds(i64[min max] deadlineMilliseconds)
+{
+    stack i64[min max] now = System.Runtime.Platform.MonotonicMilliseconds();
+    if (now < 0)
+    {
+        return (i32[min max])now;
+    }
+
+    if (now >= deadlineMilliseconds)
+    {
+        return 0;
+    }
+
+    stack i64[min max] remaining = deadlineMilliseconds - now;
+    if (remaining > (i64[min max])(2 ** 31 - 1))
+    {
+        return (i32[min max])(2 ** 31 - 1);
+    }
+
+    return (i32[min max])remaining;
+}
+
+internal unsafe fn void MarkTimedOutAndKill(i32[min max] processId, mut borrow ProcessOutput output)
+{
+    output.TimedOut = true;
+    stack i32[min max] ignoredKill = System.Runtime.Platform.KillProcess(processId);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> WaitProcessAfterCapture(
+    i32[min max] processId,
+    mut borrow ProcessOutput output,
+    bool timeoutEnabled,
+    i64[min max] deadlineMilliseconds)
+{
+    if (!timeoutEnabled || output.TimedOut)
+    {
+        stack mut i32[min max] status = 0;
+        stack i32[min max] waitResult = System.Runtime.Platform.WaitProcess(processId, &status);
+        if (waitResult < 0)
+        {
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(waitResult));
+        }
+
+        return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(status));
+    }
+
+    while willexit (true)
+    {
+        stack mut i32[min max] status = 0;
+        stack i32[min max] waitResult = System.Runtime.Platform.WaitProcessNoHang(processId, &status);
+        if (waitResult < 0)
+        {
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(waitResult));
+        }
+
+        if (waitResult > 0)
+        {
+            return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(status));
+        }
+
+        stack i32[min max] remaining = RemainingTimeoutMilliseconds(deadlineMilliseconds);
+        if (remaining < 0)
+        {
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(remaining));
+        }
+
+        if (remaining == 0)
+        {
+            MarkTimedOutAndKill(processId, output);
+            stack mut i32[min max] killedStatus = 0;
+            stack i32[min max] killedWaitResult = System.Runtime.Platform.WaitProcess(processId, &killedStatus);
+            if (killedWaitResult < 0)
+            {
+                return ProcessResult<i32[min max]>.Err(ProcessError.Platform(killedWaitResult));
+            }
+
+            return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(killedStatus));
+        }
+
+        stack mut u64[0 2 ** 63 - 1] sleepMilliseconds = (u64[0 2 ** 63 - 1])remaining;
+        if (sleepMilliseconds > 10)
+        {
+            sleepMilliseconds = 10;
+        }
+
+        System.Runtime.Platform.SleepThreadMilliseconds(sleepMilliseconds);
+    }
+}
+
+internal unsafe fn i32[min max] CloseDescriptorIfOpen(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return 0;
+    }
+
+    // Pipe descriptors are raw fds, not platform file handles; on macOS the
+    // handle-based close would dereference them as MacOSHandle allocations.
+    return System.Runtime.Platform.CloseRawDescriptor(descriptor);
+}
+
+internal fn ProcessResult<ProcessOutput> ProcessStartFailure(i32[min max] startResult)
+{
+    if (startResult < 0)
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.Platform(startResult));
+    }
+
+    // The platform reported a descriptor/directory/exec setup failure with a
+    // shell-convention exit code (126/127) instead of creating a child, the
+    // same codes a fork/exec child reports through its own exit status.
+    stack mut ProcessOutput output = new();
+    output.ExitCode = startResult;
+    return ProcessResult<ProcessOutput>.Ok(output);
+}
+
+internal unsafe fn ProcessStatus BuildArgumentVector(
+    mut borrow ProcessCommand command,
+    mut borrow dynamic rawptr<System.C.c_char> argv)
+{
+    stack u64[0 2 ** 63 - 1] argumentCount = command.Arguments.Length;
+    if (argumentCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 3))
+    {
+        return ProcessStatus.Err(ProcessError.TooLarge);
+    }
+
+    stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(argumentCount + 2);
+    if (!argv.TryReserveCapacity(required))
+    {
+        return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+    }
+
+    init argv[argv.Length] = command.Executable.Data();
+    stack System.C.OwnedCStr[] arguments = command.Arguments[0, argumentCount];
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < argumentCount; index += 1)
+    {
+        init argv[argv.Length] = arguments[index].Data();
+    }
+
+    init argv[argv.Length] = null;
+    return ProcessStatus.Ok;
+}
+
+internal unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> AppendPipeBytes(
+    i32[min max] descriptor,
+    mut borrow dynamic i8[min max] destination)
+{
+    stack mut i8[min max][8192] buffer;
+    stack i64[min max] readCount = System.Runtime.Platform.ReadRawDescriptorBytes(&buffer[0], 8192, descriptor);
+    if (readCount < 0)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Err(ProcessError.Platform((i32[min max])readCount));
+    }
+
+    if (readCount == 0)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(0);
+    }
+
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])readCount;
+    stack i8[min max][] slice = slice(&buffer[0], count);
+    stack System.Memory.MemoryStatus status = System.Memory.AppendBytes(destination, slice, count);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Err(FromMemoryError(error));
+        case System.Memory.MemoryStatus.Ok:
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(count);
+    }
+}
+
+internal unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> WritePipeBytes(
+    i32[min max] descriptor,
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] length,
+    u64[0 2 ** 63 - 1] offset)
+{
+    if (offset >= length)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(0);
+    }
+
+    if (data == null)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack u64[0 2 ** 63 - 1] remaining = length - offset;
+    stack mut u64[0 2 ** 63 - 1] count = remaining;
+    if (count > 8192)
+    {
+        count = 8192;
+    }
+
+    stack i64[min max] written = System.Runtime.Platform.WriteRawDescriptorBytes(&data[offset], count, descriptor);
+    if (written < 0)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Err(ProcessError.Platform((i32[min max])written));
+    }
+
+    return ProcessResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])written);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutput(
+    i32[min max] processId,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output)
+{
+    return CaptureChildOutputWithOptionalTimeout(
+        processId,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        false,
+        0);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithTimeout(
+    i32[min max] processId,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    return CaptureChildOutputWithOptionalTimeout(
+        processId,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        true,
+        timeoutMilliseconds);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithOptionalTimeout(
+    i32[min max] processId,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output,
+    bool timeoutEnabled,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack mut bool stdoutOpen = stdoutDescriptor >= 0;
+    stack mut bool stderrOpen = stderrDescriptor >= 0;
+    stack mut i32[min max] stdoutFd = stdoutDescriptor;
+    stack mut i32[min max] stderrFd = stderrDescriptor;
+    stack mut i64[min max] deadlineMilliseconds = 0;
+    if (timeoutEnabled)
+    {
+        switch (StartTimeoutDeadline(timeoutMilliseconds))
+        {
+            case ProcessResult<i64[min max]>.Err(var error):
+                stack i32[min max] ignoredCloseDeadlineStdout = CloseDescriptorIfOpen(stdoutFd);
+                stack i32[min max] ignoredCloseDeadlineStderr = CloseDescriptorIfOpen(stderrFd);
+                return ProcessResult<i32[min max]>.Err(error);
+            case ProcessResult<i64[min max]>.Ok(var value):
+                deadlineMilliseconds = value;
+        }
+    }
+
+    while willexit (stdoutOpen || stderrOpen)
+    {
+        stack mut i16[min max] stdoutEvents = 0;
+        stack mut i16[min max] stderrEvents = 0;
+        stack mut i32[min max] pollTimeoutMilliseconds = -1;
+        if (timeoutEnabled && !output.TimedOut)
+        {
+            pollTimeoutMilliseconds = RemainingTimeoutMilliseconds(deadlineMilliseconds);
+            if (pollTimeoutMilliseconds < 0)
+            {
+                stack i32[min max] ignoredCloseTimeoutStdout = CloseDescriptorIfOpen(stdoutFd);
+                stack i32[min max] ignoredCloseTimeoutStderr = CloseDescriptorIfOpen(stderrFd);
+                return ProcessResult<i32[min max]>.Err(ProcessError.Platform(pollTimeoutMilliseconds));
+            }
+
+            if (pollTimeoutMilliseconds == 0)
+            {
+                MarkTimedOutAndKill(processId, output);
+                pollTimeoutMilliseconds = -1;
+            }
+        }
+
+        stack i32[min max] pollResult = System.Runtime.Platform.PollProcessPipesTimed(
+            stdoutFd,
+            stderrFd,
+            &stdoutEvents,
+            &stderrEvents,
+            pollTimeoutMilliseconds);
+        if (pollResult < 0)
+        {
+            stack i32[min max] ignoredClosePollStdout = CloseDescriptorIfOpen(stdoutFd);
+            stack i32[min max] ignoredClosePollStderr = CloseDescriptorIfOpen(stderrFd);
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(pollResult));
+        }
+
+        if (pollResult == 0)
+        {
+            MarkTimedOutAndKill(processId, output);
+            continue;
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.ProcessPipeReadable(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutEof = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.ProcessPipeReadable(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutAfterStderrReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrEof = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.ProcessPipeClosed(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutHangup = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.ProcessPipeClosed(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutAfterStderrHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrHangup = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+    }
+
+    return WaitProcessAfterCapture(processId, output, timeoutEnabled, deadlineMilliseconds);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithInput(
+    i32[min max] processId,
+    i32[min max] stdinDescriptor,
+    ascii input,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output)
+{
+    return CaptureChildOutputWithInputOptionalTimeout(
+        processId,
+        stdinDescriptor,
+        input,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        false,
+        0);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithInputTimeout(
+    i32[min max] processId,
+    i32[min max] stdinDescriptor,
+    ascii input,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    return CaptureChildOutputWithInputOptionalTimeout(
+        processId,
+        stdinDescriptor,
+        input,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        true,
+        timeoutMilliseconds);
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithInputOptionalTimeout(
+    i32[min max] processId,
+    i32[min max] stdinDescriptor,
+    ascii input,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output,
+    bool timeoutEnabled,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack i64[min max] signedInputLength = System.Text.AsciiLength(input);
+    if (signedInputLength < 0)
+    {
+        stack i32[min max] ignoredCloseInvalidInput = CloseDescriptorIfOpen(stdinDescriptor);
+        stack i32[min max] ignoredCloseStdoutInvalidInput = CloseDescriptorIfOpen(stdoutDescriptor);
+        stack i32[min max] ignoredCloseStderrInvalidInput = CloseDescriptorIfOpen(stderrDescriptor);
+        return ProcessResult<i32[min max]>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack u64[0 2 ** 63 - 1] inputLength = (u64[0 2 ** 63 - 1])signedInputLength;
+    stack mut rawptr<i8[min max]> inputData = null;
+    if (inputLength > 0)
+    {
+        inputData = System.Text.AsciiData(input);
+        if (inputData == null)
+        {
+            stack i32[min max] ignoredCloseNullInput = CloseDescriptorIfOpen(stdinDescriptor);
+            stack i32[min max] ignoredCloseStdoutNullInput = CloseDescriptorIfOpen(stdoutDescriptor);
+            stack i32[min max] ignoredCloseStderrNullInput = CloseDescriptorIfOpen(stderrDescriptor);
+            return ProcessResult<i32[min max]>.Err(ProcessError.InvalidArgument);
+        }
+    }
+
+    stack mut bool stdinOpen = stdinDescriptor >= 0;
+    stack mut bool stdoutOpen = stdoutDescriptor >= 0;
+    stack mut bool stderrOpen = stderrDescriptor >= 0;
+    stack mut i32[min max] stdinFd = stdinDescriptor;
+    stack mut i32[min max] stdoutFd = stdoutDescriptor;
+    stack mut i32[min max] stderrFd = stderrDescriptor;
+    stack mut u64[0 2 ** 63 - 1] inputOffset = 0;
+    stack mut i64[min max] deadlineMilliseconds = 0;
+    if (timeoutEnabled)
+    {
+        switch (StartTimeoutDeadline(timeoutMilliseconds))
+        {
+            case ProcessResult<i64[min max]>.Err(var error):
+                stack i32[min max] ignoredCloseDeadlineStdin = CloseDescriptorIfOpen(stdinFd);
+                stack i32[min max] ignoredCloseDeadlineStdout = CloseDescriptorIfOpen(stdoutFd);
+                stack i32[min max] ignoredCloseDeadlineStderr = CloseDescriptorIfOpen(stderrFd);
+                return ProcessResult<i32[min max]>.Err(error);
+            case ProcessResult<i64[min max]>.Ok(var value):
+                deadlineMilliseconds = value;
+        }
+    }
+
+    if (stdinOpen && inputLength == 0)
+    {
+        stack i32[min max] ignoredCloseEmptyInput = CloseDescriptorIfOpen(stdinFd);
+        stdinOpen = false;
+        stdinFd = -1;
+    }
+
+    while willexit (stdinOpen || stdoutOpen || stderrOpen)
+    {
+        stack mut i16[min max] stdinEvents = 0;
+        stack mut i16[min max] stdoutEvents = 0;
+        stack mut i16[min max] stderrEvents = 0;
+        stack mut i32[min max] pollTimeoutMilliseconds = -1;
+        if (timeoutEnabled && !output.TimedOut)
+        {
+            pollTimeoutMilliseconds = RemainingTimeoutMilliseconds(deadlineMilliseconds);
+            if (pollTimeoutMilliseconds < 0)
+            {
+                stack i32[min max] ignoredCloseTimeoutStdin = CloseDescriptorIfOpen(stdinFd);
+                stack i32[min max] ignoredCloseTimeoutStdout = CloseDescriptorIfOpen(stdoutFd);
+                stack i32[min max] ignoredCloseTimeoutStderr = CloseDescriptorIfOpen(stderrFd);
+                return ProcessResult<i32[min max]>.Err(ProcessError.Platform(pollTimeoutMilliseconds));
+            }
+
+            if (pollTimeoutMilliseconds == 0)
+            {
+                MarkTimedOutAndKill(processId, output);
+                stack i32[min max] ignoredCloseTimedOutStdin = CloseDescriptorIfOpen(stdinFd);
+                stdinOpen = false;
+                stdinFd = -1;
+                pollTimeoutMilliseconds = -1;
+            }
+        }
+
+        stack i32[min max] pollResult = System.Runtime.Platform.PollProcessIoTimed(
+            stdinFd,
+            stdoutFd,
+            stderrFd,
+            &stdinEvents,
+            &stdoutEvents,
+            &stderrEvents,
+            pollTimeoutMilliseconds);
+        if (pollResult < 0)
+        {
+            stack i32[min max] ignoredClosePollStdin = CloseDescriptorIfOpen(stdinFd);
+            stack i32[min max] ignoredClosePollStdout = CloseDescriptorIfOpen(stdoutFd);
+            stack i32[min max] ignoredClosePollStderr = CloseDescriptorIfOpen(stderrFd);
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(pollResult));
+        }
+
+        if (pollResult == 0)
+        {
+            MarkTimedOutAndKill(processId, output);
+            stack i32[min max] ignoredClosePollTimeoutStdin = CloseDescriptorIfOpen(stdinFd);
+            stdinOpen = false;
+            stdinFd = -1;
+            continue;
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.ProcessPipeReadable(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdinAfterStdoutReadError = CloseDescriptorIfOpen(stdinFd);
+                    stack i32[min max] ignoredCloseStdoutReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutEof = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.ProcessPipeReadable(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdinAfterStderrReadError = CloseDescriptorIfOpen(stdinFd);
+                    stack i32[min max] ignoredCloseStdoutAfterStderrReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrEof = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+
+        if (stdinOpen && System.Runtime.Platform.ProcessPipeClosed(stdinEvents))
+        {
+            stack i32[min max] ignoredCloseStdinHangup = CloseDescriptorIfOpen(stdinFd);
+            stdinOpen = false;
+            stdinFd = -1;
+        }
+
+        if (stdinOpen && System.Runtime.Platform.ProcessPipeWritable(stdinEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> writeResult = WritePipeBytes(stdinFd, inputData, inputLength, inputOffset);
+            switch (writeResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdinWriteError = CloseDescriptorIfOpen(stdinFd);
+                    stack i32[min max] ignoredCloseStdoutAfterStdinWriteError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdinWriteError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdinZeroWrite = CloseDescriptorIfOpen(stdinFd);
+                        stdinOpen = false;
+                        stdinFd = -1;
+                    }
+                    else
+                    {
+                        inputOffset += count;
+                        if (inputOffset >= inputLength)
+                        {
+                            stack i32[min max] ignoredCloseStdinComplete = CloseDescriptorIfOpen(stdinFd);
+                            stdinOpen = false;
+                            stdinFd = -1;
+                        }
+                    }
+            }
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.ProcessPipeClosed(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdinAfterStdoutHangupError = CloseDescriptorIfOpen(stdinFd);
+                    stack i32[min max] ignoredCloseStdoutHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutHangup = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.ProcessPipeClosed(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdinAfterStderrHangupError = CloseDescriptorIfOpen(stdinFd);
+                    stack i32[min max] ignoredCloseStdoutAfterStderrHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrHangup = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+    }
+
+    return WaitProcessAfterCapture(processId, output, timeoutEnabled, deadlineMilliseconds);
+}
 
 public fn i32[min max] CurrentId()
 {
@@ -12,5 +900,714 @@ public fn void Exit(i32[min max] code)
     {
         System.Runtime.Platform.ExitProcess(code);
         return;
+    }
+}
+
+public fn ProcessResult<ProcessCommand> Command(ascii executable)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(executable);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessResult<ProcessCommand>.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+            stack mut ProcessCommand command = new();
+            command.Executable = value;
+            return ProcessResult<ProcessCommand>.Ok(command);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(mut borrow ProcessCommand command)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCapture(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        false,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessStartFailure(startResult);
+    }
+
+    stack mut ProcessOutput output = new();
+    stack ProcessResult<i32[min max]> exitResult = CaptureChildOutput(processId, stdoutDescriptor, stderrDescriptor, output);
+    switch (exitResult)
+    {
+        case ProcessResult<i32[min max]>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<i32[min max]>.Ok(var code):
+            output.ExitCode = code;
+            return ProcessResult<ProcessOutput>.Ok(output);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithTimeout(
+    mut borrow ProcessCommand command,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCapture(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        false,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessStartFailure(startResult);
+    }
+
+    stack mut ProcessOutput output = new();
+    stack ProcessResult<i32[min max]> exitResult = CaptureChildOutputWithTimeout(
+        processId,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        timeoutMilliseconds);
+    switch (exitResult)
+    {
+        case ProcessResult<i32[min max]>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<i32[min max]>.Ok(var code):
+            output.ExitCode = code;
+            return ProcessResult<ProcessOutput>.Ok(output);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInput(mut borrow ProcessCommand command, ascii input)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCapture(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        true,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessStartFailure(startResult);
+    }
+
+    stack mut ProcessOutput output = new();
+    stack ProcessResult<i32[min max]> exitResult = CaptureChildOutputWithInput(
+        processId,
+        stdinDescriptor,
+        input,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output);
+    switch (exitResult)
+    {
+        case ProcessResult<i32[min max]>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<i32[min max]>.Ok(var code):
+            output.ExitCode = code;
+            return ProcessResult<ProcessOutput>.Ok(output);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInputTimeout(
+    mut borrow ProcessCommand command,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCapture(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        true,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessStartFailure(startResult);
+    }
+
+    stack mut ProcessOutput output = new();
+    stack ProcessResult<i32[min max]> exitResult = CaptureChildOutputWithInputTimeout(
+        processId,
+        stdinDescriptor,
+        input,
+        stdoutDescriptor,
+        stderrDescriptor,
+        output,
+        timeoutMilliseconds);
+    switch (exitResult)
+    {
+        case ProcessResult<i32[min max]>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<i32[min max]>.Ok(var code):
+            output.ExitCode = code;
+            return ProcessResult<ProcessOutput>.Ok(output);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(ascii executable)
+{
+    stack ProcessResult<ProcessCommand> commandResult = Command(executable);
+    switch (commandResult)
+    {
+        case ProcessResult<ProcessCommand>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<ProcessCommand>.Ok(var command):
+            stack mut ProcessCommand mutableCommand = command;
+            return RunCapture(mutableCommand);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithTimeout(
+    ascii executable,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack ProcessResult<ProcessCommand> commandResult = Command(executable);
+    switch (commandResult)
+    {
+        case ProcessResult<ProcessCommand>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<ProcessCommand>.Ok(var command):
+            stack mut ProcessCommand mutableCommand = command;
+            return RunCaptureWithTimeout(mutableCommand, timeoutMilliseconds);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInput(ascii executable, ascii input)
+{
+    stack ProcessResult<ProcessCommand> commandResult = Command(executable);
+    switch (commandResult)
+    {
+        case ProcessResult<ProcessCommand>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<ProcessCommand>.Ok(var command):
+            stack mut ProcessCommand mutableCommand = command;
+            return RunCaptureWithInput(mutableCommand, input);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInputTimeout(
+    ascii executable,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack ProcessResult<ProcessCommand> commandResult = Command(executable);
+    switch (commandResult)
+    {
+        case ProcessResult<ProcessCommand>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<ProcessCommand>.Ok(var command):
+            stack mut ProcessCommand mutableCommand = command;
+            return RunCaptureWithInputTimeout(mutableCommand, input, timeoutMilliseconds);
+    }
+}
+
+// A spawned child with piped stdout/stderr, running in its own process group
+// (T30.7 gap surface for the stage1 test driver). Read the pipes with
+// ReadStdoutChunk/ReadStderrChunk (blocking; Ok(0) is end-of-stream), poll or
+// block on the exit with TryWaitExit/WaitExit, end the whole tree with
+// KillTree, and always Close to release the descriptors.
+public struct ChildProcess
+{
+    internal i32[min max] ProcessIdValue;
+    internal i32[min max] StdoutDescriptorValue;
+    internal i32[min max] StderrDescriptorValue;
+
+    ChildProcess()
+    {
+        self.ProcessIdValue = -1;
+        self.StdoutDescriptorValue = -1;
+        self.StderrDescriptorValue = -1;
+    }
+
+    public inline finite law i32[min max] ProcessId(borrow ChildProcess self)
+    {
+        return self.ProcessIdValue;
+    }
+}
+
+// Spawns the command with piped stdout/stderr, placing the child in its own
+// process group so KillTree can end every descendant. Setup failures that the
+// platform reports through shell-convention codes (126/127) surface as
+// ProcessError.Platform with that positive code: no child exists either way.
+public unsafe fn ProcessResult<ChildProcess> Spawn(mut borrow ProcessCommand command)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ChildProcess>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ChildProcess>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCaptureGrouped(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        false,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessResult<ChildProcess>.Err(ProcessError.Platform(startResult));
+    }
+
+    stack mut ChildProcess child = new();
+    child.ProcessIdValue = processId;
+    child.StdoutDescriptorValue = stdoutDescriptor;
+    child.StderrDescriptorValue = stderrDescriptor;
+    return ProcessResult<ChildProcess>.Ok(child);
+}
+
+// Blocking chunk read from the child's stdout pipe, appended to destination.
+// Ok(0) means the pipe reached end-of-stream (child closed its end).
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ReadStdoutChunk(
+    borrow ChildProcess child,
+    mut borrow dynamic i8[min max] destination)
+{
+    return AppendPipeBytes(child.StdoutDescriptorValue, destination);
+}
+
+// Blocking chunk read from the child's stderr pipe, appended to destination.
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ReadStderrChunk(
+    borrow ChildProcess child,
+    mut borrow dynamic i8[min max] destination)
+{
+    return AppendPipeBytes(child.StderrDescriptorValue, destination);
+}
+
+// Non-blocking exit poll: None while the child is still running, Some(code)
+// once it exited.
+public unsafe fn ProcessResult<ProcessOption<i32[min max]>> TryWaitExit(borrow ChildProcess child)
+{
+    stack mut i32[min max] status = 0;
+    stack i32[min max] waitResult = System.Runtime.Platform.WaitProcessNoHang(child.ProcessIdValue, &status);
+    if (waitResult < 0)
+    {
+        return ProcessResult<ProcessOption<i32[min max]>>.Err(ProcessError.Platform(waitResult));
+    }
+
+    if (waitResult == 0)
+    {
+        return ProcessResult<ProcessOption<i32[min max]>>.Ok(ProcessOption<i32[min max]>.None);
+    }
+
+    return ProcessResult<ProcessOption<i32[min max]>>.Ok(ProcessOption<i32[min max]>.Some(DecodeExitStatus(status)));
+}
+
+// Blocking exit wait; returns the decoded exit code.
+public unsafe fn ProcessResult<i32[min max]> WaitExit(borrow ChildProcess child)
+{
+    stack mut i32[min max] status = 0;
+    stack i32[min max] waitResult = System.Runtime.Platform.WaitProcess(child.ProcessIdValue, &status);
+    if (waitResult < 0)
+    {
+        return ProcessResult<i32[min max]>.Err(ProcessError.Platform(waitResult));
+    }
+
+    return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(status));
+}
+
+// Kills the child's whole process group (the child is its own group leader).
+// On Windows this currently terminates only the direct child.
+public unsafe fn ProcessStatus KillTree(borrow ChildProcess child)
+{
+    stack i32[min max] killResult = System.Runtime.Platform.KillProcessGroup(child.ProcessIdValue);
+    if (killResult != 0)
+    {
+        return ProcessStatus.Err(ProcessError.Platform(killResult));
+    }
+
+    return ProcessStatus.Ok;
+}
+
+// Releases the pipe descriptors. Safe to call once after the child exited
+// (or was killed and reaped); double closes are prevented by the -1 reset.
+public unsafe fn ProcessStatus Close(mut borrow ChildProcess child)
+{
+    stack i32[min max] stdoutClose = CloseDescriptorIfOpen(child.StdoutDescriptorValue);
+    child.StdoutDescriptorValue = -1;
+    stack i32[min max] stderrClose = CloseDescriptorIfOpen(child.StderrDescriptorValue);
+    child.StderrDescriptorValue = -1;
+    if (stdoutClose != 0 || stderrClose != 0)
+    {
+        return ProcessStatus.Err(ProcessError.Platform(-1));
+    }
+
+    return ProcessStatus.Ok;
+}
+
+// Polls the child's pipes for readable data (or closure, which a following
+// chunk read observes as end-of-stream). Returns a mask: bit 1 for stdout,
+// bit 2 for stderr, 0 when the timeout elapsed first. A negative timeout
+// blocks indefinitely.
+public unsafe fn ProcessResult<u8[0 3]> PollChildPipes(
+    borrow ChildProcess child,
+    i32[min max] timeoutMilliseconds)
+{
+    stack mut i16[min max] stdoutEvents = 0;
+    stack mut i16[min max] stderrEvents = 0;
+    stack i32[min max] pollResult = System.Runtime.Platform.PollProcessPipesTimed(
+        child.StdoutDescriptorValue,
+        child.StderrDescriptorValue,
+        &stdoutEvents,
+        &stderrEvents,
+        timeoutMilliseconds);
+    if (pollResult < 0)
+    {
+        return ProcessResult<u8[0 3]>.Err(ProcessError.Platform(pollResult));
+    }
+
+    if (pollResult == 0)
+    {
+        return ProcessResult<u8[0 3]>.Ok(0);
+    }
+
+    stack mut u8[0 3] readyMask = 0;
+    if (System.Runtime.Platform.ProcessPipeReadable(stdoutEvents))
+    {
+        readyMask += 1;
+    }
+
+    if (System.Runtime.Platform.ProcessPipeReadable(stderrEvents))
+    {
+        readyMask += 2;
+    }
+
+    return ProcessResult<u8[0 3]>.Ok(readyMask);
+}
+
+// Monotonic elapsed clock for deadline math and progress prefixes (T30.7 gap
+// surface): milliseconds from an arbitrary fixed origin, unaffected by wall
+// clock changes.
+public unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    return System.Runtime.Platform.MonotonicMilliseconds();
+}
+
+public unsafe fn ProcessResult<ProcessOption<System.Text.OwnedAscii>> GetEnvironment(ascii name)
+{
+    stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
+    if (signedNameLength <= 0)
+    {
+        return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(name);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cName):
+            stack rawptr<System.C.c_char> value = System.Runtime.Platform.GetEnvironmentRaw(cName.Data());
+            if (value == null)
+            {
+                return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Ok(ProcessOption<System.Text.OwnedAscii>.None);
+            }
+
+            stack mut u64[0 2 ** 63 - 1] valueLength = 0;
+            while willexit (*(&value[valueLength]) != 0)
+            {
+                valueLength += 1;
+            }
+
+            stack mut rawptr<i8[min max]> valueData = null;
+            if (valueLength > 0)
+            {
+                valueData = (rawptr<i8[min max]>)value;
+            }
+
+            stack System.Memory.MemoryResult<System.Text.OwnedAscii> copied =
+                System.Text.CopyAsciiPointer(valueData, valueLength);
+            switch (copied)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var copyError):
+                    return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(FromMemoryError(copyError));
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var text):
+                    return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Ok(ProcessOption<System.Text.OwnedAscii>.Some(text));
+            }
+    }
+}
+
+public unsafe fn ProcessStatus SetEnvironment(ascii name, ascii value)
+{
+    stack ProcessResult<System.C.OwnedCStr> nameResult = PrepareCString(name);
+    switch (nameResult)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cName):
+            stack ProcessResult<System.C.OwnedCStr> valueResult = PrepareCString(value);
+            switch (valueResult)
+            {
+                case ProcessResult<System.C.OwnedCStr>.Err(var valueError):
+                    return ProcessStatus.Err(valueError);
+                case ProcessResult<System.C.OwnedCStr>.Ok(var cValue):
+                    stack i32[min max] result = System.Runtime.Platform.SetEnvironmentRaw(cName.Data(), cValue.Data());
+                    if (result != 0)
+                    {
+                        return ProcessStatus.Err(ProcessError.Platform(result));
+                    }
+
+                    return ProcessStatus.Ok;
+            }
+    }
+}
+
+public unsafe fn ProcessStatus RemoveEnvironment(ascii name)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(name);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cName):
+            stack i32[min max] result = System.Runtime.Platform.RemoveEnvironmentRaw(cName.Data());
+            if (result != 0)
+            {
+                return ProcessStatus.Err(ProcessError.Platform(result));
+            }
+
+            return ProcessStatus.Ok;
+    }
+}
+
+public fn ProcessResult<System.Text.OwnedAscii> CurrentDirectory()
+{
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = System.IO.Path.CurrentDirectory();
+    switch (result)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return ProcessResult<System.Text.OwnedAscii>.Err(FromMemoryError(error));
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            return ProcessResult<System.Text.OwnedAscii>.Ok(value);
+    }
+}
+
+public unsafe fn ProcessStatus SetCurrentDirectory(ascii path)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(path);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cPath):
+            stack i32[min max] result = System.Runtime.Platform.ChangeCurrentDirectoryRaw(cPath.Data());
+            if (result != 0)
+            {
+                return ProcessStatus.Err(ProcessError.Platform(result));
+            }
+
+            return ProcessStatus.Ok;
+    }
+}
+
+internal unsafe fn ProcessStatus PushArgumentSlice(
+    mut borrow ProcessArguments arguments,
+    borrow i8[min max][] bytes,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack mut rawptr<i8[min max]> data = null;
+    if (length > 0)
+    {
+        data = &bytes[start];
+    }
+
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> copied = System.Text.CopyAsciiPointer(data, length);
+    switch (copied)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return ProcessStatus.Err(FromMemoryError(error));
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            if (!arguments.Items.TryReserve(1))
+            {
+                return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+            }
+
+            init arguments.Items[arguments.Items.Length] = value;
+            return ProcessStatus.Ok;
+    }
+}
+
+public unsafe fn ProcessResult<ProcessArguments> Arguments()
+{
+    stack mut dynamic i8[min max] bytes = new();
+    stack i32[min max] readStatus = System.Runtime.Platform.ReadArgumentsBlock(bytes);
+    if (readStatus != 0)
+    {
+        return ProcessResult<ProcessArguments>.Err(ProcessError.Platform(readStatus));
+    }
+
+    stack mut ProcessArguments arguments = new();
+    stack i8[min max][] slice = bytes[0, bytes.Length];
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < slice.Length; index += 1)
+    {
+        if (slice[index] == 0)
+        {
+            stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])(index - start);
+            stack ProcessStatus status = PushArgumentSlice(arguments, slice, start, length);
+            switch (status)
+            {
+                case ProcessStatus.Err(var pushError):
+                    return ProcessResult<ProcessArguments>.Err(pushError);
+                case ProcessStatus.Ok:
+            }
+
+            start = (u64[0 2 ** 63 - 1])(index + 1);
+        }
+    }
+
+    if (start < slice.Length)
+    {
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])(slice.Length - start);
+        stack ProcessStatus status = PushArgumentSlice(arguments, slice, start, length);
+        switch (status)
+        {
+            case ProcessStatus.Err(var pushError):
+                return ProcessResult<ProcessArguments>.Err(pushError);
+            case ProcessStatus.Ok:
+        }
+    }
+
+    return ProcessResult<ProcessArguments>.Ok(arguments);
+}
+
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ArgumentCount()
+{
+    stack ProcessResult<ProcessArguments> result = Arguments();
+    switch (result)
+    {
+        case ProcessResult<ProcessArguments>.Err(var error):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Err(error);
+        case ProcessResult<ProcessArguments>.Ok(var arguments):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(arguments.Count());
     }
 }

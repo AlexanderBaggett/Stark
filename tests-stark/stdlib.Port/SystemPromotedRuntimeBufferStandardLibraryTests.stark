@@ -1,0 +1,471 @@
+import StdlibPortSupport
+import System.Memory
+import System.Runtime
+import System.Runtime.Buffer
+import System.Testing
+module SystemPromotedRuntimeBufferStandardLibraryTests
+
+// Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferSurfaceCompiles.
+internal fn bool StdLibSourcePromotedRuntimeBufferSurfaceCompilesImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("promoted-runtime-buffer-surface", raw"""
+import System.Runtime
+import System.Runtime.Buffer
+import System.Memory
+module Demo
+
+fn System.Memory.MemoryStatus FillFixed(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
+    i8[min max] value,
+    u64[0 2 ** 63 - 1] count)
+    {
+        return buffer.WriteFill(value, count);
+}
+
+fn System.Memory.MemoryStatus AppendDynamic(
+    mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] count)
+    {
+        return buffer.WriteSlice(source, count);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "System_Runtime_Buffer_FixedByteBuffer512_WriteFill"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "System_Runtime_Buffer_DynamicByteBuffer_WriteSlice"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPaths.
+// PORT-NOTE: The C# original reads the on-disk stdlib module
+// stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
+// Stark port compiles the same source file through the host-test bridge and
+// verifies the disjoint-write fast paths on the same emitted LLVM bodies.
+internal fn bool StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPathsImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-disjoint-write-fast-paths",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii writeSliceBody = LlvmDefinitionBody(llvm, "WriteSliceToStorage");
+    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteSlice");
+
+    if (!Contains(writeSliceBody, "icmp ule ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(dynamicWriteSliceBody, "icmp ule ptr"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpers.
+// PORT-NOTE: The C# original reads the on-disk stdlib module
+// stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
+// Stark port compiles the same source file through the host-test bridge and
+// verifies the tail-region memory-helper expectations on the same bodies.
+internal fn bool StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpersImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-tail-region-memory-helpers",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteSlice");
+    stack ascii dynamicWriteFillBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteFill");
+
+    if (!Contains(dynamicWriteSliceBody, "@__stark_inline_clone_System_Memory_InitializeBytesDisjoint")
+        && !Contains(dynamicWriteSliceBody, "@llvm.memcpy.p0.p0.i64"))
+    {
+        return false;
+    }
+
+    if (!Contains(dynamicWriteFillBody, "@llvm.memset.p0.i64"))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(dynamicWriteFillBody, "@DynamicByteBuffer_WriteByte"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorage.
+// PORT-NOTE: The C# original reads the on-disk stdlib module
+// stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
+// Stark port compiles the same source file through the host-test bridge and
+// verifies inline-storage layouts plus allocation-free fixed-buffer bodies.
+internal fn bool StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorageImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-fixed-inline-storage",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "%FixedByteBuffer512 = type { [512 x i8], i64, i64 }"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "%FixedByteBuffer4096 = type { [4096 x i8], i64, i64 }"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "%FixedByteBuffer8192 = type { [8192 x i8], i64, i64 }"))
+    {
+        return false;
+    }
+
+    if (!FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "WriteSliceToStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "WriteFillToStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "CompactStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_Compact"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_Compact"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_Compact")))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Verifies a single fixed-buffer LLVM body uses only inline storage: no dynamic
+// runtime allocation/reallocation calls and no reference to the heap-backed
+// DynamicByteBuffer. Mirrors the C# DoesNotContain assertions over the joined
+// fixed-buffer bodies.
+internal fn bool FixedBodyIsInlineStorage(ascii body)
+{
+    return DoesNotContain(body, "__stark_dynamic")
+        && DoesNotContain(body, "__stark_runtime_alloc")
+        && DoesNotContain(body, "__stark_runtime_try_alloc")
+        && DoesNotContain(body, "__stark_runtime_realloc")
+        && DoesNotContain(body, "__stark_runtime_try_realloc")
+        && DoesNotContain(body, "DynamicByteBuffer");
+}
+
+// Ported from SystemPromotedRuntimeBufferStandardLibraryTests.SourceStdLibPromotedRuntimeBufferExecutableRuns.
+// PORT-NOTE: The C# original emits a native executable via CompilerCli
+// (--emit-exe), runs it against the shared stdlib package, and asserts the
+// process exits 0 with empty stdout/stderr. The compile-only bridge cannot emit
+// or run a native binary, so the embedded program (which returns 0 from main when
+// every promoted-runtime-buffer invariant holds) is compiled through the host
+// pipeline and the port asserts that it compiles successfully.
+internal fn bool SourceStdLibPromotedRuntimeBufferExecutableRunsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("promoted-runtime-buffer-executable-runs", raw"""
+import System.Runtime.Buffer
+import System.Memory
+module App
+
+fn bool Ok(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool TooLarge(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return false;
+        case MemoryStatus.Err(var error):
+            return error == MemoryError.TooLarge;
+    }
+}
+
+fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count)
+{
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+fn bool WriteFirstWritable(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
+    i8[min max] value,
+    u64[0 2 ** 63 - 1] expectedWritable)
+    {
+        if (buffer.Writable() != expectedWritable)
+    {
+        return false;
+    }
+
+    buffer.WriteSlice()[0] = value;
+    return true;
+}
+
+fn bool IncrementFirstReadable(mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer)
+{
+    if (buffer.Readable() == 0)
+    {
+        return false;
+    }
+
+    buffer.ReadMutableSlice()[0] += 1;
+    return true;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+    stack mut i8[min max][8] source =
+    {
+        1, 2, 3, 4, 5, 6, 7, 8
+    };
+
+    if (fixedBuffer.Capacity() != 512 || !fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512)
+    {
+        return 1;
+    }
+
+    if (!Ok(fixedBuffer.WriteSlice(source, 8)))
+    {
+        return 2;
+    }
+
+    if (fixedBuffer.Readable() != 8 || fixedBuffer.Writable() != 504)
+    {
+        return 3;
+    }
+
+    stack i8[min max][] initial = fixedBuffer.ReadSlice();
+    if (SumBytes(initial, 8) != 36)
+    {
+        return 4;
+    }
+
+    fixedBuffer.AdvanceRead(3);
+    if (fixedBuffer.Readable() != 5)
+    {
+        return 5;
+    }
+
+    fixedBuffer.Compact();
+    if (fixedBuffer.Readable() != 5 || fixedBuffer.Writable() != 507)
+    {
+        return 6;
+    }
+
+    stack i8[min max][] compacted = fixedBuffer.ReadSlice();
+    if (compacted[0] != 4 || compacted[4] != 8)
+    {
+        return 7;
+    }
+
+    if (!Ok(fixedBuffer.WriteFill(9, 507)) || !fixedBuffer.IsFull())
+    {
+        return 8;
+    }
+
+    if (!TooLarge(fixedBuffer.WriteByte(1)))
+    {
+        return 9;
+    }
+
+    fixedBuffer.AdvanceRead(512);
+    if (!fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512)
+    {
+        return 10;
+    }
+
+    if (!Ok(fixedBuffer.WriteFill(5, 4)))
+    {
+        return 11;
+    }
+
+    if (!WriteFirstWritable(fixedBuffer, 6, 508))
+    {
+        return 12;
+    }
+
+    fixedBuffer.AdvanceWrite(1);
+    if (!IncrementFirstReadable(fixedBuffer))
+    {
+        return 13;
+    }
+
+    stack i8[min max][] manual = fixedBuffer.ReadSlice();
+    if (fixedBuffer.Readable() != 5 || manual[0] != 6 || manual[4] != 6)
+    {
+        return 14;
+    }
+
+    stack u64[0 2 ** 63 - 1] aliasedFixedCount = fixedBuffer.Readable();
+    stack i8[min max][] aliasedFixedSource = fixedBuffer.ReadSlice();
+    if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount)))
+    {
+        return 32;
+    }
+
+    stack i8[min max][] duplicatedFixed = fixedBuffer.ReadSlice();
+    if (fixedBuffer.Readable() != 10 || duplicatedFixed[5] != duplicatedFixed[0] || duplicatedFixed[9] != duplicatedFixed[4])
+    {
+        return 33;
+    }
+
+    fixedBuffer.Clear();
+    if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512)
+    {
+        return 15;
+    }
+
+    fixedBuffer.Compact();
+    if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512)
+    {
+        return 34;
+    }
+
+    stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
+    if (!Ok(dynamicBuffer.Reserve(16)) || dynamicBuffer.Capacity() < 16)
+    {
+        return 16;
+    }
+
+    if (!Ok(dynamicBuffer.WriteByte(10)))
+    {
+        return 17;
+    }
+
+    if (!Ok(dynamicBuffer.WriteSlice(source, 8)))
+    {
+        return 18;
+    }
+
+    if (!Ok(dynamicBuffer.WriteFill(2, 4)))
+    {
+        return 19;
+    }
+
+    if (dynamicBuffer.Length() != 13 || dynamicBuffer.Readable() != 13)
+    {
+        return 20;
+    }
+
+    stack mut i8[min max] popped = 0;
+    if (!dynamicBuffer.TryReadByte(popped) || popped != 10)
+    {
+        return 21;
+    }
+
+    dynamicBuffer.AdvanceRead(4);
+    dynamicBuffer.Compact();
+
+    if (dynamicBuffer.Length() != 8 || dynamicBuffer.Readable() != 8)
+    {
+        return 22;
+    }
+
+    stack i8[min max][] remaining = dynamicBuffer.ReadSlice();
+    if (remaining[0] != 5 || remaining[3] != 8 || remaining[7] != 2)
+    {
+        return 23;
+    }
+
+    stack u64[0 2 ** 63 - 1] aliasedDynamicCount = dynamicBuffer.Readable();
+    stack i8[min max][] aliasedDynamicSource = dynamicBuffer.ReadSlice();
+    if (!Ok(dynamicBuffer.WriteSlice(aliasedDynamicSource, aliasedDynamicCount)))
+    {
+        return 30;
+    }
+
+    stack i8[min max][] duplicatedDynamic = dynamicBuffer.ReadSlice();
+    if (dynamicBuffer.Readable() != 16 || duplicatedDynamic[8] != duplicatedDynamic[0] || duplicatedDynamic[15] != duplicatedDynamic[7])
+    {
+        return 31;
+    }
+
+    if (!TooLarge(dynamicBuffer.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))))
+    {
+        return 24;
+    }
+
+    dynamicBuffer.Clear();
+    if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0)
+    {
+        return 25;
+    }
+
+    dynamicBuffer.Compact();
+    if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0)
+    {
+        return 36;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
+    if (!Ok(fixed4096.WriteFill(3, 4096)) || !fixed4096.IsFull())
+    {
+        return 26;
+    }
+
+    fixed4096.Compact();
+    if (!fixed4096.IsFull() || fixed4096.Readable() != 4096)
+    {
+        return 35;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
+    if (!Ok(fixed8192.WriteByte(4)) || fixed8192.Readable() != 1)
+    {
+        return 27;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

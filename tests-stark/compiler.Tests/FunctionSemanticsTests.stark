@@ -1,0 +1,1003 @@
+import CompilerTestSupport
+import System.Memory
+import System.Testing
+import System.Text
+module FunctionSemanticsTests
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold.
+
+// Ported from FunctionSemanticsTests.LawFunctionsRejectPlainFunctionPointerCalls.
+internal fn bool LawFunctionsRejectPlainFunctionPointerCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-law-rejects-plain-fnptr-call",
+        raw"""
+module Demo
+
+unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op)
+{
+    return op();
+}
+""");
+    // A law body may not call a plain function pointer: STK4106 with a message
+    // about law-compatible function pointers.
+    return FailsWithDiagnosticMessage(compiled, "STK4106", "law-compatible function pointers");
+}
+
+// Ported from FunctionSemanticsTests.LawFunctionsRejectPlainClosureCalls.
+internal fn bool LawFunctionsRejectPlainClosureCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-law-rejects-plain-closure-call",
+        raw"""
+module Demo
+
+unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op)
+{
+    return op();
+}
+""");
+    // A law body may not call a plain closure: STK4106 with a message about
+    // law-compatible closures.
+    return FailsWithDiagnosticMessage(compiled, "STK4106", "law-compatible closures");
+}
+
+// Ported from FunctionSemanticsTests.NonCapturingLawLambdaBodiesRejectNonLawCalls.
+internal fn bool NonCapturingLawLambdaBodiesRejectNonLawCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-non-capturing-law-lambda-rejects-non-law-call",
+        raw"""
+module Demo
+
+static i32[min max] Counter = 1;
+
+unsafe fn i32[min max] Impure()
+{
+    return Counter;
+}
+
+unsafe fn void Run()
+{
+    stack fnptr<law i32[min max]()> op = () => Impure();
+    return;
+}
+""");
+    // The law lambda inside Run may only call other laws: STK4106 naming the
+    // synthesized lambda and the "may only call other laws" obligation.
+    return FailsWithDiagnostic(compiled, "STK4106")
+        && AnyDiagnosticMessageContains(compiled, "Run.__lambda_")
+        && AnyDiagnosticMessageContains(compiled, "may only call other laws");
+}
+
+// Ported from FunctionSemanticsTests.RuntimeTextConcatenationPreservesFunctionKindObligations.
+internal fn bool RuntimeTextConcatenationPreservesFunctionKindObligationsImpl()
+{
+    // The C# test supplies virtual System.Memory/System.Text modules. The
+    // Stark port uses the source-tree stdlib through STARK_PATH so the runtime
+    // ConcatAscii call inside a `finite law` reaches semantic validation.
+    stack mut LlvmCompile compiled = CompileSemanticValidateUsingStarkPath(
+        "diagp1-runtime-text-concat-preserves-kind-obligations",
+        raw"""
+import System.Memory
+import System.Text
+module Demo
+
+unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+{
+    return "Score: " + result;
+}
+""");
+    // The runtime concatenation must not be permitted in a `finite law`: STK4106
+    // for the law obligation and STK4107 for the finite obligation.
+    return HasDiagnostic(compiled, "STK4106")
+        && HasDiagnostic(compiled, "STK4107");
+}
+
+// Ported from FunctionSemanticsTests.PureCallsInheritExternallyVisibleSliceWrites.
+internal fn bool PureCallsInheritExternallyVisibleSliceWritesImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-pure-calls-inherit-externally-visible-slice-writes",
+        raw"""
+module Demo
+
+unsafe law void Touch(mut i32[min max][] view)
+{
+    view[0] = 1;
+    return;
+}
+
+unsafe law void Outer(mut i32[min max][] view)
+{
+    Touch(view);
+    return;
+}
+""");
+    // The externally visible slice write in Touch is inherited by the law Outer
+    // through the call: STK4104 naming Touch and the "through call 'Touch'" chain.
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Touch")
+        && AnyDiagnosticMessageContains(compiled, "through call 'Touch'");
+}
+
+// Ported from FunctionSemanticsTests.InstanceMemberFunctionsCannotBeCalledThroughTypeName.
+internal fn bool InstanceMemberFunctionsCannotBeCalledThroughTypeNameImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-instance-member-not-callable-through-type-name",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    unsafe finite law i32[min max] Read(borrow Box self)
+    {
+        return self.Value;
+    }
+}
+
+unsafe fn i32[min max] Read(Box box)
+{
+    return Box.Read(box);
+}
+""");
+    // An instance member function cannot be invoked through the type name:
+    // STK3014 naming Box.Read.
+    return FailsWithDiagnosticMessage(compiled, "STK3014", "Box.Read");
+}
+
+// Ported from FunctionSemanticsTests.StaticMemberFunctionsCannotBeCalledThroughInstance.
+internal fn bool StaticMemberFunctionsCannotBeCalledThroughInstanceImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-static-member-not-callable-through-instance",
+        raw"""
+module Demo
+
+struct Utility
+{
+    static unsafe finite law i32[min max] Value()
+    {
+        return 1;
+    }
+}
+
+unsafe fn i32[min max] Read(Utility utility)
+{
+    return utility.Value();
+}
+""");
+    // A static member function cannot be invoked through an instance: STK3014
+    // naming Utility.Value.
+    return FailsWithDiagnosticMessage(compiled, "STK3014", "Utility.Value");
+}
+
+// Ported from FunctionSemanticsTests.StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions.
+internal fn bool StaticModifierIsRejectedOutsideStructAndRecordMemberFunctionsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-static-modifier-rejected-outside-member",
+        raw"""
+module Demo
+
+static unsafe fn void Bad()
+{
+    return;
+}
+""");
+    // The `static` modifier is only valid on struct/record member functions:
+    // STK4115.
+    return FailsWithDiagnostic(compiled, "STK4115");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites.
+internal fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWritesImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-law-bodies-reject-external-state-alloc-and-writes",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+unsafe law i32[min max] ReadGlobal()
+{
+    return Counter;
+}
+
+unsafe law void Allocate()
+{
+    heap i32[min max] value = 0;
+    return;
+}
+
+unsafe law void WriteGlobal()
+{
+    Counter = 1;
+    return;
+}
+""");
+    // Three distinct law-body violations: observing mutable external state
+    // (STK4105, ReadGlobal), heap allocation (STK4102, Allocate), and an
+    // externally visible write (STK4104, WriteGlobal).
+    return FailsWithDiagnostic(compiled, "STK4105")
+        && AnyDiagnosticMessageContains(compiled, "ReadGlobal")
+        && HasDiagnostic(compiled, "STK4102")
+        && AnyDiagnosticMessageContains(compiled, "Allocate")
+        && HasDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "WriteGlobal");
+}
+
+internal fn bool LawBodiesRejectArenaStorageSelectorAllocationImpl()
+{
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-law-bodies-reject-arena-selector-allocation",
+        raw"""
+module Demo
+
+unsafe law u64[0 max] Bad()
+{
+    stack mut dynamic i32[min max] values = new(arena, 4);
+    return values.Length;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK4102", "new(arena");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffects.
+internal fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-law-bodies-reject-implicit-drop-effects",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+struct Resource
+{
+    drop
+    {
+        Counter = Counter + 1;
+    }
+}
+
+unsafe law void Bad()
+{
+    stack Resource resource = new Resource();
+    return;
+}
+""");
+    // The implicit drop of Resource has an externally visible effect, so the law
+    // Bad is rejected: STK4104 naming Bad and "dropping 'Resource'".
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Bad")
+        && AnyDiagnosticMessageContains(compiled, "dropping 'Resource'");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls.
+internal fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-law-bodies-reject-implicit-drop-effects-through-dtor-calls",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn void Bump()
+{
+    Counter = Counter + 1;
+    return;
+}
+
+struct Resource
+{
+    drop
+    {
+        Bump();
+    }
+}
+
+unsafe law void Bad()
+{
+    stack Resource resource = new Resource();
+    return;
+}
+""");
+    // The implicit drop of Resource calls Bump, whose visible write makes the law
+    // Bad's drop externally visible: STK4104 naming Bad and "dropping 'Resource'".
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Bad")
+        && AnyDiagnosticMessageContains(compiled, "dropping 'Resource'");
+}
+
+// Ported from FunctionSemanticsTests.MemberFunctionVisibilityCannotExceedEnclosingTypeVisibility.
+internal fn bool MemberFunctionVisibilityCannotExceedEnclosingTypeVisibilityImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-member-visibility-cannot-exceed-enclosing-type",
+        raw"""
+module Demo
+
+internal struct Hidden
+{
+    public unsafe fn void Leak()
+    {
+        return;
+    }
+}
+""");
+    // A public member cannot widen the visibility of its internal enclosing
+    // struct: STK4116 naming Hidden.Leak.
+    return FailsWithDiagnosticMessage(compiled, "STK4116", "Hidden.Leak");
+}
+
+// Ported from FunctionSemanticsTests.ExportMemberFunctionsRequireExportEnclosingTypes.
+internal fn bool ExportMemberFunctionsRequireExportEnclosingTypesImpl()
+{
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
+        "diagp1-export-member-requires-export-enclosing-type",
+        raw"""
+module Demo
+
+public struct Api
+{
+    export unsafe fn void AbiVisible()
+    {
+        return;
+    }
+}
+""");
+    // An export member requires an export enclosing struct (public is not enough):
+    // STK4116 naming Api.AbiVisible.
+    return FailsWithDiagnosticMessage(compiled, "STK4116", "Api.AbiVisible");
+}
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+//
+// PORT-NOTE: every C# original here asserts on the SemanticValidationModel
+// artifact (per-function MemoryEffects flags, per-parameter facts such as
+// IsMemoryBacked / GuaranteedNonNull / GuaranteedReadOnly / GuaranteedNoAlias /
+// DereferenceableBytes / AlignmentBytes / CaptureKind / Reads / Writes, and the
+// per-call argument writes). The Stark host test protocol cannot read the
+// SemanticValidation artifact's structured fields; the helpers only expose
+// Succeeds / diagnostics / LLVM / MIR text. Each embedded program is therefore
+// routed through CompileTypeCheck (which runs the semantic-validate pass) and the
+// structured-fact assertions are reduced to the original `Assert.True(Succeeded)`
+// gate: the program must type-check and pass semantic validation. The specific
+// fact reduced is named per test below.
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures.
+internal fn bool SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCapturesImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts echo.MemoryEffects.CapturesArgumentMemory,
+        // and the single `value` parameter facts: IsMemoryBacked, GuaranteedNonNull,
+        // GuaranteedReadOnly, DereferenceableBytes==4, AlignmentBytes==4,
+        // CaptureKind==Return. Helpers cannot read these structured facts, so this
+        // is reduced to Succeeds (program type-checks + passes semantic-validate).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-param-guarantees-return-captures",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn retborrow Box Echo(retborrow Box value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregates.
+internal fn bool SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregatesImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts the single `pair` parameter facts:
+        // IsMemoryBacked, GuaranteedNonNull, DereferenceableBytes==8 (i8 + pad +
+        // i32), AlignmentBytes==4. Helpers cannot read layout facts, so reduced to
+        // Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-padded-aggregate-layout",
+            raw"""
+module Demo
+
+struct Pair
+{
+    i8[min max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn void Inspect(borrow Pair pair)
+{
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts.
+internal fn bool DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFactsImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts both `left` and `right` parameters of
+        // TouchDefault and TouchSecondDefault have GuaranteedNoAlias==true (default
+        // non-overlap contract). Helpers cannot read the no-alias fact, so reduced
+        // to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-default-nonoverlap-noalias",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFacts.
+internal fn bool DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFactsImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts TouchDefault params GuaranteedNoAlias==true,
+        // and TouchOverlap (where overlap(left,right)) and TouchSame (where
+        // same(left,right)) params GuaranteedNoAlias==false. Helpers cannot read the
+        // no-alias fact, so reduced to Succeeds (program type-checks + passes
+        // semantic-validate including the overlap/same where-contracts).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-overlap-same-noalias",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.ConstParameterQualifierFlowsIntoSemanticReadonlyFacts.
+internal fn bool ConstParameterQualifierFlowsIntoSemanticReadonlyFactsImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts the single `ptr` parameter has
+        // GuaranteedReadOnly==true (from the `const` qualifier). Helpers cannot read
+        // the readonly fact, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-const-param-readonly",
+            raw"""
+module Demo
+
+unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+{
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.TransitiveCallEffectsFlowIntoSemanticSummaries.
+internal fn bool TransitiveCallEffectsFlowIntoSemanticSummariesImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts Outer.MemoryEffects.WritesArgumentMemory,
+        // its single `box` parameter Writes==true, and the single recorded call to
+        // "Touch" with its single argument mapping box->box and Writes==true
+        // (transitive call effect). Helpers cannot read memory effects or the call
+        // table, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-transitive-call-effects",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void Touch(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+
+unsafe fn void Outer(borrow mut Box box)
+{
+    Touch(box);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesDistinguishArgumentAndOtherMemory.
+internal fn bool SemanticValidationSummariesDistinguishArgumentAndOtherMemoryImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts ReadGlobal.MemoryEffects ReadsOtherMemory==
+        // true, WritesOtherMemory==false, ReadsArgumentMemory==false; and TouchArg
+        // .MemoryEffects WritesArgumentMemory==true, ReadsOtherMemory==false,
+        // WritesOtherMemory==false (argument vs other-memory distinction). Helpers
+        // cannot read memory-effect flags, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-distinguish-arg-other-memory",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn i32[min max] ReadGlobal()
+{
+    return Counter;
+}
+
+unsafe fn void TouchArg(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorState.
+internal fn bool SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorStateImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts that the extern declarations Allocate,
+        // Reallocate and Free each have MemoryEffects with ReadsOtherMemory==true and
+        // WritesOtherMemory==true (allocator state). Helpers cannot read memory
+        // effects, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-allocator-state",
+            raw"""
+module System.Memory
+
+public struct Allocator
+{
+    u8[0 127] Kind;
+}
+
+internal struct Allocation
+{
+    rawmutptr<i8[min max]> Pointer;
+    u64[0 2 ** 63 - 1] ByteLength;
+    u64[1 2 ** 63 - 1] Alignment;
+    Allocator Allocator;
+}
+
+internal unsafe fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal unsafe fn void Free(Allocation allocation);
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemory.
+internal fn bool DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemoryImpl()
+{
+    {
+        // PORT-NOTE: reduced. C# asserts that Reserve and Append each have
+        // MemoryEffects with ReadsArgumentMemory==true and WritesArgumentMemory==
+        // true, and that each single `values` parameter has Reads==true and
+        // Writes==true (dynamic storage ops on a borrowed parameter write argument
+        // memory). Helpers cannot read memory effects or parameter facts, so reduced
+        // to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-dynamic-storage-writes-arg",
+            raw"""
+module Demo
+
+unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+{
+    return values.TryReserve(8);
+}
+
+unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+{
+    if (!values.TryReserve(1))
+    {
+        return false;
+    }
+
+    init values[values.Length] = 1;
+    return true;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+// The Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the helpers
+// cannot express (SyntaxModel declaration-visibility introspection) that were
+// reduced to the nearest signal.
+
+// Ported from FunctionSemanticsTests.MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExport.
+internal fn bool MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExportImpl()
+{
+    {
+        // PORT-NOTE: beyond result.Succeeded, the original probes the SyntaxModel
+        // declarations to confirm member-function visibility inheritance/narrowing:
+        // "Api.SourceVisible" is Public, "Api.RuntimeOnly" is Internal, and
+        // "Api.AbiVisible" is Export. SyntaxModel declaration-visibility access is not
+        // expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "function-semantics-member-visibility-inherits-narrows-avoids-export",
+            raw"""
+module Demo
+
+export struct Api
+{
+    unsafe fn void SourceVisible()
+    {
+        return;
+    }
+
+    internal unsafe fn void RuntimeOnly()
+    {
+        return;
+    }
+
+    export unsafe fn void AbiVisible()
+    {
+        return;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the helpers
+// cannot express (SemanticValidationModel / TypeCheckModel probes -- declared
+// and effective function kinds, CanStrengthenKind, per-function lambda
+// summaries, IsStatic) that were reduced to the nearest signal.
+
+// Ported from FunctionSemanticsTests.PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthened.
+internal fn bool PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthenedImpl()
+{
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel: Add (DeclaredKind == Fn, EffectiveKind ==
+        // FiniteLaw, CanStrengthenKind) and Touch (DeclaredKind == Fn,
+        // EffectiveKind == Finite, CanStrengthenKind). Declared/effective
+        // function-kind facts are not expressible via the compile helpers, so
+        // this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-plain-fns-report-effective-kinds",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn void Touch(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKinds.
+internal fn bool PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKindsImpl()
+{
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for Count (DeclaredKind == Fn, EffectiveKind ==
+        // FiniteLaw, CanStrengthenKind). Declared/effective function-kind facts
+        // are not expressible via the compile helpers, so this reduces to "the
+        // embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-plain-fns-willexit-strengthen-finite",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Count()
+{
+    stack mut i32[min max] value = 0;
+
+    while willexit (value < 3)
+    {
+        value += 1;
+    }
+
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FunctionKindObligationsAllowMatchingFunctionPointerCalls.
+internal fn bool FunctionKindObligationsAllowMatchingFunctionPointerCallsImpl()
+{
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the DeclaredKind of UseFinite (Finite),
+        // UseLaw (Law), and UseStrict (FiniteLaw). Declared function-kind facts
+        // are not expressible via the compile helpers, so this reduces to "the
+        // embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fn-kind-obligations-fnptr-calls",
+            raw"""
+module Demo
+
+unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op)
+{
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FunctionKindObligationsAllowMatchingClosureCalls.
+internal fn bool FunctionKindObligationsAllowMatchingClosureCallsImpl()
+{
+    {
+        // PORT-NOTE: the original compiles with StopAfterPassId
+        // "semantic-validate", asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the DeclaredKind of UseFinite (Finite),
+        // UseLaw (Law), and UseStrict (FiniteLaw). The stop-after pass selector
+        // maps to CompileTypeCheck (stops after type/semantic checking); the
+        // declared function-kind facts are not expressible via the compile
+        // helpers, so this reduces to "the embedded program type-checks
+        // successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fn-kind-obligations-closure-calls",
+            raw"""
+module Demo
+
+unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op)
+{
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.NonCapturingLawLambdasGetSeparateSemanticSummaries.
+internal fn bool NonCapturingLawLambdasGetSeparateSemanticSummariesImpl()
+{
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the single function whose Name starts with
+        // "Run.__lambda_", checking DeclaredKind == Law and EffectiveKind is Law
+        // or FiniteLaw. Per-lambda semantic summaries are not expressible via the
+        // compile helpers, so this reduces to "the embedded program type-checks
+        // successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-noncapturing-law-lambdas-summaries",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Pure()
+{
+    return 1;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<law i32[min max]()> op = () => Pure();
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.LawsCanCallPlainFnsThatInferAsLaws.
+internal fn bool LawsCanCallPlainFnsThatInferAsLawsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-laws-call-plain-fns-infer-laws",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe law i32[min max] Use()
+{
+    return Add(1, 2);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FiniteFunctionsCanCallPlainFnsThatInferAsFinite.
+internal fn bool FiniteFunctionsCanCallPlainFnsThatInferAsFiniteImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-finite-fns-call-plain-fns-infer-finite",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Step(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe finite i32[min max] Use(i32[min max] value)
+{
+    return Step(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.StaticMemberFunctionsTypeCheckAndPreserveFunctionKinds.
+internal fn bool StaticMemberFunctionsTypeCheckAndPreserveFunctionKindsImpl()
+{
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // TypeCheckModel (Functions["Allocator.Default"].IsStatic) and the
+        // SemanticValidationModel (Allocator.Default DeclaredKind == FiniteLaw
+        // and EffectiveKind == FiniteLaw). IsStatic and declared/effective
+        // function-kind facts are not expressible via the compile helpers, so
+        // this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-static-member-fns-preserve-kinds",
+            raw"""
+module Demo
+
+struct Allocator
+{
+    static unsafe finite law Allocator Default()
+    {
+        return new();
+    }
+
+    unsafe finite law bool IsDefault(borrow Allocator self)
+    {
+        return true;
+    }
+}
+
+unsafe fn Allocator UseDefault()
+{
+    return Allocator.Default();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValue.
+internal fn bool LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValueImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-law-bodies-allow-self-mutating-drop",
+            raw"""
+module Demo
+
+struct Resource
+{
+    i32[min max] Value;
+
+    mut drop
+    {
+        self.Value = 0;
+    }
+}
+
+unsafe law void Good()
+{
+    stack Resource resource = new Resource()
+    {
+        Value = 1
+    };
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

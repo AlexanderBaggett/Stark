@@ -1,0 +1,322 @@
+import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+import Compiler.Mir.PackageImage.Builder.OwnedModuleSelection
+import Compiler.Mir.PackageImage.Builder.PackageImageBuilder
+import Compiler.Mir.PackageImage.Loader.CompilerLayoutNativeFactsLoader
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Memory
+import System.Text
+module PackageOwnershipTests
+
+public fn bool Stage1OwnedPackageBoundaryKeepsVendorFamilyAndDependencyIdentities()
+{
+    stack ascii systemApi =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    stack ascii systemContent =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    stack ascii raymathApi =
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    stack ascii raymathContent =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    stack mut LogicalPackageModuleOwnershipGraph graph = new();
+    stack mut u32[0 max] root = 0;
+    stack mut u32[0 max] core = 0;
+    stack mut u32[0 max] siblingSource = 0;
+    stack mut u32[0 max] unrelatedSource = 0;
+    stack mut u32[0 max] systemBits = 0;
+    stack mut u32[0 max] systemText = 0;
+    stack mut u32[0 max] raymathPackage = 0;
+    if (AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Vendor.Raylib",
+            "/repo/vendor/src/Vendor/Raylib.stark",
+            true,
+            root) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Vendor.Raylib.Core",
+            "/repo/vendor/templates/Vendor/Raylib/Core.stark",
+            false,
+            core) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Vendor.Raymath.Source",
+            "/repo/vendor/src/Vendor/Raymath/Source.stark",
+            true,
+            siblingSource) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Helper",
+            "/repo/vendor/src/Helper.stark",
+            true,
+            unrelatedSource) != MemoryStatus.Ok
+        || AddLogicalPackageDependencyModuleCandidate(
+            graph,
+            "System.BitOperations",
+            "System",
+            systemApi,
+            systemContent,
+            systemBits) != MemoryStatus.Ok
+        || AddLogicalPackageDependencyModuleCandidate(
+            graph,
+            "System.Text",
+            "System",
+            systemApi,
+            systemContent,
+            systemText) != MemoryStatus.Ok
+        || AddLogicalPackageDependencyModuleCandidate(
+            graph,
+            "Vendor.Raymath",
+            "Vendor.Raymath",
+            raymathApi,
+            raymathContent,
+            raymathPackage) != MemoryStatus.Ok
+        || !AddLogicalPackageModuleImport(graph, root, core)
+        || !AddLogicalPackageModuleImport(graph, root, siblingSource)
+        || !AddLogicalPackageModuleImport(graph, root, unrelatedSource)
+        || !AddLogicalPackageModuleImport(graph, root, systemBits)
+        || !AddLogicalPackageModuleImport(graph, root, raymathPackage)
+        || !AddLogicalPackageModuleImport(graph, core, systemText))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageOwnedModuleSelection selection = new();
+    if (BuildLogicalPackageOwnedModuleSelection(selection, graph, "Vendor.Raylib")
+            != LogicalPackageOwnedModuleSelectionStatus.Ok
+        || selection.ModuleCount() != 2
+        || selection.DependencyCount() != 2
+        || !graph.ModuleNameEqualsAt(selection.ModuleIndexAt(0), "Vendor.Raylib")
+        || !graph.ModuleNameEqualsAt(selection.ModuleIndexAt(1), "Vendor.Raylib.Core"))
+    {
+        return false;
+    }
+
+    stack u32[0 max] systemDependency = selection.DependencyModuleIndexAt(0);
+    stack u32[0 max] raymathDependency = selection.DependencyModuleIndexAt(1);
+    if (!graph.PackageIdEqualsAt(systemDependency, "System")
+        || !graph.ApiHashEqualsAt(systemDependency, systemApi)
+        || !graph.ContentHashEqualsAt(systemDependency, systemContent)
+        || !graph.PackageIdEqualsAt(raymathDependency, "Vendor.Raymath")
+        || !graph.ApiHashEqualsAt(raymathDependency, raymathApi)
+        || !graph.ContentHashEqualsAt(raymathDependency, raymathContent))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageImageBuilder packageBuilder = new();
+    if (!packageBuilder.SetRootModule("Vendor.Raylib")
+        || !packageBuilder.SetLibraryFileName("libVendor.Raylib.a")
+        || !packageBuilder.SetBuildProfile("release")
+        || !packageBuilder.SetTargetTriple("arm64-apple-macosx26.0.0")
+        || !packageBuilder.SetTargetDataLayout("e-m:o-p:64:64-i64:64-n32:64-S128")
+        || !packageBuilder.SetTargetCpu("apple-m2")
+        || !packageBuilder.SetRelocationModel("pic")
+        || !packageBuilder.SetCodeModel("small")
+        || !packageBuilder.SetCDataModel("lp64", true, 64, 64, 64, 64)
+        || !packageBuilder.SetAggregatePointerLayout(8, 8))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageManifestJsonBuilder manifestBuilder = new();
+    stack mut u32[0 max] raylibLibraryRow = 0;
+    stack mut u32[0 max] mathLibraryRow = 0;
+    stack mut u32[0 max] frameworkRow = 0;
+    stack mut u32[0 max] cocoaRow = 0;
+    stack mut u32[0 max] linkageRow = 0;
+    stack mut u32[0 max] symbolRow = 0;
+    if (!AddLogicalPackageOwnedModuleShells(manifestBuilder, graph, selection)
+        || manifestBuilder.ModuleCount() != 2
+        || !manifestBuilder.AddSourceSurfaceImport(0, "System.BitOperations", false)
+        || !manifestBuilder.AddSourceSurfaceImport(0, "Vendor.Raymath", false)
+        || !manifestBuilder.AddSourceSurfaceImport(0, "Vendor.Raylib.Core", true)
+        || !manifestBuilder.AddNativeDependency(
+            LogicalPackageNativeDependencyKind.Library,
+            "raylib",
+            raylibLibraryRow)
+        || !manifestBuilder.AddNativeDependency(
+            LogicalPackageNativeDependencyKind.Library,
+            "m",
+            mathLibraryRow)
+        || !manifestBuilder.AddNativeDependency(
+            LogicalPackageNativeDependencyKind.LinkArgument,
+            "-framework",
+            frameworkRow)
+        || !manifestBuilder.AddNativeDependency(
+            LogicalPackageNativeDependencyKind.LinkArgument,
+            "Cocoa",
+            cocoaRow)
+        || !manifestBuilder.AddCompilerFactLinkage(0, "Vendor.Raylib.o", linkageRow)
+        || !manifestBuilder.AddCompilerFactLinkageDefinedSymbol(
+            linkageRow,
+            "Vendor.Raylib.main",
+            symbolRow))
+    {
+        return false;
+    }
+
+    stack mut JsonWriter writer = new();
+    stack mut LogicalPackageNativeMetadataFactGraph nativeGraph = new();
+    unsafe
+    {
+        switch (WriteLogicalPackageManifestJson(writer, packageBuilder, manifestBuilder))
+        {
+            case JsonStatus.Err(var writeError):
+                return false;
+            case JsonStatus.Ok:
+        }
+
+        stack ascii manifestJson = writer.View();
+        if (!Contains(manifestJson, "\"Triple\":\"arm64-apple-macosx26.0.0\"")
+            || !Contains(manifestJson, "\"Cpu\":\"apple-m2\"")
+            || !TryMaterializeLogicalPackageNativeMetadataFactJsonGraph(
+                manifestJson,
+                0,
+                nativeGraph))
+        {
+            return false;
+        }
+    }
+
+    stack LogicalPackageNativeDependencyRow raylib = nativeGraph.NativeDependencyRowAt(1);
+    stack LogicalPackageNativeDependencyRow math = nativeGraph.NativeDependencyRowAt(2);
+    stack LogicalPackageNativeDependencyRow framework = nativeGraph.NativeDependencyRowAt(3);
+    stack LogicalPackageNativeDependencyRow cocoa = nativeGraph.NativeDependencyRowAt(4);
+    stack LogicalPackageLinkageRow linkage = nativeGraph.LinkageRowAt(1);
+    stack LogicalPackageNativeMetadataFactTextRow raylibTextRow =
+        nativeGraph.TextRowAt(raylib.TextRow());
+    stack LogicalPackageNativeMetadataFactTextRow mathTextRow =
+        nativeGraph.TextRowAt(math.TextRow());
+    stack LogicalPackageNativeMetadataFactTextRow frameworkTextRow =
+        nativeGraph.TextRowAt(framework.TextRow());
+    stack LogicalPackageNativeMetadataFactTextRow cocoaTextRow =
+        nativeGraph.TextRowAt(cocoa.TextRow());
+    stack mut OwnedAscii raylibText = new();
+    stack mut OwnedAscii mathText = new();
+    stack mut OwnedAscii frameworkText = new();
+    stack mut OwnedAscii cocoaText = new();
+    return nativeGraph.NativeDependencyRowCount() == 4
+        && nativeGraph.LinkageRowCount() == 1
+        && raylib.Kind() == LogicalPackageNativeDependencyKind.Library
+        && raylib.DependencyOrdinal() == 0
+        && math.Kind() == LogicalPackageNativeDependencyKind.Library
+        && math.DependencyOrdinal() == 1
+        && framework.Kind() == LogicalPackageNativeDependencyKind.LinkArgument
+        && framework.DependencyOrdinal() == 0
+        && cocoa.Kind() == LogicalPackageNativeDependencyKind.LinkArgument
+        && cocoa.DependencyOrdinal() == 1
+        && linkage.ModuleOrdinal() == 0
+        && AppendLogicalPackageNativeMetadataFactText(
+            nativeGraph,
+            raylibTextRow,
+            raylibText) == MemoryStatus.Ok
+        && AppendLogicalPackageNativeMetadataFactText(
+            nativeGraph,
+            mathTextRow,
+            mathText) == MemoryStatus.Ok
+        && AppendLogicalPackageNativeMetadataFactText(
+            nativeGraph,
+            frameworkTextRow,
+            frameworkText) == MemoryStatus.Ok
+        && AppendLogicalPackageNativeMetadataFactText(
+            nativeGraph,
+            cocoaTextRow,
+            cocoaText) == MemoryStatus.Ok
+        && OwnedAsciiEqualsAscii(raylibText, "raylib")
+        && OwnedAsciiEqualsAscii(mathText, "m")
+        && OwnedAsciiEqualsAscii(frameworkText, "-framework")
+        && OwnedAsciiEqualsAscii(cocoaText, "Cocoa");
+}
+
+public fn bool Stage1OwnedPackageBoundaryKeepsFlatSourceRootAndRejectsIdentityConflict()
+{
+    stack mut LogicalPackageModuleOwnershipGraph graph = new();
+    stack mut u32[0 max] facade = 0;
+    stack mut u32[0 max] math = 0;
+    stack mut u32[0 max] privateHelper = 0;
+    stack mut u32[0 max] dependency = 0;
+    if (AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Facade",
+            "/repo/package/Facade.stark",
+            true,
+            facade) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Math",
+            "/repo/package/Math.stark",
+            true,
+            math) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "PrivateHelper",
+            "/repo/package/PrivateHelper.stark",
+            false,
+            privateHelper) != MemoryStatus.Ok
+        || AddLogicalPackageSourceModuleCandidate(
+            graph,
+            "Dependency",
+            "/repo/dependency/Dependency.stark",
+            true,
+            dependency) != MemoryStatus.Ok
+        || !AddLogicalPackageModuleImport(graph, facade, privateHelper)
+        || !AddLogicalPackageModuleImport(graph, facade, dependency))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageOwnedModuleSelection selection = new();
+    if (BuildLogicalPackageOwnedModuleSelection(selection, graph, "Facade")
+            != LogicalPackageOwnedModuleSelectionStatus.Ok
+        || selection.ModuleCount() != 3
+        || selection.DependencyCount() != 0
+        || !graph.ModuleNameEqualsAt(selection.ModuleIndexAt(0), "Facade")
+        || !graph.ModuleNameEqualsAt(selection.ModuleIndexAt(1), "Math")
+        || !graph.ModuleNameEqualsAt(selection.ModuleIndexAt(2), "PrivateHelper"))
+    {
+        return false;
+    }
+
+    stack ascii apiHash =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    stack ascii firstContent =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    stack ascii secondContent =
+        "3333333333333333333333333333333333333333333333333333333333333333";
+    stack mut LogicalPackageModuleOwnershipGraph conflicting = new();
+    stack mut u32[0 max] root = 0;
+    stack mut u32[0 max] systemA = 0;
+    stack mut u32[0 max] systemB = 0;
+    if (AddLogicalPackageSourceModuleCandidate(
+            conflicting,
+            "Consumer",
+            "/repo/consumer/Consumer.stark",
+            true,
+            root) != MemoryStatus.Ok
+        || AddLogicalPackageDependencyModuleCandidate(
+            conflicting,
+            "System.A",
+            "System",
+            apiHash,
+            firstContent,
+            systemA) != MemoryStatus.Ok
+        || AddLogicalPackageDependencyModuleCandidate(
+            conflicting,
+            "System.B",
+            "System",
+            apiHash,
+            secondContent,
+            systemB) != MemoryStatus.Ok
+        || !AddLogicalPackageModuleImport(conflicting, root, systemA)
+        || !AddLogicalPackageModuleImport(conflicting, root, systemB))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageOwnedModuleSelection rejected = new();
+    return BuildLogicalPackageOwnedModuleSelection(rejected, conflicting, "Consumer")
+            == LogicalPackageOwnedModuleSelectionStatus.ConflictingDependencyIdentity
+        && rejected.ModuleCount() == 0
+        && rejected.DependencyCount() == 0;
+}

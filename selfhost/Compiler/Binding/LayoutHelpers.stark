@@ -1,0 +1,773 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Declarations
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import System.Text
+module Compiler.Binding.LayoutHelpers
+
+internal enum LayoutControlKind
+{
+    Auto,
+    C,
+    Explicit,
+}
+
+internal finite law bool LayoutAttributeNameMatches(ascii source, borrow TokenStream stream, u32[0 max] token, ascii name)
+    where overlap(source, stream)
+{
+    return stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Identifier
+        && TokenTextEquals(source, stream, token, name);
+}
+
+internal fn u32[0 max] LayoutAttributeNameCount(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd, ascii name)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (LayoutAttributeNameMatches(source, stream, scan, name))
+        {
+            count = (u32[0 max])(count + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal fn u32[0 max] LayoutAttributeNameToken(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd, ascii name)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (LayoutAttributeNameMatches(source, stream, scan, name))
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] LayoutAttributeArgumentToken(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd, ascii name)
+    where overlap(source, stream)
+{
+    stack u32[0 max] nameToken = LayoutAttributeNameToken(source, stream, attrStart, attrEnd, name);
+    if (nameToken != 0
+        && (u32[0 max])(nameToken + 3) <= attrEnd
+        && stream.KindAt((u64[0 2 ** 63 - 1])(nameToken + 1)) == TokenKind.LParen
+        && stream.KindAt((u64[0 2 ** 63 - 1])(nameToken + 3)) == TokenKind.RParen)
+    {
+        return (u32[0 max])(nameToken + 2);
+    }
+
+    return 0;
+}
+
+internal fn bool LayoutTryParseU64Literal(ascii source, borrow TokenStream stream, u32[0 max] token, out u64[0 max] value)
+    where overlap(source, stream)
+{
+    value = 0;
+    if (token == 0 || stream.KindAt((u64[0 2 ** 63 - 1])token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack ascii text = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.ParseU64Ascii(text))
+    {
+        case System.Text.TextResult<u64[0 max]>.Err(var parseError):
+            return false;
+        case System.Text.TextResult<u64[0 max]>.Ok(var parsed):
+            value = parsed;
+            return true;
+    }
+}
+
+internal fn bool LayoutTryParseU32Literal(ascii source, borrow TokenStream stream, u32[0 max] token, out u32[0 max] value)
+    where overlap(source, stream)
+{
+    value = 0;
+    stack mut u64[0 max] raw = 0;
+    if (!LayoutTryParseU64Literal(source, stream, token, raw)
+        || raw > (u64[0 max])4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])raw;
+    return true;
+}
+
+internal finite law bool LayoutValueIsPowerOfTwo(u64[0 max] value)
+{
+    return value > 0 && (value & (u64[0 max])(value - 1)) == 0;
+}
+
+internal fn bool LayoutAttributeHasPowerOfTwoLiteral(ascii source, borrow TokenStream stream, u32[0 max] token)
+    where overlap(source, stream)
+{
+    stack mut u64[0 max] value = 0;
+    return LayoutTryParseU64Literal(source, stream, token, value)
+        && LayoutValueIsPowerOfTwo(value);
+}
+
+internal fn bool LayoutAttributeHasNonNegativeIntegerLiteral(ascii source, borrow TokenStream stream, u32[0 max] token)
+    where overlap(source, stream)
+{
+    stack mut u64[0 max] value = 0;
+    return LayoutTryParseU64Literal(source, stream, token, value);
+}
+
+internal fn LayoutControlKind LayoutKindFromArgument(ascii source, borrow TokenStream stream, u32[0 max] token)
+    where overlap(source, stream)
+{
+    if (token != 0 && stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Identifier)
+    {
+        if (TokenTextEquals(source, stream, token, "C"))
+        {
+            return LayoutControlKind.C;
+        }
+
+        if (TokenTextEquals(source, stream, token, "Explicit"))
+        {
+            return LayoutControlKind.Explicit;
+        }
+    }
+
+    return LayoutControlKind.Auto;
+}
+
+internal fn u32[0 max] LayoutDeclarationAttributeU32Value(DeclItem item, ascii source, borrow TokenStream stream, ascii name)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] value = 0;
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return value;
+        }
+
+        stack u32[0 max] argToken = LayoutAttributeArgumentToken(source, stream, scan, attrEnd, name);
+        stack mut u32[0 max] parsed = 0;
+        if (LayoutTryParseU32Literal(source, stream, argToken, parsed))
+        {
+            value = parsed;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return value;
+}
+
+internal fn LayoutControlKind LayoutDeclarationLayoutKind(DeclItem item, ascii source, borrow TokenStream stream)
+    where overlap(source, stream)
+{
+    stack mut LayoutControlKind layoutKind = LayoutControlKind.Auto;
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return layoutKind;
+        }
+
+        if (LayoutAttributeNameCount(source, stream, scan, attrEnd, "StructLayout") > 0)
+        {
+            layoutKind = LayoutKindFromArgument(source, stream, LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "StructLayout"));
+            return layoutKind;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return layoutKind;
+}
+
+internal finite law bool AttributeListContainsStructLayoutC(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, "StructLayout")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, (u32[0 max])(scan + 2), "C")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 3)) == TokenKind.RParen)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool AttributeListContainsStructLayoutExplicit(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, "StructLayout")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, (u32[0 max])(scan + 2), "Explicit")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 3)) == TokenKind.RParen)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool DeclarationHasStructLayoutCAttribute(ascii source, borrow TokenStream stream, DeclItem item)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return false;
+        }
+
+        if (AttributeListContainsStructLayoutC(source, stream, scan, attrEnd))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool DeclarationHasStructLayoutExplicitAttribute(ascii source, borrow TokenStream stream, DeclItem item)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return false;
+        }
+
+        if (AttributeListContainsStructLayoutExplicit(source, stream, scan, attrEnd))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return false;
+}
+
+internal fn bool DeclarationNameHasLayoutControl(borrow DeclarationList decls, ascii source, borrow TokenStream stream, u32[0 max] headToken)
+    where overlap(source, stream)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if ((item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+            && BindingTokenTextEqualsToken(source, stream, item.NameToken, headToken))
+        {
+            return DeclarationHasStructLayoutCAttribute(source, stream, item)
+                || DeclarationHasStructLayoutExplicitAttribute(source, stream, item);
+        }
+    }
+
+    return false;
+}
+
+internal fn bool LayoutTypeSpanIsFfiSafe(
+    borrow DeclarationList decls,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    u32[0 max] typeHead,
+    u32[0 max] typePrimary)
+    where overlap(source, stream)
+{
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimary);
+    if (primaryKind == TokenKind.Bool
+        || primaryKind == TokenKind.IntegerType
+        || primaryKind == TokenKind.FloatType
+        || primaryKind == TokenKind.Rawptr
+        || primaryKind == TokenKind.Rawmutptr
+        || primaryKind == TokenKind.Fnptr)
+    {
+        return true;
+    }
+
+    if (LayoutNameIsSystemCAlias(source, stream, typeHead))
+    {
+        return true;
+    }
+
+    if (primaryKind == TokenKind.Identifier
+        && typeHead != 0
+        && !LayoutTypeSpanHasTopLevelGenericArguments(stream, typeHead, typeEnd)
+        && DeclarationNameHasLayoutControl(decls, source, stream, typeHead))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool LayoutTryReadDataDeclarationItem(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeNameToken,
+    out DeclItem item)
+    where overlap(source, stream)
+{
+    item = new();
+    if (typeNameToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclarationKind kind = table.KindAt(index);
+        if ((kind == DeclarationKind.Struct || kind == DeclarationKind.Record)
+            && BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), typeNameToken))
+        {
+            stack u32[0 max] declIndex = table.DeclIndexAt(index);
+            if ((u64[0 2 ** 63 - 1])declIndex < decls.Count())
+            {
+                item = decls.ItemAt((u64[0 2 ** 63 - 1])declIndex);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] LayoutSkipLeadingAttributes(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return scan;
+}
+
+internal finite law bool LayoutTokenIsMemberModifier(borrow TokenStream stream, u32[0 max] token)
+{
+    if (stream.ContextualKindAt((u64[0 2 ** 63 - 1])token) == ContextualKeywordKind.Tail)
+    {
+        return true;
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    return kind == TokenKind.Public
+        || kind == TokenKind.Internal
+        || kind == TokenKind.Export
+        || kind == TokenKind.Static
+        || kind == TokenKind.Unsafe
+        || kind == TokenKind.Ffi
+        || kind == TokenKind.Varargs
+        || kind == TokenKind.Finite
+        || kind == TokenKind.Law
+        || kind == TokenKind.Inline
+        || kind == TokenKind.Noinline
+        || kind == TokenKind.Inlinehint
+        || kind == TokenKind.Hot
+        || kind == TokenKind.Cold
+        || kind == TokenKind.Strictfp
+        || kind == TokenKind.Asm;
+}
+
+internal finite law u32[0 max] LayoutMatchingCloseToken(borrow TokenStream stream, u32[0 max] openToken)
+{
+    stack TokenKind openKind = stream.KindAt((u64[0 2 ** 63 - 1])openToken);
+    stack mut TokenKind closeKind = TokenKind.RParen;
+    if (openKind == TokenKind.LBrack)
+    {
+        closeKind = TokenKind.RBrack;
+    }
+    else if (openKind == TokenKind.Lt)
+    {
+        closeKind = TokenKind.Gt;
+    }
+    else if (openKind != TokenKind.LParen)
+    {
+        return openToken;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = openToken;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == openKind)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == closeKind)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0)
+            {
+                return scan;
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return openToken;
+}
+
+internal finite law u32[0 max] LayoutSkipMemberModifiers(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] scan = LayoutSkipLeadingAttributes(stream, start);
+    while willexit (LayoutTokenIsMemberModifier(stream, scan))
+    {
+        scan = (u32[0 max])(scan + 1);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LParen)
+        {
+            stack u32[0 max] close = LayoutMatchingCloseToken(stream, scan);
+            if (close > scan)
+            {
+                scan = (u32[0 max])(close + 1);
+            }
+        }
+    }
+
+    return scan;
+}
+
+internal finite law u32[0 max] LayoutBoundedFirstTypeStart(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Identifier
+            || kind == TokenKind.IntegerType
+            || kind == TokenKind.FloatType
+            || kind == TokenKind.Bool
+            || kind == TokenKind.Void
+            || kind == TokenKind.AsciiView
+            || kind == TokenKind.UnicodeView
+            || kind == TokenKind.AsciiOwned
+            || kind == TokenKind.UnicodeOwned
+            || kind == TokenKind.Dynamic
+            || kind == TokenKind.Rawptr
+            || kind == TokenKind.Rawmutptr
+            || kind == TokenKind.Fnptr
+            || kind == TokenKind.Closure
+            || kind == TokenKind.Borrow
+            || kind == TokenKind.Retborrow
+            || kind == TokenKind.Storeborrow
+            || kind == TokenKind.Out
+            || kind == TokenKind.Init
+            || kind == TokenKind.Frozen
+            || kind == TokenKind.Shared)
+        {
+            return index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return 0;
+}
+
+internal fn bool LayoutTypeSpanHasTopLevelGenericArguments(borrow TokenStream stream, u32[0 max] headToken, u32[0 max] endExclusive)
+{
+    stack u32[0 max] next = (u32[0 max])(headToken + 1);
+    return next < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])next) == TokenKind.Lt;
+}
+
+internal fn bool LayoutNameIsSystemCAlias(ascii source, borrow TokenStream stream, u32[0 max] headToken)
+    where overlap(source, stream)
+{
+    if (headToken == 0)
+    {
+        return false;
+    }
+
+    return TokenTextEquals(source, stream, headToken, "c_char")
+        || TokenTextEquals(source, stream, headToken, "c_schar")
+        || TokenTextEquals(source, stream, headToken, "c_uchar")
+        || TokenTextEquals(source, stream, headToken, "c_short")
+        || TokenTextEquals(source, stream, headToken, "c_ushort")
+        || TokenTextEquals(source, stream, headToken, "c_int")
+        || TokenTextEquals(source, stream, headToken, "c_uint")
+        || TokenTextEquals(source, stream, headToken, "c_long")
+        || TokenTextEquals(source, stream, headToken, "c_ulong")
+        || TokenTextEquals(source, stream, headToken, "c_longlong")
+        || TokenTextEquals(source, stream, headToken, "c_ulonglong")
+        || TokenTextEquals(source, stream, headToken, "c_size_t")
+        || TokenTextEquals(source, stream, headToken, "c_ptrdiff_t");
+}
+
+internal fn bool LayoutTryReadDeclarationItem(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeNameToken,
+    out DeclItem item,
+    out DeclarationKind declarationKind)
+    where overlap(source, stream)
+{
+    item = new();
+    declarationKind = DeclarationKind.Unknown;
+    if (typeNameToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), typeNameToken))
+        {
+            stack u32[0 max] declIndex = table.DeclIndexAt(index);
+            if ((u64[0 2 ** 63 - 1])declIndex < decls.Count())
+            {
+                item = decls.ItemAt((u64[0 2 ** 63 - 1])declIndex);
+                declarationKind = table.KindAt(index);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TypeSpanHasTopLevelToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, TokenKind target)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == target)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] InlineLayoutDeclarationGenericOpen(borrow TokenStream stream, u32[0 max] declKeyword)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(declKeyword + 1);
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Identifier)
+        {
+            stack u32[0 max] next = (u32[0 max])(scan + 1);
+            if (stream.KindAt((u64[0 2 ** 63 - 1])next) == TokenKind.Lt)
+            {
+                return next;
+            }
+
+            return 0;
+        }
+
+        if (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.LParen)
+        {
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] LayoutSkipDeclarationBody(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut bool sawBrace = false;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+            sawBrace = true;
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0 && sawBrace)
+            {
+                return index;
+            }
+        }
+        else if (kind == TokenKind.Semi && depth == 0 && !sawBrace)
+        {
+            return index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return index;
+}
+
+internal finite law bool LayoutTokenStartsMemberDeclaration(TokenKind kind)
+{
+    return kind == TokenKind.Fn
+        || kind == TokenKind.Struct
+        || kind == TokenKind.Record
+        || kind == TokenKind.Enum
+        || kind == TokenKind.Trait
+        || kind == TokenKind.Doctrine
+        || kind == TokenKind.Alias
+        || kind == TokenKind.Drop;
+}
+
+internal finite law u32[0 max] LayoutBoundedLastIdentifier(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] result = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            result = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return result;
+}
+
+internal fn u32[0 max] LayoutFieldDeclaratorCount(borrow TokenStream stream, u32[0 max] start, u32[0 max] endInclusive)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan <= endInclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.Semi))
+        {
+            if (LayoutBoundedLastIdentifier(stream, segStart, scan) != 0)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal finite law u32[0 max] AlignUp(u32[0 max] value, u32[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u32[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return (u32[0 max])(value + alignment - remainder);
+}

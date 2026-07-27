@@ -1,0 +1,354 @@
+import System.Collections
+import System.Core
+import System.Memory
+module System.Collections.Arena
+
+// A stable handle into an `Arena<T>`: a slot index plus the generation the slot
+// held when the handle was issued. Once an entry is removed (and its slot
+// possibly recycled for a later insert), the slot's generation advances, so the
+// old handle no longer matches and lookups through it fail. Handles are small
+// Copyable values, freely copied and stored in IR fact side-tables.
+public struct ArenaHandle
+{
+    u32[0 max] Index;
+    u32[0 max] Generation;
+
+    ArenaHandle()
+    {
+        self.Index = 0;
+        self.Generation = 0;
+    }
+
+    inline finite law bool Equals(borrow ArenaHandle self, ArenaHandle other)
+    {
+        return self.Index == other.Index && self.Generation == other.Generation;
+    }
+}
+
+// A generational arena (slot map): O(1) insert, remove, and lookup keyed by a
+// stable `ArenaHandle`. Removed slots are recycled through a free list, and each
+// reuse advances the slot generation so prior handles to that slot become stale
+// rather than silently aliasing the new occupant. This is the storage substrate
+// for the self-hosted compiler's IR tables, where nodes are referenced by stable
+// typed ids across mutation. `T` must be `Copyable` so a recycled slot can be
+// overwritten without running a destructor on the dead value (ids and IR facts
+// are Copyable; owned IR payloads are stored out-of-line and referenced by id).
+public struct Arena<T>
+{
+    internal System.Collections.List<T> Slots;
+    internal System.Collections.List<u32[0 max]> Generations;
+    internal System.Collections.List<bool> Occupied;
+    internal System.Collections.List<u32[0 max]> FreeList;
+    internal u64[0 2 ** 63 - 1] LiveCount;
+
+    Arena()
+    {
+        self.Slots = new();
+        self.Generations = new();
+        self.Occupied = new();
+        self.FreeList = new();
+        self.LiveCount = 0;
+    }
+
+    // Number of live entries.
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow Arena<T> self)
+    {
+        return self.LiveCount;
+    }
+
+    // Number of physical slots (live plus tombstoned-and-recyclable).
+    inline finite law u64[0 2 ** 63 - 1] SlotCount(borrow Arena<T> self)
+    {
+        return self.Slots.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow Arena<T> self)
+    {
+        return self.LiveCount == 0;
+    }
+
+    // True when `handle` currently refers to a live entry (in range, occupied,
+    // and the generation still matches).
+    law bool Contains(borrow Arena<T> self, ArenaHandle handle)
+    {
+        stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])handle.Index;
+        if (slot >= self.Slots.Count())
+        {
+            return false;
+        }
+
+        if (!self.Occupied.Get(slot))
+        {
+            return false;
+        }
+
+        return self.Generations.Get(slot) == handle.Generation;
+    }
+
+    // Looks up the value behind `handle`, or `None` if the handle is stale.
+    law Option<T> Get(borrow Arena<T> self, ArenaHandle handle)
+    {
+        if (!self.Contains(handle))
+        {
+            return Option<T>.None;
+        }
+
+        return Option<T>.Some(self.Slots.Get((u64[0 2 ** 63 - 1])handle.Index));
+    }
+
+    // Inserts `value`, returning a fresh handle through `handle`. Recycles a
+    // freed slot when one is available, otherwise appends a new slot. Fails only
+    // on allocation failure or when the slot count would overflow `u32`.
+    fn System.Memory.MemoryStatus Insert(mut borrow Arena<T> self, T value, out ArenaHandle handle)
+    {
+        handle = new();
+
+        stack mut u32[0 max] reuseIndex = 0;
+        if (self.FreeList.TryPop(reuseIndex))
+        {
+            stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])reuseIndex;
+            self.Slots.GetMut(slot) = value;
+            self.Occupied.GetMut(slot) = true;
+            stack u32[0 max] generation = self.Generations.Get(slot);
+            self.LiveCount = (u64[0 2 ** 63 - 1])(self.LiveCount + 1);
+            handle.Index = reuseIndex;
+            handle.Generation = generation;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u64[0 2 ** 63 - 1] newIndex = self.Slots.Count();
+        if (newIndex >= (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        // Reserve all three parallel arrays before mutating so the pushes below
+        // cannot fail partway and desynchronize the slot bookkeeping.
+        switch (self.Slots.Reserve(1))
+        {
+            case System.Memory.MemoryStatus.Err(var slotsError):
+                return System.Memory.MemoryStatus.Err(slotsError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (self.Generations.Reserve(1))
+        {
+            case System.Memory.MemoryStatus.Err(var generationsError):
+                return System.Memory.MemoryStatus.Err(generationsError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (self.Occupied.Reserve(1))
+        {
+            case System.Memory.MemoryStatus.Err(var occupiedError):
+                return System.Memory.MemoryStatus.Err(occupiedError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (self.Slots.Push(value))
+        {
+            case System.Memory.MemoryStatus.Err(var pushError):
+                return System.Memory.MemoryStatus.Err(pushError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (self.Generations.Push(0))
+        {
+            case System.Memory.MemoryStatus.Err(var pushError):
+                return System.Memory.MemoryStatus.Err(pushError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (self.Occupied.Push(true))
+        {
+            case System.Memory.MemoryStatus.Err(var pushError):
+                return System.Memory.MemoryStatus.Err(pushError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        self.LiveCount = (u64[0 2 ** 63 - 1])(self.LiveCount + 1);
+        handle.Index = (u32[0 max])newIndex;
+        handle.Generation = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    // Removes the entry behind `handle`. Returns false (and changes nothing)
+    // when the handle is already stale. The slot is tombstoned, its generation
+    // advanced, and the index offered for recycling; if the free-list push hits
+    // allocation failure the slot simply stays retired (the entry is still
+    // removed), so removal never corrupts the arena.
+    fn bool Remove(mut borrow Arena<T> self, ArenaHandle handle)
+    {
+        if (!self.Contains(handle))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])handle.Index;
+        self.Occupied.GetMut(slot) = false;
+        stack u32[0 max] currentGeneration = self.Generations.Get(slot);
+        self.Generations.GetMut(slot) = (u32[0 max])(currentGeneration + 1);
+        self.LiveCount = (u64[0 2 ** 63 - 1])(self.LiveCount - 1);
+
+        // A free-list push failure only forfeits recycling of this slot; the
+        // entry is already removed, so the result is intentionally discarded.
+        switch (self.FreeList.Push(handle.Index))
+        {
+            default:
+        }
+
+        return true;
+    }
+
+    // The live handle occupying physical slot `index`, or `None` when the slot
+    // is out of range or tombstoned. Walk `0 .. SlotCount()` and keep the
+    // `Some` results to enumerate every live entry without allocating; the
+    // handles are dense in insertion/recycle order.
+    law Option<ArenaHandle> HandleAt(borrow Arena<T> self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Slots.Count() || index >= (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return Option<ArenaHandle>.None;
+        }
+
+        if (!self.Occupied.Get(index))
+        {
+            return Option<ArenaHandle>.None;
+        }
+
+        stack mut ArenaHandle handle = new();
+        handle.Index = (u32[0 max])index;
+        handle.Generation = self.Generations.Get(index);
+        return Option<ArenaHandle>.Some(handle);
+    }
+
+    // Drops every entry and resets the arena to empty. Physical slots are
+    // released; previously issued handles are all stale afterward.
+    fn void Clear(mut borrow Arena<T> self)
+    {
+        self.Slots.Clear();
+        self.Generations.Clear();
+        self.Occupied.Clear();
+        self.FreeList.Clear();
+        self.LiveCount = 0;
+        return;
+    }
+}
+
+// A dense fact side-table keyed by `ArenaHandle`: it attaches an optional `F`
+// fact to each arena entry without storing facts inside the entry itself, the
+// IR fact-table model from doc 24. One `SideTable` per fact category can be laid
+// over the same arena. `F` must be `Copyable` (facts are small value records).
+//
+// Each slot records the handle generation its fact was last written under, so
+// the table guarantees no cross-generation bleed: once a slot is recycled and
+// re-facted under the new handle, queries with the old-generation handle miss,
+// and the recycled handle never observes the previous occupant's fact. The
+// table is not a liveness oracle — it is not told when the arena removes an
+// entry, so a query with a since-removed handle that was never re-facted still
+// returns its old fact. Callers gate lookups on live handles (e.g.
+// `arena.Contains`) exactly as they would index any handle-keyed store.
+public struct SideTable<F>
+{
+    // `None` marks an absent fact; `Generations[i]` records the handle
+    // generation the fact at slot `i` was set under.
+    internal System.Collections.List<Option<F>> Values;
+    internal System.Collections.List<u32[0 max]> Generations;
+
+    SideTable()
+    {
+        self.Values = new();
+        self.Generations = new();
+    }
+
+    // Attaches (or replaces) the fact for `handle`. Grows the dense backing to
+    // cover the handle's slot, filling skipped slots as absent.
+    fn System.Memory.MemoryStatus Set(mut borrow SideTable<F> self, ArenaHandle handle, F fact)
+    {
+        stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])handle.Index;
+        while willexit (self.Values.Count() <= target)
+        {
+            switch (self.Values.Push(Option<F>.None))
+            {
+                case System.Memory.MemoryStatus.Err(var valuesError):
+                    return System.Memory.MemoryStatus.Err(valuesError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (self.Generations.Push(0))
+            {
+                case System.Memory.MemoryStatus.Err(var generationsError):
+                    return System.Memory.MemoryStatus.Err(generationsError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        self.Values.GetMut(target) = Option<F>.Some(fact);
+        self.Generations.GetMut(target) = handle.Generation;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    // The fact attached to `handle`, or `None` when none is set or the handle is
+    // stale (its slot was recycled since the fact was attached).
+    law Option<F> Get(borrow SideTable<F> self, ArenaHandle handle)
+    {
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])handle.Index;
+        if (index >= self.Values.Count())
+        {
+            return Option<F>.None;
+        }
+
+        if (self.Generations.Get(index) != handle.Generation)
+        {
+            return Option<F>.None;
+        }
+
+        return self.Values.Get(index);
+    }
+
+    // True when a fact is currently attached to `handle`.
+    law bool Contains(borrow SideTable<F> self, ArenaHandle handle)
+    {
+        switch (self.Get(handle))
+        {
+            case Option<F>.None:
+                return false;
+            case Option<F>.Some(_):
+                return true;
+        }
+    }
+
+    // Removes any fact attached to `handle`. Returns false when there was
+    // nothing to remove (absent or stale handle).
+    fn bool Remove(mut borrow SideTable<F> self, ArenaHandle handle)
+    {
+        if (!self.Contains(handle))
+        {
+            return false;
+        }
+
+        self.Values.GetMut((u64[0 2 ** 63 - 1])handle.Index) = Option<F>.None;
+        return true;
+    }
+
+    // Copies the fact (if any) attached to `src` onto `dst` — the builder
+    // `Inherit` contract from doc 24's lowering policy. A `None` source leaves
+    // `dst` untouched.
+    fn System.Memory.MemoryStatus Inherit(mut borrow SideTable<F> self, ArenaHandle dst, ArenaHandle src)
+    {
+        switch (self.Get(src))
+        {
+            case Option<F>.None:
+                return System.Memory.MemoryStatus.Ok;
+            case Option<F>.Some(var fact):
+                return self.Set(dst, fact);
+        }
+    }
+
+    fn void Clear(mut borrow SideTable<F> self)
+    {
+        self.Values.Clear();
+        self.Generations.Clear();
+        return;
+    }
+}

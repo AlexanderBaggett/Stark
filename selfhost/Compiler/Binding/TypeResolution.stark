@@ -1,0 +1,618 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import System.Text
+import System.Memory
+module Compiler.Binding.TypeResolution
+
+// True when the user-type head token `headToken` names some top-level
+// declaration in `table` (a struct/enum/record/trait/alias). The head token's
+// text and each candidate are slices of the same `source`, so they are compared
+// with `System.Text.Equals` rather than passed to the disjoint-contract
+// `LookupDeclaration`.
+internal fn bool TypeHeadResolves(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] headToken)
+{
+    stack mut bool resolved = false;
+    stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])headToken);
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] t = 0; t < count; t += 1)
+    {
+        if (!resolved)
+        {
+            stack ascii declName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(t));
+            if (System.Text.Equals(declName, name))
+            {
+                resolved = true;
+            }
+        }
+    }
+
+    return resolved;
+}
+
+internal fn bool TypeReferenceResolvesInScope(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    u32[0 max] headToken)
+{
+    if (TypeHeadResolves(table, source, stream, headToken))
+    {
+        return true;
+    }
+
+    if (useDeclarationGenericScope)
+    {
+        return HeadIsGenericParameter(source, stream, declKeyword, headToken);
+    }
+
+    return GenericParamListMatches(source, stream, genericList, headToken);
+}
+
+internal finite law bool GenericArgumentSegmentIsValue(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    if (start >= endExclusive)
+    {
+        return false;
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])start);
+    return kind == TokenKind.IntegerLiteral
+        || kind == TokenKind.Plus
+        || kind == TokenKind.Minus
+        || kind == TokenKind.Comptime;
+}
+
+internal finite law u32[0 max] MatchingTypeCloseBefore(borrow TokenStream stream, u32[0 max] openToken, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] index = openToken;
+    stack mut u32[0 max] depth = 0;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return endExclusive;
+}
+
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeReferencesInGenericArguments(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] segmentStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < index && !GenericArgumentSegmentIsValue(stream, segmentStart, index))
+            {
+                switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, segmentStart, index, genericList, declKeyword, useDeclarationGenericScope, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var segmentError):
+                        return System.Memory.MemoryStatus.Err(segmentError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segmentStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeReferencesInSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Where)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                switch (CollectUnresolvedTypeReferencesInGenericArguments(table, source, stream, (u32[0 max])(index + 1), close, genericList, declKeyword, useDeclarationGenericScope, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var genericError):
+                        return System.Memory.MemoryStatus.Err(genericError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier)
+        {
+            stack TokenKind nextKind = stream.KindAt((u64[0 2 ** 63 - 1])(index + 1));
+            stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])index);
+            if (nextKind != TokenKind.Dot
+                && !System.Text.Equals(name, "tail")
+                && !TypeReferenceResolvesInScope(table, source, stream, genericList, declKeyword, useDeclarationGenericScope, index))
+            {
+                switch (diags.Append(BindDiagnosticCode.UnresolvedType, index))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] CountUnresolvedTypeReferencesInGenericArguments(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope)
+{
+    stack mut u32[0 max] unresolved = 0;
+    stack mut u32[0 max] segmentStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < index && !GenericArgumentSegmentIsValue(stream, segmentStart, index))
+            {
+                unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, segmentStart, index, genericList, declKeyword, useDeclarationGenericScope));
+            }
+
+            segmentStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return unresolved;
+}
+
+internal fn u32[0 max] CountUnresolvedTypeReferencesInSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope)
+{
+    stack mut u32[0 max] unresolved = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Where)
+        {
+            return unresolved;
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInGenericArguments(table, source, stream, (u32[0 max])(index + 1), close, genericList, declKeyword, useDeclarationGenericScope));
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier)
+        {
+            stack TokenKind nextKind = stream.KindAt((u64[0 2 ** 63 - 1])(index + 1));
+            stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])index);
+            if (nextKind != TokenKind.Dot
+                && !System.Text.Equals(name, "tail")
+                && !TypeReferenceResolvesInScope(table, source, stream, genericList, declKeyword, useDeclarationGenericScope, index))
+            {
+                unresolved = (u32[0 max])(unresolved + 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return unresolved;
+}
+
+// Counts a function signature's user-type references, including nested generic
+// argument types, that resolve to no top-level declaration. A return of 0 means
+// every named type in the signature is declared.
+public fn u32[0 max] CountUnresolvedSignatureTypes(borrow FunctionSignature signature, borrow DeclarationTable table, ascii source, borrow TokenStream stream)
+{
+    stack mut u32[0 max] unresolved = 0;
+    stack u32[0 max] genericList = (u32[0 max])(signature.Name() + 1);
+
+    stack u32[0 max] returnStart = signature.ReturnTypeStartTokenAt();
+    stack u32[0 max] returnEnd = signature.ReturnTypeEndTokenAt();
+    if (returnStart < returnEnd)
+    {
+        unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, returnStart, returnEnd, genericList, 0, false));
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
+    {
+        stack u32[0 max] paramStart = signature.ParamTypeStartTokenAt(index);
+        stack u32[0 max] paramEnd = signature.ParamTypeEndTokenAt(index);
+        if (paramStart < paramEnd)
+        {
+            unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, paramStart, paramEnd, genericList, 0, false));
+        }
+    }
+
+    return unresolved;
+}
+
+// True when `headToken`'s text names a generic parameter of the declaration whose
+// keyword is at `declKeyword` — i.e. a parameter of the `<...>` that IMMEDIATELY
+// follows the declaration name (e.g. `T` in `struct Box<T>`, `K`/`V` in `record
+// Pair<K, V>`, `N` in `struct Buf<comptime u32 N>`). Used so a field whose type
+// names a generic parameter is not reported as an unresolved type. The `<` must
+// follow the name directly: a struct/record may carry a generic BASE trait
+// (`struct S : Base<Bar>`) whose `<...>` is NOT a parameter list. A parameter is
+// `Identifier` or `comptime type_ Identifier` (`Stark.g4` `typeParameter`), so the
+// parameter NAME is the LAST depth-1 identifier of each `,`-separated entry (the
+// comptime form's leading type is skipped). Names are `source` slices, compared
+// with `System.Text.Equals` (overlap-permitting), not a disjoint-contract lookup.
+internal fn bool HeadIsGenericParameter(ascii source, borrow TokenStream stream, u32[0 max] declKeyword, u32[0 max] headToken)
+{
+    // The declaration name is the first identifier after the keyword; the type
+    // parameter list, if present, is the `<` directly after it.
+    stack mut u32[0 max] nameNext = 0;
+    stack mut bool foundName = false;
+    stack mut u32[0 max] nscan = (u32[0 max])(declKeyword + 1);
+    stack mut u64[0 2 ** 63 - 1] nameGuard = stream.Count();
+    while willexit (nameGuard > 0)
+    {
+        nameGuard = (u64[0 2 ** 63 - 1])(nameGuard - 1);
+        stack TokenKind nk = stream.KindAt((u64[0 2 ** 63 - 1])nscan);
+        if (nk == TokenKind.EndOfFile || nk == TokenKind.LBrace || nk == TokenKind.Semi || nk == TokenKind.LParen)
+        {
+            nameGuard = 0;
+        }
+        else if (nk == TokenKind.Identifier)
+        {
+            nameNext = (u32[0 max])(nscan + 1);
+            foundName = true;
+            nameGuard = 0;
+        }
+        else
+        {
+            nscan = (u32[0 max])(nscan + 1);
+        }
+    }
+
+    if (!foundName)
+    {
+        return false;
+    }
+
+    return GenericParamListMatches(source, stream, nameNext, headToken);
+}
+
+// True when the generic parameter list opening at `ltToken` (which must be `<`)
+// declares a parameter whose name equals `headToken`'s text. A parameter is
+// `Identifier` or `comptime type_ Identifier`, so the name is the LAST depth-1
+// identifier of each `,`-separated entry. Returns false when `ltToken` is not a `<`
+// (the declaration has no parameter list). Shared by the type-declaration and
+// function-signature generic-parameter exemptions.
+internal fn bool GenericParamListMatches(ascii source, borrow TokenStream stream, u32[0 max] ltToken, u32[0 max] headToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])ltToken) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack ascii headName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])headToken);
+    stack mut u32[0 max] index = ltToken;
+    stack mut u32[0 max] angleDepth = 0;
+    stack mut u32[0 max] lastParamIdent = 0;
+    stack mut bool matched = false;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (k == TokenKind.Gt)
+        {
+            // The closing `>` of the parameter list ends the last parameter.
+            if (angleDepth == 1)
+            {
+                if (lastParamIdent != 0)
+                {
+                    stack ascii lastName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])lastParamIdent);
+                    if (System.Text.Equals(lastName, headName))
+                    {
+                        matched = true;
+                    }
+                }
+
+                guard = 0;
+            }
+            else if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+        else if (angleDepth == 1 && k == TokenKind.Comma)
+        {
+            // End of one parameter: its name is the last identifier seen.
+            if (lastParamIdent != 0)
+            {
+                stack ascii paramName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])lastParamIdent);
+                if (System.Text.Equals(paramName, headName))
+                {
+                    matched = true;
+                    guard = 0;
+                }
+            }
+
+            lastParamIdent = 0;
+        }
+        else if (angleDepth == 1 && k == TokenKind.Identifier)
+        {
+            // Keep the LAST depth-1 identifier of the current parameter (the name;
+            // a `comptime type_` prefix's identifiers are overwritten by it).
+            lastParamIdent = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return matched;
+}
+
+// Emits an `UnresolvedType` diagnostic (anchored at the field's type-head token)
+// for each data field of the struct/record whose keyword is at `structKeyword`
+// whose user-type head names no top-level declaration AND is not one of the
+// declaration's own generic parameters — built-in field types have head 0 and are
+// skipped. Mirrors the host resolving `field.type_()` for every field (with the
+// type's generic parameters in scope). Parse failures for the type are skipped.
+internal fn System.Memory.MemoryStatus CollectUnresolvedFieldTypes(u32[0 max] structKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] count = fields.Count();
+            // All declarators of one `type_ a, b;` field declaration share the exact
+            // type span; the host resolves that `field.type_()` once, so emit
+            // diagnostics once per distinct source span.
+            stack mut u32[0 max] prevStart = 0;
+            stack mut u32[0 max] prevEnd = 0;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] start = fields.TypeStartAt(index);
+                stack u32[0 max] end = fields.TypeEndAt(index);
+                if (start < end && (start != prevStart || end != prevEnd))
+                {
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, structKeyword, true, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var fieldError):
+                            return System.Memory.MemoryStatus.Err(fieldError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                prevStart = start;
+                prevEnd = end;
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits an `UnresolvedType` for each enum-variant payload type (tuple/named-field/
+// `from`) whose user-type head names no top-level declaration and is not one of the
+// enum's own generic parameters. Each payload type position is a distinct
+// `type_` for the host, so occurrences are not deduped. Parse failures are skipped.
+internal fn System.Memory.MemoryStatus CollectUnresolvedVariantTypes(u32[0 max] enumKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (ParseEnumPayloadTypeSpans(stream, enumKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var spansError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<TypeSpanList>.Ok(var spans):
+            stack u64[0 2 ** 63 - 1] count = spans.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] start = spans.StartTokenAt(index);
+                stack u32[0 max] end = spans.EndTokenAt(index);
+                if (start < end)
+                {
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, enumKeyword, true, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var variantError):
+                            return System.Memory.MemoryStatus.Err(variantError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits an `UnresolvedType` for every `where T: Bound, ...` constraint bound on a
+// type declaration whose bound type names no declaration and is not one of the
+// declaration's own generic parameters. This mirrors function `where` constraint
+// resolution while using the type declaration's generic parameter list.
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeDeclarationWhereConstraints(u32[0 max] declKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (CollectWhereConstraintTypeSpans(stream, declKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var whereError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<TypeSpanList>.Ok(var spans):
+            stack u64[0 2 ** 63 - 1] count = spans.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] start = spans.StartTokenAt(index);
+                stack u32[0 max] end = spans.EndTokenAt(index);
+                if (start < end)
+                {
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, declKeyword, true, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var constraintError):
+                            return System.Memory.MemoryStatus.Err(constraintError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

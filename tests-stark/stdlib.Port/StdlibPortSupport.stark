@@ -1,0 +1,507 @@
+import System.IO
+import System.Memory
+import System.Process
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module StdlibPortSupport
+
+// Host-compile harness for the ported standard-library tests. Compiles a Stark
+// program (which may `import System.*`) against the current C# host compiler
+// through the host test protocol and exposes success plus the rendered `llvm`
+// artifact text. Stark-side port helper for tests/compiler.StandardLibraryTests.
+// Requires STARK_HOST_COMPILER to point at the host compiler executable.
+//
+// Runtime/native-execution, package-image-byte, and CLI assertions in older
+// reductions are handled where a focused host-test helper exists. Otherwise the
+// port names the remaining reduction in a // PORT-NOTE beside the test body.
+
+const HostTimeoutMilliseconds = 180000;
+const PackageHostTargetDataLayout = "e-p:64:64";
+
+public const LinuxX64TargetTriple = "x86_64-unknown-linux-gnu";
+public const MacOSArm64TargetTriple = "arm64-apple-macosx26.0.0";
+public const WindowsX64MsvcTargetTriple = "x86_64-pc-windows-msvc";
+
+public struct ProgramCompile
+{
+    HostCompileOutcome Outcome;
+    bool Ok;
+
+    ProgramCompile()
+    {
+        self.Outcome = new();
+        self.Ok = false;
+    }
+}
+
+// Compiles the program through the full pipeline with the LLVM artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn ProgramCompile CompileProgram(ascii id, ascii source)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Compiles an on-disk stdlib source file through the host protocol. Use for
+// artifact probes that need the stdlib module's own helper definitions.
+public fn ProgramCompile CompileSourceFile(ascii id, ascii sourcePath)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileSourceFileForTarget(id, sourcePath, "llvm", "");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileSourceFile, but pins the request to a target triple so
+// source-file platform probes preserve target-dependent backend facts.
+public fn ProgramCompile CompileSourceFileForTarget(ascii id, ascii sourcePath, ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileSourceFileForTarget(id, sourcePath, "llvm", targetTriple);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileProgram, but pins the host-test request to a target triple so
+// artifact-only platform tests preserve target/backend facts through lowering.
+public fn ProgramCompile CompileProgramForTarget(ascii id, ascii source, ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileForTargetWithSeed(id, source, "", "llvm", targetTriple, "");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileProgramForTarget, but asks the host to emit imported inline
+// bodies reachable from one source function so artifact probes can inspect a
+// platform helper body without making it public source API.
+public fn ProgramCompile CompileProgramForTargetWithSeed(
+    ascii id,
+    ascii source,
+    ascii targetTriple,
+    ascii importedInlineCloneSeed)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled =
+            RunHostCompileForTargetWithSeed(id, source, "", "llvm", targetTriple, importedInlineCloneSeed);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Builds `libModuleSource` as a package image, deletes the source, then compiles
+// `source` through lower-mir against that package plus STARK_PATH stdlib roots.
+public fn ProgramCompile CompileMirWithPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = CompileArtifactWithPackage(
+            id,
+            source,
+            "lower-mir",
+            "mir",
+            libModuleName,
+            libModuleSource);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+public fn bool Succeeds(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
+}
+
+public fn bool HasDiagnostic(mut borrow ProgramCompile compiled, ascii code)
+{
+    unsafe
+    {
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
+}
+
+public fn ascii Llvm(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+public fn ascii Mir(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("mir");
+    }
+}
+
+internal fn ProgramCompile RunHostCompileSourceFileForTarget(
+    ascii id,
+    ascii sourcePath,
+    ascii artifactName,
+    ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileSourcePathArtifactUsingStarkPathForTarget(
+                compilerPath.View(),
+                id,
+                sourcePath,
+                artifactName,
+                HostTimeoutMilliseconds,
+                targetTriple))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn ProgramCompile CompileArtifactWithPackage(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        stack mut ProgramCompile failed = new();
+
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return failed;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        switch (sourceName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (sourceName.AppendConstAscii(".stark"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        switch (libraryName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendConstAscii(".a"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii packageName = new();
+        switch (packageName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendConstAscii(".starkpkg"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        switch (System.Testing.CreateTempDirectory("stdlib-host-pkg"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(sourceName.View(), libModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                switch (BuildLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    LinuxX64TargetTriple,
+                    PackageHostTargetDataLayout,
+                    false,
+                    HostTimeoutMilliseconds))
+                {
+                    case HostResult<bool>.Err(var buildError):
+                        return failed;
+                    case HostResult<bool>.Ok(var built):
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                stack mut HostCompileOutcome outcome = new();
+                stack mut bool transportOk = false;
+                stack mut OwnedAscii targetTripleCopy = new();
+                stack mut OwnedAscii dataLayoutCopy = new();
+                switch (targetTripleCopy.AppendAscii(LinuxX64TargetTriple))
+                {
+                    case MemoryStatus.Err(_):
+                        return failed;
+                    case MemoryStatus.Ok:
+                }
+                switch (dataLayoutCopy.AppendAscii(PackageHostTargetDataLayout))
+                {
+                    case MemoryStatus.Err(_):
+                        return failed;
+                    case MemoryStatus.Ok:
+                }
+
+                switch (CompileOnceArtifactInUsingStarkPathForTargetWithSeed(
+                    compilerPath.View(),
+                    id,
+                    source,
+                    stopAfterPassId,
+                    artifactName,
+                    tempDir.View(),
+                    0,
+                    HostTimeoutMilliseconds,
+                    targetTripleCopy.View(),
+                    dataLayoutCopy.View(),
+                    ""))
+                {
+                    case HostResult<HostCompileOutcome>.Err(var error):
+                        transportOk = false;
+                    case HostResult<HostCompileOutcome>.Ok(var captured):
+                        outcome = captured;
+                        transportOk = true;
+                }
+
+                stack mut ProgramCompile compiled = new();
+                compiled.Ok = transportOk && !outcome.HadProtocolError();
+                compiled.Outcome = outcome;
+                return compiled;
+        }
+    }
+}
+
+internal fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInUsingStarkPath(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn ProgramCompile RunHostCompileForTarget(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii targetTriple)
+{
+    return RunHostCompileForTargetWithSeed(id, source, stopAfterPassId, artifactName, targetTriple, "");
+}
+
+internal fn ProgramCompile RunHostCompileForTargetWithSeed(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii targetTriple,
+    ascii importedInlineCloneSeed)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInUsingStarkPathForTargetWithSeed(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds,
+                targetTriple,
+                "",
+                importedInlineCloneSeed))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}

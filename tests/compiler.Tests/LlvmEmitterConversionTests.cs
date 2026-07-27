@@ -15,7 +15,8 @@ public sealed class LlvmEmitterConversionTests
 
         Assert.Contains("define", llvm);
         Assert.Contains("@Run()", llvm);
-        Assert.Contains("fptosi float 3.5 to i32", llvm);
+        // f32 3.5 emits as the bit-exact hex float of (double)(float)3.5.
+        Assert.Contains("fptosi float 0x400C000000000000 to i32", llvm);
         Assert.Contains("ret i32", llvm);
     }
 
@@ -66,6 +67,28 @@ public sealed class LlvmEmitterConversionTests
     }
 
     [Fact]
+    public void RawPointerToFunctionPointerConversionIsLlvmNoOp()
+    {
+        var sourceType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.CVoid, isMutable: false);
+        var targetType = StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Integer(32),
+            [StarkTypeSymbols.Integer(32)],
+            ffiAbi: StarkFfiAbi.C,
+            isUnsafe: true);
+        var llvm = EmitSingleConversion(
+            targetType,
+            new SsaNullConstant(sourceType));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Run()", llvm);
+        Assert.DoesNotContain("ptrtoint", llvm);
+        Assert.DoesNotContain("inttoptr", llvm);
+        Assert.DoesNotContain("bitcast", llvm);
+        Assert.Contains("ret ptr null", llvm);
+    }
+
+    [Fact]
     public void SameWidthIntegerConversionIsEmittedAsAlias()
     {
         var integerType = StarkTypeSymbols.Integer(32);
@@ -94,7 +117,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("select i1 true, float", llvm);
         Assert.DoesNotContain("fpext", llvm);
         Assert.DoesNotContain("fptrunc", llvm);
-        Assert.Contains("ret float 3.5", llvm);
+        Assert.Contains("ret float 0x400C000000000000", llvm);
     }
 
     [Fact]
@@ -106,7 +129,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.Contains("define", llvm);
         Assert.DoesNotContain("add float", llvm);
         Assert.DoesNotContain("fadd", llvm);
-        Assert.Contains("ret float 3.5", llvm);
+        Assert.Contains("ret float 0x400C000000000000", llvm);
     }
 
     [Fact]

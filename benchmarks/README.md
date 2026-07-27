@@ -186,8 +186,9 @@ The locked default flags are:
 ## Current Coverage
 
 - `micro/*.stark` covers scalar arithmetic, abstraction parity, calls,
-  branch/fact pruning, direct-call inlining, range pruning, text-literal facts,
-  stack scalarization, dead-store narrowing, and stack-array access loops.
+  guaranteed tail-call state machines, branch/fact pruning, direct-call
+  inlining, range pruning, text-literal facts, stack scalarization, dead-store
+  narrowing, and stack-array access loops.
 - `allocator/*.stark` covers heap-local bucket reuse, bucket and fallback
   reallocation, dynamic reserve growth, byte/code-point copy, fill, and
   overlap-safe move helpers. Natural C and Rust counterparts are included where

@@ -1,0 +1,80 @@
+import Compiler.Mir
+import System.Text
+module SourceBackendFactTests
+
+public fn bool SourceFunctionsPreserveBackendFactsToLlvm()
+{
+    stack ascii source = raw"""
+        inline hot strictfp finite law fn i16[min max] HotValue() { return 7 }
+
+        [Backend(Opaque)]
+        cold inline finite law fn i16[min max] OpaqueValue() { return 9 }
+
+        public noinline fn i16[min max] PublicValue() { return 10 }
+        export inlinehint finite law fn i16[min max] ExportedValue() { return 11 }
+        tail finite law fn i16[min max] TailValue() { return 12 }
+        fn i16[min max] Caller() { return HotValue() }
+        """;
+    stack mut OwnedAscii llvm = new();
+    if (!CompileModuleFromAst(source, llvm))
+    {
+        return false;
+    }
+
+    return System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local range(i16 7, 8) i16 @f1() memory(none) nosync nofree willreturn mustprogress hot strictfp alwaysinline norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local range(i16 9, 10) i16 @f2() memory(none) nosync nofree willreturn mustprogress cold optnone noinline norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define range(i16 10, 11) i16 @f3() noinline")
+        && System.Text.Contains(
+            llvm.View(),
+            "define range(i16 11, 12) i16 @f4() memory(none) nosync nofree willreturn mustprogress inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local tailcc range(i16 12, 13) i16 @f5() memory(none) nosync nofree willreturn mustprogress norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local i16 @f6()")
+        && System.Text.Contains(
+            llvm.View(),
+            "call i16 @f1() memory(none) nosync nofree willreturn mustprogress hot strictfp alwaysinline norecurse");
+}
+
+public fn bool TypedSourceFunctionBackendDefaultsReachLlvm()
+{
+    stack ascii source = raw"""
+        finite law fn i16[min max] InternalValue() { return 7 }
+        public fn i16[min max] PublicValue() { return 8 }
+        export fn i16[min max] ExportedValue() { return 9 }
+        tail finite law fn i16[min max] TailValue() { return 10 }
+        fn i16[min max] Caller() { return InternalValue() }
+        """;
+    stack mut OwnedAscii llvm = new();
+    if (!CompileModuleFromAstWithTypedBackendDefaults(source, llvm))
+    {
+        return false;
+    }
+
+    return System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local fastcc range(i16 7, 8) i16 @f1() memory(none) nosync nofree willreturn mustprogress nounwind inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define fastcc range(i16 8, 9) i16 @f2() nounwind inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define range(i16 9, 10) i16 @f3() nounwind inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local tailcc range(i16 10, 11) i16 @f4() memory(none) nosync nofree willreturn mustprogress nounwind inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "define internal dso_local fastcc i16 @f5() nounwind inlinehint norecurse")
+        && System.Text.Contains(
+            llvm.View(),
+            "call fastcc i16 @f1() memory(none) nosync nofree willreturn mustprogress nounwind inlinehint norecurse");
+}

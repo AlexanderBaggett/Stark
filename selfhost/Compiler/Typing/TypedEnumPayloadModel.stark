@@ -1,0 +1,467 @@
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedEnumPayloadModel
+
+public enum TypedEnumPayloadKind
+{
+    Positional,
+    Named,
+    From,
+    Unknown,
+}
+
+public enum TypedEnumVariantRole
+{
+    None,
+    Ok,
+    Err,
+    OkErr,
+}
+
+public struct TypedEnumPayloadTable
+{
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] VariantOrdinals;
+    internal dynamic u32[0 max] VariantNameTokens;
+    internal dynamic u32[0 max] PayloadOrdinals;
+    internal dynamic u32[0 max] PayloadNameTokens;
+    internal dynamic TypedEnumPayloadKind PayloadKinds;
+    internal dynamic TypedEnumVariantRole VariantRoles;
+    internal dynamic bool ErrorFunnels;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic TypedSignatureTypeKind TypeKinds;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] RangeStartTokens;
+    internal dynamic u32[0 max] RangeEndTokens;
+    internal dynamic u32[0 max] ElementCountStartTokens;
+    internal dynamic u32[0 max] ElementCountEndTokens;
+    internal dynamic u32[0 max] BitWidths;
+    internal dynamic u32[0 max] TypeArgumentCounts;
+    internal dynamic u32[0 max] ComptimeArgumentCounts;
+    internal dynamic u32[0 max] TypeFlags;
+
+    TypedEnumPayloadTable()
+    {
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.VariantOrdinals = new();
+        self.VariantNameTokens = new();
+        self.PayloadOrdinals = new();
+        self.PayloadNameTokens = new();
+        self.PayloadKinds = new();
+        self.VariantRoles = new();
+        self.ErrorFunnels = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.TypeKinds = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.RangeStartTokens = new();
+        self.RangeEndTokens = new();
+        self.ElementCountStartTokens = new();
+        self.ElementCountEndTokens = new();
+        self.BitWidths = new();
+        self.TypeArgumentCounts = new();
+        self.ComptimeArgumentCounts = new();
+        self.TypeFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedEnumPayloadTable self)
+    {
+        return self.TypeKinds.Length;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] VariantOrdinalAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.VariantOrdinals.Length)
+        {
+            ordinal = self.VariantOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] VariantNameTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.VariantNameTokens.Length)
+        {
+            token = self.VariantNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] PayloadOrdinalAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.PayloadOrdinals.Length)
+        {
+            ordinal = self.PayloadOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] PayloadNameTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PayloadNameTokens.Length)
+        {
+            token = self.PayloadNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedEnumPayloadKind PayloadKindAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedEnumPayloadKind kind = TypedEnumPayloadKind.Unknown;
+        if (index < self.PayloadKinds.Length)
+        {
+            kind = self.PayloadKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedEnumVariantRole VariantRoleAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedEnumVariantRole role = TypedEnumVariantRole.None;
+        if (index < self.VariantRoles.Length)
+        {
+            role = self.VariantRoles[index];
+        }
+
+        return role;
+    }
+
+    public law bool IsErrorFunnelAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut bool value = false;
+        if (index < self.ErrorFunnels.Length)
+        {
+            value = self.ErrorFunnels[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedSignatureTypeKind TypeKindAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TypeKinds.Length)
+        {
+            kind = self.TypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeStartTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeStartTokens.Length)
+        {
+            token = self.RangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeEndTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeEndTokens.Length)
+        {
+            token = self.RangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountStartTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountStartTokens.Length)
+        {
+            token = self.ElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountEndTokenAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountEndTokens.Length)
+        {
+            token = self.ElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] BitWidthAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.BitWidths.Length)
+        {
+            width = self.BitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TypeArgumentCountAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TypeArgumentCounts.Length)
+        {
+            count = self.TypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ComptimeArgumentCountAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ComptimeArgumentCounts.Length)
+        {
+            count = self.ComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TypeFlagsAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TypeFlags.Length)
+        {
+            flags = self.TypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool IsIntegerSignedAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool IsIntegerUnsignedAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool HasIntegerRangeAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool RangeStartsAtMinAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeStartsAtMin());
+    }
+
+    public law bool RangeEndsAtMaxAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeEndsAtMax());
+    }
+
+    public law bool IsRawMutablePointerAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRawMutablePointer());
+    }
+
+    public law bool HasElementCountExpressionAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasElementCountExpression());
+    }
+
+    public law bool TypeHeadIsGenericParameterAt(borrow TypedEnumPayloadTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHeadIsGenericParameter());
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedEnumPayloadTable self,
+        u32[0 max] ownerDeclarationIndex,
+        u32[0 max] ownerNameToken,
+        u32[0 max] variantOrdinal,
+        u32[0 max] variantNameToken,
+        u32[0 max] payloadOrdinal,
+        u32[0 max] payloadNameToken,
+        TypedEnumPayloadKind payloadKind,
+        TypedEnumVariantRole variantRole,
+        bool errorFunnel,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        TypedSignatureTypeKind typeKind,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] rangeStartToken,
+        u32[0 max] rangeEndToken,
+        u32[0 max] elementCountStartToken,
+        u32[0 max] elementCountEndToken,
+        u32[0 max] bitWidth,
+        u32[0 max] typeArgumentCount,
+        u32[0 max] comptimeArgumentCount,
+        u32[0 max] typeFlags)
+    {
+        if (!self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.VariantOrdinals.TryReserve(1)
+            || !self.VariantNameTokens.TryReserve(1)
+            || !self.PayloadOrdinals.TryReserve(1)
+            || !self.PayloadNameTokens.TryReserve(1)
+            || !self.PayloadKinds.TryReserve(1)
+            || !self.VariantRoles.TryReserve(1)
+            || !self.ErrorFunnels.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.TypeKinds.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.RangeStartTokens.TryReserve(1)
+            || !self.RangeEndTokens.TryReserve(1)
+            || !self.ElementCountStartTokens.TryReserve(1)
+            || !self.ElementCountEndTokens.TryReserve(1)
+            || !self.BitWidths.TryReserve(1)
+            || !self.TypeArgumentCounts.TryReserve(1)
+            || !self.ComptimeArgumentCounts.TryReserve(1)
+            || !self.TypeFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.VariantOrdinals[self.VariantOrdinals.Length] = variantOrdinal;
+        init self.VariantNameTokens[self.VariantNameTokens.Length] = variantNameToken;
+        init self.PayloadOrdinals[self.PayloadOrdinals.Length] = payloadOrdinal;
+        init self.PayloadNameTokens[self.PayloadNameTokens.Length] = payloadNameToken;
+        init self.PayloadKinds[self.PayloadKinds.Length] = payloadKind;
+        init self.VariantRoles[self.VariantRoles.Length] = variantRole;
+        init self.ErrorFunnels[self.ErrorFunnels.Length] = errorFunnel;
+        init self.StartTokens[self.StartTokens.Length] = startToken;
+        init self.EndTokens[self.EndTokens.Length] = endToken;
+        init self.TypeKinds[self.TypeKinds.Length] = typeKind;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.RangeStartTokens[self.RangeStartTokens.Length] = rangeStartToken;
+        init self.RangeEndTokens[self.RangeEndTokens.Length] = rangeEndToken;
+        init self.ElementCountStartTokens[self.ElementCountStartTokens.Length] = elementCountStartToken;
+        init self.ElementCountEndTokens[self.ElementCountEndTokens.Length] = elementCountEndToken;
+        init self.BitWidths[self.BitWidths.Length] = bitWidth;
+        init self.TypeArgumentCounts[self.TypeArgumentCounts.Length] = typeArgumentCount;
+        init self.ComptimeArgumentCounts[self.ComptimeArgumentCounts.Length] = comptimeArgumentCount;
+        init self.TypeFlags[self.TypeFlags.Length] = typeFlags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+

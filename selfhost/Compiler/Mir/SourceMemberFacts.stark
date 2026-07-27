@@ -1,0 +1,435 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+import Compiler.Typing.TypedPipeline
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSymbols
+module Compiler.Mir.SourceMemberFacts
+
+// Typed member path rows imported from the typing phase for MIR storage-place
+// lowering. The prepass builds the typed member expression rows once per
+// module, validates every field-resolved row against the declaration list,
+// and predecodes each row into a flat member-path fact: owner identity for
+// chain-step agreement, leaf type kind and width for resolved-type agreement,
+// and the declared integer range that width-only resolved field type codes
+// cannot carry. The shared member-chain resolver then joins its token walk to
+// these facts through a dense member-name-token index, so per-step validation
+// is a table read plus one token text compare — the typed tables themselves
+// never enter the lowering recursion.
+
+// One prevalidated, predecoded member-path fact for a member-name token whose
+// typed row resolved as a field access.
+public struct SourceMemberPathFact
+{
+    // Declaration name token of the aggregate that owns the resolved field.
+    u32[0 max] OwnerDeclNameToken;
+    // The resolved field's type kind from typing (Integer, Bool, Named,
+    // RawPointer, FixedArray, ...).
+    TypedSignatureTypeKind Kind;
+    // Integer bit width when Kind is Integer; 0 otherwise.
+    u32[0 max] BitWidth;
+    // True when Kind is Integer and the declared field type is unsigned.
+    bool IntegerIsUnsigned;
+    // Declared integer range decoded from the field's type tokens. Bool fields
+    // carry [0 2). Fields without a decodable declared range carry no fact.
+    bool HasDeclaredRange;
+    i64[min max] DeclaredRangeLower;
+    i64[min max] DeclaredRangeUpperExclusive;
+    // For fixed-array fields: the ELEMENT's declared integer range, decoded
+    // from the element type head (`u8[0 2][4]` decodes the `u8[0 2]` span),
+    // so indexed element reads can carry the same range facts scalar field
+    // reads do.
+    bool ElementHasDeclaredRange;
+    i64[min max] ElementDeclaredRangeLower;
+    i64[min max] ElementDeclaredRangeUpperExclusive;
+
+    SourceMemberPathFact()
+    {
+        self.OwnerDeclNameToken = 0;
+        self.Kind = TypedSignatureTypeKind.Unknown;
+        self.BitWidth = 0;
+        self.IntegerIsUnsigned = false;
+        self.HasDeclaredRange = false;
+        self.DeclaredRangeLower = 0;
+        self.DeclaredRangeUpperExclusive = 0;
+        self.ElementHasDeclaredRange = false;
+        self.ElementDeclaredRangeLower = 0;
+        self.ElementDeclaredRangeUpperExclusive = 0;
+    }
+}
+
+// Builds the member-path facts for a module: runs the typing-phase member
+// expression builder, validates every field-resolved row's owner declaration,
+// and predecodes leaf type and declared-range facts. Slot `token + 1` of
+// `memberFactRowsByToken` holds the fact row (1-based) for the member-name
+// token, or 0 when typing produced no field-resolved row there. A duplicate
+// row for one token or a field row naming an out-of-range or nameless owner
+// declaration is an internal typing inconsistency and rejects the module
+// before lowering.
+internal fn bool BuildSourceMemberPathFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    out IrTable<u32[0 max]> memberFactRowsByToken,
+    out IrTable<SourceMemberPathFact> memberPathFacts)
+    where overlap(sourceText, source)
+{
+    memberFactRowsByToken = new();
+    memberPathFacts = new();
+
+    stack mut TypedMemberExpressionTable typedMembers = new();
+    switch (BuildTypedMemberExpressions(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedMemberExpressionTable>.Err(var memberError):
+            return false;
+        case ParseResult<TypedMemberExpressionTable>.Ok(var built):
+            typedMembers = built;
+    }
+
+    stack mut IrTable<u32[0 max]> rowsByToken = new();
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] fill = 0;
+    while willexit (fill < tokenCount)
+    {
+        if (rowsByToken.Add(0) == 0)
+        {
+            return false;
+        }
+
+        fill += 1;
+    }
+
+    stack mut IrTable<SourceMemberPathFact> facts = new();
+    stack u64[0 2 ** 63 - 1] rowCount = typedMembers.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < rowCount)
+    {
+        if (!typedMembers.IsResolvedAt(index) || !typedMembers.IsFieldAt(index))
+        {
+            index += 1;
+            continue;
+        }
+
+        stack u32[0 max] nameToken = typedMembers.MemberNameTokenAt(index);
+        if (nameToken == 0)
+        {
+            index += 1;
+            continue;
+        }
+
+        stack u64[0 2 ** 63 - 1] ownerDeclaration = (u64[0 2 ** 63 - 1])typedMembers.TargetDeclarationIndexAt(index);
+        if (ownerDeclaration >= declarations.Count())
+        {
+            return false;
+        }
+
+        stack Compiler.Parsing.DeclItem ownerItem = declarations.ItemAt(ownerDeclaration);
+        if (ownerItem.NameToken == 0)
+        {
+            return false;
+        }
+
+        stack mut SourceMemberPathFact fact = new();
+        fact.OwnerDeclNameToken = ownerItem.NameToken;
+        fact.Kind = typedMembers.TypeKindAt(index);
+        fact.BitWidth = typedMembers.BitWidthAt(index);
+        fact.IntegerIsUnsigned = typedMembers.IsIntegerUnsignedAt(index);
+        if (fact.Kind == TypedSignatureTypeKind.Bool)
+        {
+            fact.HasDeclaredRange = true;
+            fact.DeclaredRangeLower = 0;
+            fact.DeclaredRangeUpperExclusive = 2;
+        }
+        else if (fact.Kind == TypedSignatureTypeKind.Integer && typedMembers.HasIntegerRangeAt(index))
+        {
+            // The semantic primary token is the integer type token itself; the
+            // head token is a last-identifier heuristic that does not land on
+            // integer type heads.
+            stack mut ValueFacts rangeFacts = new();
+            if (TryReadIntegerRangeFact(stream, source, typedMembers.TypePrimaryTokenAt(index), rangeFacts)
+                && rangeFacts.HasIntegerRange())
+            {
+                fact.HasDeclaredRange = true;
+                fact.DeclaredRangeLower = rangeFacts.IntegerRangeLower();
+                fact.DeclaredRangeUpperExclusive = rangeFacts.IntegerRangeUpperExclusive();
+            }
+        }
+        else if (fact.Kind == TypedSignatureTypeKind.FixedArray)
+        {
+            // The primary token of a fixed-array field is the element's
+            // integer type head, so the same range reader decodes the
+            // element's declared span.
+            stack mut ValueFacts elementRangeFacts = new();
+            if (TryReadIntegerRangeFact(stream, source, typedMembers.TypePrimaryTokenAt(index), elementRangeFacts)
+                && elementRangeFacts.HasIntegerRange())
+            {
+                fact.ElementHasDeclaredRange = true;
+                fact.ElementDeclaredRangeLower = elementRangeFacts.IntegerRangeLower();
+                fact.ElementDeclaredRangeUpperExclusive = elementRangeFacts.IntegerRangeUpperExclusive();
+            }
+        }
+
+        stack u32[0 max] factRow = facts.Add(fact);
+        if (factRow == 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] slot = nameToken + 1;
+        if (!rowsByToken.Contains(slot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] existingRow = rowsByToken.Get(slot);
+        if (existingRow != 0)
+        {
+            return false;
+        }
+
+        if (!rowsByToken.Replace(slot, factRow))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    memberFactRowsByToken = rowsByToken;
+    memberPathFacts = facts;
+    return true;
+}
+
+// The member-path fact row (1-based) recorded for `nameToken`, or 0 when
+// typing produced no field-resolved member row at that token.
+internal finite law u32[0 max] SourceMemberPathFactRowForToken(
+    borrow IrTable<u32[0 max]> memberFactRowsByToken,
+    u32[0 max] nameToken)
+{
+    stack u32[0 max] slot = nameToken + 1;
+    if (!memberFactRowsByToken.Contains(slot))
+    {
+        return 0;
+    }
+
+    return memberFactRowsByToken.Get(slot);
+}
+
+// Validates one `.field` chain step against the imported member-path facts:
+// the member token must carry a field-resolved fact whose owner declaration
+// names the same aggregate the storage walk is currently inside. Returns the
+// matched fact row so leaf consumers can read its type and range facts.
+internal fn bool SourceMemberPathFactMatchesFieldStep(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> memberFactRowsByToken,
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] ownerTypeNameToken,
+    u32[0 max] memberNameToken,
+    out u32[0 max] factRowPlusOne)
+{
+    factRowPlusOne = 0;
+    stack u32[0 max] found = SourceMemberPathFactRowForToken(memberFactRowsByToken, memberNameToken);
+    if (found == 0 || !memberPathFacts.Contains(found))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(found);
+    if (fact.OwnerDeclNameToken == 0
+        || !TokenTextEqualsAsciiSpan(stream, source, fact.OwnerDeclNameToken, ownerTypeNameToken))
+    {
+        return false;
+    }
+
+    factRowPlusOne = found;
+    return true;
+}
+
+// True when the member-path fact's leaf type agrees with the storage walk's
+// resolved field type code: scalar codes must match the fact's kind and bit
+// width exactly, pointer codes require a raw-pointer fact, and enum/aggregate
+// codes require a named-type fact.
+internal finite law bool SourceMemberPathFactAgreesWithFieldTypeCode(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne,
+    u32[0 max] fieldTypeCode)
+{
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeBool())
+    {
+        return fact.Kind == TypedSignatureTypeKind.Bool;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeI8())
+    {
+        return fact.Kind == TypedSignatureTypeKind.Integer && fact.BitWidth == 8;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeI16())
+    {
+        return fact.Kind == TypedSignatureTypeKind.Integer && fact.BitWidth == 16;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeI32())
+    {
+        return fact.Kind == TypedSignatureTypeKind.Integer && fact.BitWidth == 32;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeI64())
+    {
+        return fact.Kind == TypedSignatureTypeKind.Integer && fact.BitWidth == 64;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodePointer())
+    {
+        return fact.Kind == TypedSignatureTypeKind.RawPointer;
+    }
+
+    if (SourceResolvedFieldTypeCodeIsEnum(fieldTypeCode)
+        || SourceResolvedFieldTypeCodeIsAggregate(fieldTypeCode))
+    {
+        return fact.Kind == TypedSignatureTypeKind.Named;
+    }
+
+    return false;
+}
+
+// True when the member-path fact's leaf is a fixed-array field, for indexed
+// member paths whose storage walk resolved an array element layout.
+internal finite law bool SourceMemberPathFactIsFixedArray(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne)
+{
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    return fact.Kind == TypedSignatureTypeKind.FixedArray;
+}
+
+// True when the member-path fact's declared range spans its full storage
+// width (or the fact carries no decodable declared range at all), so a store
+// needs no range proof beyond the existing width agreement. Bool fields count
+// as full width. Narrower declared ranges impose a store-side range proof.
+internal finite law bool SourceMemberPathFactDeclaredRangeIsFullWidth(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne)
+{
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return true;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    if (!fact.HasDeclaredRange || fact.Kind == TypedSignatureTypeKind.Bool)
+    {
+        return true;
+    }
+
+    stack mut i64[min max] widthLower = 0;
+    stack mut i64[min max] widthUpperExclusive = 0;
+    if (fact.BitWidth == 8)
+    {
+        widthLower = -128;
+        widthUpperExclusive = 128;
+        if (fact.IntegerIsUnsigned)
+        {
+            widthLower = 0;
+            widthUpperExclusive = 256;
+        }
+    }
+    else if (fact.BitWidth == 16)
+    {
+        widthLower = -32768;
+        widthUpperExclusive = 32768;
+        if (fact.IntegerIsUnsigned)
+        {
+            widthLower = 0;
+            widthUpperExclusive = 65536;
+        }
+    }
+    else if (fact.BitWidth == 32)
+    {
+        widthLower = -2147483648;
+        widthUpperExclusive = 2147483648;
+        if (fact.IntegerIsUnsigned)
+        {
+            widthLower = 0;
+            widthUpperExclusive = 4294967296;
+        }
+    }
+    else
+    {
+        // 64-bit full-width ranges are not decodable into i64 facts, so a
+        // decoded declared range at width 64 is always narrower than storage.
+        return false;
+    }
+
+    return fact.DeclaredRangeLower == widthLower
+        && fact.DeclaredRangeUpperExclusive == widthUpperExclusive;
+}
+
+// Reads the declared ELEMENT integer range fact for a fixed-array
+// member-path fact row. Returns false when the element carries no decodable
+// declared range.
+internal finite bool TryDeclaredElementRangeFactForMemberPathFact(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne,
+    out i64[min max] lower,
+    out i64[min max] upperExclusive)
+{
+    lower = 0;
+    upperExclusive = 0;
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    if (!fact.ElementHasDeclaredRange)
+    {
+        return false;
+    }
+
+    lower = fact.ElementDeclaredRangeLower;
+    upperExclusive = fact.ElementDeclaredRangeUpperExclusive;
+    return true;
+}
+
+// Reads the declared integer range fact for a member-path fact row into value
+// facts. Returns false when the fact carries no decodable declared range.
+internal finite bool TryDeclaredRangeFactForMemberPathFact(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne,
+    out i64[min max] lower,
+    out i64[min max] upperExclusive)
+{
+    lower = 0;
+    upperExclusive = 0;
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    if (!fact.HasDeclaredRange)
+    {
+        return false;
+    }
+
+    lower = fact.DeclaredRangeLower;
+    upperExclusive = fact.DeclaredRangeUpperExclusive;
+    return true;
+}

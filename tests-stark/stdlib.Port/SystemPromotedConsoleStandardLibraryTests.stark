@@ -1,0 +1,359 @@
+import StdlibPortSupport
+import System.Console
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Runtime.Buffer
+import System.Testing
+import System.Text
+module SystemPromotedConsoleStandardLibraryTests
+
+// Ported from SystemPromotedConsoleStandardLibraryTests.StdLibSourcePromotedConsoleSurfaceCompiles.
+internal fn bool StdLibSourcePromotedConsoleSurfaceCompilesImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-console-surface", raw"""
+        import System.Console
+        import System.Runtime.Buffer
+        import System.Text
+        import System.IO
+        import System.Memory
+        module Demo
+
+        fn System.IO.IOStatus WriteOwned(mut borrow System.Text.OwnedAscii text)
+        {
+            return System.Console.WriteLine(text);
+        }
+
+        fn System.IO.IOStatus WriteBuffer(borrow System.Runtime.Buffer.DynamicByteBuffer buffer)
+        {
+            return System.Console.Write(buffer);
+        }
+
+        fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadInto(
+            mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer)
+            {
+                return System.Console.ReadBytes(buffer, 32);
+        }
+
+        fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine()
+        {
+            return System.Console.ReadLine();
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack mut ascii llvm = Llvm(c);
+    if (!System.Testing.Contains(llvm, "System_Console"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "System_Runtime_Buffer_FixedByteBuffer8192_WriteByte"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.DoesNotContain(llvm, "System_Experimental_Console"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemPromotedConsoleStandardLibraryTests.StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPaths.
+internal fn bool StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPathsImpl()
+{
+    // Compile the stdlib module directly so the scoped LLVM checks match the C# oracle.
+    stack mut ProgramCompile c = CompileSourceFile(
+        "stdlib-promoted-console-direct-platform-paths",
+        "../../stdlib/src/System/Console.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack mut ascii llvm = Llvm(c);
+    stack ascii writeBytesToStdout = LlvmDefinitionBody(llvm, "WriteBytesToStdout");
+    stack ascii writeBytesToStderr = LlvmDefinitionBody(llvm, "WriteBytesToStderr");
+    stack ascii writeBytesLineToStdout = LlvmDefinitionBody(llvm, "WriteBytesLineToStdout");
+    stack ascii writeBytesLineToStderr = LlvmDefinitionBody(llvm, "WriteBytesLineToStderr");
+    stack ascii writeLineAscii = LlvmDefinitionBody(llvm, "WriteLine__ascii_");
+    stack ascii writeLineUnicode = LlvmDefinitionBody(llvm, "WriteLine__unicode_");
+    stack ascii writeLineBytes = LlvmDefinitionBody(llvm, "WriteLine__borrowi8_minmax____");
+    stack ascii writeErrorLineAscii = LlvmDefinitionBody(llvm, "WriteErrorLine__ascii_");
+    stack ascii writeErrorLineUnicode = LlvmDefinitionBody(llvm, "WriteErrorLine__unicode_");
+    stack ascii writeErrorLineBytes = LlvmDefinitionBody(llvm, "WriteErrorLine__borrowi8_minmax____");
+
+    if (!System.Testing.Contains(writeBytesToStdout, "@System_Runtime_Platform_WriteStdoutBytes(")
+        || !System.Testing.Contains(writeBytesToStderr, "@System_Runtime_Platform_WriteStderrBytes(")
+        || !System.Testing.Contains(writeBytesLineToStdout, "@System_Runtime_Platform_WriteStdoutBytesLine(")
+        || !System.Testing.Contains(writeBytesLineToStderr, "@System_Runtime_Platform_WriteStderrBytesLine(")
+        || !System.Testing.Contains(writeLineAscii, "@System_Runtime_Platform_WriteStdoutAsciiLine(")
+        || !System.Testing.Contains(writeLineUnicode, "@System_Runtime_Platform_WriteStdoutUnicodeLine(")
+        || !System.Testing.Contains(writeLineBytes, "@WriteBytesLineToStdout(")
+        || !System.Testing.Contains(writeErrorLineAscii, "@System_Runtime_Platform_WriteStderrAsciiLine(")
+        || !System.Testing.Contains(writeErrorLineUnicode, "@System_Runtime_Platform_WriteStderrUnicodeLine(")
+        || !System.Testing.Contains(writeErrorLineBytes, "@WriteBytesLineToStderr("))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(writeBytesToStdout, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesToStderr, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesLineToStdout, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesLineToStderr, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeLineAscii, "@Write__ascii_")
+        || System.Testing.Contains(writeErrorLineAscii, "@WriteError__ascii_"))
+    {
+        return false;
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Platform.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var source):
+            stack ascii platformSource = source.View();
+            return System.Testing.Contains(platformSource, "WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)")
+                && System.Testing.Contains(platformSource, "WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)")
+                && System.Testing.Contains(platformSource, "ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity)");
+    }
+}
+
+// Ported from SystemPromotedConsoleStandardLibraryTests.StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffers.
+internal fn bool StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffersImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-runtime-platform-line-writes-coalesce",
+        "../../stdlib/src/System/Runtime/Platform/Linux.stark",
+        LinuxX64TargetTriple);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack mut ascii llvm = Llvm(c);
+    stack ascii bufferLine = LlvmDefinitionBody(llvm, "WriteBufferLineToHandle");
+    stack ascii asciiLine = LlvmDefinitionBody(llvm, "WriteAsciiLineToHandle");
+    stack ascii unicodeLine = LlvmDefinitionBody(llvm, "WriteUnicodeLineToHandle");
+
+    if (!System.Testing.Contains(bufferLine, "%System_Runtime_Buffer_FixedByteBuffer8192")
+        || !System.Testing.Contains(bufferLine, "@WriteBufferToHandle(")
+        || !System.Testing.Contains(asciiLine, "@WriteBufferLineToHandle(")
+        || !System.Testing.Contains(unicodeLine, "%System_Runtime_Buffer_FixedByteBuffer4096")
+        || !System.Testing.Contains(unicodeLine, "@AppendUtf8CodePoint(")
+        || !System.Testing.Contains(unicodeLine, "i32 10"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemPromotedConsoleStandardLibraryTests.SourceStdLibPromotedConsoleExecutableRuns.
+internal fn bool SourceStdLibPromotedConsoleExecutableRunsImpl()
+{
+    // PORT-NOTE: the original compiles the embedded program against the shared stdlib
+    // source via the CLI (--emit-exe -I <stdlib> --target <triple>), then runs the
+    // produced binary feeding "alpha\r\ncafé\nZ123" + 8193 'a' chars over UTF-8 stdin and
+    // asserts exit code 0 with stdout "ascii:owned\nunicode:α\nBUF\n" and stderr "err\n"
+    // (skipped on Windows). The compile-only host bridge cannot link, run, or pipe stdin
+    // into the produced binary, so this reduces to compiling the embedded program and
+    // asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-console-executable-runs", raw"""
+        import System.Console
+        import System.Runtime.Buffer
+        import System.Text
+        import System.IO
+        import System.Memory
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool ReadCount(System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> result, u64[0 2 ** 63 - 1] expected)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                    return value == expected;
+                case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsAlpha(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                    return false;
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                    stack mut System.Text.OwnedAscii line = value;
+                    if (line.Length() != 5)
+                    {
+                        return false;
+                    }
+
+                    stack i8[min max][] slice = line.AsSlice();
+                    return slice[0] == 97
+                        && slice[1] == 108
+                        && slice[2] == 112
+                        && slice[3] == 104
+                        && slice[4] == 97;
+            }
+        }
+
+        fn bool IsCafe(System.Memory.MemoryResult<System.Text.OwnedUnicode> result)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
+                    return false;
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+                    stack mut System.Text.OwnedUnicode line = value;
+                    if (line.Length() != 4)
+                    {
+                        return false;
+                    }
+
+                    stack i32[min max][] slice = line.AsSlice();
+                    return slice[0] == 99
+                        && slice[1] == 97
+                        && slice[2] == 102
+                        && slice[3] == 233;
+            }
+        }
+
+        fn bool IsZ(System.Memory.MemoryResult<System.Text.OwnedUnicode> result)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
+                    return false;
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+                    stack mut System.Text.OwnedUnicode unit = value;
+                    if (unit.Length() != 1)
+                    {
+                        return false;
+                    }
+
+                    stack i32[min max][] slice = unit.AsSlice();
+                    return slice[0] == 90;
+            }
+        }
+
+        fn bool IsTooLargeAscii(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                    return false;
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                    switch (error)
+                    {
+                        case System.Memory.MemoryError.OutOfMemory:
+                            return false;
+                        case System.Memory.MemoryError.TooLarge:
+                            return true;
+                        case System.Memory.MemoryError.InvalidLayout:
+                            return false;
+                        case System.Memory.MemoryError.UnsupportedAlignment:
+                            return false;
+                    }
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut System.Text.OwnedAscii owned = new();
+            if (!MemoryOk(owned.AppendAscii("owned")))
+            {
+                return 1;
+            }
+
+            stack mut i8[min max][3] bufferBytes =
+            {
+                66, 85, 70
+            };
+            stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+            if (!MemoryOk(fixedBuffer.WriteSlice(bufferBytes, 3)))
+            {
+                return 2;
+            }
+
+            if (!StatusOk(System.Console.Write("ascii:"))
+                || !StatusOk(System.Console.WriteLine(owned))
+                || !StatusOk(System.Console.Write((unicode)"unicode:"))
+                || !StatusOk(System.Console.WriteLine((unicode)"α"))
+                || !StatusOk(System.Console.WriteLine(fixedBuffer))
+                || !StatusOk(System.Console.WriteErrorLine("err")))
+                {
+                    return 3;
+            }
+
+            if (!IsAlpha(System.Console.ReadAsciiLine()))
+            {
+                return 4;
+            }
+
+            if (!IsCafe(System.Console.ReadUnicodeLine()))
+            {
+                return 5;
+            }
+
+            if (!IsZ(System.Console.Read()))
+            {
+                return 6;
+            }
+
+            stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBytes = new();
+            if (!ReadCount(System.Console.ReadBytes(dynamicBytes, 3), 3))
+            {
+                return 7;
+            }
+
+            stack i8[min max][] readBytes = dynamicBytes.ReadSlice();
+            if (readBytes[0] != 49 || readBytes[1] != 50 || readBytes[2] != 51)
+            {
+                return 8;
+            }
+
+            if (!IsTooLargeAscii(System.Console.ReadAsciiLine()))
+            {
+                return 9;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

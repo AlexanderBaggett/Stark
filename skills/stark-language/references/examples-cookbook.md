@@ -18,16 +18,11 @@ export fn i32[min max] main()
 
 ```stark
 import System.Console
-import System.IO
 module Demo.Console
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello from Stark") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello from Stark");
     return 0;
 }
 ```
@@ -271,13 +266,7 @@ kind = "executable"
 [executable]
 root = "Demo.stark"
 output = "demo"
-
-[dependencies]
-stdlib = { path = "../stdlib" }
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
+
+Do not add a `stdlib` dependency for `System.*` imports; project builds resolve
+the bundled standard library automatically.

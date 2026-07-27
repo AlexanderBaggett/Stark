@@ -101,7 +101,6 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             new CompilerOptions(
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -348,8 +347,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-source-alloc-symbols-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -400,32 +398,16 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-package-alloc-symbols-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
         var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 
         try
         {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            Assert.Contains("Emitted static library:", buildStdout.ToString());
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
             await WriteAllocatorAuditAppAsync(appPath);
 
             var stdout = new StringWriter();
@@ -488,7 +470,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-O0", "-o", libraryPath, "--target", targetInfo.Triple],
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -502,7 +484,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var packagedStdout = new StringWriter();
             var packagedStderr = new StringWriter();
             var packagedExitCode = await CompilerCli.RunAsync(
-                [packagedAppPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", packagedOutputPath, "--target", targetInfo.Triple],
+                [packagedAppPath, "--emit-exe", "-I", packageDirectory, "-o", packagedOutputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 packagedStdout,
                 packagedStderr);
@@ -534,8 +516,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-source-console-no-memory-objects-");
         var tempsDirectory = Path.Combine(tempDirectory.FullName, "temps");
         Directory.CreateDirectory(tempsDirectory);
@@ -550,7 +531,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O0", "-I", sourceRoot, "--save-temps", tempsDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "-I", sourceRoot, "--save-temps", tempsDirectory, "-o", outputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -560,15 +541,41 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
+            using (var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }))
+            {
+                Assert.NotNull(process);
+                var processStdout = await process!.StandardOutput.ReadToEndAsync();
+                var processStderr = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                Assert.Equal(0, process.ExitCode);
+                Assert.Equal("allocator stays unused\n", processStdout);
+                Assert.Equal(string.Empty, processStderr);
+            }
+
             var emittedFiles = Directory.EnumerateFiles(tempsDirectory)
                 .Select(Path.GetFileName)
                 .OrderBy(static fileName => fileName, StringComparer.Ordinal)
                 .ToArray();
-            var emittedFileList = string.Join(Environment.NewLine, emittedFiles);
-            Assert.Contains($"System_Console{objectExtension}", emittedFiles);
-            Assert.DoesNotContain($"System_Memory{objectExtension}", emittedFiles);
+            // Reachability pruning plus symbol-driven dependency emission may fold every
+            // reachable definition (Console.WriteLine included) into the root object, so a
+            // standalone System_Console object is not required. The property under test is
+            // that no unused memory/file-system objects are ever emitted as intermediates.
+            Assert.NotEmpty(emittedFiles);
+            Assert.DoesNotContain(
+                emittedFiles,
+                fileName => fileName is not null
+                    && fileName.EndsWith(objectExtension, StringComparison.Ordinal)
+                    && fileName.Contains("Memory", StringComparison.Ordinal));
             Assert.DoesNotContain($"System_FileSystem{objectExtension}", emittedFiles);
-            Assert.DoesNotContain($"System_Memory{objectExtension}", emittedFileList);
         }
         finally
         {

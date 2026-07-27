@@ -47,7 +47,7 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
             Assert.Contains("Emitted static library:", emitStdout.ToString());
             Assert.Equal(string.Empty, emitStderr.ToString());
             Assert.True(File.Exists(libraryPath));
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json")));
+            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, "libFacade.starkpkg")));
             File.Delete(facadeSourcePath);
             await File.WriteAllTextAsync(
                 demoSourcePath,

@@ -1,0 +1,2887 @@
+import Compiler.Ir
+export import Compiler.Mir.PackageImage.ModelKinds
+export import Compiler.Mir.PackageImage.ManifestJsonRows
+export import Compiler.Mir.PackageImage.GenericTemplateModels
+export import Compiler.Mir.PackageImage.TypedInterfaceFactModels
+export import Compiler.Mir.PackageImage.FunctionFactModels
+export import Compiler.Mir.PackageImage.BackendFactModels
+module Compiler.Mir.PackageImage.Models
+
+// Public package-image status, summary, source-surface, typed-declaration,
+// manifest, and module-graph carriers. Focused model families are re-exported
+// above so existing facade consumers retain the same zero-copy fact surface.
+
+// Public package-image status surface. The compatibility facade re-exports
+// these declarations from Compiler.Mir.PackageImage.
+
+public enum PackageImageInspectionFormat
+{
+    Text,
+    Json,
+}
+
+public enum PackageImageValidationStatus
+{
+    Ok,
+    TruncatedHeader,
+    UnsupportedFormat,
+    MalformedSectionDirectory,
+    TruncatedSection,
+}
+
+public finite law ascii PackageImageValidationStatusName(PackageImageValidationStatus status)
+{
+    switch (status)
+    {
+        case PackageImageValidationStatus.Ok:
+            return "ok";
+        case PackageImageValidationStatus.TruncatedHeader:
+            return "truncated-header";
+        case PackageImageValidationStatus.UnsupportedFormat:
+            return "unsupported-format";
+        case PackageImageValidationStatus.MalformedSectionDirectory:
+            return "malformed-section-directory";
+        case PackageImageValidationStatus.TruncatedSection:
+            return "truncated-section";
+    }
+}
+
+// Internal typed-interface manifest rows. They carry serialized row indices
+// and scalar flags only; JSON materialization stays outside Models.
+
+internal struct PackageImageSummary
+{
+    bool IsLogical;
+    bool IsSectioned;
+    bool HasAsm;
+    u32[0 max] StringTableOffset;
+    u64[0 max] StringTableLength;
+    u32[0 max] ManifestOffset;
+    u64[0 max] ManifestLength;
+    u32[0 max] RootModuleStringIndex;
+    u32[0 max] LibraryFileNameStringIndex;
+    u32[0 max] BuildProfileStringIndex;
+    u32[0 max] TargetTripleStringIndex;
+    u32[0 max] TargetDataLayoutStringIndex;
+    u32[0 max] TargetCpuStringIndex;
+    u32[0 max] RelocationModelStringIndex;
+    u32[0 max] CodeModelStringIndex;
+    u32[0 max] FeatureStringIndexOffset;
+    u32[0 max] CDataModelKindStringIndex;
+    bool CCharIsSigned;
+    u32[0 max] CPointerBitWidth;
+    u32[0 max] CLongBitWidth;
+    u32[0 max] CSizeTBitWidth;
+    u32[0 max] CPtrDiffTBitWidth;
+    u32[0 max] AggregatePointerSizeBytes;
+    u32[0 max] AggregatePointerAlignmentBytes;
+    u32[0 max] InstructionCount;
+    u32[0 max] BlockCount;
+    u32[0 max] FunctionCount;
+    u32[0 max] GlobalCount;
+    u32[0 max] AsmFunctionCount;
+    u32[0 max] EnumLayoutFactCount;
+    u32[0 max] TextPayloadByteCount;
+    u32[0 max] TextConstantCount;
+    u32[0 max] FloatPayloadByteCount;
+    u32[0 max] FloatConstantCount;
+    u32[0 max] SectionCount;
+    u32[0 max] StringCount;
+    u32[0 max] TargetFeatureCount;
+    bool HasBuildProfile;
+    bool HasTarget;
+    bool HasCDataModel;
+    bool HasAggregateLayout;
+    bool HasEnumLayoutFacts;
+    bool HasTextConstants;
+    bool HasFloatConstants;
+
+    PackageImageSummary()
+    {
+        self.IsLogical = false;
+        self.IsSectioned = false;
+        self.HasAsm = false;
+        self.StringTableOffset = 0;
+        self.StringTableLength = 0;
+        self.ManifestOffset = 0;
+        self.ManifestLength = 0;
+        self.RootModuleStringIndex = PackageImageMissingStringIndex();
+        self.LibraryFileNameStringIndex = PackageImageMissingStringIndex();
+        self.BuildProfileStringIndex = PackageImageMissingStringIndex();
+        self.TargetTripleStringIndex = PackageImageMissingStringIndex();
+        self.TargetDataLayoutStringIndex = PackageImageMissingStringIndex();
+        self.TargetCpuStringIndex = PackageImageMissingStringIndex();
+        self.RelocationModelStringIndex = PackageImageMissingStringIndex();
+        self.CodeModelStringIndex = PackageImageMissingStringIndex();
+        self.FeatureStringIndexOffset = 0;
+        self.CDataModelKindStringIndex = PackageImageMissingStringIndex();
+        self.CCharIsSigned = false;
+        self.CPointerBitWidth = 0;
+        self.CLongBitWidth = 0;
+        self.CSizeTBitWidth = 0;
+        self.CPtrDiffTBitWidth = 0;
+        self.AggregatePointerSizeBytes = 0;
+        self.AggregatePointerAlignmentBytes = 0;
+        self.InstructionCount = 0;
+        self.BlockCount = 0;
+        self.FunctionCount = 0;
+        self.GlobalCount = 0;
+        self.AsmFunctionCount = 0;
+        self.EnumLayoutFactCount = 0;
+        self.TextPayloadByteCount = 0;
+        self.TextConstantCount = 0;
+        self.FloatPayloadByteCount = 0;
+        self.FloatConstantCount = 0;
+        self.SectionCount = 0;
+        self.StringCount = 0;
+        self.TargetFeatureCount = 0;
+        self.HasBuildProfile = false;
+        self.HasTarget = false;
+        self.HasCDataModel = false;
+        self.HasAggregateLayout = false;
+        self.HasEnumLayoutFacts = false;
+        self.HasTextConstants = false;
+        self.HasFloatConstants = false;
+    }
+}
+
+internal struct LogicalPackageFactsHeader
+{
+    u32[0 max] RootModuleStringIndex;
+    u32[0 max] LibraryFileNameStringIndex;
+    u32[0 max] BuildProfileStringIndex;
+    u32[0 max] TargetTripleStringIndex;
+    u32[0 max] TargetDataLayoutStringIndex;
+    u32[0 max] TargetCpuStringIndex;
+    u32[0 max] RelocationModelStringIndex;
+    u32[0 max] CodeModelStringIndex;
+    u32[0 max] FeatureStringIndexOffset;
+    u32[0 max] TargetFeatureCount;
+    u32[0 max] CDataModelKindStringIndex;
+    bool CCharIsSigned;
+    u32[0 max] CPointerBitWidth;
+    u32[0 max] CLongBitWidth;
+    u32[0 max] CSizeTBitWidth;
+    u32[0 max] CPtrDiffTBitWidth;
+    u32[0 max] AggregatePointerSizeBytes;
+    u32[0 max] AggregatePointerAlignmentBytes;
+    bool HasBuildProfile;
+    bool HasTarget;
+    bool HasCDataModel;
+    bool HasAggregateLayout;
+
+    LogicalPackageFactsHeader()
+    {
+        self.RootModuleStringIndex = PackageImageMissingStringIndex();
+        self.LibraryFileNameStringIndex = PackageImageMissingStringIndex();
+        self.BuildProfileStringIndex = PackageImageMissingStringIndex();
+        self.TargetTripleStringIndex = PackageImageMissingStringIndex();
+        self.TargetDataLayoutStringIndex = PackageImageMissingStringIndex();
+        self.TargetCpuStringIndex = PackageImageMissingStringIndex();
+        self.RelocationModelStringIndex = PackageImageMissingStringIndex();
+        self.CodeModelStringIndex = PackageImageMissingStringIndex();
+        self.FeatureStringIndexOffset = 0;
+        self.TargetFeatureCount = 0;
+        self.CDataModelKindStringIndex = PackageImageMissingStringIndex();
+        self.CCharIsSigned = false;
+        self.CPointerBitWidth = 0;
+        self.CLongBitWidth = 0;
+        self.CSizeTBitWidth = 0;
+        self.CPtrDiffTBitWidth = 0;
+        self.AggregatePointerSizeBytes = 0;
+        self.AggregatePointerAlignmentBytes = 0;
+        self.HasBuildProfile = false;
+        self.HasTarget = false;
+        self.HasCDataModel = false;
+        self.HasAggregateLayout = false;
+    }
+}
+
+public struct LogicalPackageImageFacts
+{
+    u32[0 max] SectionCountValue;
+    u32[0 max] StringCountValue;
+    u32[0 max] StringTableOffsetValue;
+    u64[0 max] StringTableLengthValue;
+    u32[0 max] ManifestOffsetValue;
+    u64[0 max] ManifestLengthValue;
+    u32[0 max] RootModuleStringIndexValue;
+    u32[0 max] LibraryFileNameStringIndexValue;
+    u32[0 max] BuildProfileStringIndexValue;
+    u32[0 max] TargetTripleStringIndexValue;
+    u32[0 max] TargetDataLayoutStringIndexValue;
+    u32[0 max] TargetCpuStringIndexValue;
+    u32[0 max] RelocationModelStringIndexValue;
+    u32[0 max] CodeModelStringIndexValue;
+    u32[0 max] FeatureStringIndexOffsetValue;
+    u32[0 max] TargetFeatureCountValue;
+    u32[0 max] CDataModelKindStringIndexValue;
+    bool CCharIsSignedValue;
+    u32[0 max] CPointerBitWidthValue;
+    u32[0 max] CLongBitWidthValue;
+    u32[0 max] CSizeTBitWidthValue;
+    u32[0 max] CPtrDiffTBitWidthValue;
+    u32[0 max] AggregatePointerSizeBytesValue;
+    u32[0 max] AggregatePointerAlignmentBytesValue;
+    bool HasBuildProfileValue;
+    bool HasTargetValue;
+    bool HasCDataModelValue;
+    bool HasAggregateLayoutValue;
+
+    LogicalPackageImageFacts()
+    {
+        self.SectionCountValue = 0;
+        self.StringCountValue = 0;
+        self.StringTableOffsetValue = 0;
+        self.StringTableLengthValue = 0;
+        self.ManifestOffsetValue = 0;
+        self.ManifestLengthValue = 0;
+        self.RootModuleStringIndexValue = PackageImageMissingStringIndex();
+        self.LibraryFileNameStringIndexValue = PackageImageMissingStringIndex();
+        self.BuildProfileStringIndexValue = PackageImageMissingStringIndex();
+        self.TargetTripleStringIndexValue = PackageImageMissingStringIndex();
+        self.TargetDataLayoutStringIndexValue = PackageImageMissingStringIndex();
+        self.TargetCpuStringIndexValue = PackageImageMissingStringIndex();
+        self.RelocationModelStringIndexValue = PackageImageMissingStringIndex();
+        self.CodeModelStringIndexValue = PackageImageMissingStringIndex();
+        self.FeatureStringIndexOffsetValue = 0;
+        self.TargetFeatureCountValue = 0;
+        self.CDataModelKindStringIndexValue = PackageImageMissingStringIndex();
+        self.CCharIsSignedValue = false;
+        self.CPointerBitWidthValue = 0;
+        self.CLongBitWidthValue = 0;
+        self.CSizeTBitWidthValue = 0;
+        self.CPtrDiffTBitWidthValue = 0;
+        self.AggregatePointerSizeBytesValue = 0;
+        self.AggregatePointerAlignmentBytesValue = 0;
+        self.HasBuildProfileValue = false;
+        self.HasTargetValue = false;
+        self.HasCDataModelValue = false;
+        self.HasAggregateLayoutValue = false;
+    }
+
+    public inline finite law u32[0 max] SectionCount(borrow LogicalPackageImageFacts self)
+    {
+        return self.SectionCountValue;
+    }
+
+    public inline finite law u32[0 max] StringCount(borrow LogicalPackageImageFacts self)
+    {
+        return self.StringCountValue;
+    }
+
+    public inline finite law u32[0 max] RootModuleStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.RootModuleStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] ManifestOffset(borrow LogicalPackageImageFacts self)
+    {
+        return self.ManifestOffsetValue;
+    }
+
+    public inline finite law u64[0 max] ManifestLength(borrow LogicalPackageImageFacts self)
+    {
+        return self.ManifestLengthValue;
+    }
+
+    public inline finite law u32[0 max] LibraryFileNameStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.LibraryFileNameStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] BuildProfileStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.BuildProfileStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] TargetTripleStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.TargetTripleStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] TargetDataLayoutStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.TargetDataLayoutStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] TargetCpuStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.TargetCpuStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] RelocationModelStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.RelocationModelStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] CodeModelStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.CodeModelStringIndexValue;
+    }
+
+    public inline finite law u32[0 max] TargetFeatureCount(borrow LogicalPackageImageFacts self)
+    {
+        return self.TargetFeatureCountValue;
+    }
+
+    public inline finite law u32[0 max] CDataModelKindStringIndex(borrow LogicalPackageImageFacts self)
+    {
+        return self.CDataModelKindStringIndexValue;
+    }
+
+    public inline finite law bool CCharIsSigned(borrow LogicalPackageImageFacts self)
+    {
+        return self.CCharIsSignedValue;
+    }
+
+    public inline finite law u32[0 max] CPointerBitWidth(borrow LogicalPackageImageFacts self)
+    {
+        return self.CPointerBitWidthValue;
+    }
+
+    public inline finite law u32[0 max] CLongBitWidth(borrow LogicalPackageImageFacts self)
+    {
+        return self.CLongBitWidthValue;
+    }
+
+    public inline finite law u32[0 max] CSizeTBitWidth(borrow LogicalPackageImageFacts self)
+    {
+        return self.CSizeTBitWidthValue;
+    }
+
+    public inline finite law u32[0 max] CPtrDiffTBitWidth(borrow LogicalPackageImageFacts self)
+    {
+        return self.CPtrDiffTBitWidthValue;
+    }
+
+    public inline finite law u32[0 max] AggregatePointerSizeBytes(borrow LogicalPackageImageFacts self)
+    {
+        return self.AggregatePointerSizeBytesValue;
+    }
+
+    public inline finite law u32[0 max] AggregatePointerAlignmentBytes(borrow LogicalPackageImageFacts self)
+    {
+        return self.AggregatePointerAlignmentBytesValue;
+    }
+
+    public inline finite law bool HasBuildProfile(borrow LogicalPackageImageFacts self)
+    {
+        return self.HasBuildProfileValue;
+    }
+
+    public inline finite law bool HasTarget(borrow LogicalPackageImageFacts self)
+    {
+        return self.HasTargetValue;
+    }
+
+    public inline finite law bool HasCDataModel(borrow LogicalPackageImageFacts self)
+    {
+        return self.HasCDataModelValue;
+    }
+
+    public inline finite law bool HasAggregateLayout(borrow LogicalPackageImageFacts self)
+    {
+        return self.HasAggregateLayoutValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceImportSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] ImportOrdinalValue;
+    bool HasDirectImportValue;
+    bool HasReExportValue;
+    bool IsExportedValue;
+
+    LogicalPackageSourceSurfaceImportSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.ImportOrdinalValue = 0;
+        self.HasDirectImportValue = false;
+        self.HasReExportValue = false;
+        self.IsExportedValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageSourceSurfaceImportSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ImportOrdinal(borrow LogicalPackageSourceSurfaceImportSummary self)
+    {
+        return self.ImportOrdinalValue;
+    }
+
+    public inline finite law bool HasDirectImport(borrow LogicalPackageSourceSurfaceImportSummary self)
+    {
+        return self.HasDirectImportValue;
+    }
+
+    public inline finite law bool HasReExport(borrow LogicalPackageSourceSurfaceImportSummary self)
+    {
+        return self.HasReExportValue;
+    }
+
+    public inline finite law bool IsExported(borrow LogicalPackageSourceSurfaceImportSummary self)
+    {
+        return self.IsExportedValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeAliasSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeAliasOrdinalValue;
+    u32[0 max] GenericParameterCountValue;
+    u32[0 max] ComptimeGenericParameterCountValue;
+
+    LogicalPackageSourceSurfaceTypeAliasSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeAliasOrdinalValue = 0;
+        self.GenericParameterCountValue = 0;
+        self.ComptimeGenericParameterCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeAliasSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeAliasSummary self)
+    {
+        return self.TypeAliasOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterCount(
+        borrow LogicalPackageSourceSurfaceTypeAliasSummary self)
+    {
+        return self.GenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterCount(
+        borrow LogicalPackageSourceSurfaceTypeAliasSummary self)
+    {
+        return self.ComptimeGenericParameterCountValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeAliasOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+
+    LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeAliasOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary self)
+    {
+        return self.TypeAliasOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] GenericParameterCountValue;
+    u32[0 max] ComptimeGenericParameterCountValue;
+    u32[0 max] PrimaryConstructorParameterCountValue;
+    u32[0 max] FieldCountValue;
+    u32[0 max] VariantCountValue;
+    u32[0 max] MethodCountValue;
+    u32[0 max] ConstructorCountValue;
+    u32[0 max] AssociatedTypeCountValue;
+    u32[0 max] ImplementedTraitCountValue;
+    u32[0 max] ThreadSafetyLawAttributeCountValue;
+    u32[0 max] PackBytesValue;
+    u32[0 max] AlignBytesValue;
+    bool HasBackendOptimizationModeValue;
+    bool HasStructLayoutValue;
+    bool HasPackBytesValue;
+    bool HasAlignBytesValue;
+    bool HasDestructorValue;
+    bool IsDynTraitValue;
+
+    LogicalPackageSourceSurfaceTypeSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.GenericParameterCountValue = 0;
+        self.ComptimeGenericParameterCountValue = 0;
+        self.PrimaryConstructorParameterCountValue = 0;
+        self.FieldCountValue = 0;
+        self.VariantCountValue = 0;
+        self.MethodCountValue = 0;
+        self.ConstructorCountValue = 0;
+        self.AssociatedTypeCountValue = 0;
+        self.ImplementedTraitCountValue = 0;
+        self.ThreadSafetyLawAttributeCountValue = 0;
+        self.PackBytesValue = 0;
+        self.AlignBytesValue = 0;
+        self.HasBackendOptimizationModeValue = false;
+        self.HasStructLayoutValue = false;
+        self.HasPackBytesValue = false;
+        self.HasAlignBytesValue = false;
+        self.HasDestructorValue = false;
+        self.IsDynTraitValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterCount(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.GenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterCount(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.ComptimeGenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] PrimaryConstructorParameterCount(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.PrimaryConstructorParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] FieldCount(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.FieldCountValue;
+    }
+
+    public inline finite law u32[0 max] VariantCount(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.VariantCountValue;
+    }
+
+    public inline finite law u32[0 max] MethodCount(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.MethodCountValue;
+    }
+
+    public inline finite law u32[0 max] ConstructorCount(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.ConstructorCountValue;
+    }
+
+    public inline finite law u32[0 max] AssociatedTypeCount(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.AssociatedTypeCountValue;
+    }
+
+    public inline finite law u32[0 max] ImplementedTraitCount(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.ImplementedTraitCountValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawAttributeCount(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.ThreadSafetyLawAttributeCountValue;
+    }
+
+    public inline finite law u32[0 max] PackBytes(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.PackBytesValue;
+    }
+
+    public inline finite law u32[0 max] AlignBytes(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.AlignBytesValue;
+    }
+
+    public inline finite law bool HasBackendOptimizationMode(
+        borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.HasBackendOptimizationModeValue;
+    }
+
+    public inline finite law bool HasStructLayout(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.HasStructLayoutValue;
+    }
+
+    public inline finite law bool HasPackBytes(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.HasPackBytesValue;
+    }
+
+    public inline finite law bool HasAlignBytes(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.HasAlignBytesValue;
+    }
+
+    public inline finite law bool HasDestructor(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.HasDestructorValue;
+    }
+
+    public inline finite law bool IsDynTrait(borrow LogicalPackageSourceSurfaceTypeSummary self)
+    {
+        return self.IsDynTraitValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeFieldSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] FieldOrdinalValue;
+    u32[0 max] ThreadSafetyLawAttributeCountValue;
+    u32[0 max] ExplicitOffsetBytesValue;
+    bool HasVisibilityValue;
+    bool HasExplicitOffsetBytesValue;
+
+    LogicalPackageSourceSurfaceTypeFieldSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.FieldOrdinalValue = 0;
+        self.ThreadSafetyLawAttributeCountValue = 0;
+        self.ExplicitOffsetBytesValue = 0;
+        self.HasVisibilityValue = false;
+        self.HasExplicitOffsetBytesValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FieldOrdinal(borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.FieldOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawAttributeCount(
+        borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.ThreadSafetyLawAttributeCountValue;
+    }
+
+    public inline finite law u32[0 max] ExplicitOffsetBytes(
+        borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.ExplicitOffsetBytesValue;
+    }
+
+    public inline finite law bool HasVisibility(borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.HasVisibilityValue;
+    }
+
+    public inline finite law bool HasExplicitOffsetBytes(
+        borrow LogicalPackageSourceSurfaceTypeFieldSummary self)
+    {
+        return self.HasExplicitOffsetBytesValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+    bool IsDisjointValue;
+    bool IsConstValue;
+    bool HasRawPointerElementCountExpressionValue;
+
+    LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.IsDisjointValue = false;
+        self.IsConstValue = false;
+        self.HasRawPointerElementCountExpressionValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law bool IsDisjoint(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.IsDisjointValue;
+    }
+
+    public inline finite law bool IsConst(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.IsConstValue;
+    }
+
+    public inline finite law bool HasRawPointerElementCountExpression(
+        borrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary self)
+    {
+        return self.HasRawPointerElementCountExpressionValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeEnumVariantSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] VariantOrdinalValue;
+    u32[0 max] PayloadCountValue;
+    bool UsesNamedFieldsValue;
+    bool HasRoleValue;
+    bool HasAbsorbsErrorTypeValue;
+
+    LogicalPackageSourceSurfaceTypeEnumVariantSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.VariantOrdinalValue = 0;
+        self.PayloadCountValue = 0;
+        self.UsesNamedFieldsValue = false;
+        self.HasRoleValue = false;
+        self.HasAbsorbsErrorTypeValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] VariantOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.VariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] PayloadCount(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.PayloadCountValue;
+    }
+
+    public inline finite law bool UsesNamedFields(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.UsesNamedFieldsValue;
+    }
+
+    public inline finite law bool HasRole(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.HasRoleValue;
+    }
+
+    public inline finite law bool HasAbsorbsErrorType(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantSummary self)
+    {
+        return self.HasAbsorbsErrorTypeValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] VariantOrdinalValue;
+    u32[0 max] PayloadOrdinalValue;
+    bool HasNameValue;
+
+    LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.VariantOrdinalValue = 0;
+        self.PayloadOrdinalValue = 0;
+        self.HasNameValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] VariantOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary self)
+    {
+        return self.VariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] PayloadOrdinal(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary self)
+    {
+        return self.PayloadOrdinalValue;
+    }
+
+    public inline finite law bool HasName(
+        borrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary self)
+    {
+        return self.HasNameValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceGlobalSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] GlobalOrdinalValue;
+    bool IsMutableValue;
+    bool HasConstantInitializerValue;
+
+    LogicalPackageSourceSurfaceGlobalSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.GlobalOrdinalValue = 0;
+        self.IsMutableValue = false;
+        self.HasConstantInitializerValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceGlobalSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] GlobalOrdinal(
+        borrow LogicalPackageSourceSurfaceGlobalSummary self)
+    {
+        return self.GlobalOrdinalValue;
+    }
+
+    public inline finite law bool IsMutable(borrow LogicalPackageSourceSurfaceGlobalSummary self)
+    {
+        return self.IsMutableValue;
+    }
+
+    public inline finite law bool HasConstantInitializer(
+        borrow LogicalPackageSourceSurfaceGlobalSummary self)
+    {
+        return self.HasConstantInitializerValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceFunctionSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] FunctionOrdinalValue;
+    u32[0 max] ParameterCountValue;
+    u32[0 max] GenericParameterCountValue;
+    u32[0 max] ComptimeGenericParameterCountValue;
+    u32[0 max] TypeParameterConstraintCountValue;
+    u32[0 max] ThreadSafetyLawPredicateCountValue;
+    u32[0 max] ValueContractCountValue;
+    u32[0 max] DisjointParameterGroupCountValue;
+    u32[0 max] OverlapParameterGroupCountValue;
+    u32[0 max] SameParameterGroupCountValue;
+    u32[0 max] PointeeDeadOnReturnParameterNameCountValue;
+    bool HasInlinePreferenceValue;
+    bool HasFfiAbiValue;
+    bool HasBackendOptimizationModeValue;
+    bool HasLinkNameValue;
+    bool HasAsmValue;
+    bool IsFfiValue;
+    bool IsStrictFpValue;
+    bool UsesFastCallingConventionValue;
+    bool IsHotValue;
+    bool IsColdValue;
+    bool HasExplicitInlinePreferenceValue;
+    bool IsUnsafeValue;
+    bool IsVarargsValue;
+    bool IsTailCallableValue;
+
+    LogicalPackageSourceSurfaceFunctionSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.FunctionOrdinalValue = 0;
+        self.ParameterCountValue = 0;
+        self.GenericParameterCountValue = 0;
+        self.ComptimeGenericParameterCountValue = 0;
+        self.TypeParameterConstraintCountValue = 0;
+        self.ThreadSafetyLawPredicateCountValue = 0;
+        self.ValueContractCountValue = 0;
+        self.DisjointParameterGroupCountValue = 0;
+        self.OverlapParameterGroupCountValue = 0;
+        self.SameParameterGroupCountValue = 0;
+        self.PointeeDeadOnReturnParameterNameCountValue = 0;
+        self.HasInlinePreferenceValue = false;
+        self.HasFfiAbiValue = false;
+        self.HasBackendOptimizationModeValue = false;
+        self.HasLinkNameValue = false;
+        self.HasAsmValue = false;
+        self.IsFfiValue = false;
+        self.IsStrictFpValue = false;
+        self.UsesFastCallingConventionValue = false;
+        self.IsHotValue = false;
+        self.IsColdValue = false;
+        self.HasExplicitInlinePreferenceValue = false;
+        self.IsUnsafeValue = false;
+        self.IsVarargsValue = false;
+        self.IsTailCallableValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FunctionOrdinal(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.FunctionOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.ParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.GenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.ComptimeGenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] TypeParameterConstraintCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.TypeParameterConstraintCountValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawPredicateCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.ThreadSafetyLawPredicateCountValue;
+    }
+
+    public inline finite law u32[0 max] ValueContractCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.ValueContractCountValue;
+    }
+
+    public inline finite law u32[0 max] DisjointParameterGroupCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.DisjointParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] OverlapParameterGroupCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.OverlapParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] SameParameterGroupCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.SameParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] PointeeDeadOnReturnParameterNameCount(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.PointeeDeadOnReturnParameterNameCountValue;
+    }
+
+    public inline finite law bool HasInlinePreference(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasInlinePreferenceValue;
+    }
+
+    public inline finite law bool HasFfiAbi(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasFfiAbiValue;
+    }
+
+    public inline finite law bool HasBackendOptimizationMode(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasBackendOptimizationModeValue;
+    }
+
+    public inline finite law bool HasLinkName(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasLinkNameValue;
+    }
+
+    public inline finite law bool HasAsm(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasAsmValue;
+    }
+
+    public inline finite law bool IsFfi(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsFfiValue;
+    }
+
+    public inline finite law bool IsStrictFp(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsStrictFpValue;
+    }
+
+    public inline finite law bool UsesFastCallingConvention(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.UsesFastCallingConventionValue;
+    }
+
+    public inline finite law bool IsHot(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsHotValue;
+    }
+
+    public inline finite law bool IsCold(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsColdValue;
+    }
+
+    public inline finite law bool HasExplicitInlinePreference(
+        borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.HasExplicitInlinePreferenceValue;
+    }
+
+    public inline finite law bool IsUnsafe(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsUnsafeValue;
+    }
+
+    public inline finite law bool IsVarargs(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsVarargsValue;
+    }
+
+    public inline finite law bool IsTailCallable(borrow LogicalPackageSourceSurfaceFunctionSummary self)
+    {
+        return self.IsTailCallableValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceFunctionParameterSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] FunctionOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+    bool IsDisjointValue;
+    bool IsConstValue;
+    bool HasRawPointerElementCountExpressionValue;
+
+    LogicalPackageSourceSurfaceFunctionParameterSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.FunctionOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.IsDisjointValue = false;
+        self.IsConstValue = false;
+        self.HasRawPointerElementCountExpressionValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FunctionOrdinal(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.FunctionOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law bool IsDisjoint(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.IsDisjointValue;
+    }
+
+    public inline finite law bool IsConst(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.IsConstValue;
+    }
+
+    public inline finite law bool HasRawPointerElementCountExpression(
+        borrow LogicalPackageSourceSurfaceFunctionParameterSummary self)
+    {
+        return self.HasRawPointerElementCountExpressionValue;
+    }
+}
+
+public struct LogicalPackageSourceSurfaceBridgeGraph
+{
+    internal IrTable<LogicalPackageSourceSurfaceImportSummary> ImportRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeAliasSummary> TypeAliasRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary> TypeAliasGenericParameterRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeSummary> TypeRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeFieldSummary> TypeFieldRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary>
+        TypePrimaryConstructorParameterRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeEnumVariantSummary> TypeEnumVariantRows;
+    internal IrTable<LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary> TypeEnumVariantPayloadRows;
+    internal IrTable<LogicalPackageSourceSurfaceGlobalSummary> GlobalRows;
+    internal IrTable<LogicalPackageSourceSurfaceFunctionSummary> FunctionRows;
+    internal IrTable<LogicalPackageSourceSurfaceFunctionParameterSummary> FunctionParameterRows;
+
+    LogicalPackageSourceSurfaceBridgeGraph()
+    {
+        self.ImportRows = new();
+        self.TypeAliasRows = new();
+        self.TypeAliasGenericParameterRows = new();
+        self.TypeRows = new();
+        self.TypeFieldRows = new();
+        self.TypePrimaryConstructorParameterRows = new();
+        self.TypeEnumVariantRows = new();
+        self.TypeEnumVariantPayloadRows = new();
+        self.GlobalRows = new();
+        self.FunctionRows = new();
+        self.FunctionParameterRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ImportRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.ImportRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeAliasRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeAliasRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeAliasGenericParameterRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeAliasGenericParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeFieldRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeFieldRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypePrimaryConstructorParameterRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypePrimaryConstructorParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeEnumVariantRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeEnumVariantRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeEnumVariantPayloadRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.TypeEnumVariantPayloadRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] GlobalRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.GlobalRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.FunctionRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionParameterRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.FunctionParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TotalRowCount(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self)
+    {
+        return self.ImportRowCount()
+            + self.TypeAliasRowCount()
+            + self.TypeAliasGenericParameterRowCount()
+            + self.TypeRowCount()
+            + self.TypeFieldRowCount()
+            + self.TypePrimaryConstructorParameterRowCount()
+            + self.TypeEnumVariantRowCount()
+            + self.TypeEnumVariantPayloadRowCount()
+            + self.GlobalRowCount()
+            + self.FunctionRowCount()
+            + self.FunctionParameterRowCount();
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceImportSummary ImportRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.ImportRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeAliasSummary TypeAliasRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeAliasRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary
+        TypeAliasGenericParameterRowAt(
+            borrow LogicalPackageSourceSurfaceBridgeGraph self,
+            u32[0 max] row)
+    {
+        return self.TypeAliasGenericParameterRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeSummary TypeRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeFieldSummary TypeFieldRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeFieldRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary
+        TypePrimaryConstructorParameterRowAt(
+            borrow LogicalPackageSourceSurfaceBridgeGraph self,
+            u32[0 max] row)
+    {
+        return self.TypePrimaryConstructorParameterRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeEnumVariantSummary TypeEnumVariantRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeEnumVariantRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary
+        TypeEnumVariantPayloadRowAt(
+            borrow LogicalPackageSourceSurfaceBridgeGraph self,
+            u32[0 max] row)
+    {
+        return self.TypeEnumVariantPayloadRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceGlobalSummary GlobalRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.GlobalRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceFunctionSummary FunctionRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.FunctionRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageSourceSurfaceFunctionParameterSummary FunctionParameterRowAt(
+        borrow LogicalPackageSourceSurfaceBridgeGraph self,
+        u32[0 max] row)
+    {
+        return self.FunctionParameterRows.Get(row);
+    }
+}
+
+internal fn PackageImageSummary PackageImageSummaryOf(
+    bool isSectioned,
+    bool hasAsm,
+    u32[0 max] instructionCount,
+    u32[0 max] blockCount,
+    u32[0 max] functionCount,
+    u32[0 max] globalCount,
+    u32[0 max] asmFunctionCount)
+{
+    stack mut PackageImageSummary summary = new();
+    summary.IsSectioned = isSectioned;
+    summary.HasAsm = hasAsm;
+    summary.InstructionCount = instructionCount;
+    summary.BlockCount = blockCount;
+    summary.FunctionCount = functionCount;
+    summary.GlobalCount = globalCount;
+    summary.AsmFunctionCount = asmFunctionCount;
+    return summary;
+}
+
+// Public declaration and callable summary model surface.
+
+public struct LogicalPackageTypedDeclarationSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] DeclarationOrdinalValue;
+    LogicalPackageTypedDeclarationKind DeclarationKindValue;
+    u32[0 max] GenericParameterCountValue;
+    u32[0 max] ComptimeGenericParameterCountValue;
+    u32[0 max] ParameterCountValue;
+    u32[0 max] FieldCountValue;
+    u32[0 max] VariantCountValue;
+    u32[0 max] MethodCountValue;
+    u32[0 max] ConstructorCountValue;
+    u32[0 max] AssociatedTypeCountValue;
+    u32[0 max] ImplementedTraitCountValue;
+    u32[0 max] ThreadSafetyLawAttributeCountValue;
+    u32[0 max] ThreadSafetyLawPredicateCountValue;
+    u32[0 max] TypeParameterConstraintCountValue;
+    u32[0 max] ValueContractCountValue;
+    bool HasManifestKindValue;
+    bool HasBackendOptimizationModeValue;
+    bool HasStructLayoutValue;
+    bool HasPackBytesValue;
+    bool HasAlignBytesValue;
+    bool IsDynTraitValue;
+    bool IsMutableGlobalValue;
+    bool HasConstantInitializerValue;
+    bool IsFfiFunctionValue;
+    bool IsStrictFpFunctionValue;
+    bool UsesFastCallingConventionValue;
+    bool HasGenericTemplateBodyValue;
+
+    LogicalPackageTypedDeclarationSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.DeclarationOrdinalValue = 0;
+        self.DeclarationKindValue = LogicalPackageTypedDeclarationKind.TypeAlias;
+        self.GenericParameterCountValue = 0;
+        self.ComptimeGenericParameterCountValue = 0;
+        self.ParameterCountValue = 0;
+        self.FieldCountValue = 0;
+        self.VariantCountValue = 0;
+        self.MethodCountValue = 0;
+        self.ConstructorCountValue = 0;
+        self.AssociatedTypeCountValue = 0;
+        self.ImplementedTraitCountValue = 0;
+        self.ThreadSafetyLawAttributeCountValue = 0;
+        self.ThreadSafetyLawPredicateCountValue = 0;
+        self.TypeParameterConstraintCountValue = 0;
+        self.ValueContractCountValue = 0;
+        self.HasManifestKindValue = false;
+        self.HasBackendOptimizationModeValue = false;
+        self.HasStructLayoutValue = false;
+        self.HasPackBytesValue = false;
+        self.HasAlignBytesValue = false;
+        self.IsDynTraitValue = false;
+        self.IsMutableGlobalValue = false;
+        self.HasConstantInitializerValue = false;
+        self.IsFfiFunctionValue = false;
+        self.IsStrictFpFunctionValue = false;
+        self.UsesFastCallingConventionValue = false;
+        self.HasGenericTemplateBodyValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] DeclarationOrdinal(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.DeclarationOrdinalValue;
+    }
+
+    public inline finite law LogicalPackageTypedDeclarationKind DeclarationKind(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.DeclarationKindValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.GenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ComptimeGenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ParameterCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] FieldCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.FieldCountValue;
+    }
+
+    public inline finite law u32[0 max] VariantCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.VariantCountValue;
+    }
+
+    public inline finite law u32[0 max] MethodCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.MethodCountValue;
+    }
+
+    public inline finite law u32[0 max] ConstructorCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ConstructorCountValue;
+    }
+
+    public inline finite law u32[0 max] AssociatedTypeCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.AssociatedTypeCountValue;
+    }
+
+    public inline finite law u32[0 max] ImplementedTraitCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ImplementedTraitCountValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawAttributeCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ThreadSafetyLawAttributeCountValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawPredicateCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ThreadSafetyLawPredicateCountValue;
+    }
+
+    public inline finite law u32[0 max] TypeParameterConstraintCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.TypeParameterConstraintCountValue;
+    }
+
+    public inline finite law u32[0 max] ValueContractCount(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.ValueContractCountValue;
+    }
+
+    public inline finite law bool HasManifestKind(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasManifestKindValue;
+    }
+
+    public inline finite law bool HasBackendOptimizationMode(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasBackendOptimizationModeValue;
+    }
+
+    public inline finite law bool HasStructLayout(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasStructLayoutValue;
+    }
+
+    public inline finite law bool HasPackBytes(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasPackBytesValue;
+    }
+
+    public inline finite law bool HasAlignBytes(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasAlignBytesValue;
+    }
+
+    public inline finite law bool IsDynTrait(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.IsDynTraitValue;
+    }
+
+    public inline finite law bool IsMutableGlobal(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.IsMutableGlobalValue;
+    }
+
+    public inline finite law bool HasConstantInitializer(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasConstantInitializerValue;
+    }
+
+    public inline finite law bool IsFfiFunction(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.IsFfiFunctionValue;
+    }
+
+    public inline finite law bool IsStrictFpFunction(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.IsStrictFpFunctionValue;
+    }
+
+    public inline finite law bool UsesFastCallingConvention(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.UsesFastCallingConventionValue;
+    }
+
+    public inline finite law bool HasGenericTemplateBody(borrow LogicalPackageTypedDeclarationSummary self)
+    {
+        return self.HasGenericTemplateBodyValue;
+    }
+}
+
+public struct LogicalPackageTypedCallableSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    LogicalPackageTypedCallableKind CallableKindValue;
+    u32[0 max] DeclarationOrdinalValue;
+    u32[0 max] MethodOrdinalValue;
+    u32[0 max] GenericParameterCountValue;
+    u32[0 max] ComptimeGenericParameterCountValue;
+    u32[0 max] ParameterCountValue;
+    u32[0 max] ThreadSafetyLawPredicateCountValue;
+    u32[0 max] TypeParameterConstraintCountValue;
+    u32[0 max] ValueContractCountValue;
+    u32[0 max] DisjointParameterGroupCountValue;
+    u32[0 max] OverlapParameterGroupCountValue;
+    u32[0 max] SameParameterGroupCountValue;
+    u32[0 max] PointeeDeadOnReturnParameterNameCountValue;
+    bool HasVisibilityValue;
+    bool HasQualifiedResolvedNameValue;
+    bool HasPublishedOverloadKeyValue;
+    bool HasInlinePreferenceValue;
+    bool HasFfiAbiValue;
+    bool HasBackendOptimizationModeValue;
+    bool HasLinkNameValue;
+    bool HasAsmValue;
+    bool IsFfiValue;
+    bool IsStrictFpValue;
+    bool UsesFastCallingConventionValue;
+    bool HasGenericTemplateBodyValue;
+    bool IsHotValue;
+    bool IsColdValue;
+    bool HasExplicitInlinePreferenceValue;
+    bool IsStaticValue;
+    bool IsUnsafeValue;
+    bool IsVarargsValue;
+    bool IsTailCallableValue;
+    bool HasBodyValue;
+
+    LogicalPackageTypedCallableSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.CallableKindValue = LogicalPackageTypedCallableKind.Function;
+        self.DeclarationOrdinalValue = 0;
+        self.MethodOrdinalValue = 0;
+        self.GenericParameterCountValue = 0;
+        self.ComptimeGenericParameterCountValue = 0;
+        self.ParameterCountValue = 0;
+        self.ThreadSafetyLawPredicateCountValue = 0;
+        self.TypeParameterConstraintCountValue = 0;
+        self.ValueContractCountValue = 0;
+        self.DisjointParameterGroupCountValue = 0;
+        self.OverlapParameterGroupCountValue = 0;
+        self.SameParameterGroupCountValue = 0;
+        self.PointeeDeadOnReturnParameterNameCountValue = 0;
+        self.HasVisibilityValue = false;
+        self.HasQualifiedResolvedNameValue = false;
+        self.HasPublishedOverloadKeyValue = false;
+        self.HasInlinePreferenceValue = false;
+        self.HasFfiAbiValue = false;
+        self.HasBackendOptimizationModeValue = false;
+        self.HasLinkNameValue = false;
+        self.HasAsmValue = false;
+        self.IsFfiValue = false;
+        self.IsStrictFpValue = false;
+        self.UsesFastCallingConventionValue = false;
+        self.HasGenericTemplateBodyValue = false;
+        self.IsHotValue = false;
+        self.IsColdValue = false;
+        self.HasExplicitInlinePreferenceValue = false;
+        self.IsStaticValue = false;
+        self.IsUnsafeValue = false;
+        self.IsVarargsValue = false;
+        self.IsTailCallableValue = false;
+        self.HasBodyValue = true;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law LogicalPackageTypedCallableKind CallableKind(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.CallableKindValue;
+    }
+
+    public inline finite law u32[0 max] DeclarationOrdinal(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.DeclarationOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] MethodOrdinal(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.MethodOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.GenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.ComptimeGenericParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ParameterCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.ParameterCountValue;
+    }
+
+    public inline finite law u32[0 max] ThreadSafetyLawPredicateCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.ThreadSafetyLawPredicateCountValue;
+    }
+
+    public inline finite law u32[0 max] TypeParameterConstraintCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.TypeParameterConstraintCountValue;
+    }
+
+    public inline finite law u32[0 max] ValueContractCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.ValueContractCountValue;
+    }
+
+    public inline finite law u32[0 max] DisjointParameterGroupCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.DisjointParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] OverlapParameterGroupCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.OverlapParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] SameParameterGroupCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.SameParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] PointeeDeadOnReturnParameterNameCount(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.PointeeDeadOnReturnParameterNameCountValue;
+    }
+
+    public inline finite law bool HasVisibility(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasVisibilityValue;
+    }
+
+    public inline finite law bool HasQualifiedResolvedName(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasQualifiedResolvedNameValue;
+    }
+
+    public inline finite law bool HasPublishedOverloadKey(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasPublishedOverloadKeyValue;
+    }
+
+    public inline finite law bool HasInlinePreference(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasInlinePreferenceValue;
+    }
+
+    public inline finite law bool HasFfiAbi(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasFfiAbiValue;
+    }
+
+    public inline finite law bool HasBackendOptimizationMode(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasBackendOptimizationModeValue;
+    }
+
+    public inline finite law bool HasLinkName(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasLinkNameValue;
+    }
+
+    public inline finite law bool HasAsm(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasAsmValue;
+    }
+
+    public inline finite law bool IsFfi(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsFfiValue;
+    }
+
+    public inline finite law bool IsStrictFp(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsStrictFpValue;
+    }
+
+    public inline finite law bool UsesFastCallingConvention(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.UsesFastCallingConventionValue;
+    }
+
+    public inline finite law bool HasGenericTemplateBody(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasGenericTemplateBodyValue;
+    }
+
+    public inline finite law bool IsHot(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsHotValue;
+    }
+
+    public inline finite law bool IsCold(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsColdValue;
+    }
+
+    public inline finite law bool HasExplicitInlinePreference(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasExplicitInlinePreferenceValue;
+    }
+
+    public inline finite law bool IsStatic(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsStaticValue;
+    }
+
+    public inline finite law bool IsUnsafe(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsUnsafeValue;
+    }
+
+    public inline finite law bool IsVarargs(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsVarargsValue;
+    }
+
+    public inline finite law bool IsTailCallable(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.IsTailCallableValue;
+    }
+
+    public inline finite law bool HasBody(borrow LogicalPackageTypedCallableSummary self)
+    {
+        return self.HasBodyValue;
+    }
+}
+
+public struct LogicalPackageTypedCallableParameterSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    LogicalPackageTypedCallableKind CallableKindValue;
+    u32[0 max] DeclarationOrdinalValue;
+    u32[0 max] MethodOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+    bool IsDisjointValue;
+    bool IsConstValue;
+    bool HasRawPointerElementCountExpressionValue;
+
+    LogicalPackageTypedCallableParameterSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.CallableKindValue = LogicalPackageTypedCallableKind.Function;
+        self.DeclarationOrdinalValue = 0;
+        self.MethodOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.IsDisjointValue = false;
+        self.IsConstValue = false;
+        self.HasRawPointerElementCountExpressionValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law LogicalPackageTypedCallableKind CallableKind(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.CallableKindValue;
+    }
+
+    public inline finite law u32[0 max] DeclarationOrdinal(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.DeclarationOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] MethodOrdinal(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.MethodOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law bool IsDisjoint(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.IsDisjointValue;
+    }
+
+    public inline finite law bool IsConst(borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.IsConstValue;
+    }
+
+    public inline finite law bool HasRawPointerElementCountExpression(
+        borrow LogicalPackageTypedCallableParameterSummary self)
+    {
+        return self.HasRawPointerElementCountExpressionValue;
+    }
+}
+
+// Public manifest summary, module-summary, and aggregate module-graph
+// model layer. Parsing and section materialization remain outside Models.
+
+public struct LogicalPackageManifestSummary
+{
+    u32[0 max] ModuleCountValue;
+    u32[0 max] RootModuleOrdinalValue;
+    bool HasNativeDependenciesValue;
+    bool HasBuildProfileValue;
+    bool HasTargetValue;
+    bool HasCDataModelValue;
+    bool HasAggregateLayoutValue;
+
+    LogicalPackageManifestSummary()
+    {
+        self.ModuleCountValue = 0;
+        self.RootModuleOrdinalValue = PackageImageMissingStringIndex();
+        self.HasNativeDependenciesValue = false;
+        self.HasBuildProfileValue = false;
+        self.HasTargetValue = false;
+        self.HasCDataModelValue = false;
+        self.HasAggregateLayoutValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleCount(borrow LogicalPackageManifestSummary self)
+    {
+        return self.ModuleCountValue;
+    }
+
+    public inline finite law u32[0 max] RootModuleOrdinal(borrow LogicalPackageManifestSummary self)
+    {
+        return self.RootModuleOrdinalValue;
+    }
+
+    public inline finite law bool HasNativeDependencies(borrow LogicalPackageManifestSummary self)
+    {
+        return self.HasNativeDependenciesValue;
+    }
+
+    public inline finite law bool HasBuildProfile(borrow LogicalPackageManifestSummary self)
+    {
+        return self.HasBuildProfileValue;
+    }
+
+    public inline finite law bool HasTarget(borrow LogicalPackageManifestSummary self)
+    {
+        return self.HasTargetValue;
+    }
+
+    public inline finite law bool HasCDataModel(borrow LogicalPackageManifestSummary self)
+    {
+        return self.HasCDataModelValue;
+    }
+
+    public inline finite law bool HasAggregateLayout(borrow LogicalPackageManifestSummary self)
+    {
+        return self.HasAggregateLayoutValue;
+    }
+}
+
+public struct LogicalPackageManifestModuleSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] ReExportCountValue;
+    u32[0 max] FunctionCountValue;
+    u32[0 max] TypeCountValue;
+    u32[0 max] GlobalCountValue;
+    u32[0 max] TypeAliasCountValue;
+    u32[0 max] ImportCountValue;
+    u32[0 max] TypedInterfaceFunctionCountValue;
+    u32[0 max] TypedInterfaceTypeCountValue;
+    u32[0 max] TypedInterfaceGlobalCountValue;
+    u32[0 max] TypedInterfaceTypeAliasCountValue;
+    u32[0 max] TypedInterfaceImportCountValue;
+    bool HasTypedInterfaceValue;
+    bool HasCompilerFactsValue;
+    bool HasGenericTemplatesValue;
+    bool HasSourceSurfaceValue;
+    bool HasCompilerSectionsValue;
+    bool UsesCompilerSectionsTypedInterfaceValue;
+
+    LogicalPackageManifestModuleSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.ReExportCountValue = 0;
+        self.FunctionCountValue = 0;
+        self.TypeCountValue = 0;
+        self.GlobalCountValue = 0;
+        self.TypeAliasCountValue = 0;
+        self.ImportCountValue = 0;
+        self.TypedInterfaceFunctionCountValue = 0;
+        self.TypedInterfaceTypeCountValue = 0;
+        self.TypedInterfaceGlobalCountValue = 0;
+        self.TypedInterfaceTypeAliasCountValue = 0;
+        self.TypedInterfaceImportCountValue = 0;
+        self.HasTypedInterfaceValue = false;
+        self.HasCompilerFactsValue = false;
+        self.HasGenericTemplatesValue = false;
+        self.HasSourceSurfaceValue = false;
+        self.HasCompilerSectionsValue = false;
+        self.UsesCompilerSectionsTypedInterfaceValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ReExportCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.ReExportCountValue;
+    }
+
+    public inline finite law u32[0 max] FunctionCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.FunctionCountValue;
+    }
+
+    public inline finite law u32[0 max] TypeCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypeCountValue;
+    }
+
+    public inline finite law u32[0 max] GlobalCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.GlobalCountValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypeAliasCountValue;
+    }
+
+    public inline finite law u32[0 max] ImportCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.ImportCountValue;
+    }
+
+    public inline finite law u32[0 max] TypedInterfaceFunctionCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypedInterfaceFunctionCountValue;
+    }
+
+    public inline finite law u32[0 max] TypedInterfaceTypeCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypedInterfaceTypeCountValue;
+    }
+
+    public inline finite law u32[0 max] TypedInterfaceGlobalCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypedInterfaceGlobalCountValue;
+    }
+
+    public inline finite law u32[0 max] TypedInterfaceTypeAliasCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypedInterfaceTypeAliasCountValue;
+    }
+
+    public inline finite law u32[0 max] TypedInterfaceImportCount(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.TypedInterfaceImportCountValue;
+    }
+
+    public inline finite law bool HasTypedInterface(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.HasTypedInterfaceValue;
+    }
+
+    public inline finite law bool HasCompilerFacts(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.HasCompilerFactsValue;
+    }
+
+    public inline finite law bool HasGenericTemplates(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.HasGenericTemplatesValue;
+    }
+
+    public inline finite law bool HasSourceSurface(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.HasSourceSurfaceValue;
+    }
+
+    public inline finite law bool HasCompilerSections(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.HasCompilerSectionsValue;
+    }
+
+    public inline finite law bool UsesCompilerSectionsTypedInterface(borrow LogicalPackageManifestModuleSummary self)
+    {
+        return self.UsesCompilerSectionsTypedInterfaceValue;
+    }
+}
+
+public struct LogicalPackageManifestModel
+{
+    internal LogicalPackageManifestSummary ManifestSummaryValue;
+    internal IrTable<LogicalPackageManifestModuleSummary> ModuleRows;
+    internal IrTable<LogicalPackageManifestModuleGraphModel> ModuleGraphRows;
+
+    LogicalPackageManifestModel()
+    {
+        self.ManifestSummaryValue = new();
+        self.ModuleRows = new();
+        self.ModuleGraphRows = new();
+    }
+
+    public finite law retborrow LogicalPackageManifestSummary ManifestSummary(
+        borrow LogicalPackageManifestModel self)
+    {
+        return self.ManifestSummaryValue;
+    }
+
+    public inline finite law u32[0 max] ModuleCount(borrow LogicalPackageManifestModel self)
+    {
+        return self.ManifestSummaryValue.ModuleCountValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleRowCount(
+        borrow LogicalPackageManifestModel self)
+    {
+        return self.ModuleRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleGraphRowCount(
+        borrow LogicalPackageManifestModel self)
+    {
+        return self.ModuleGraphRows.Count();
+    }
+
+    public inline finite law u32[0 max] RootModuleOrdinal(borrow LogicalPackageManifestModel self)
+    {
+        return self.ManifestSummaryValue.RootModuleOrdinalValue;
+    }
+
+    public inline finite law bool ContainsModuleOrdinal(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return (u64[0 2 ** 63 - 1])moduleOrdinal < self.ModuleRows.Count();
+    }
+
+    public finite law retborrow LogicalPackageManifestModuleSummary ModuleSummaryAtOrdinal(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        stack u32[0 max] row = moduleOrdinal + 1;
+        return self.ModuleRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageManifestModuleSummary ModuleSummaryRowAt(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] row)
+    {
+        return self.ModuleRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageManifestModuleGraphModel ModuleGraphAtOrdinal(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        stack u32[0 max] row = moduleOrdinal + 1;
+        return self.ModuleGraphRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageManifestModuleGraphModel ModuleGraphRowAt(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] row)
+    {
+        return self.ModuleGraphRows.Get(row);
+    }
+
+    public finite law bool ModuleHasFunctionEffectFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasFunctionEffectFacts();
+    }
+
+    public finite law u32[0 max] ModuleGraphOrdinal(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).ModuleOrdinal();
+    }
+
+    public finite law bool ModuleHasGenericTemplateFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasGenericTemplateFacts();
+    }
+
+    public finite law bool ModuleHasAbiFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasAbiFacts();
+    }
+
+    public finite law bool ModuleHasLayoutFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasLayoutFacts();
+    }
+
+    public finite law bool ModuleHasNativeMetadataFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasNativeMetadataFacts();
+    }
+
+    public finite law bool ModuleHasFunctionSemanticFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasFunctionSemanticFacts();
+    }
+
+    public finite law bool ModuleHasFunctionOwnershipFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasFunctionOwnershipFacts();
+    }
+
+    public finite law bool ModuleHasTypedTypeAliasFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasTypedTypeAliasFacts();
+    }
+
+    public finite law bool ModuleHasTypedCallableFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasTypedCallableFacts();
+    }
+
+    public finite law bool ModuleHasTypedGlobalFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasTypedGlobalFacts();
+    }
+
+    public finite law bool ModuleHasTypedTypeFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasTypedTypeFacts();
+    }
+
+    public finite law bool ModuleHasSourceSurfaceBridgeFacts(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).HasSourceSurfaceBridgeFacts();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleFunctionEffectRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).FunctionEffectRowCount();
+    }
+
+    public finite law retborrow LogicalPackageFunctionEffectRow ModuleFunctionEffectRowAt(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal,
+        u32[0 max] row)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).FunctionEffectRowAt(row);
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleGenericTemplateFunctionTemplateRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).GenericTemplateFunctionTemplateRowCount();
+    }
+
+    public finite law retborrow LogicalPackageFunctionTemplateRow ModuleGenericTemplateFunctionTemplateRowAt(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal,
+        u32[0 max] row)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).GenericTemplateFunctionTemplateRowAt(row);
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleAbiFunctionRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).AbiFunctionRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleLayoutConcreteLayoutRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).LayoutConcreteLayoutRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleLayoutEnumLayoutRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).LayoutEnumLayoutRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleNativeDependencyRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).NativeDependencyRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleNativeLinkageRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).NativeLinkageRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleFunctionSemanticRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).FunctionSemanticRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleFunctionOwnershipRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).FunctionOwnershipRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedTypeAliasRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedTypeAliasRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedTypeAliasTypeReferenceCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedTypeAliasTypeReferenceCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedCallableGenericParameterRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedCallableGenericParameterRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedCallableImportRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedCallableImportRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedGlobalRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedGlobalRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedGlobalTypeReferenceCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedGlobalTypeReferenceCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedTypeRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedTypeRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleTypedTypeEnumVariantRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).TypedTypeEnumVariantRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceImportRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceImportRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeAliasRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeAliasRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeAliasGenericParameterRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeAliasGenericParameterRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeFieldRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeFieldRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypePrimaryConstructorParameterRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypePrimaryConstructorParameterRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeEnumVariantRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeEnumVariantRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceTypeEnumVariantPayloadRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceTypeEnumVariantPayloadRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceGlobalRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceGlobalRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceFunctionRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceFunctionRowCount();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ModuleSourceSurfaceFunctionParameterRowCount(
+        borrow LogicalPackageManifestModel self,
+        u32[0 max] moduleOrdinal)
+    {
+        return self.ModuleGraphAtOrdinal(moduleOrdinal).SourceSurfaceFunctionParameterRowCount();
+    }
+}
+
+public struct LogicalPackageManifestModuleGraphModel
+{
+    internal u32[0 max] ModuleOrdinalValue;
+    internal bool HasTypedTypeAliasFactsValue;
+    internal bool HasTypedCallableFactsValue;
+    internal bool HasTypedGlobalFactsValue;
+    internal bool HasTypedTypeFactsValue;
+    internal bool HasFunctionEffectFactsValue;
+    internal bool HasGenericTemplateFactsValue;
+    internal bool HasAbiFactsValue;
+    internal bool HasLayoutFactsValue;
+    internal bool HasNativeMetadataFactsValue;
+    internal bool HasFunctionSemanticFactsValue;
+    internal bool HasFunctionOwnershipFactsValue;
+    internal bool HasSourceSurfaceBridgeFactsValue;
+    internal LogicalPackageTypedTypeAliasFactGraph TypedTypeAliases;
+    internal LogicalPackageTypedCallableFactGraph TypedCallables;
+    internal LogicalPackageTypedGlobalFactGraph TypedGlobals;
+    internal LogicalPackageTypedTypeFactGraph TypedTypes;
+    internal LogicalPackageSourceSurfaceBridgeGraph SourceSurfaceBridge;
+    internal LogicalPackageFunctionEffectFactGraph FunctionEffects;
+    internal LogicalPackageGenericTemplateFactGraph GenericTemplates;
+    internal LogicalPackageAbiFactGraph AbiFacts;
+    internal LogicalPackageLayoutFactGraph LayoutFacts;
+    internal LogicalPackageNativeMetadataFactGraph NativeMetadataFacts;
+    internal LogicalPackageFunctionSemanticFactGraph FunctionSemantics;
+    internal LogicalPackageFunctionOwnershipFactGraph FunctionOwnership;
+
+    LogicalPackageManifestModuleGraphModel()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.HasTypedTypeAliasFactsValue = false;
+        self.HasTypedCallableFactsValue = false;
+        self.HasTypedGlobalFactsValue = false;
+        self.HasTypedTypeFactsValue = false;
+        self.HasFunctionEffectFactsValue = false;
+        self.HasGenericTemplateFactsValue = false;
+        self.HasAbiFactsValue = false;
+        self.HasLayoutFactsValue = false;
+        self.HasNativeMetadataFactsValue = false;
+        self.HasFunctionSemanticFactsValue = false;
+        self.HasFunctionOwnershipFactsValue = false;
+        self.HasSourceSurfaceBridgeFactsValue = false;
+        self.TypedTypeAliases = new();
+        self.TypedCallables = new();
+        self.TypedGlobals = new();
+        self.TypedTypes = new();
+        self.SourceSurfaceBridge = new();
+        self.FunctionEffects = new();
+        self.GenericTemplates = new();
+        self.AbiFacts = new();
+        self.LayoutFacts = new();
+        self.NativeMetadataFacts = new();
+        self.FunctionSemantics = new();
+        self.FunctionOwnership = new();
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law bool HasTypedTypeAliasFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasTypedTypeAliasFactsValue;
+    }
+
+    public inline finite law bool HasTypedCallableFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasTypedCallableFactsValue;
+    }
+
+    public inline finite law bool HasTypedGlobalFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasTypedGlobalFactsValue;
+    }
+
+    public inline finite law bool HasTypedTypeFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasTypedTypeFactsValue;
+    }
+
+    public inline finite law bool HasFunctionEffectFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasFunctionEffectFactsValue;
+    }
+
+    public inline finite law bool HasGenericTemplateFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasGenericTemplateFactsValue;
+    }
+
+    public inline finite law bool HasAbiFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasAbiFactsValue;
+    }
+
+    public inline finite law bool HasLayoutFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasLayoutFactsValue;
+    }
+
+    public inline finite law bool HasNativeMetadataFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasNativeMetadataFactsValue;
+    }
+
+    public inline finite law bool HasFunctionSemanticFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasFunctionSemanticFactsValue;
+    }
+
+    public inline finite law bool HasFunctionOwnershipFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasFunctionOwnershipFactsValue;
+    }
+
+    public inline finite law bool HasSourceSurfaceBridgeFacts(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.HasSourceSurfaceBridgeFactsValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionEffectRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.FunctionEffects.FunctionEffectRowCount();
+    }
+
+    public finite law retborrow LogicalPackageFunctionEffectRow FunctionEffectRowAt(
+        borrow LogicalPackageManifestModuleGraphModel self,
+        u32[0 max] row)
+    {
+        return self.FunctionEffects.FunctionEffectRowAt(row);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] GenericTemplateFunctionTemplateRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.GenericTemplates.FunctionTemplateRowCount();
+    }
+
+    public finite law retborrow LogicalPackageFunctionTemplateRow GenericTemplateFunctionTemplateRowAt(
+        borrow LogicalPackageManifestModuleGraphModel self,
+        u32[0 max] row)
+    {
+        return self.GenericTemplates.FunctionTemplateRowAt(row);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] AbiFunctionRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.AbiFacts.AbiFunctionRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LayoutConcreteLayoutRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.LayoutFacts.ConcreteLayoutRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LayoutEnumLayoutRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.LayoutFacts.EnumLayoutRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] NativeDependencyRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.NativeMetadataFacts.NativeDependencyRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] NativeLinkageRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.NativeMetadataFacts.LinkageRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionSemanticRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.FunctionSemantics.FunctionSemanticRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionOwnershipRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.FunctionOwnership.FunctionOwnershipRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedTypeAliasRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedTypeAliases.TypeAliasRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedTypeAliasTypeReferenceCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedTypeAliases.TypeReferenceCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedCallableGenericParameterRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedCallables.GenericParameterRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedCallableImportRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedCallables.ImportRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedGlobalRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedGlobals.GlobalRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedGlobalTypeReferenceCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedGlobals.TypeReferenceCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedTypeRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedTypes.TypeRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypedTypeEnumVariantRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.TypedTypes.EnumVariantRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceImportRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.ImportRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeAliasRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeAliasRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeAliasGenericParameterRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeAliasGenericParameterRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeFieldRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeFieldRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypePrimaryConstructorParameterRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypePrimaryConstructorParameterRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeEnumVariantRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeEnumVariantRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceTypeEnumVariantPayloadRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.TypeEnumVariantPayloadRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceGlobalRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.GlobalRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceFunctionRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.FunctionRowCount();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceSurfaceFunctionParameterRowCount(
+        borrow LogicalPackageManifestModuleGraphModel self)
+    {
+        return self.SourceSurfaceBridge.FunctionParameterRowCount();
+    }
+}
+
+internal fn LogicalPackageImageFacts LogicalPackageImageFactsOf(PackageImageSummary summary)
+{
+    return new LogicalPackageImageFacts()
+    {
+        SectionCountValue = summary.SectionCount,
+        StringCountValue = summary.StringCount,
+        StringTableOffsetValue = summary.StringTableOffset,
+        StringTableLengthValue = summary.StringTableLength,
+        ManifestOffsetValue = summary.ManifestOffset,
+        ManifestLengthValue = summary.ManifestLength,
+        RootModuleStringIndexValue = summary.RootModuleStringIndex,
+        LibraryFileNameStringIndexValue = summary.LibraryFileNameStringIndex,
+        BuildProfileStringIndexValue = summary.BuildProfileStringIndex,
+        TargetTripleStringIndexValue = summary.TargetTripleStringIndex,
+        TargetDataLayoutStringIndexValue = summary.TargetDataLayoutStringIndex,
+        TargetCpuStringIndexValue = summary.TargetCpuStringIndex,
+        RelocationModelStringIndexValue = summary.RelocationModelStringIndex,
+        CodeModelStringIndexValue = summary.CodeModelStringIndex,
+        FeatureStringIndexOffsetValue = summary.FeatureStringIndexOffset,
+        TargetFeatureCountValue = summary.TargetFeatureCount,
+        CDataModelKindStringIndexValue = summary.CDataModelKindStringIndex,
+        CCharIsSignedValue = summary.CCharIsSigned,
+        CPointerBitWidthValue = summary.CPointerBitWidth,
+        CLongBitWidthValue = summary.CLongBitWidth,
+        CSizeTBitWidthValue = summary.CSizeTBitWidth,
+        CPtrDiffTBitWidthValue = summary.CPtrDiffTBitWidth,
+        AggregatePointerSizeBytesValue = summary.AggregatePointerSizeBytes,
+        AggregatePointerAlignmentBytesValue = summary.AggregatePointerAlignmentBytes,
+        HasBuildProfileValue = summary.HasBuildProfile,
+        HasTargetValue = summary.HasTarget,
+        HasCDataModelValue = summary.HasCDataModel,
+        HasAggregateLayoutValue = summary.HasAggregateLayout
+    };
+}
+
+internal fn PackageImageSummary LogicalPackageImageSummaryOf(
+    u32[0 max] sectionCount,
+    u32[0 max] stringCount,
+    u32[0 max] stringTableOffset,
+    u64[0 max] stringTableLength,
+    u32[0 max] manifestOffset,
+    u64[0 max] manifestLength,
+    LogicalPackageFactsHeader facts)
+{
+    stack mut PackageImageSummary summary = new();
+    summary.IsLogical = true;
+    summary.IsSectioned = true;
+    summary.StringTableOffset = stringTableOffset;
+    summary.StringTableLength = stringTableLength;
+    summary.ManifestOffset = manifestOffset;
+    summary.ManifestLength = manifestLength;
+    summary.RootModuleStringIndex = facts.RootModuleStringIndex;
+    summary.LibraryFileNameStringIndex = facts.LibraryFileNameStringIndex;
+    summary.BuildProfileStringIndex = facts.BuildProfileStringIndex;
+    summary.TargetTripleStringIndex = facts.TargetTripleStringIndex;
+    summary.TargetDataLayoutStringIndex = facts.TargetDataLayoutStringIndex;
+    summary.TargetCpuStringIndex = facts.TargetCpuStringIndex;
+    summary.RelocationModelStringIndex = facts.RelocationModelStringIndex;
+    summary.CodeModelStringIndex = facts.CodeModelStringIndex;
+    summary.FeatureStringIndexOffset = facts.FeatureStringIndexOffset;
+    summary.CDataModelKindStringIndex = facts.CDataModelKindStringIndex;
+    summary.CCharIsSigned = facts.CCharIsSigned;
+    summary.CPointerBitWidth = facts.CPointerBitWidth;
+    summary.CLongBitWidth = facts.CLongBitWidth;
+    summary.CSizeTBitWidth = facts.CSizeTBitWidth;
+    summary.CPtrDiffTBitWidth = facts.CPtrDiffTBitWidth;
+    summary.AggregatePointerSizeBytes = facts.AggregatePointerSizeBytes;
+    summary.AggregatePointerAlignmentBytes = facts.AggregatePointerAlignmentBytes;
+    summary.SectionCount = sectionCount;
+    summary.StringCount = stringCount;
+    summary.TargetFeatureCount = facts.TargetFeatureCount;
+    summary.HasBuildProfile = facts.HasBuildProfile;
+    summary.HasTarget = facts.HasTarget;
+    summary.HasCDataModel = facts.HasCDataModel;
+    summary.HasAggregateLayout = facts.HasAggregateLayout;
+    return summary;
+}

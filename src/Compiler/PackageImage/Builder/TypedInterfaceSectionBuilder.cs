@@ -51,10 +51,24 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
             IsVarargs: effects.IsVarargs,
+            IsTailCallable: effects.IsTailCallable,
+            FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
             BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                function.ComptimeGenericParams,
+                moduleName: ModuleNameFromQualifiedName(qualifiedName)),
+            TypeParameterConstraints: BuildTypeParameterConstraintManifests(
+                function.Constraints,
+                ModuleNameFromQualifiedName(qualifiedName)),
+            ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
+                function.ThreadSafetyLaws,
+                ModuleNameFromQualifiedName(qualifiedName)),
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts),
+            LinkName: function.ExternalLinkName);
         return true;
     }
 
@@ -99,10 +113,19 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
             IsUnsafe: manifest.IsUnsafe,
             IsVarargs: manifest.IsVarargs,
+            IsTailCallable: manifest.IsTailCallable,
+            FfiAbi: manifest.FfiAbi,
             BackendOptimizationMode: manifest.BackendOptimizationMode,
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
+            HasBody: declarationFunction.HasBody,
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName),
+            TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(function.Constraints, moduleName),
+            ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(function.ThreadSafetyLaws, moduleName),
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts),
+            LinkName: manifest.LinkName);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -126,7 +149,9 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageFieldManifest(
                         field.Name,
                         RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName),
-                        RenderFieldVisibility(field.Visibility)))
+                        RenderFieldVisibility(field.Visibility),
+                        field.ExplicitOffsetBytes,
+                        BuildThreadSafetyLawAttributeManifests(field.ThreadSafetyLaws, module.SyntaxModel.ModuleName)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -140,7 +165,11 @@ internal static partial class PackageImageBuilder
                             .Select(field => new StarkPackageFieldManifest(
                                 field.Name ?? $"Item{field.Position}",
                                 RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName)))
-                            .ToArray()))
+                            .ToArray(),
+                        Role: RenderEnumVariantRole(variant.Role),
+                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                            ? RenderManifestTypeText(absorbedErrorType, module.SyntaxModel.ModuleName)
+                            : null))
                     .ToArray(),
             Methods: declaration.Kind == DeclarationKind.Enum
                 ? null
@@ -148,7 +177,19 @@ internal static partial class PackageImageBuilder
             Destructor: declaration.Kind == DeclarationKind.Enum
                 ? null
                 : BuildTypeDestructorManifest(module, declaration.Name),
-            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode),
+            StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
+            PackBytes: namedType.Layout?.PackBytes,
+            AlignBytes: namedType.Layout?.AlignBytes,
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
+            AssociatedTypes: BuildAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName),
+            IsDynTrait: declaration.Kind == DeclarationKind.Trait && namedType.IsDynTrait,
+            ThreadSafetyLawAttributes: BuildThreadSafetyLawAttributeManifests(
+                namedType.ThreadSafetyLaws,
+                module.SyntaxModel.ModuleName));
     }
 
     private static StarkPackageTypedTypeManifest BuildTypedTypeManifest(
@@ -173,7 +214,9 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageTypedFieldManifest(
                         field.Name,
                         BuildTypeReference(field.Type, module.SyntaxModel.ModuleName),
-                        RenderFieldVisibility(field.Visibility)))
+                        RenderFieldVisibility(field.Visibility),
+                        field.ExplicitOffsetBytes,
+                        BuildTypedThreadSafetyLawAttributeManifests(field.ThreadSafetyLaws, module.SyntaxModel.ModuleName)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypedTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -187,7 +230,11 @@ internal static partial class PackageImageBuilder
                             .Select(field => new StarkPackageTypedFieldManifest(
                                 field.Name ?? $"Item{field.Position}",
                                 BuildTypeReference(field.Type, module.SyntaxModel.ModuleName)))
-                            .ToArray()))
+                            .ToArray(),
+                        Role: RenderEnumVariantRole(variant.Role),
+                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                            ? BuildTypeReference(absorbedErrorType, module.SyntaxModel.ModuleName)
+                            : null))
                     .ToArray(),
             Methods: declaration.Kind == DeclarationKind.Enum
                 ? null
@@ -198,7 +245,163 @@ internal static partial class PackageImageBuilder
             Constructors: declaration.Kind is DeclarationKind.Struct or DeclarationKind.Record
                 ? BuildTypedTypeConstructors(module, declaration.Name, namedType, typeModel, moduleGraph)
                 : null,
-            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode),
+            StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
+            PackBytes: namedType.Layout?.PackBytes,
+            AlignBytes: namedType.Layout?.AlignBytes,
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
+            ImplementedTraitTypes: namedType.ImplementedTraitTypes.Count == 0
+                ? null
+                : namedType.ImplementedTraitTypes
+                    .Select(type => BuildTypeReference(type, module.SyntaxModel.ModuleName))
+                    .ToArray(),
+            AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName),
+            IsDynTrait: declaration.Kind == DeclarationKind.Trait && namedType.IsDynTrait,
+            ThreadSafetyLawAttributes: BuildTypedThreadSafetyLawAttributeManifests(
+                namedType.ThreadSafetyLaws,
+                module.SyntaxModel.ModuleName));
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? BuildThreadSafetyLawAttributeManifests(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        string moduleName)
+    {
+        return attributes.Count == 0
+            ? null
+            : attributes
+                .Select(attribute => new StarkPackageThreadSafetyLawAttributeManifest(
+                    RenderThreadSafetyLawAttributeKind(attribute.Kind),
+                    attribute.LawName,
+                    attribute.Condition is { } condition
+                        ? new StarkPackageThreadSafetyLawPredicateManifest(
+                            condition.LawName,
+                            RenderManifestTypeText(condition.Type, moduleName))
+                        : null))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? BuildTypedThreadSafetyLawAttributeManifests(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        string moduleName)
+    {
+        return attributes.Count == 0
+            ? null
+            : attributes
+                .Select(attribute => new StarkPackageTypedThreadSafetyLawAttributeManifest(
+                    RenderThreadSafetyLawAttributeKind(attribute.Kind),
+                    attribute.LawName,
+                    attribute.Condition is { } condition
+                        ? new StarkPackageTypedThreadSafetyLawPredicateManifest(
+                            condition.LawName,
+                            BuildTypeReference(condition.Type, moduleName))
+                        : null))
+                .ToArray();
+    }
+
+    private static string RenderThreadSafetyLawAttributeKind(ThreadSafetyLawAttributeKind kind)
+    {
+        return kind switch
+        {
+            ThreadSafetyLawAttributeKind.Grant => "grant",
+            ThreadSafetyLawAttributeKind.Deny => "deny",
+            _ => "unknown"
+        };
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? BuildThreadSafetyLawPredicateManifests(
+        IReadOnlyList<ThreadSafetyLawPredicateSymbol> predicates,
+        string moduleName)
+    {
+        return predicates.Count == 0
+            ? null
+            : predicates
+                .Select(predicate => new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.LawName,
+                    RenderManifestTypeText(predicate.Type, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? BuildTypeParameterConstraintManifests(
+        IReadOnlyList<TypeParameterConstraint> constraints,
+        string moduleName)
+    {
+        return constraints.Count == 0
+            ? null
+            : constraints
+                .Select(constraint => new StarkPackageTypeParameterConstraintManifest(
+                    constraint.ParameterName,
+                    constraint.BoundTraits
+                        .Select(bound => RenderManifestTypeText(bound, moduleName))
+                        .ToArray()))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? BuildTypedTypeParameterConstraintManifests(
+        IReadOnlyList<TypeParameterConstraint> constraints,
+        string moduleName)
+    {
+        return constraints.Count == 0
+            ? null
+            : constraints
+                .Select(constraint => new StarkPackageTypedTypeParameterConstraintManifest(
+                    constraint.ParameterName,
+                    constraint.BoundTraits
+                        .Select(bound => BuildTypeReference(bound, moduleName))
+                        .ToArray()))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? BuildTypedThreadSafetyLawPredicateManifests(
+        IReadOnlyList<ThreadSafetyLawPredicateSymbol> predicates,
+        string moduleName)
+    {
+        return predicates.Count == 0
+            ? null
+            : predicates
+                .Select(predicate => new StarkPackageTypedThreadSafetyLawPredicateManifest(
+                    predicate.LawName,
+                    BuildTypeReference(predicate.Type, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageAssociatedTypeManifest>? BuildAssociatedTypeManifests(
+        NamedTypeSymbol namedType,
+        string moduleName)
+    {
+        return namedType.AssociatedTypes.Count == 0
+            ? null
+            : namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .Select(associatedType => new StarkPackageAssociatedTypeManifest(
+                    associatedType.Name,
+                    associatedType.TargetType is null ? null : RenderManifestTypeText(associatedType.TargetType, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedAssociatedTypeManifest>? BuildTypedAssociatedTypeManifests(
+        NamedTypeSymbol namedType,
+        string moduleName)
+    {
+        return namedType.AssociatedTypes.Count == 0
+            ? null
+            : namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .Select(associatedType => new StarkPackageTypedAssociatedTypeManifest(
+                    associatedType.Name,
+                    associatedType.TargetType is null ? null : BuildTypeReference(associatedType.TargetType, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<string>? BuildImplementedTraitManifestNames(NamedTypeSymbol namedType)
+    {
+        return namedType.ImplementedTraits.Count == 0
+            ? null
+            : namedType.ImplementedTraits
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
     }
 
     private static IReadOnlyList<StarkPackageParameterManifest>? BuildTypePrimaryConstructorParameters(
@@ -283,7 +486,7 @@ internal static partial class PackageImageBuilder
         var genericParameters = namedType.GenericParams.Count == 0
             ? null
             : namedType.GenericParams.ToHashSet(StringComparer.Ordinal);
-        var resolver = CreatePackageImageTypeResolver(moduleGraph, typeModel);
+        var resolver = CreatePackageImageTypeResolver(moduleGraph, typeModel, module.TargetInfo);
 
         return constructors
             .Select(constructor => new StarkPackageTypedConstructorManifest(
@@ -330,10 +533,13 @@ internal static partial class PackageImageBuilder
 
     private static StarkTypeResolver CreatePackageImageTypeResolver(
         ModuleGraph moduleGraph,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        LlvmTargetInfo? targetInfo)
     {
         return new StarkTypeResolver(
-            new CompilerPassContext(new CompilationState(new CompilationInput(string.Empty), new CompilerOptions())),
+            new CompilerPassContext(new CompilationState(
+                new CompilationInput(string.Empty),
+                new CompilerOptions(TargetInfo: targetInfo))),
             "package-image-build",
             moduleGraph,
             typeModel.NamedTypes,
@@ -408,11 +614,24 @@ internal static partial class PackageImageBuilder
                     IsStatic: declaration.Function.IsStatic,
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    IsTailCallable: effects.IsTailCallable,
+                    FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
+                    ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                        function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName),
+                    TypeParameterConstraints: BuildTypeParameterConstraintManifests(
+                        function.Constraints,
+                        module.SyntaxModel.ModuleName),
+                    ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
+                        function.ThreadSafetyLaws,
+                        module.SyntaxModel.ModuleName),
+                    ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -477,10 +696,24 @@ internal static partial class PackageImageBuilder
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    IsTailCallable: effects.IsTailCallable,
+                    FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
+                    HasBody: declaration.Function.HasBody,
+                    ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                        function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName),
+                    TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(
+                        function.Constraints,
+                        module.SyntaxModel.ModuleName),
+                    ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(
+                        function.ThreadSafetyLaws,
+                        module.SyntaxModel.ModuleName),
+                    ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -537,6 +770,16 @@ internal static partial class PackageImageBuilder
             : visibility.ToString().ToLowerInvariant();
     }
 
+    private static string? RenderStructLayoutKind(StructLayoutKind? layoutKind)
+    {
+        return layoutKind switch
+        {
+            StructLayoutKind.C => "C",
+            StructLayoutKind.Explicit => "Explicit",
+            _ => null
+        };
+    }
+
     private static bool ParameterHasPrefix(StarkParser.ParameterContext parameter, int tokenType)
     {
         return parameter.parameterContractPrefix()
@@ -580,6 +823,28 @@ internal static partial class PackageImageBuilder
         IReadOnlyList<ParameterSameGroup> groups)
     {
         return BuildParameterRelationGroupManifests(groups.Select(static group => group.ParameterNames));
+    }
+
+    private static IReadOnlyList<string>? BuildPointeeDeadOnReturnParameterNames(IReadOnlyList<string> names)
+    {
+        var distinctNames = names
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return distinctNames.Length == 0 ? null : distinctNames;
+    }
+
+    private static IReadOnlyList<StarkPackageValueContractManifest>? BuildParameterValueContractManifests(
+        IReadOnlyList<ParameterValueContract> contracts)
+    {
+        return contracts.Count == 0
+            ? null
+            : contracts
+                .Select(static contract => new StarkPackageValueContractManifest(
+                    contract.LeftText,
+                    contract.OperatorText,
+                    contract.RightText))
+                .ToArray();
     }
 
     private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(
@@ -659,6 +924,30 @@ internal static partial class PackageImageBuilder
         return BuildParameterRelationGroupManifests(
             memoryContractClauses,
             static contract => contract.sameContract()?.expressionList());
+    }
+
+    private static IReadOnlyList<StarkPackageValueContractManifest>? BuildParameterValueContractManifests(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        List<StarkPackageValueContractManifest>? contracts = null;
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.valueContract() is not { } valueContract)
+                {
+                    continue;
+                }
+
+                contracts ??= [];
+                contracts.Add(new StarkPackageValueContractManifest(
+                    valueContract.shiftExpression(0).GetText(),
+                    valueContract.valueContractOperator().GetText(),
+                    valueContract.shiftExpression(1).GetText()));
+            }
+        }
+
+        return contracts;
     }
 
     private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(

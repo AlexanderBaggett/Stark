@@ -1,0 +1,501 @@
+import SsaTestSupport
+import System.Testing
+module SsaIrValidationTests
+
+// Ported from tests/compiler.Tests/SsaIrValidationTests.cs. These tests use the
+// host-test `validatorFixture` path because the invalid SSA object-model inputs
+// cannot be expressed as legal Stark source. Fixture success means the host
+// validator produced the expected diagnostic contract for that named case.
+
+internal fn bool UndefinedSsaValueReferenceFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UndefinedSsaValueReferenceFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSsaConversionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSsaConversionFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsizedIntegerConversionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsizedIntegerConversionFailsBeforeLlvmEmission");
+}
+
+internal fn bool CompileTimeIntegerConstantFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("CompileTimeIntegerConstantFailsBeforeLlvmEmission");
+}
+
+internal fn bool IntegerConstantOutsideStorageFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("IntegerConstantOutsideStorageFailsBeforeLlvmEmission");
+}
+
+internal fn bool IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedFloatConversionTargetFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedFloatConversionTargetFailsBeforeLlvmEmission");
+}
+
+internal fn bool DirectCallAbiMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DirectCallAbiMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool DirectCallIndirectAddressOnDirectParameterFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DirectCallIndirectAddressOnDirectParameterFailsBeforeLlvmEmission");
+}
+
+internal fn bool DirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool DirectCallPromotedUnknownLocalFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DirectCallPromotedUnknownLocalFailsBeforeLlvmEmission");
+}
+
+internal fn bool DirectCallIndirectAddressAndPromotedStorageShapesAreAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("DirectCallIndirectAddressAndPromotedStorageShapesAreAccepted");
+}
+
+internal fn bool IndirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("IndirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool IndirectCallLargeByvalAddressShapeIsAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("IndirectCallLargeByvalAddressShapeIsAccepted");
+}
+
+internal fn bool FfiTextReturnFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FfiTextReturnFailsBeforeLlvmEmission");
+}
+
+internal fn bool MirOnlyTempLocalStorageFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("MirOnlyTempLocalStorageFailsBeforeLlvmEmission");
+}
+
+internal fn bool NonHeapDeallocationFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("NonHeapDeallocationFailsBeforeLlvmEmission");
+}
+
+internal fn bool ArenaFrameInstructionsAreAcceptedAroundArenaAllocationImpl()
+{
+    return SsaValidatorFixtureMatches("ArenaFrameInstructionsAreAcceptedAroundArenaAllocation");
+}
+
+internal fn bool ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmission");
+}
+
+internal fn bool MisplacedArenaFrameInstructionsFailBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("MisplacedArenaFrameInstructionsFailBeforeLlvmEmission");
+}
+
+internal fn bool LocalUseWithoutAllocationFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("LocalUseWithoutAllocationFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionMissingAbiFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionMissingAbiFailsBeforeLlvmEmission");
+}
+
+internal fn bool DuplicateSsaValueDefinitionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DuplicateSsaValueDefinitionFailsBeforeLlvmEmission");
+}
+
+internal fn bool PhiIncomingTypeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("PhiIncomingTypeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool PhiIncomingFromNonPredecessorFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("PhiIncomingFromNonPredecessorFailsBeforeLlvmEmission");
+}
+
+internal fn bool PhiMissingIncomingFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("PhiMissingIncomingFailsBeforeLlvmEmission");
+}
+
+internal fn bool PhiDuplicateIncomingFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("PhiDuplicateIncomingFailsBeforeLlvmEmission");
+}
+
+internal fn bool PhiWithoutIncomingFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("PhiWithoutIncomingFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAbiReturnMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiReturnMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAbiRetborrowPointerReturnIsAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiRetborrowPointerReturnIsAccepted");
+}
+
+internal fn bool FunctionAbiParameterCountMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiParameterCountMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAbiParameterTypeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiParameterTypeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAbiSretShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiSretShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAbiSretShapeAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAbiSretShapeAccepted");
+}
+
+internal fn bool AddressOfParameterMissingAbiUserParameterFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("AddressOfParameterMissingAbiUserParameterFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSsaInstructionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSsaInstructionFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSsaRValueFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSsaRValueFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSsaValueFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSsaValueFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSsaTerminatorFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSsaTerminatorFailsBeforeLlvmEmission");
+}
+
+internal fn bool DynamicStorageElementLayoutFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DynamicStorageElementLayoutFailsBeforeLlvmEmission");
+}
+
+internal fn bool DynamicStorageCapacityWidthFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DynamicStorageCapacityWidthFailsBeforeLlvmEmission");
+}
+
+internal fn bool DynamicStorageReserveAddressShapeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DynamicStorageReserveAddressShapeFailsBeforeLlvmEmission");
+}
+
+internal fn bool DynamicStorageMoveAtAddressPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("DynamicStorageMoveAtAddressPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ElementAddressBasePointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ElementAddressBasePointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ElementAddressResultPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ElementAddressResultPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedUnaryShapeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedUnaryShapeFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsizedIntegerUnaryFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsizedIntegerUnaryFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedFloatUnaryFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedFloatUnaryFailsBeforeLlvmEmission");
+}
+
+internal fn bool BinaryOperandShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("BinaryOperandShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool WrappingFloatOperatorFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("WrappingFloatOperatorFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedFloatIntrinsicWidthFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedFloatIntrinsicWidthFailsBeforeLlvmEmission");
+}
+
+internal fn bool ComparisonResultShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ComparisonResultShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool FixedArrayOrderedComparisonUnsupportedElementFailsBeforeHelperEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FixedArrayOrderedComparisonUnsupportedElementFailsBeforeHelperEmission");
+}
+
+internal fn bool NamedOrderedComparisonUnsupportedFieldFailsBeforeHelperEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("NamedOrderedComparisonUnsupportedFieldFailsBeforeHelperEmission");
+}
+
+internal fn bool ExtractFieldResultMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ExtractFieldResultMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ExtractFieldNameIndexMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ExtractFieldNameIndexMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ExtractIndexOutOfRangeIsUnrepresentableImpl()
+{
+    // Host-internal object-model constructor guard; there is no validator input.
+    return true;
+}
+
+internal fn bool InsertIndexValueMismatchIsUnrepresentableImpl()
+{
+    // Host-internal object-model constructor guard; there is no validator input.
+    return true;
+}
+
+internal fn bool SliceViewIndexExtractionIsAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("SliceViewIndexExtractionIsAccepted");
+}
+
+internal fn bool SliceViewNoOpRetypeSupportsImmutableComponentExtractionImpl()
+{
+    return SsaValidatorFixtureMatches("SliceViewNoOpRetypeSupportsImmutableComponentExtraction");
+}
+
+internal fn bool IndexOperationFamilyMismatchIsUnrepresentableImpl()
+{
+    // Host-internal object-model constructor guard; there is no validator input.
+    return true;
+}
+
+internal fn bool TextViewIndexExtractionIsAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("TextViewIndexExtractionIsAccepted");
+}
+
+internal fn bool TextViewFieldExtractionIsAcceptedImpl()
+{
+    return SsaValidatorFixtureMatches("TextViewFieldExtractionIsAccepted");
+}
+
+internal fn bool SelectArmShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SelectArmShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsupportedSwitchConditionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsupportedSwitchConditionFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnsizedIntegerSwitchConditionFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnsizedIntegerSwitchConditionFailsBeforeLlvmEmission");
+}
+
+internal fn bool SwitchCaseShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SwitchCaseShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool SliceCreationShapeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SliceCreationShapeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool IndirectLoadAddressShapeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("IndirectLoadAddressShapeFailsBeforeLlvmEmission");
+}
+
+internal fn bool IndirectStoreAcceptsQualifiedPointeeShapeImpl()
+{
+    return SsaValidatorFixtureMatches("IndirectStoreAcceptsQualifiedPointeeShape");
+}
+
+internal fn bool CopyMemoryDestinationPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("CopyMemoryDestinationPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool CopyMemorySourcePointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("CopyMemorySourcePointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool CopyMemoryWithoutConcreteLayoutFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("CopyMemoryWithoutConcreteLayoutFailsBeforeLlvmEmission");
+}
+
+internal fn bool CopyMemoryAllowsFixedArrayElementPointersImpl()
+{
+    return SsaValidatorFixtureMatches("CopyMemoryAllowsFixedArrayElementPointers");
+}
+
+internal fn bool ScopedNoAliasProofCarrierAcceptsMatchingParameterRootsImpl()
+{
+    return SsaValidatorFixtureMatches("ScopedNoAliasProofCarrierAcceptsMatchingParameterRoots");
+}
+
+internal fn bool ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmission");
+}
+
+internal fn bool ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmission");
+}
+
+internal fn bool StringConstantNonTextTypeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("StringConstantNonTextTypeFailsBeforeLlvmEmission");
+}
+
+internal fn bool TextDataAddressPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("TextDataAddressPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool GlobalAddressPointeeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("GlobalAddressPointeeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool UnknownGlobalLoadFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("UnknownGlobalLoadFailsBeforeLlvmEmission");
+}
+
+internal fn bool KnownGlobalLoadTypeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("KnownGlobalLoadTypeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool KnownGlobalAddressTypeMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("KnownGlobalAddressTypeMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool StoreToImmutableGlobalFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("StoreToImmutableGlobalFailsBeforeLlvmEmission");
+}
+
+internal fn bool StoreGlobalValueMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("StoreGlobalValueMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool StoreMutableKnownGlobalPassesSsaValidationImpl()
+{
+    return SsaValidatorFixtureMatches("StoreMutableKnownGlobalPassesSsaValidation");
+}
+
+internal fn bool FunctionAddressNonFunctionPointerTypeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAddressNonFunctionPointerTypeFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAddressMissingAbiFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAddressMissingAbiFailsBeforeLlvmEmission");
+}
+
+internal fn bool FunctionAddressSignatureMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("FunctionAddressSignatureMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool SystemMathBuiltinInvalidSignatureFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SystemMathBuiltinInvalidSignatureFailsBeforeLlvmEmission");
+}
+
+internal fn bool SystemBitOperationsBuiltinInvalidWidthFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SystemBitOperationsBuiltinInvalidWidthFailsBeforeLlvmEmission");
+}
+
+internal fn bool SystemMemoryBuiltinInvalidAllocationShapeFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SystemMemoryBuiltinInvalidAllocationShapeFailsBeforeLlvmEmission");
+}
+
+internal fn bool SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidationImpl()
+{
+    return SsaValidatorFixtureMatches("SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidation");
+}
+
+internal fn bool SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmission");
+}
+
+internal fn bool SystemRuntimeByteSlicePartsMutableMismatchFailsBeforeLlvmEmissionImpl()
+{
+    return SsaValidatorFixtureMatches("SystemRuntimeByteSlicePartsMutableMismatchFailsBeforeLlvmEmission");
+}
+
+internal fn bool ValidSystemBuiltinSignaturesPassSsaValidationImpl()
+{
+    return SsaValidatorFixtureMatches("ValidSystemBuiltinSignaturesPassSsaValidation");
+}

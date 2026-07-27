@@ -1,0 +1,763 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedEnumLayoutAttributes
+import Compiler.Typing.TypedEnumLayoutArithmetic
+import Compiler.Typing.TypedEnumPayloads
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedDynamicFacts
+import Compiler.Typing.TypedEnumLayoutGenerics
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumLayoutVariants
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedEnumLayouts
+
+internal fn bool TypedEnumLayoutTryGetGenericTypeParameterLayout(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    mut borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] parameterNameToken,
+    u32[0 max] recursionDepth,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    if (contextIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] contextIndex = (u64[0 2 ** 63 - 1])(contextIndexPlusOne - 1);
+    stack mut u32[0 max] ordinal = 0;
+    if (!TypedEnumLayoutGenericParameterOrdinal(
+        source,
+        stream,
+        contexts.GenericOpenTokenAt(contextIndex),
+        parameterNameToken,
+        false,
+        ordinal))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] startToken = 0;
+    stack mut u32[0 max] endToken = 0;
+    if (!TypedEnumLayoutGenericArgumentSegment(
+        stream,
+        contexts.ActualOpenTokenAt(contextIndex),
+        false,
+        ordinal,
+        startToken,
+        endToken))
+    {
+        return false;
+    }
+
+    return TypedEnumLayoutTryGetTypeLayoutFromSpan(
+        source,
+        stream,
+        declarations,
+        fields,
+        contexts,
+        contexts.ParentContextIndexPlusOneAt(contextIndex),
+        startToken,
+        endToken,
+        (u32[0 max])(recursionDepth + 1),
+        sizeBytes,
+        alignmentBytes);
+}
+
+internal fn bool TypedEnumLayoutTryGetTypeLayoutFromSpan(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    mut borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] recursionDepth,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    if (typeStartToken == 0 || typeEndToken <= typeStartToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    stack mut u64[0 2 ** 63 - 1] contextIndex = 0;
+    stack mut u32[0 max] ownerGenericOpenToken = 0;
+    if (contextIndexPlusOne != 0)
+    {
+        contextIndex = (u64[0 2 ** 63 - 1])(contextIndexPlusOne - 1);
+        ownerGenericOpenToken = contexts.GenericOpenTokenAt(contextIndex);
+    }
+
+    stack u32[0 max] typeHeadToken = TypedFieldLastIdentifierInSpan(stream, typeStartToken, typeEndToken);
+    stack u32[0 max] typePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typeHeadToken);
+    stack TypedSignatureTypeKind kind = TypedSignatureKindForType(source, stream, typePrimaryToken, typeHeadToken, 0, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, typePrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, typePrimaryToken);
+    }
+
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] actualGenericOpenToken = 0;
+    if (typeHeadToken != 0)
+    {
+        actualGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, typeHeadToken);
+    }
+
+    if (actualGenericOpenToken != 0)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, actualGenericOpenToken, typeArgumentCount, comptimeArgumentCount);
+    }
+
+    stack u32[0 max] flags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        typePrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        false,
+        0,
+        false);
+
+    return TypedEnumLayoutTryGetTypeLayout(
+        source,
+        stream,
+        declarations,
+        fields,
+        contexts,
+        contextIndexPlusOne,
+        kind,
+        typeHeadToken,
+        typePrimaryToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        flags,
+        elementCountStartToken,
+        elementCountEndToken,
+        recursionDepth,
+        sizeBytes,
+        alignmentBytes);
+}
+
+internal fn bool TypedEnumLayoutTryGetPrimaryTokenLayout(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] bitWidth,
+    u32[0 max] typeFlags,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+    if (TypedDynamicTokenKind(kind))
+    {
+        sizeBytes = TypedDynamicLayoutSizeBytes();
+        alignmentBytes = TypedDynamicLayoutAlignmentBytes();
+        return true;
+    }
+
+    switch (kind)
+    {
+        case TokenKind.Bool:
+            sizeBytes = 1;
+            alignmentBytes = 1;
+            return true;
+        case TokenKind.IntegerType:
+            stack u64[0 max] integerSize = TypedEnumLayoutScalarSizeBytes(bitWidth);
+            sizeBytes = integerSize;
+            alignmentBytes = TypedEnumLayoutScalarAlignmentBytes(integerSize);
+            return true;
+        case TokenKind.FloatType:
+            stack u64[0 max] floatSize = TypedEnumLayoutScalarSizeBytes(bitWidth);
+            sizeBytes = floatSize;
+            alignmentBytes = TypedEnumLayoutScalarAlignmentBytes(floatSize);
+            return true;
+        case TokenKind.Rawptr:
+            sizeBytes = 8;
+            alignmentBytes = 8;
+            return true;
+        case TokenKind.Rawmutptr:
+            sizeBytes = 8;
+            alignmentBytes = 8;
+            return true;
+        case TokenKind.Fnptr:
+            sizeBytes = 8;
+            alignmentBytes = 8;
+            return true;
+        case TokenKind.AsciiView:
+            sizeBytes = 16;
+            alignmentBytes = 8;
+            return true;
+        case TokenKind.UnicodeView:
+            sizeBytes = 16;
+            alignmentBytes = 8;
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TypedEnumLayoutTryFindAggregateDeclaration(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    u32[0 max] typeHeadToken,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    if (typeHeadToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] declarationCount = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declarationCount; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if ((item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+            && item.NameToken != 0
+            && TypedSignatureTokenTextEqualsToken(source, stream, item.NameToken, typeHeadToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutTryGetTypeLayout(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    mut borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    TypedSignatureTypeKind kind,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] bitWidth,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeArgumentCount,
+    u32[0 max] typeFlags,
+    u32[0 max] elementCountStartToken,
+    u32[0 max] elementCountEndToken,
+    u32[0 max] recursionDepth,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    if (recursionDepth > TypedEnumLayoutTypeRecursionLimit())
+    {
+        return false;
+    }
+
+    switch (kind)
+    {
+        case TypedSignatureTypeKind.Bool:
+            sizeBytes = 1;
+            alignmentBytes = 1;
+            return true;
+        case TypedSignatureTypeKind.Integer:
+            stack u64[0 max] integerSize = TypedEnumLayoutScalarSizeBytes(bitWidth);
+            sizeBytes = integerSize;
+            alignmentBytes = TypedEnumLayoutScalarAlignmentBytes(integerSize);
+            return true;
+        case TypedSignatureTypeKind.Float:
+            stack u64[0 max] floatSize = TypedEnumLayoutScalarSizeBytes(bitWidth);
+            sizeBytes = floatSize;
+            alignmentBytes = TypedEnumLayoutScalarAlignmentBytes(floatSize);
+            return true;
+        case TypedSignatureTypeKind.RawPointer:
+            sizeBytes = 8;
+            alignmentBytes = 8;
+            return true;
+        case TypedSignatureTypeKind.FunctionPointer:
+            sizeBytes = 8;
+            alignmentBytes = 8;
+            return true;
+        case TypedSignatureTypeKind.Text:
+            if (TypedSignatureFlagPresent(typeFlags, TypedSignatureTypeFlagOwnedText()))
+            {
+                return false;
+            }
+
+            sizeBytes = 16;
+            alignmentBytes = 8;
+            return true;
+        case TypedSignatureTypeKind.Slice:
+            sizeBytes = 16;
+            alignmentBytes = 8;
+            return true;
+        case TypedSignatureTypeKind.Dynamic:
+            sizeBytes = TypedDynamicLayoutSizeBytes();
+            alignmentBytes = TypedDynamicLayoutAlignmentBytes();
+            return true;
+        case TypedSignatureTypeKind.FixedArray:
+            stack mut u64[0 max] elementCount = 0;
+            if (!TypedEnumLayoutTryReadElementCount(
+                source,
+                stream,
+                contexts,
+                contextIndexPlusOne,
+                elementCountStartToken,
+                elementCountEndToken,
+                elementCount))
+            {
+                return false;
+            }
+
+            stack mut u64[0 max] elementSize = 0;
+            stack mut u64[0 max] elementAlign = 1;
+            if (!TypedEnumLayoutTryGetPrimaryTokenLayout(
+                source,
+                stream,
+                typePrimaryToken,
+                bitWidth,
+                typeFlags,
+                elementSize,
+                elementAlign))
+            {
+                if (TypedSignatureFlagPresent(typeFlags, TypedSignatureTypeFlagHeadIsGenericParameter()))
+                {
+                    if (!TypedEnumLayoutTryGetGenericTypeParameterLayout(
+                        source,
+                        stream,
+                        declarations,
+                        fields,
+                        contexts,
+                        contextIndexPlusOne,
+                        typeHeadToken,
+                        (u32[0 max])(recursionDepth + 1),
+                        elementSize,
+                        elementAlign))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    stack mut u32[0 max] elementActualGenericOpenToken = 0;
+                    if (typeHeadToken != 0)
+                    {
+                        elementActualGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, typeHeadToken);
+                    }
+
+                    if (!TypedEnumLayoutTryGetNamedAggregateLayout(
+                        source,
+                        stream,
+                        declarations,
+                        fields,
+                        contexts,
+                        contextIndexPlusOne,
+                        typeHeadToken,
+                        elementActualGenericOpenToken,
+                        (u32[0 max])(recursionDepth + 1),
+                        elementSize,
+                        elementAlign))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            sizeBytes = elementSize * elementCount;
+            if (elementCount == 0)
+            {
+                alignmentBytes = 1;
+            }
+            else
+            {
+                alignmentBytes = elementAlign;
+            }
+
+            return true;
+        case TypedSignatureTypeKind.GenericParameter:
+            return TypedEnumLayoutTryGetGenericTypeParameterLayout(
+                source,
+                stream,
+                declarations,
+                fields,
+                contexts,
+                contextIndexPlusOne,
+                typeHeadToken,
+                (u32[0 max])(recursionDepth + 1),
+                sizeBytes,
+                alignmentBytes);
+        case TypedSignatureTypeKind.Named:
+            stack mut u32[0 max] namedActualGenericOpenToken = 0;
+            if (typeHeadToken != 0)
+            {
+                namedActualGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, typeHeadToken);
+            }
+
+            return TypedEnumLayoutTryGetNamedAggregateLayout(
+                source,
+                stream,
+                declarations,
+                fields,
+                contexts,
+                contextIndexPlusOne,
+                typeHeadToken,
+                namedActualGenericOpenToken,
+                (u32[0 max])(recursionDepth + 1),
+                sizeBytes,
+                alignmentBytes);
+        default:
+            return false;
+    }
+}
+
+internal fn bool TypedEnumLayoutTryGetNamedAggregateLayout(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    mut borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] typeHeadToken,
+    u32[0 max] actualGenericOpenToken,
+    u32[0 max] recursionDepth,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    if (recursionDepth > TypedEnumLayoutTypeRecursionLimit())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    if (!TypedEnumLayoutTryFindAggregateDeclaration(
+        source,
+        stream,
+        declarations,
+        typeHeadToken,
+        ownerDeclarationIndex))
+    {
+        return false;
+    }
+
+    stack DeclItem owner = declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    stack u32[0 max] ownerGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, owner.NameToken);
+    stack mut u32[0 max] fieldContextIndexPlusOne = contextIndexPlusOne;
+    if (ownerGenericOpenToken != 0)
+    {
+        if (actualGenericOpenToken == 0)
+        {
+            return false;
+        }
+
+        if (!contexts.TryAppend(ownerGenericOpenToken, actualGenericOpenToken, contextIndexPlusOne, fieldContextIndexPlusOne))
+        {
+            return false;
+        }
+    }
+    else if (actualGenericOpenToken != 0)
+    {
+        return false;
+    }
+
+    stack TypedEnumLayoutControlKind layoutKind = TypedEnumLayoutDeclarationLayoutKind(owner, source, stream);
+    stack mut u64[0 max] packBytes = 0;
+    if (layoutKind == TypedEnumLayoutControlKind.C)
+    {
+        packBytes = TypedEnumLayoutDeclarationAttributeU64Value(owner, source, stream, "Pack");
+    }
+
+    stack mut u64[0 max] currentSize = 0;
+    stack mut u64[0 max] currentAlignment = 1;
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < fieldCount; index += 1)
+    {
+        if (fields.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex)
+        {
+            stack mut u64[0 max] fieldSize = 0;
+            stack mut u64[0 max] fieldAlignment = 1;
+            if (!TypedEnumLayoutTryGetTypeLayout(
+                source,
+                stream,
+                declarations,
+                fields,
+                contexts,
+                fieldContextIndexPlusOne,
+                fields.TypeKindAt(index),
+                fields.TypeHeadTokenAt(index),
+                fields.TypePrimaryTokenAt(index),
+                fields.BitWidthAt(index),
+                fields.TypeArgumentCountAt(index),
+                fields.ComptimeArgumentCountAt(index),
+                fields.TypeFlagsAt(index),
+                fields.ElementCountStartTokenAt(index),
+                fields.ElementCountEndTokenAt(index),
+                (u32[0 max])(recursionDepth + 1),
+                fieldSize,
+                fieldAlignment))
+            {
+                return false;
+            }
+
+            if (layoutKind == TypedEnumLayoutControlKind.Explicit)
+            {
+                stack mut u64[0 max] fieldOffset = 0;
+                if (!TypedEnumLayoutTryReadFieldOffset(owner, source, stream, fields.NameTokenAt(index), fieldOffset))
+                {
+                    return false;
+                }
+
+                stack u64[0 max] fieldEnd = fieldOffset + fieldSize;
+                if (fieldEnd > currentSize)
+                {
+                    currentSize = fieldEnd;
+                }
+
+                if (fieldAlignment > currentAlignment)
+                {
+                    currentAlignment = fieldAlignment;
+                }
+            }
+            else
+            {
+                stack u64[0 max] effectiveAlignment = TypedEnumLayoutEffectiveFieldAlignment(fieldAlignment, packBytes);
+                stack u64[0 max] fieldOffset = TypedEnumLayoutAlignTo(currentSize, effectiveAlignment);
+                currentSize = fieldOffset + fieldSize;
+                if (effectiveAlignment > currentAlignment)
+                {
+                    currentAlignment = effectiveAlignment;
+                }
+            }
+        }
+    }
+
+    stack u64[0 max] alignBytes = TypedEnumLayoutDeclarationAttributeU64Value(owner, source, stream, "Align");
+    if (alignBytes > currentAlignment)
+    {
+        currentAlignment = alignBytes;
+    }
+
+    sizeBytes = TypedEnumLayoutAlignTo(currentSize, currentAlignment);
+    alignmentBytes = currentAlignment;
+    return true;
+}
+
+internal fn bool TypedEnumLayoutTryGetPayloadTypeLayout(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    borrow TypedEnumPayloadTable payloads,
+    u64[0 2 ** 63 - 1] payloadIndex,
+    out u64[0 max] sizeBytes,
+    out u64[0 max] alignmentBytes)
+{
+    stack mut TypedEnumLayoutGenericContextTable contexts = new();
+    return TypedEnumLayoutTryGetTypeLayout(
+        source,
+        stream,
+        declarations,
+        fields,
+        contexts,
+        0,
+        payloads.TypeKindAt(payloadIndex),
+        payloads.TypeHeadTokenAt(payloadIndex),
+        payloads.TypePrimaryTokenAt(payloadIndex),
+        payloads.BitWidthAt(payloadIndex),
+        payloads.TypeArgumentCountAt(payloadIndex),
+        payloads.ComptimeArgumentCountAt(payloadIndex),
+        payloads.TypeFlagsAt(payloadIndex),
+        payloads.ElementCountStartTokenAt(payloadIndex),
+        payloads.ElementCountEndTokenAt(payloadIndex),
+        0,
+        sizeBytes,
+        alignmentBytes);
+}
+
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumLayoutRowsForDeclaration(
+    mut borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    borrow TypedEnumPayloadTable payloads)
+{
+    stack mut TypedEnumVariantLayoutScanTable variants = new();
+    switch (AppendTypedEnumLayoutVariantsForDeclaration(variants, source, stream, owner))
+    {
+        case System.Memory.MemoryStatus.Err(var scanError):
+            return System.Memory.MemoryStatus.Err(scanError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] variantCount = (u32[0 max])variants.Count();
+    if (variantCount == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] firstUnitOrdinal = TypedEnumLayoutFirstUnitOrdinal(variants);
+    stack u32[0 max] tagBitWidth = TypedEnumLayoutTagBitWidth(variantCount);
+    stack u64[0 max] tagSizeBytes = TypedEnumLayoutScalarSizeBytes(tagBitWidth);
+    stack u64[0 max] tagAlignmentBytes = TypedEnumLayoutScalarAlignmentBytes(tagSizeBytes);
+    stack u32[0 max] tagTypeFlags = TypedSignatureTypeFlagIntegerSigned() | TypedSignatureTypeFlagHasIntegerRange();
+
+    for willexit (stack mut u32[0 max] sourceOrdinal = 0; sourceOrdinal < variantCount; sourceOrdinal += 1)
+    {
+        stack u64[0 2 ** 63 - 1] sourceIndex = (u64[0 2 ** 63 - 1])sourceOrdinal;
+        stack u32[0 max] payloadCount = TypedEnumLayoutPayloadCountForVariant(payloads, ownerDeclarationIndex, sourceOrdinal);
+        switch (table.Append(
+            TypedEnumLayoutRowKind.Variant,
+            ownerDeclarationIndex,
+            owner.NameToken,
+            sourceOrdinal,
+            variants.NameTokenAt(sourceIndex),
+            TypedEnumLayoutTagForSourceOrdinal(sourceOrdinal, firstUnitOrdinal, variantCount),
+            payloadCount,
+            0,
+            0,
+            TypedEnumPayloadKind.Unknown,
+            variants.VariantRoleAt(sourceIndex),
+            TypedEnumLayoutVariantIsErrorFunnel(payloads, ownerDeclarationIndex, sourceOrdinal),
+            TypedEnumLayoutVariantUsesNamedPayloads(payloads, ownerDeclarationIndex, sourceOrdinal),
+            0,
+            0,
+            tagSizeBytes,
+            tagAlignmentBytes,
+            TypedEnumLayoutStorageIsMisaligned(0, tagAlignmentBytes),
+            TypedSignatureTypeKind.Integer,
+            0,
+            0,
+            tagBitWidth,
+            tagTypeFlags,
+            TypedEnumLayoutFlagConcrete()))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack mut bool layoutComplete = true;
+    stack mut u64[0 max] currentSize = tagSizeBytes;
+    stack mut u64[0 max] currentAlignment = tagAlignmentBytes;
+    stack mut u32[0 max] storageFieldOrdinal = 1;
+    for willexit (stack mut u32[0 max] tag = 0; tag < variantCount; tag += 1)
+    {
+        stack u32[0 max] sourceOrdinal = TypedEnumLayoutSourceOrdinalForTag(tag, firstUnitOrdinal, variantCount);
+        stack u32[0 max] payloadCount = TypedEnumLayoutPayloadCountForVariant(payloads, ownerDeclarationIndex, sourceOrdinal);
+        for willexit (stack mut u32[0 max] payloadOrdinal = 0; payloadOrdinal < payloadCount; payloadOrdinal += 1)
+        {
+            stack u32[0 max] payloadIndexPlusOne = TypedEnumLayoutPayloadIndexPlusOne(payloads, ownerDeclarationIndex, sourceOrdinal, payloadOrdinal);
+            if (payloadIndexPlusOne == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack u64[0 2 ** 63 - 1] payloadIndex = (u64[0 2 ** 63 - 1])(payloadIndexPlusOne - 1);
+            stack mut u64[0 max] fieldOffset = 0;
+            stack mut u64[0 max] fieldSize = 0;
+            stack mut u64[0 max] fieldAlignment = 1;
+            stack mut bool fieldMisaligned = false;
+            stack mut u32[0 max] layoutFlags = 0;
+            if (layoutComplete
+                && TypedEnumLayoutTryGetPayloadTypeLayout(source, stream, declarations, fields, payloads, payloadIndex, fieldSize, fieldAlignment))
+            {
+                fieldOffset = TypedEnumLayoutAlignTo(currentSize, fieldAlignment);
+                fieldMisaligned = TypedEnumLayoutStorageIsMisaligned(fieldOffset, fieldAlignment);
+                currentSize = fieldOffset + fieldSize;
+                if (fieldAlignment > currentAlignment)
+                {
+                    currentAlignment = fieldAlignment;
+                }
+
+                layoutFlags = TypedEnumLayoutFlagConcrete();
+            }
+            else
+            {
+                layoutComplete = false;
+            }
+
+            switch (table.Append(
+                TypedEnumLayoutRowKind.Payload,
+                ownerDeclarationIndex,
+                owner.NameToken,
+                sourceOrdinal,
+                payloads.VariantNameTokenAt(payloadIndex),
+                tag,
+                payloadCount,
+                payloadOrdinal,
+                payloads.PayloadNameTokenAt(payloadIndex),
+                payloads.PayloadKindAt(payloadIndex),
+                payloads.VariantRoleAt(payloadIndex),
+                payloads.IsErrorFunnelAt(payloadIndex),
+                payloads.PayloadKindAt(payloadIndex) == TypedEnumPayloadKind.Named,
+                storageFieldOrdinal,
+                fieldOffset,
+                fieldSize,
+                fieldAlignment,
+                fieldMisaligned,
+                payloads.TypeKindAt(payloadIndex),
+                payloads.TypeHeadTokenAt(payloadIndex),
+                payloads.TypePrimaryTokenAt(payloadIndex),
+                payloads.BitWidthAt(payloadIndex),
+                payloads.TypeFlagsAt(payloadIndex),
+                layoutFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            storageFieldOrdinal = (u32[0 max])(storageFieldOrdinal + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

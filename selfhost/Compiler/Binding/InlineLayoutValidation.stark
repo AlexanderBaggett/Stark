@@ -1,0 +1,636 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.LayoutHelpers
+import System.Text
+import System.Memory
+module Compiler.Binding.InlineLayoutValidation
+
+internal fn bool InlineLayoutTokenTextEqualsToken(ascii source, borrow TokenStream stream, u32[0 max] left, u32[0 max] right)
+    where overlap(source, stream)
+{
+    stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
+    stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
+    return System.Text.Equals(leftText, rightText);
+}
+
+internal struct InlineLayoutSubstitutionTable
+{
+    internal dynamic u32[0 max] ParamOwnerKeywords;
+    internal dynamic u32[0 max] ParamNameTokens;
+    internal dynamic u32[0 max] ArgOwnerKeywords;
+    internal dynamic u32[0 max] ArgStartTokens;
+    internal dynamic u32[0 max] ArgEndTokens;
+
+    InlineLayoutSubstitutionTable()
+    {
+        self.ParamOwnerKeywords = new();
+        self.ParamNameTokens = new();
+        self.ArgOwnerKeywords = new();
+        self.ArgStartTokens = new();
+        self.ArgEndTokens = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow InlineLayoutSubstitutionTable self)
+    {
+        return self.ParamNameTokens.Length;
+    }
+
+    internal law u32[0 max] ParamOwnerKeywordAt(borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamOwnerKeywords.Length)
+        {
+            token = self.ParamOwnerKeywords[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ParamNameTokenAt(borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamNameTokens.Length)
+        {
+            token = self.ParamNameTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ArgOwnerKeywordAt(borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ArgOwnerKeywords.Length)
+        {
+            token = self.ArgOwnerKeywords[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ArgStartTokenAt(borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ArgStartTokens.Length)
+        {
+            token = self.ArgStartTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ArgEndTokenAt(borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ArgEndTokens.Length)
+        {
+            token = self.ArgEndTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow InlineLayoutSubstitutionTable self,
+        u32[0 max] paramOwnerKeyword,
+        u32[0 max] paramNameToken,
+        u32[0 max] argOwnerKeyword,
+        u32[0 max] argStartToken,
+        u32[0 max] argEndToken)
+    {
+        if (!self.ParamOwnerKeywords.TryReserve(1)
+            || !self.ParamNameTokens.TryReserve(1)
+            || !self.ArgOwnerKeywords.TryReserve(1)
+            || !self.ArgStartTokens.TryReserve(1)
+            || !self.ArgEndTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.ParamOwnerKeywords[self.ParamOwnerKeywords.Length] = paramOwnerKeyword;
+        init self.ParamNameTokens[self.ParamNameTokens.Length] = paramNameToken;
+        init self.ArgOwnerKeywords[self.ArgOwnerKeywords.Length] = argOwnerKeyword;
+        init self.ArgStartTokens[self.ArgStartTokens.Length] = argStartToken;
+        init self.ArgEndTokens[self.ArgEndTokens.Length] = argEndToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn void Truncate(mut borrow InlineLayoutSubstitutionTable self, u64[0 2 ** 63 - 1] count)
+    {
+        while willexit (self.ParamNameTokens.Length > count)
+        {
+            stack u32[0 max] removedParamOwner = self.ParamOwnerKeywords.MoveLast();
+            stack u32[0 max] removedParamName = self.ParamNameTokens.MoveLast();
+            stack u32[0 max] removedArgOwner = self.ArgOwnerKeywords.MoveLast();
+            stack u32[0 max] removedArgStart = self.ArgStartTokens.MoveLast();
+            stack u32[0 max] removedArgEnd = self.ArgEndTokens.MoveLast();
+        }
+    }
+}
+
+internal finite law bool InlineLayoutAggregateKind(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct
+        || kind == DeclarationKind.Record
+        || kind == DeclarationKind.Enum;
+}
+
+internal fn bool InlineLayoutTypeParameterOrdinal(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] declKeyword,
+    u32[0 max] paramNameToken,
+    out u32[0 max] ordinal)
+{
+    ordinal = 0;
+    stack u32[0 max] open = InlineLayoutDeclarationGenericOpen(stream, declKeyword);
+    if (open == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeOrdinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(open + 1);
+    stack mut u32[0 max] scan = segmentStart;
+    stack mut u32[0 max] depth = 1;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile && depth > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        stack mut bool boundary = false;
+        if (kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (depth == 1)
+            {
+                boundary = true;
+            }
+
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 1 && kind == TokenKind.Comma)
+        {
+            boundary = true;
+        }
+
+        if (boundary && segmentStart < scan)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])segmentStart) != TokenKind.Comptime)
+            {
+                stack u32[0 max] name = LayoutBoundedLastIdentifier(stream, segmentStart, scan);
+                if (name != 0 && InlineLayoutTokenTextEqualsToken(source, stream, name, paramNameToken))
+                {
+                    ordinal = typeOrdinal;
+                    return true;
+                }
+
+                typeOrdinal = (u32[0 max])(typeOrdinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool InlineLayoutTypeArgumentSpanAt(
+    borrow TokenStream stream,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] ordinal,
+    out u32[0 max] argStart,
+    out u32[0 max] argEnd)
+{
+    argStart = 0;
+    argEnd = 0;
+    stack u32[0 max] open = (u32[0 max])(typeHeadToken + 1);
+    if (open >= typeEndToken || stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeOrdinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(open + 1);
+    stack mut u32[0 max] scan = segmentStart;
+    stack mut u32[0 max] depth = 1;
+    while willexit (scan < typeEndToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile && depth > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        stack mut bool boundary = false;
+        if (kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (depth == 1)
+            {
+                boundary = true;
+            }
+
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 1 && kind == TokenKind.Comma)
+        {
+            boundary = true;
+        }
+
+        if (boundary && segmentStart < scan)
+        {
+            if (!GenericArgumentSegmentIsValue(stream, segmentStart, scan))
+            {
+                if (typeOrdinal == ordinal)
+                {
+                    argStart = segmentStart;
+                    argEnd = scan;
+                    return true;
+                }
+
+                typeOrdinal = (u32[0 max])(typeOrdinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool InlineLayoutTrySubstituteType(
+    borrow InlineLayoutSubstitutionTable substitutions,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] spanOwnerKeyword,
+    u32[0 max] typeHeadToken,
+    out u32[0 max] argOwnerKeyword,
+    out u32[0 max] argStart,
+    out u32[0 max] argEnd)
+{
+    argOwnerKeyword = 0;
+    argStart = 0;
+    argEnd = 0;
+
+    stack mut u32[0 max] ordinal = 0;
+    if (!InlineLayoutTypeParameterOrdinal(source, stream, spanOwnerKeyword, typeHeadToken, ordinal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = substitutions.Count();
+    while willexit (index > 0)
+    {
+        index = (u64[0 2 ** 63 - 1])(index - 1);
+        if (substitutions.ParamOwnerKeywordAt(index) == spanOwnerKeyword
+            && InlineLayoutTokenTextEqualsToken(source, stream, substitutions.ParamNameTokenAt(index), typeHeadToken))
+        {
+            argOwnerKeyword = substitutions.ArgOwnerKeywordAt(index);
+            argStart = substitutions.ArgStartTokenAt(index);
+            argEnd = substitutions.ArgEndTokenAt(index);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus InlineLayoutAppendUseSiteSubstitutions(
+    mut borrow InlineLayoutSubstitutionTable substitutions,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] targetDeclKeyword,
+    u32[0 max] useOwnerKeyword,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeEndToken)
+{
+    stack u32[0 max] open = InlineLayoutDeclarationGenericOpen(stream, targetDeclKeyword);
+    if (open == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] typeOrdinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(open + 1);
+    stack mut u32[0 max] scan = segmentStart;
+    stack mut u32[0 max] depth = 1;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile && depth > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        stack mut bool boundary = false;
+        if (kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (depth == 1)
+            {
+                boundary = true;
+            }
+
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 1 && kind == TokenKind.Comma)
+        {
+            boundary = true;
+        }
+
+        if (boundary && segmentStart < scan)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])segmentStart) != TokenKind.Comptime)
+            {
+                stack u32[0 max] paramName = LayoutBoundedLastIdentifier(stream, segmentStart, scan);
+                stack mut u32[0 max] argStart = 0;
+                stack mut u32[0 max] argEnd = 0;
+                if (paramName != 0 && InlineLayoutTypeArgumentSpanAt(stream, typeHeadToken, typeEndToken, typeOrdinal, argStart, argEnd))
+                {
+                    switch (substitutions.Append(targetDeclKeyword, paramName, useOwnerKeyword, argStart, argEnd))
+                    {
+                        case System.Memory.MemoryStatus.Err(var appendError):
+                            return System.Memory.MemoryStatus.Err(appendError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                typeOrdinal = (u32[0 max])(typeOrdinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal finite law bool InlineLayoutTypePrimaryStopsInlineTraversal(TokenKind kind)
+{
+    return kind == TokenKind.Bool
+        || kind == TokenKind.IntegerType
+        || kind == TokenKind.FloatType
+        || kind == TokenKind.Void
+        || kind == TokenKind.AsciiView
+        || kind == TokenKind.UnicodeView
+        || kind == TokenKind.AsciiOwned
+        || kind == TokenKind.UnicodeOwned
+        || kind == TokenKind.Dynamic
+        || kind == TokenKind.Rawptr
+        || kind == TokenKind.Rawmutptr
+        || kind == TokenKind.Fnptr
+        || kind == TokenKind.Closure
+        || kind == TokenKind.Borrow
+        || kind == TokenKind.Retborrow
+        || kind == TokenKind.Storeborrow
+        || kind == TokenKind.Out
+        || kind == TokenKind.Init
+        || kind == TokenKind.Frozen
+        || kind == TokenKind.Shared;
+}
+
+internal finite law bool InlineLayoutTypeSpanIsSliceView(borrow TokenStream stream, u32[0 max] typeHeadToken, u32[0 max] typeEndToken)
+{
+    stack u32[0 max] bracket = (u32[0 max])(typeHeadToken + 1);
+    return bracket < typeEndToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])bracket) == TokenKind.LBrack
+        && (u32[0 max])(bracket + 1) < typeEndToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])(bracket + 1)) == TokenKind.RBrack;
+}
+
+internal fn BindResult<u32[0 max]> InlineLayoutDetectAggregateCycle(
+    borrow DeclarationList decls,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow InlineLayoutSubstitutionTable substitutions,
+    u32[0 max] rootNameToken,
+    DeclItem item)
+{
+    if (!InlineLayoutAggregateKind(item.Kind))
+    {
+        return BindResult<u32[0 max]>.Ok(0);
+    }
+
+    if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+    {
+        switch (ParseStructFields(stream, item.KeywordToken))
+        {
+            case ParseResult<FieldList>.Err(var fieldParseError):
+                return BindResult<u32[0 max]>.Ok(0);
+            case ParseResult<FieldList>.Ok(var fields):
+                stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+                for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+                {
+                    stack TokenKind fieldPrimaryKind = stream.KindAt((u64[0 2 ** 63 - 1])fields.TypePrimaryAt(field));
+                    if (fields.TypeHeadAt(field) != 0
+                        && fields.TypePrimaryAt(field) != 0
+                        && !InlineLayoutTypePrimaryStopsInlineTraversal(fieldPrimaryKind)
+                        && !InlineLayoutTypeSpanIsSliceView(stream, fields.TypeHeadAt(field), fields.TypeEndAt(field))
+                        && InlineLayoutTokenTextEqualsToken(source, stream, fields.TypeHeadAt(field), rootNameToken))
+                    {
+                        return BindResult<u32[0 max]>.Ok(fields.NameTokenAt(field));
+                    }
+
+                    switch (InlineLayoutDetectTypeSpanCycle(
+                        decls,
+                        source,
+                        stream,
+                        substitutions,
+                        rootNameToken,
+                        item.KeywordToken,
+                        fields.TypeStartAt(field),
+                        fields.TypeEndAt(field),
+                        fields.TypeHeadAt(field),
+                        fields.TypePrimaryAt(field),
+                        fields.NameTokenAt(field)))
+                    {
+                        case BindResult<u32[0 max]>.Err(var fieldError):
+                            return BindResult<u32[0 max]>.Err(fieldError);
+                        case BindResult<u32[0 max]>.Ok(var fieldAnchor):
+                            if (fieldAnchor != 0)
+                            {
+                                return BindResult<u32[0 max]>.Ok(fieldAnchor);
+                            }
+                    }
+                }
+        }
+    }
+    else if (item.Kind == DeclarationKind.Enum)
+    {
+        switch (ParseEnumPayloadTypeSpans(stream, item.KeywordToken))
+        {
+            case ParseResult<TypeSpanList>.Err(var payloadParseError):
+                return BindResult<u32[0 max]>.Ok(0);
+            case ParseResult<TypeSpanList>.Ok(var payloads):
+                stack u64[0 2 ** 63 - 1] payloadCount = payloads.Count();
+                for willexit (stack mut u64[0 2 ** 63 - 1] payload = 0; payload < payloadCount; payload += 1)
+                {
+                    stack TokenKind payloadPrimaryKind = stream.KindAt((u64[0 2 ** 63 - 1])payloads.PrimaryAt(payload));
+                    if (payloads.HeadAt(payload) != 0
+                        && payloads.PrimaryAt(payload) != 0
+                        && !InlineLayoutTypePrimaryStopsInlineTraversal(payloadPrimaryKind)
+                        && !InlineLayoutTypeSpanIsSliceView(stream, payloads.HeadAt(payload), payloads.EndTokenAt(payload))
+                        && InlineLayoutTokenTextEqualsToken(source, stream, payloads.HeadAt(payload), rootNameToken))
+                    {
+                        return BindResult<u32[0 max]>.Ok(payloads.PrimaryAt(payload));
+                    }
+
+                    switch (InlineLayoutDetectTypeSpanCycle(
+                        decls,
+                        source,
+                        stream,
+                        substitutions,
+                        rootNameToken,
+                        item.KeywordToken,
+                        payloads.StartTokenAt(payload),
+                        payloads.EndTokenAt(payload),
+                        payloads.HeadAt(payload),
+                        payloads.PrimaryAt(payload),
+                        payloads.PrimaryAt(payload)))
+                    {
+                        case BindResult<u32[0 max]>.Err(var payloadError):
+                            return BindResult<u32[0 max]>.Err(payloadError);
+                        case BindResult<u32[0 max]>.Ok(var payloadAnchor):
+                            if (payloadAnchor != 0)
+                            {
+                                return BindResult<u32[0 max]>.Ok(payloadAnchor);
+                            }
+                    }
+                }
+        }
+    }
+
+    return BindResult<u32[0 max]>.Ok(0);
+}
+
+internal fn BindResult<u32[0 max]> InlineLayoutDetectTypeSpanCycle(
+    borrow DeclarationList decls,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow InlineLayoutSubstitutionTable substitutions,
+    u32[0 max] rootNameToken,
+    u32[0 max] spanOwnerKeyword,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    u32[0 max] typeHead,
+    u32[0 max] typePrimary,
+    u32[0 max] anchorToken)
+{
+    if (typeStart >= typeEnd || typeHead == 0 || typePrimary == 0)
+    {
+        return BindResult<u32[0 max]>.Ok(0);
+    }
+
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimary);
+    if (InlineLayoutTypePrimaryStopsInlineTraversal(primaryKind)
+        || InlineLayoutTypeSpanIsSliceView(stream, typeHead, typeEnd))
+    {
+        return BindResult<u32[0 max]>.Ok(0);
+    }
+
+    stack mut u32[0 max] argOwnerKeyword = 0;
+    stack mut u32[0 max] argStart = 0;
+    stack mut u32[0 max] argEnd = 0;
+    if (InlineLayoutTrySubstituteType(substitutions, source, stream, spanOwnerKeyword, typeHead, argOwnerKeyword, argStart, argEnd))
+    {
+        stack u32[0 max] argHead = LayoutBoundedLastIdentifier(stream, argStart, argEnd);
+        stack u32[0 max] argPrimary = LayoutBoundedFirstTypeStart(stream, argStart, argEnd);
+        stack TokenKind argPrimaryKind = stream.KindAt((u64[0 2 ** 63 - 1])argPrimary);
+        if (argHead != 0 && InlineLayoutTokenTextEqualsToken(source, stream, argHead, rootNameToken))
+        {
+            if (argPrimary != 0
+                && !InlineLayoutTypePrimaryStopsInlineTraversal(argPrimaryKind)
+                && !InlineLayoutTypeSpanIsSliceView(stream, argHead, argEnd))
+            {
+                return BindResult<u32[0 max]>.Ok(anchorToken);
+            }
+        }
+
+        return InlineLayoutDetectTypeSpanCycle(decls, source, stream, substitutions, rootNameToken, argOwnerKeyword, argStart, argEnd, argHead, argPrimary, anchorToken);
+    }
+
+    stack u64[0 2 ** 63 - 1] declCount = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declCount; index += 1)
+    {
+        stack DeclItem candidate = decls.ItemAt(index);
+        if (InlineLayoutAggregateKind(candidate.Kind)
+            && InlineLayoutTokenTextEqualsToken(source, stream, candidate.NameToken, typeHead))
+        {
+            if (InlineLayoutTokenTextEqualsToken(source, stream, candidate.NameToken, rootNameToken))
+            {
+                return BindResult<u32[0 max]>.Ok(anchorToken);
+            }
+
+            stack u64[0 2 ** 63 - 1] substitutionCount = substitutions.Count();
+            switch (InlineLayoutAppendUseSiteSubstitutions(substitutions, source, stream, candidate.KeywordToken, spanOwnerKeyword, typeHead, typeEnd))
+            {
+                case System.Memory.MemoryStatus.Err(var substitutionError):
+                    substitutions.Truncate(substitutionCount);
+                    return BindResult<u32[0 max]>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (InlineLayoutDetectAggregateCycle(decls, source, stream, substitutions, rootNameToken, candidate))
+            {
+                case BindResult<u32[0 max]>.Err(var visitError):
+                    substitutions.Truncate(substitutionCount);
+                    return BindResult<u32[0 max]>.Err(visitError);
+                case BindResult<u32[0 max]>.Ok(var visitAnchor):
+                    substitutions.Truncate(substitutionCount);
+                    return BindResult<u32[0 max]>.Ok(visitAnchor);
+            }
+        }
+    }
+
+    return BindResult<u32[0 max]>.Ok(0);
+}
+
+internal fn System.Memory.MemoryStatus CollectRecursiveInlineLayoutDiagnostics(
+    borrow DeclarationList decls,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (InlineLayoutAggregateKind(item.Kind))
+        {
+            stack mut InlineLayoutSubstitutionTable substitutions = new();
+            switch (InlineLayoutDetectAggregateCycle(decls, source, stream, substitutions, item.NameToken, item))
+            {
+                case BindResult<u32[0 max]>.Err(var layoutError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<u32[0 max]>.Ok(var anchorToken):
+                    if (anchorToken != 0)
+                    {
+                        switch (diags.Append(BindDiagnosticCode.RecursiveInlineLayout, anchorToken))
+                        {
+                            case System.Memory.MemoryStatus.Err(var appendError):
+                                return System.Memory.MemoryStatus.Err(appendError);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

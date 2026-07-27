@@ -1,0 +1,26 @@
+export import Compiler.Lexing
+export import Compiler.Parsing
+export import Compiler.Diagnostics
+export import Compiler.Artifacts
+export import Compiler.ArtifactRendering
+export import Compiler.Pipeline
+export import Compiler.Lowering
+export import Compiler.Binding
+export import Compiler.Typing
+export import Compiler.Ir
+export import Compiler.Mir
+export import Compiler.Ssa
+export import Compiler.Llvm
+export import Compiler.AsmFacts
+export import Compiler.TargetFacts
+export import Compiler.NativeFacts
+export import Compiler.Sdk
+export import Compiler.TestRunner
+export import Compiler.TestDriver
+module Compiler
+
+// Stage 1 self-hosted Stark compiler (pre-/src-cutover staging package).
+// The C# host under src/ remains Stage 0 and the conformance oracle; this
+// package grows pass by pass per docs/Internals/SelfHostedCompilerArchitecture.md
+// and remains under /selfhost
+// (host renamed to /old_src) at the agreed cutover milestone.

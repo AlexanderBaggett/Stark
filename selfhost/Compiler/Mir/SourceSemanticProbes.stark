@@ -1,0 +1,1462 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.SourceSymbols
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSemanticProbes
+
+// === Name resolution (toward the binder, #33) ===
+// A first semantic-analysis pass over the lexed token stream — beyond lexing/lowering:
+// it answers "does every identifier USE refer to something declared?" without emitting
+// any code. Declared names are the identifiers introduced by `var` (and any function
+// parameters between `fn <name> (` and `)`). A use-position identifier that resolves to
+// none of them is an unbound name — the canonical first binder diagnostic.
+
+// True when token `index` is in a DECLARING position: right after `var` (a local) or a
+// parameter name inside the `( … )` that follows `fn <name>` (so it is being introduced,
+// not used).
+internal finite law bool IsTailFunctionModifierKind(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Internal:
+            return true;
+        case TokenKind.Public:
+            return true;
+        case TokenKind.Export:
+            return true;
+        case TokenKind.Finite:
+            return true;
+        case TokenKind.Law:
+            return true;
+        case TokenKind.Inline:
+            return true;
+        case TokenKind.Noinline:
+            return true;
+        case TokenKind.Inlinehint:
+            return true;
+        case TokenKind.Hot:
+            return true;
+        case TokenKind.Cold:
+            return true;
+        case TokenKind.Ffi:
+            return true;
+        case TokenKind.Varargs:
+            return true;
+        case TokenKind.Unsafe:
+            return true;
+        case TokenKind.Strictfp:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool IsTailContextualToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    return stream.ContextualKindAt(index) == ContextualKeywordKind.Tail;
+}
+
+internal fn bool IsTailFunctionModifierIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    if (!IsTailContextualToken(stream, index))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = index + 1;
+    while willexit (scan < count && IsTailFunctionModifierKind(stream.KindAt(scan)))
+    {
+        scan = scan + 1;
+    }
+
+    return scan < count && stream.KindAt(scan) == TokenKind.Fn;
+}
+
+internal fn bool FunctionTokenHasTailModifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    if (fnIndex == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnIndex - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        if (IsTailContextualToken(stream, token))
+        {
+            return true;
+        }
+
+        if (!IsTailFunctionModifierKind(stream.KindAt(token)))
+        {
+            return false;
+        }
+
+        scan = scan - 1;
+    }
+
+    return false;
+}
+
+internal fn bool FunctionTokenHasFiniteModifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    if (fnIndex == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnIndex - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        if (stream.KindAt(token) == TokenKind.Finite)
+        {
+            return true;
+        }
+
+        if (IsTailContextualToken(stream, token))
+        {
+            scan = scan - 1;
+        }
+        else if (!IsTailFunctionModifierKind(stream.KindAt(token)))
+        {
+            return false;
+        }
+        else
+        {
+            scan = scan - 1;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool IsDeclaringIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    if (index == 0)
+    {
+        return false;
+    }
+
+    stack TokenKind prev = stream.KindAt(index - 1);
+    if (prev == TokenKind.Var)
+    {
+        return true;
+    }
+
+    // A function name: the identifier introduced right after `fn` (also a callable name,
+    // so references to it elsewhere resolve).
+    if (prev == TokenKind.Fn)
+    {
+        return true;
+    }
+
+    // A parameter: the identifier sits after `fn <name> (` and before the matching `)`,
+    // i.e. the nearest preceding bracket-relevant token is `(` or a `,` following the
+    // function name. Approximate with: previous token is `(` or `,` AND a `fn` precedes
+    // the opening paren on this declaration.
+    if (prev == TokenKind.LParen || prev == TokenKind.Comma)
+    {
+        // Walk back to the matching `(`; if a `fn` sits two tokens before it, this is a
+        // parameter-list identifier.
+        stack mut i64[min max] k = (i64[min max])index - 1;
+        while willexit (k >= 0)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])k) == TokenKind.LParen)
+            {
+                return k >= 2 && stream.KindAt((u64[0 2 ** 63 - 1])k - 2) == TokenKind.Fn;
+            }
+
+            k = k - 1;
+        }
+    }
+
+    return false;
+}
+
+internal struct FiniteFunctionRow
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u64[0 2 ** 63 - 1] FnIndex;
+    u64[0 2 ** 63 - 1] EndToken;
+    bool DeclaredFinite;
+
+    FiniteFunctionRow()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.FnIndex = 0;
+        self.EndToken = 0;
+        self.DeclaredFinite = false;
+    }
+}
+
+internal struct FiniteCallEdge
+{
+    u32[0 max] Caller;
+    u32[0 max] Callee;
+
+    FiniteCallEdge()
+    {
+        self.Caller = 0;
+        self.Callee = 0;
+    }
+}
+
+internal fn void BuildFiniteFunctionRows(borrow TokenStream stream, mut borrow IrTable<FiniteFunctionRow> rows)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (stream.KindAt(index) == TokenKind.Fn)
+        {
+            stack mut FunctionSignature signature = new();
+            switch (ParseFunctionSignature(stream, (u32[0 max])index))
+            {
+                case ParseResult<FunctionSignature>.Err(var signatureError):
+                    index = index + 1;
+                    continue;
+                case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                    signature = parsedSignature;
+            }
+
+            stack u32[0 max] nameToken = signature.Name();
+            stack mut FiniteFunctionRow row = new();
+            row.Start = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+            row.Length = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+            row.FnIndex = index;
+            row.EndToken = count;
+            row.DeclaredFinite = FunctionTokenHasFiniteModifier(stream, index);
+
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, index);
+            if (nextFn >= 0)
+            {
+                row.EndToken = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            stack u32[0 max] added = rows.Add(row);
+        }
+
+        index = index + 1;
+    }
+}
+
+internal fn i64[min max] FiniteFunctionIndexOf(
+    borrow IrTable<FiniteFunctionRow> rows,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(index + 1));
+        if (SpanEquals(source, row.Start, row.Length, start, length))
+        {
+            return (i64[min max])(index + 1);
+        }
+
+        index = index + 1;
+    }
+
+    return -1;
+}
+
+internal fn bool FiniteCallEdgeTableContains(borrow IrTable<FiniteCallEdge> edges, u32[0 max] caller, u32[0 max] callee)
+{
+    stack u64[0 2 ** 63 - 1] count = edges.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteCallEdge edge = edges.Get((u32[0 max])(index + 1));
+        if (edge.Caller == caller && edge.Callee == callee)
+        {
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn void AppendFiniteCallEdge(mut borrow IrTable<FiniteCallEdge> edges, u32[0 max] caller, u32[0 max] callee)
+{
+    if (caller == 0 || callee == 0 || FiniteCallEdgeTableContains(edges, caller, callee))
+    {
+        return;
+    }
+
+    stack mut FiniteCallEdge edge = new();
+    edge.Caller = caller;
+    edge.Callee = callee;
+    stack u32[0 max] added = edges.Add(edge);
+}
+
+internal fn void BuildFiniteFunctionCallEdges(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FiniteFunctionRow> rows,
+    mut borrow IrTable<FiniteCallEdge> edges)
+{
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] rowIndex = 0;
+    while willexit (rowIndex < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(rowIndex + 1));
+        stack mut u64[0 2 ** 63 - 1] cursor = row.FnIndex + 2;
+        while willexit (cursor + 1 < row.EndToken)
+        {
+            if (stream.KindAt(cursor) == TokenKind.Identifier
+                && stream.KindAt(cursor + 1) == TokenKind.LParen)
+            {
+                stack i64[min max] callee = FiniteFunctionIndexOf(rows, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+                if (callee > 0)
+                {
+                    AppendFiniteCallEdge(edges, (u32[0 max])(rowIndex + 1), (u32[0 max])callee);
+                }
+            }
+
+            cursor = cursor + 1;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+}
+
+internal fn void ExpandFiniteFunctionCallClosure(mut borrow IrTable<FiniteCallEdge> edges)
+{
+    stack mut bool changed = true;
+    while willexit (changed)
+    {
+        changed = false;
+        stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+        stack mut u64[0 2 ** 63 - 1] leftIndex = 0;
+        while willexit (leftIndex < edgeCount)
+        {
+            stack FiniteCallEdge left = edges.Get((u32[0 max])(leftIndex + 1));
+            stack mut u64[0 2 ** 63 - 1] rightIndex = 0;
+            while willexit (rightIndex < edgeCount)
+            {
+                stack FiniteCallEdge right = edges.Get((u32[0 max])(rightIndex + 1));
+                if (left.Callee == right.Caller && !FiniteCallEdgeTableContains(edges, left.Caller, right.Callee))
+                {
+                    AppendFiniteCallEdge(edges, left.Caller, right.Callee);
+                    changed = true;
+                }
+
+                rightIndex = rightIndex + 1;
+            }
+
+            leftIndex = leftIndex + 1;
+        }
+    }
+}
+
+internal fn bool FiniteRecursionValidStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack mut IrTable<FiniteFunctionRow> rows = new();
+    BuildFiniteFunctionRows(stream, rows);
+
+    stack mut IrTable<FiniteCallEdge> edges = new();
+    BuildFiniteFunctionCallEdges(stream, source, rows, edges);
+    ExpandFiniteFunctionCallClosure(edges);
+
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(index + 1));
+        if (row.DeclaredFinite)
+        {
+            stack u32[0 max] functionIndex = (u32[0 max])(index + 1);
+            if (FiniteCallEdgeTableContains(edges, functionIndex, functionIndex))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+            while willexit (targetIndex < count)
+            {
+                stack u32[0 max] target = (u32[0 max])(targetIndex + 1);
+                if (FiniteCallEdgeTableContains(edges, functionIndex, target)
+                    && FiniteCallEdgeTableContains(edges, target, target))
+                {
+                    return false;
+                }
+
+                targetIndex = targetIndex + 1;
+            }
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+// True when the identifier at `index` is a function name (introduced right after `fn`).
+// Function names live in MODULE scope — callable from any function body.
+internal fn bool IsFunctionNameIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    return index > 0 && stream.KindAt(index - 1) == TokenKind.Fn;
+}
+
+internal finite law bool IsSemanticTypedLocalStorage(TokenKind kind)
+{
+    return kind == TokenKind.Stack
+        || kind == TokenKind.Heap
+        || kind == TokenKind.Register
+        || kind == TokenKind.Arena;
+}
+
+// Finds the name and header span of a typed local declaration containing `index`.
+// Type identifiers/range bounds in the header are syntax, while only the final
+// top-level identifier before `=`/`;` introduces the local value name.
+internal fn bool TryGetSemanticTypedLocalHeader(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] index,
+    out u64[0 2 ** 63 - 1] headerEnd,
+    out u32[0 max] nameToken)
+{
+    headerEnd = 0;
+    nameToken = 0;
+    stack mut i64[min max] scanBack = (i64[min max])index;
+    stack mut bool foundStorage = false;
+    stack mut u64[0 2 ** 63 - 1] storageToken = 0;
+    while willexit (scanBack >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scanBack;
+        stack TokenKind kind = stream.KindAt(token);
+        if (IsSemanticTypedLocalStorage(kind))
+        {
+            storageToken = token;
+            foundStorage = true;
+            scanBack = -1;
+        }
+        else if (kind == TokenKind.Semi || kind == TokenKind.LBrace || kind == TokenKind.RBrace)
+        {
+            return false;
+        }
+        else
+        {
+            scanBack = scanBack - 1;
+        }
+    }
+
+    if (!foundStorage)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] cursor = storageToken + 1;
+    while willexit (cursor < count)
+    {
+        stack TokenKind kind = stream.KindAt(cursor);
+        if (depth == 0 && (kind == TokenKind.Assign || kind == TokenKind.Semi))
+        {
+            headerEnd = cursor;
+            return index < headerEnd && nameToken != 0;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            nameToken = (u32[0 max])cursor;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetSwitchPatternAlternativeScope(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] tokenIndex,
+    out u64[0 2 ** 63 - 1] caseToken,
+    out u32[0 max] alternativeOrdinal)
+{
+    caseToken = 0;
+    alternativeOrdinal = 0;
+    stack mut bool foundCase = false;
+    stack mut i64[min max] scan = (i64[min max])tokenIndex - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        stack TokenKind kind = stream.KindAt(token);
+        if (kind == TokenKind.Case)
+        {
+            caseToken = token;
+            foundCase = true;
+            scan = -1;
+        }
+        else if (kind == TokenKind.Fn)
+        {
+            return false;
+        }
+        else
+        {
+            scan = scan - 1;
+        }
+    }
+
+    if (!foundCase)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])(caseToken + 1);
+    while willexit (cursor <= tokenIndex)
+    {
+        stack TokenKind kind = stream.KindAt(cursor);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.Colon || kind == TokenKind.When)
+            {
+                return false;
+            }
+
+            if (kind == TokenKind.Or)
+            {
+                alternativeOrdinal = alternativeOrdinal + 1;
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrace || kind == TokenKind.LBrack)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrace || kind == TokenKind.RBrack)
+        {
+            if (depth == 0)
+            {
+                return false;
+            }
+
+            depth = depth - 1;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    return true;
+}
+
+internal fn bool IsSemanticDeclaringIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    if (IsDeclaringIdentifier(stream, index))
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] headerEnd = 0;
+    stack mut u32[0 max] nameToken = 0;
+    return TryGetSemanticTypedLocalHeader(stream, index, headerEnd, nameToken)
+        && (u64[0 2 ** 63 - 1])nameToken == index;
+}
+
+internal fn bool IsSemanticNonValueIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    stack mut u64[0 2 ** 63 - 1] headerEnd = 0;
+    stack mut u32[0 max] nameToken = 0;
+    if (TryGetSemanticTypedLocalHeader(stream, index, headerEnd, nameToken)
+        && (u64[0 2 ** 63 - 1])nameToken != index)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] caseToken = 0;
+    stack mut u32[0 max] alternativeOrdinal = 0;
+    if (TryGetSwitchPatternAlternativeScope(stream, index, caseToken, alternativeOrdinal))
+    {
+        return true;
+    }
+
+    return (index > 0 && stream.KindAt(index - 1) == TokenKind.Dot)
+        || (index > 0 && stream.KindAt(index - 1) == TokenKind.New);
+}
+
+// Resolves names within ONE scope [start, end): every use-position identifier must bind
+// to a name declared IN THIS SCOPE (a `var` local or this function's parameters/name) or
+// to a MODULE-level function name (visible everywhere). Params/locals of OTHER functions
+// are NOT visible here.
+internal fn bool ScopeNamesResolve(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end, borrow IrTable<ParamName> funcNames)
+{
+    stack mut IrTable<ParamName> declared = new();
+    stack mut u64[0 2 ** 63 - 1] useStart = start;
+    if (start < end && stream.KindAt(start) == TokenKind.Fn)
+    {
+        stack mut FunctionSignature signature = new();
+        switch (ParseFunctionSignature(stream, (u32[0 max])start))
+        {
+            case ParseResult<FunctionSignature>.Err(var signatureError):
+                return false;
+            case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                signature = parsedSignature;
+        }
+
+        stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+        stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+        while willexit (paramIndex < paramCount)
+        {
+            stack u32[0 max] paramToken = signature.ParamNameAt(paramIndex);
+            stack mut ParamName param = new();
+            param.Start = stream.StartAt((u64[0 2 ** 63 - 1])paramToken);
+            param.Length = stream.LengthAt((u64[0 2 ** 63 - 1])paramToken);
+            if (declared.Add(param) == 0)
+            {
+                return false;
+            }
+
+            paramIndex = paramIndex + 1;
+        }
+
+        stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, start);
+        if (bodyBrace < 0 || (u64[0 2 ** 63 - 1])bodyBrace >= end)
+        {
+            return false;
+        }
+
+        useStart = (u64[0 2 ** 63 - 1])bodyBrace + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = start;
+    while willexit (i < end)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier && IsSemanticDeclaringIdentifier(stream, i))
+        {
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt(i);
+            name.Length = stream.LengthAt(i);
+            stack u32[0 max] added = declared.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] j = useStart;
+    while willexit (j < end)
+    {
+        if (stream.KindAt(j) == TokenKind.Identifier
+            && !IsSemanticDeclaringIdentifier(stream, j)
+            && !IsTailFunctionModifierIdentifier(stream, j)
+            && !IsSemanticNonValueIdentifier(stream, j))
+        {
+            stack u64[0 2 ** 63 - 1] useStart = stream.StartAt(j);
+            stack u64[0 2 ** 63 - 1] useLength = stream.LengthAt(j);
+            stack i64[min max] localIdx = ParamIndexOf(declared, source, useStart, useLength);
+            stack i64[min max] funcIdx = ParamIndexOf(funcNames, source, useStart, useLength);
+            if (localIdx < 0 && funcIdx < 0)
+            {
+                return false;
+            }
+        }
+
+        j = j + 1;
+    }
+
+    return true;
+}
+
+internal fn bool NamesResolveStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    stack i64[min max] firstFn = FirstTokenOfKind(stream, TokenKind.Fn);
+
+    // Module value scope: every function name is visible from any function body.
+    // Type/member syntax is classified separately and never enters this value table.
+    stack mut IrTable<ParamName> funcNames = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut FunctionSignature signature = new();
+            switch (ParseFunctionSignature(stream, (u32[0 max])i))
+            {
+                case ParseResult<FunctionSignature>.Err(var signatureError):
+                    return false;
+                case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                    signature = parsedSignature;
+            }
+
+            stack u32[0 max] nameToken = signature.Name();
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+            name.Length = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+            if (funcNames.Add(name) == 0)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    // Declaration-only modules have no function-body value uses for this preliminary
+    // pass; declaration/type validation is owned by the typed binder.
+    if (firstFn < 0)
+    {
+        return true;
+    }
+
+    // Each function spans from its `fn` to the next `fn` (or end) — a separate scope.
+    stack mut u64[0 2 ** 63 - 1] f = (u64[0 2 ** 63 - 1])firstFn;
+    while willexit (f < count)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, f);
+            stack mut u64[0 2 ** 63 - 1] scopeEnd = count;
+            if (nextFn >= 0)
+            {
+                scopeEnd = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            if (!ScopeNamesResolve(stream, source, f, scopeEnd, funcNames))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every identifier USE resolves to a declared
+// name (a `var` local or a function parameter). The first binder check: unbound-name
+// detection over the lexed token stream.
+public fn bool ProgramNamesResolve(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return NamesResolveStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Call arity checking (toward the typer, #33) ===
+// A function name paired with its declared parameter count. The next semantic check
+// after name resolution: a call must pass exactly as many arguments as its function
+// declares — the first ARITY/TYPE consistency rule.
+public struct FuncArity
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    i64[min max] Arity;
+
+    FuncArity()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.Arity = 0;
+    }
+}
+
+// The arity delimited by the `(` at `lparenIndex` and its matching `)`: 0 for an empty
+// `()`, else (top-level commas) + 1. Emptiness is decided by the token immediately after
+// the `(` — so a SINGLE argument that is itself parenthesized (`f((5))`) still counts as
+// one. Paren NESTING is tracked by depth, so a comma inside a nested argument call
+// (`f(g(a, b), c)`) is not miscounted as a top-level separator.
+internal fn i64[min max] CountArgsBetweenParens(borrow TokenStream stream, u64[0 2 ** 63 - 1] lparenIndex)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    // Empty argument list: `(` immediately followed by `)`.
+    if (lparenIndex + 1 < count && stream.KindAt(lparenIndex + 1) == TokenKind.RParen)
+    {
+        return 0;
+    }
+
+    // Non-empty: count top-level commas, then add one for the final argument.
+    stack mut i64[min max] depth = 0;
+    stack mut i64[min max] commas = 0;
+    stack mut u64[0 2 ** 63 - 1] k = lparenIndex;
+    while willexit (k < count)
+    {
+        stack TokenKind kind = stream.KindAt(k);
+        if (kind == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            depth = depth - 1;
+            if (depth == 0)
+            {
+                k = count;
+            }
+        }
+        else if (depth == 1 && kind == TokenKind.Comma)
+        {
+            commas = commas + 1;
+        }
+
+        k = k + 1;
+    }
+
+    return commas + 1;
+}
+
+// The declared arity for the function-name span [start, start+length), or -1 if absent.
+internal fn i64[min max] FuncArityOf(borrow IrTable<FuncArity> funcs, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack FuncArity existing = funcs.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, existing.Start, existing.Length, start, length))
+        {
+            return existing.Arity;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+internal fn bool CallAritiesMatchStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    // Build the fn -> declared-arity table from each `fn <name> ( … )` header.
+    stack mut IrTable<FuncArity> funcs = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut FunctionSignature signature = new();
+            switch (ParseFunctionSignature(stream, (u32[0 max])i))
+            {
+                case ParseResult<FunctionSignature>.Err(var signatureError):
+                    return false;
+                case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                    signature = parsedSignature;
+            }
+
+            stack u32[0 max] nameToken = signature.Name();
+            stack mut FuncArity fa = new();
+            fa.Start = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+            fa.Length = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+            fa.Arity = (i64[min max])signature.ParamCount();
+            if (funcs.Add(fa) == 0)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    // Each call site `<name> ( … )` (an identifier+`(` not preceded by `fn`) must pass
+    // exactly the function's declared number of arguments.
+    stack mut u64[0 2 ** 63 - 1] j = 0;
+    while willexit (j < count)
+    {
+        stack bool isCall = stream.KindAt(j) == TokenKind.Identifier && j + 1 < count && stream.KindAt(j + 1) == TokenKind.LParen;
+        stack bool isDef = j > 0 && stream.KindAt(j - 1) == TokenKind.Fn;
+        if (isCall && !isDef)
+        {
+            stack i64[min max] declaredArity = FuncArityOf(funcs, source, stream.StartAt(j), stream.LengthAt(j));
+            if (declaredArity >= 0)
+            {
+                stack i64[min max] callArity = CountArgsBetweenParens(stream, j + 1);
+                if (callArity != declaredArity)
+                {
+                    return false;
+                }
+            }
+        }
+
+        j = j + 1;
+    }
+
+    return true;
+}
+
+// Lexes a module and returns true iff every call to a defined function passes exactly
+// that function's declared number of arguments. The first arity/type consistency check.
+public fn bool ProgramCallAritiesMatch(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return CallAritiesMatchStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Redeclaration checking (toward the binder, #33) ===
+// The third semantic check: within ONE scope no name may be declared twice. Scopes are
+// per-function — the same parameter name in two different functions is fine, but a
+// duplicate parameter or a local redeclared in the same function is an error.
+
+// Returns the switch-section and sibling-alternative identity for a `var` pattern
+// capture. Pattern captures are section-local: repeating the same name in distinct
+// `case` sections is legal, and sibling alternatives in one label deliberately merge
+// equal-name captures. A duplicate inside one alternative remains a redeclaration.
+internal fn bool TryGetSwitchPatternCaptureScope(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] identifierIndex,
+    out u64[0 2 ** 63 - 1] caseToken,
+    out u32[0 max] alternativeOrdinal)
+{
+    caseToken = 0;
+    alternativeOrdinal = 0;
+    if (identifierIndex == 0 || stream.KindAt(identifierIndex - 1) != TokenKind.Var)
+    {
+        return false;
+    }
+    return TryGetSwitchPatternAlternativeScope(stream, identifierIndex, caseToken, alternativeOrdinal);
+}
+
+// True iff the declared names (params + `fn` name + `var` locals) in the half-open token
+// range [start, end) are all distinct.
+internal fn bool ScopeDeclarationsUnique(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut IrTable<ParamName> declared = new();
+    stack mut IrTable<u64[0 2 ** 63 - 1]> declarationTokens = new();
+    stack mut u64[0 2 ** 63 - 1] declarationStart = start;
+    if (start < end && stream.KindAt(start) == TokenKind.Fn)
+    {
+        stack mut FunctionSignature signature = new();
+        switch (ParseFunctionSignature(stream, (u32[0 max])start))
+        {
+            case ParseResult<FunctionSignature>.Err(var signatureError):
+                return false;
+            case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                signature = parsedSignature;
+        }
+
+        stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+        stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+        while willexit (paramIndex < paramCount)
+        {
+            stack u32[0 max] paramToken = signature.ParamNameAt(paramIndex);
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])paramToken);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])paramToken);
+            if (ParamIndexOf(declared, source, nameStart, nameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut ParamName param = new();
+            param.Start = nameStart;
+            param.Length = nameLength;
+            if (declared.Add(param) == 0
+                || declarationTokens.Add((u64[0 2 ** 63 - 1])paramToken) == 0)
+            {
+                return false;
+            }
+
+            paramIndex = paramIndex + 1;
+        }
+
+        stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, start);
+        if (bodyBrace < 0 || (u64[0 2 ** 63 - 1])bodyBrace >= end)
+        {
+            return false;
+        }
+
+        declarationStart = (u64[0 2 ** 63 - 1])bodyBrace + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = declarationStart;
+    while willexit (i < end)
+    {
+        // The function's OWN name lives in MODULE scope, not its local scope — so a
+        // parameter or local may legally share it; only params + locals are checked here.
+        if (stream.KindAt(i) == TokenKind.Identifier && IsSemanticDeclaringIdentifier(stream, i) && !IsFunctionNameIdentifier(stream, i))
+        {
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(i);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(i);
+            stack u64[0 2 ** 63 - 1] existingCount = declared.Count();
+            stack mut u64[0 2 ** 63 - 1] existingIndex = 0;
+            while willexit (existingIndex < existingCount)
+            {
+                stack ParamName existing = declared.Get((u32[0 max])(existingIndex + 1));
+                if (SpanEquals(source, existing.Start, existing.Length, nameStart, nameLength))
+                {
+                    stack u64[0 2 ** 63 - 1] existingToken = declarationTokens.Get((u32[0 max])(existingIndex + 1));
+                    stack mut u64[0 2 ** 63 - 1] existingCase = 0;
+                    stack mut u32[0 max] existingAlternative = 0;
+                    stack mut u64[0 2 ** 63 - 1] currentCase = 0;
+                    stack mut u32[0 max] currentAlternative = 0;
+                    stack bool existingIsPatternCapture = TryGetSwitchPatternCaptureScope(
+                        stream,
+                        existingToken,
+                        existingCase,
+                        existingAlternative);
+                    stack bool currentIsPatternCapture = TryGetSwitchPatternCaptureScope(
+                        stream,
+                        i,
+                        currentCase,
+                        currentAlternative);
+                    if (!existingIsPatternCapture
+                        || !currentIsPatternCapture
+                        || (existingCase == currentCase && existingAlternative == currentAlternative))
+                    {
+                        return false;
+                    }
+                }
+
+                existingIndex = existingIndex + 1;
+            }
+
+            stack mut ParamName name = new();
+            name.Start = nameStart;
+            name.Length = nameLength;
+            if (declared.Add(name) == 0 || declarationTokens.Add(i) == 0)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool DeclarationsUniqueStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack i64[min max] firstFn = FirstTokenOfKind(stream, TokenKind.Fn);
+
+    // No functions: the whole program is one scope.
+    if (firstFn < 0)
+    {
+        return ScopeDeclarationsUnique(stream, source, 0, count);
+    }
+
+    // Any top-level region before the first function is its own scope.
+    if (firstFn > 0 && !ScopeDeclarationsUnique(stream, source, 0, (u64[0 2 ** 63 - 1])firstFn))
+    {
+        return false;
+    }
+
+    // Each function spans from its `fn` to the next `fn` (or end) — a separate scope.
+    stack mut u64[0 2 ** 63 - 1] f = (u64[0 2 ** 63 - 1])firstFn;
+    while willexit (f < count)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, f);
+            stack mut u64[0 2 ** 63 - 1] scopeEnd = count;
+            if (nextFn >= 0)
+            {
+                scopeEnd = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            if (!ScopeDeclarationsUnique(stream, source, f, scopeEnd))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff no scope declares the same name twice (a
+// duplicate parameter, or a local/parameter redeclared within one function). The same
+// name in DIFFERENT functions is allowed. The redeclaration diagnostic.
+public fn bool ProgramDeclarationsUnique(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return DeclarationsUniqueStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Module-scope function-name uniqueness (toward the binder, #33) ===
+// The per-function redeclaration pass deliberately leaves the MODULE scope unchecked
+// (each function name lives there). This pass closes that gap — the gap an adversarial
+// review flagged — by rejecting two functions defined with the same name, the way two
+// parameters or two locals in one function are already rejected.
+internal fn bool FunctionNamesUniqueStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut IrTable<ParamName> seen = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut FunctionSignature signature = new();
+            switch (ParseFunctionSignature(stream, (u32[0 max])i))
+            {
+                case ParseResult<FunctionSignature>.Err(var signatureError):
+                    return false;
+                case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                    signature = parsedSignature;
+            }
+
+            stack u32[0 max] nameToken = signature.Name();
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+            if (ParamIndexOf(seen, source, nameStart, nameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut ParamName name = new();
+            name.Start = nameStart;
+            name.Length = nameLength;
+            stack u32[0 max] added = seen.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a module and returns true iff no two functions are defined with the same name.
+public fn bool ProgramFunctionNamesUnique(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return FunctionNamesUniqueStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Expression type inference (toward the typer, #33) ===
+// The first step that reasons about TYPES, not names. This integer grammar has two value
+// types: an integer (`Int`, lowered to LLVM `i64`) and a boolean (`Bool`, an `i1` produced
+// by a comparison). An expression's type is decided by its top operator: a comparison
+// (`<`/`>`) yields `Bool`, anything else yields `Int`. A second comparison makes the
+// expression compare a boolean (`a < b < c`) — ill-typed in this grammar, so `Error`.
+public enum ExprType
+{
+    IntType,
+    FloatType,
+    BoolType,
+    EnumType,
+    PtrType,
+    AggregateType,
+    ErrorType,
+}
+
+// True for EVERY comparison operator the lexer can produce — `<` `>` `<=` `>=` `==` `!=`.
+// (The Lt/Gt-only `FirstComparisonIndex` used by the LOWERING is deliberately narrower,
+// because `LowerComparison` only emits signed `slt`/`sgt`; type inference must recognize
+// the full set so a `<=`/`==`/`!=` expression is correctly typed boolean.)
+internal fn bool IsComparisonOperator(TokenKind k)
+{
+    return k == TokenKind.Lt
+        || k == TokenKind.Gt
+        || k == TokenKind.Lte
+        || k == TokenKind.Gte
+        || k == TokenKind.EqEq
+        || k == TokenKind.Neq;
+}
+
+// Infers the type of the expression in the half-open token range [start, end). Only
+// TOP-LEVEL (paren-depth 0) comparisons decide the type — a comparison nested in
+// parentheses belongs to an inner expression (a call argument `f(a < b)`, a grouped
+// sub-expression), so it does NOT make the whole expression boolean. This is a token
+// approximation: it does not strip redundant outer parens, so a fully-parenthesized
+// comparison `(a < b)` reads as `Int` (its `<` is at depth 1) — a real structural typer
+// is the #33 work; bare conditions / single-primary comparisons are the supported shape.
+internal fn ExprType InferTypeInRange(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut i64[min max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] comparisons = 0;
+    stack mut u64[0 2 ** 63 - 1] i = start;
+    while willexit (i < end)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (k == TokenKind.RParen)
+        {
+            depth = depth - 1;
+        }
+        else if (depth == 0 && IsComparisonOperator(k))
+        {
+            comparisons = comparisons + 1;
+        }
+
+        i = i + 1;
+    }
+
+    // Two or more comparisons compare a boolean operand — ill-typed.
+    if (comparisons >= 2)
+    {
+        return ExprType.ErrorType;
+    }
+
+    // Exactly one comparison yields a boolean; none yields an integer.
+    if (comparisons == 1)
+    {
+        return ExprType.BoolType;
+    }
+
+    return ExprType.IntType;
+}
+
+internal fn ExprType InferTypeStream(borrow TokenStream stream)
+{
+    return InferTypeInRange(stream, 0, stream.Count());
+}
+
+// Lexes one expression and infers its type: `Int` for arithmetic / a literal / a
+// variable / a call, `Bool` for a single comparison, `Error` for a chained comparison.
+public fn ExprType InferExpressionType(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return InferTypeStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return ExprType.ErrorType;
+    }
+}
+
+// A statement-level type rule: a `while` condition must be a boolean. The condition spans
+// from `while` to its loop body's `{`; it is well-typed only if it infers to `BoolType`
+// (exactly one comparison) — a bare integer (`while i`) or a chained comparison
+// (`while a < b < c`) is a type error.
+internal fn bool WhileConditionsAreBooleanStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.While)
+        {
+            stack i64[min max] brace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, i);
+            if (brace < 0)
+            {
+                return false;
+            }
+
+            stack ExprType conditionType = InferTypeInRange(stream, i + 1, (u64[0 2 ** 63 - 1])brace);
+            if (conditionType == ExprType.BoolType)
+            {
+                // Well-typed condition; keep scanning.
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every `while` condition has boolean type.
+public fn bool ProgramWhileConditionsAreBoolean(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return WhileConditionsAreBooleanStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// The same statement-level rule for `if` conditions. In this grammar an `if` condition is
+// a single-primary comparison `<a> <cmp> <b>` — the three tokens at `if`+1..`if`+3, the
+// exact positions the `if`/`else if` lowering parses — so it is well-typed only if those
+// tokens infer to `BoolType`. A non-comparison condition (`if x ...`) is a type error; so
+// is a CHAINED comparison (`if a < b < c ...`), detected because a single-primary
+// condition is followed by its then-value (a primary), whereas a chained comparison puts
+// a comparison operator at `if`+4. (This positional check supports only bare single-primary
+// conditions; a structural typer for parenthesized/nested conditions is the #33 work.)
+internal fn bool IfConditionsAreBooleanStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.If)
+        {
+            stack ExprType conditionType = InferTypeInRange(stream, i + 1, i + 4);
+            stack bool chained = IsComparisonOperator(stream.KindAt(i + 4));
+            if (conditionType == ExprType.BoolType && !chained)
+            {
+                // Well-typed boolean condition; keep scanning.
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every `if` condition has boolean type.
+public fn bool ProgramIfConditionsAreBoolean(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return IfConditionsAreBooleanStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// An operand-type rule: a comparison yields a boolean, and a boolean is never a valid
+// operand of arithmetic or a function argument in this integer grammar. The ONLY way a
+// comparison's result becomes such an operand is by parenthesizing it — `(a < b) + 1`,
+// `f(a < b)` — i.e. a comparison operator appearing at paren-depth >= 1. A comparison at
+// paren-depth 0 is the top-level operator of its expression (a condition / return value)
+// and is fine, even when an OPERAND is parenthesized arithmetic (`(a + b) < c`).
+internal fn bool NoBooleanOperandStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut i64[min max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (k == TokenKind.RParen)
+        {
+            depth = depth - 1;
+        }
+        else if (depth >= 1 && IsComparisonOperator(k))
+        {
+            // A comparison nested in parentheses feeds its boolean result into an
+            // arithmetic or call context that expects an integer — a type error.
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff no comparison's boolean result is used as an
+// arithmetic / call operand (no comparison nested inside parentheses).
+public fn bool ProgramNoBooleanOperand(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return NoBooleanOperandStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Composed semantic-analysis gate (toward the binder/typer, #33) ===
+// The front-end's single "is this program well-formed?" verdict: every binder and typer
+// pass run over ONE lex. A program is semantically valid only if all hold — names bind,
+// calls match arity, no scope redeclares, function names are unique, every condition is
+// boolean, no comparison's boolean result is used as an integer operand, and finite
+// functions do not participate in or depend on source call cycles.
+internal fn bool SemanticallyValidStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    return NamesResolveStream(stream, source)
+        && CallAritiesMatchStream(stream, source)
+        && DeclarationsUniqueStream(stream, source)
+        && FunctionNamesUniqueStream(stream, source)
+        && WhileConditionsAreBooleanStream(stream)
+        && IfConditionsAreBooleanStream(stream)
+        && NoBooleanOperandStream(stream)
+        && FiniteRecursionValidStream(stream, source);
+}
+
+// Lexes a program once and returns true iff it passes EVERY binder and typer check.
+public fn bool ProgramSemanticallyValid(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return SemanticallyValidStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}

@@ -5,6 +5,393 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
+    public async Task SourceStdLibFileSystemMetadataTempWalkAndLineReadingWorkOnLinux()
+    {
+        await AssertSourceExecutableRunsAsync(
+            """
+            import System
+            import System.Text
+            module App
+
+            fn bool IsOk(System.IO.IOStatus status)
+            {
+                switch (status)
+                {
+                    case System.IO.IOStatus.Ok:
+                        return true;
+                    case System.IO.IOStatus.Err(var error):
+                        return false;
+                }
+            }
+
+            fn bool MemoryOk(System.Memory.MemoryStatus status)
+            {
+                switch (status)
+                {
+                    case System.Memory.MemoryStatus.Ok:
+                        return true;
+                    case System.Memory.MemoryStatus.Err(var error):
+                        return false;
+                }
+            }
+
+            fn bool TextEquals(mut borrow System.Text.OwnedAscii text, ascii expected)
+            {
+                return System.Text.OwnedAsciiRangeEqualsAscii(text, 0, text.Length(), expected);
+            }
+
+            fn System.IO.IOStatus VisitPath(ascii path, System.FileSystem.FileSystemEntryKind kind)
+            {
+                if (System.Text.AsciiLength(path) <= 0)
+                {
+                    return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                }
+
+                return System.IO.IOStatus.Ok;
+            }
+
+            fn void Cleanup(
+                mut borrow System.Text.OwnedAscii root,
+                mut borrow System.Text.OwnedAscii child,
+                mut borrow System.Text.OwnedAscii nested,
+                mut borrow System.Text.OwnedAscii nestedChild,
+                mut borrow System.Text.OwnedAscii lines)
+            {
+                System.IO.File.Delete(lines.View());
+                System.IO.File.Delete(nestedChild.View());
+                System.IO.File.Delete(child.View());
+                System.FileSystem.DeleteDirectory(nested.View());
+                System.FileSystem.DeleteDirectory(root.View());
+            }
+
+            fn i32[min max] CheckMetadata(System.IO.IOResult<System.FileSystem.FileMetadata> result)
+            {
+                switch (result)
+                {
+                    case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+                        return 10;
+                    case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+                        if (metadata.Kind != System.FileSystem.FileSystemEntryKind.File)
+                        {
+                            return 11;
+                        }
+
+                        if (metadata.Size != 3)
+                        {
+                            return 12;
+                        }
+
+                        if (metadata.ModifiedUnixSeconds <= 0)
+                        {
+                            return 13;
+                        }
+
+                        if (metadata.Permissions == 0)
+                        {
+                            return 14;
+                        }
+
+                        return 0;
+                }
+            }
+
+            fn i32[min max] ExpectLine(
+                mut borrow System.IO.File.File file,
+                mut borrow System.Text.OwnedAscii line,
+                ascii expected)
+            {
+                switch (file.ReadLine(line))
+                {
+                    case System.IO.File.FileLineReadResult.Line:
+                        if (!TextEquals(line, expected))
+                        {
+                            return 20;
+                        }
+
+                        return 0;
+                    case System.IO.File.FileLineReadResult.End:
+                        return 21;
+                    case System.IO.File.FileLineReadResult.Err(var error):
+                        return 22;
+                }
+            }
+
+            fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+            {
+                switch (result)
+                {
+                    case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                        return value;
+                    case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                        return new();
+                }
+            }
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut System.Text.OwnedAscii root = new();
+                switch (System.FileSystem.CreateTempDirectory("stark-fs-meta-"))
+                {
+                    case System.IO.IOResult<System.Text.OwnedAscii>.Err(var createError):
+                        return 1;
+                    case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                        root = value;
+                }
+
+                stack mut System.Text.OwnedAscii child = new();
+                stack mut System.Text.OwnedAscii nested = new();
+                stack mut System.Text.OwnedAscii nestedChild = new();
+                stack mut System.Text.OwnedAscii lines = new();
+
+                if (!MemoryOk(System.IO.Path.TryJoin(child, root.View(), "child.txt"))
+                    || !MemoryOk(System.IO.Path.TryJoin(nested, root.View(), "nested"))
+                    || !MemoryOk(System.IO.Path.TryJoin(nestedChild, nested.View(), "nested.txt"))
+                    || !MemoryOk(System.IO.Path.TryJoin(lines, root.View(), "lines.txt")))
+                    {
+                        Cleanup(root, child, nested, nestedChild, lines);
+                        return 2;
+                }
+
+                if (!IsOk(System.IO.File.WriteAllText(child.View(), "abc")))
+                {
+                    Cleanup(root, child, nested, nestedChild, lines);
+                    return 3;
+                }
+
+                stack i32[min max] metadataResult = CheckMetadata(System.FileSystem.Metadata(child.View()));
+                if (metadataResult != 0)
+                {
+                    Cleanup(root, child, nested, nestedChild, lines);
+                    return metadataResult;
+                }
+
+                if (!IsOk(System.FileSystem.CreateDirectory(nested.View()))
+                    || !IsOk(System.IO.File.WriteAllText(nestedChild.View(), "nested")))
+                    {
+                        Cleanup(root, child, nested, nestedChild, lines);
+                        return 4;
+                }
+
+                if (!IsOk(System.FileSystem.WalkRecursive(root.View(), VisitPath)))
+                {
+                    Cleanup(root, child, nested, nestedChild, lines);
+                    return 5;
+                }
+
+                if (!IsOk(System.IO.File.WriteAllText(lines.View(), "alpha\nbeta\r\ngamma")))
+                {
+                    Cleanup(root, child, nested, nestedChild, lines);
+                    return 6;
+                }
+
+                stack mut System.IO.File.File reader =
+                    OpenOrEmpty(System.IO.File.Open(lines.View(), System.IO.File.FileMode.Read));
+                stack mut System.Text.OwnedAscii line = new();
+                stack i32[min max] first = ExpectLine(reader, line, "alpha");
+                stack i32[min max] second = ExpectLine(reader, line, "beta");
+                stack i32[min max] third = ExpectLine(reader, line, "gamma");
+                switch (reader.ReadLine(line))
+                {
+                    case System.IO.File.FileLineReadResult.Line:
+                        Cleanup(root, child, nested, nestedChild, lines);
+                        return 7;
+                    case System.IO.File.FileLineReadResult.Err(var readError):
+                        Cleanup(root, child, nested, nestedChild, lines);
+                        return 8;
+                    case System.IO.File.FileLineReadResult.End:
+                }
+
+                reader.Close();
+                Cleanup(root, child, nested, nestedChild, lines);
+
+                if (first != 0)
+                {
+                    return first;
+                }
+
+                if (second != 0)
+                {
+                    return second;
+                }
+
+                if (third != 0)
+                {
+                    return third;
+                }
+
+                return 0;
+            }
+            """,
+            "stark-stdlib-filesystem-metadata-",
+            skipWindows: true);
+    }
+
+    [Fact]
+    public async Task SourceStdLibFileSystemGlobStreamsRecursiveMatchesOnLinux()
+    {
+        await AssertSourceExecutableRunsAsync(
+            """
+            import System
+            import System.Text
+            module App
+
+            static mut i32[min max] MatchCount = 0;
+            static mut bool SawDirect = false;
+            static mut bool SawChild = false;
+
+            fn bool IsOk(System.IO.IOStatus status)
+            {
+                switch (status)
+                {
+                    case System.IO.IOStatus.Ok:
+                        return true;
+                    case System.IO.IOStatus.Err(var error):
+                        return false;
+                }
+            }
+
+            fn bool MemoryOk(System.Memory.MemoryStatus status)
+            {
+                switch (status)
+                {
+                    case System.Memory.MemoryStatus.Ok:
+                        return true;
+                    case System.Memory.MemoryStatus.Err(var error):
+                        return false;
+                }
+            }
+
+            fn void ResetGlobState()
+            {
+                MatchCount = 0;
+                SawDirect = false;
+                SawChild = false;
+                return;
+            }
+
+            fn System.IO.IOStatus VisitStark(ascii path, System.FileSystem.FileSystemEntryKind kind)
+            {
+                if (kind != System.FileSystem.FileSystemEntryKind.File)
+                {
+                    return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                }
+
+                if (System.IO.Path.GlobMatches("**/direct.stark", path))
+                {
+                    SawDirect = true;
+                }
+                else if (System.IO.Path.GlobMatches("**/child.stark", path))
+                {
+                    SawChild = true;
+                }
+                else
+                {
+                    return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                }
+
+                MatchCount += 1;
+                return System.IO.IOStatus.Ok;
+            }
+
+            fn System.IO.IOStatus VisitDirectOnly(ascii path, System.FileSystem.FileSystemEntryKind kind)
+            {
+                if (kind != System.FileSystem.FileSystemEntryKind.File)
+                {
+                    return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                }
+
+                if (!System.IO.Path.GlobMatches("**/direct.stark", path))
+                {
+                    return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                }
+
+                MatchCount += 1;
+                return System.IO.IOStatus.Ok;
+            }
+
+            fn void Cleanup(
+                mut borrow System.Text.OwnedAscii root,
+                mut borrow System.Text.OwnedAscii direct,
+                mut borrow System.Text.OwnedAscii nested,
+                mut borrow System.Text.OwnedAscii child,
+                mut borrow System.Text.OwnedAscii ignored)
+            {
+                System.IO.File.Delete(ignored.View());
+                System.IO.File.Delete(child.View());
+                System.IO.File.Delete(direct.View());
+                System.FileSystem.DeleteDirectory(nested.View());
+                System.FileSystem.DeleteDirectory(root.View());
+            }
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut System.Text.OwnedAscii root = new();
+                switch (System.FileSystem.CreateTempDirectory("stark-fs-glob-"))
+                {
+                    case System.IO.IOResult<System.Text.OwnedAscii>.Err(var createError):
+                        return 1;
+                    case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                        root = value;
+                }
+
+                stack mut System.Text.OwnedAscii direct = new();
+                stack mut System.Text.OwnedAscii nested = new();
+                stack mut System.Text.OwnedAscii child = new();
+                stack mut System.Text.OwnedAscii ignored = new();
+
+                if (!MemoryOk(System.IO.Path.TryJoin(direct, root.View(), "direct.stark"))
+                    || !MemoryOk(System.IO.Path.TryJoin(nested, root.View(), "nested"))
+                    || !MemoryOk(System.IO.Path.TryJoin(child, nested.View(), "child.stark"))
+                    || !MemoryOk(System.IO.Path.TryJoin(ignored, nested.View(), "ignored.txt")))
+                    {
+                        Cleanup(root, direct, nested, child, ignored);
+                        return 2;
+                }
+
+                if (!IsOk(System.IO.File.WriteAllText(direct.View(), "module Direct\n"))
+                    || !IsOk(System.FileSystem.CreateDirectory(nested.View()))
+                    || !IsOk(System.IO.File.WriteAllText(child.View(), "module Child\n"))
+                    || !IsOk(System.IO.File.WriteAllText(ignored.View(), "ignore\n")))
+                    {
+                        Cleanup(root, direct, nested, child, ignored);
+                        return 3;
+                }
+
+                ResetGlobState();
+                if (!IsOk(System.FileSystem.Glob(root.View(), "**/*.stark", VisitStark)))
+                {
+                    Cleanup(root, direct, nested, child, ignored);
+                    return 4;
+                }
+
+                if (MatchCount != 2 || !SawDirect || !SawChild)
+                {
+                    Cleanup(root, direct, nested, child, ignored);
+                    return 5;
+                }
+
+                ResetGlobState();
+                if (!IsOk(System.FileSystem.Glob(root.View(), "*.stark", VisitDirectOnly)))
+                {
+                    Cleanup(root, direct, nested, child, ignored);
+                    return 6;
+                }
+
+                if (MatchCount != 1)
+                {
+                    Cleanup(root, direct, nested, child, ignored);
+                    return 7;
+                }
+
+                Cleanup(root, direct, nested, child, ignored);
+                return 0;
+            }
+            """,
+            "stark-stdlib-filesystem-glob-",
+            skipWindows: true);
+    }
+
+    [Fact]
     public async Task SourceStdLibDirectoryReadNextInfoRawReportsEntryLengthsAndEnd()
     {
         if (!OperatingSystem.IsLinux())
@@ -340,31 +727,16 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-filesystem-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
         var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app");
 
         try
         {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
             await File.WriteAllTextAsync(
                 appPath,
                 """
@@ -580,8 +952,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory(tempPrefix);
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");

@@ -1,0 +1,64 @@
+import Compiler.Typing.TypedLiterals
+export import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedMemberFacts
+
+internal struct TypedMemberTypeFacts
+{
+    TypedMemberReceiverKind ReceiverKind;
+    u32[0 max] DeclarationIndex;
+    u32[0 max] NameToken;
+    TypedSignatureTypeKind TypeKind;
+    u32[0 max] TypeHeadToken;
+    u32[0 max] TypePrimaryToken;
+    u32[0 max] TypeStartToken;
+    u32[0 max] TypeEndToken;
+    u32[0 max] RangeStartToken;
+    u32[0 max] RangeEndToken;
+    u32[0 max] ElementCountStartToken;
+    u32[0 max] ElementCountEndToken;
+    u32[0 max] BitWidth;
+    u32[0 max] TypeArgumentCount;
+    u32[0 max] ComptimeArgumentCount;
+    u32[0 max] TypeFlags;
+
+    TypedMemberTypeFacts()
+    {
+        self.ReceiverKind = TypedMemberReceiverKind.Unknown;
+        self.DeclarationIndex = 0;
+        self.NameToken = 0;
+        self.TypeKind = TypedSignatureTypeKind.Unknown;
+        self.TypeHeadToken = 0;
+        self.TypePrimaryToken = 0;
+        self.TypeStartToken = 0;
+        self.TypeEndToken = 0;
+        self.RangeStartToken = 0;
+        self.RangeEndToken = 0;
+        self.ElementCountStartToken = 0;
+        self.ElementCountEndToken = 0;
+        self.BitWidth = 0;
+        self.TypeArgumentCount = 0;
+        self.ComptimeArgumentCount = 0;
+        self.TypeFlags = 0;
+    }
+}
+
+internal fn void TypedMemberFactsFromLiteral(
+    borrow TypedLiteralExpressionTable literals,
+    u32[0 max] literalIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (literalIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(literalIndexPlusOne - 1);
+    facts.TypeKind = literals.TypeKindAt(index);
+    facts.BitWidth = literals.BitWidthAt(index);
+    facts.TypeFlags = literals.TypeFlagsAt(index);
+    if (facts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    }
+}

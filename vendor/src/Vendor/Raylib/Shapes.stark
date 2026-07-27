@@ -1,0 +1,681 @@
+import Vendor.Raylib.Types
+export import Vendor.Raylib.Types
+module Vendor.Raylib.Shapes
+
+[LinkName("SetShapesTexture")]
+internal unsafe ffi fn void stark_raylib_SetShapesTexture(Texture2D texture, Rectangle source);
+public fn void SetShapesTexture(Texture2D texture, Rectangle source) {
+    unsafe {
+        stark_raylib_SetShapesTexture(texture, source);
+    }
+    return;
+}
+
+[LinkName("GetShapesTexture")]
+internal unsafe ffi fn Texture2D stark_raylib_GetShapesTexture();
+public fn Texture2D GetShapesTexture() {
+    unsafe {
+        return stark_raylib_GetShapesTexture();
+    }
+}
+
+[LinkName("GetShapesTextureRectangle")]
+internal unsafe ffi fn Rectangle stark_raylib_GetShapesTextureRectangle();
+public fn Rectangle GetShapesTextureRectangle() {
+    unsafe {
+        return stark_raylib_GetShapesTextureRectangle();
+    }
+}
+
+[LinkName("DrawPixel")]
+internal unsafe ffi fn void stark_raylib_DrawPixel(i32[min max] posX, i32[min max] posY, Color color);
+public fn void DrawPixel(i32[min max] posX, i32[min max] posY, Color color) {
+    unsafe {
+        stark_raylib_DrawPixel(posX, posY, color);
+    }
+    return;
+}
+
+[LinkName("DrawPixelV")]
+internal unsafe ffi fn void stark_raylib_DrawPixelV(Vector2 position, Color color);
+public fn void DrawPixelV(Vector2 position, Color color) {
+    unsafe {
+        stark_raylib_DrawPixelV(position, color);
+    }
+    return;
+}
+
+[LinkName("DrawLine")]
+internal unsafe ffi fn void stark_raylib_DrawLine(i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, Color color);
+public fn void DrawLine(i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, Color color) {
+    unsafe {
+        stark_raylib_DrawLine(startPosX, startPosY, endPosX, endPosY, color);
+    }
+    return;
+}
+
+[LinkName("DrawLineV")]
+internal unsafe ffi fn void stark_raylib_DrawLineV(Vector2 startPos, Vector2 endPos, Color color);
+public fn void DrawLineV(Vector2 startPos, Vector2 endPos, Color color) {
+    unsafe {
+        stark_raylib_DrawLineV(startPos, endPos, color);
+    }
+    return;
+}
+
+[LinkName("DrawLineEx")]
+internal unsafe ffi fn void stark_raylib_DrawLineEx(Vector2 startPos, Vector2 endPos, f32 thick, Color color);
+public fn void DrawLineEx(Vector2 startPos, Vector2 endPos, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawLineEx(startPos, endPos, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawLineDashed")]
+internal unsafe ffi fn void stark_raylib_DrawLineDashed(Vector2 startPos, Vector2 endPos, i32[min max] dashSize, i32[min max] spaceSize, Color color);
+public fn void DrawLineDashed(Vector2 startPos, Vector2 endPos, i32[min max] dashSize, i32[min max] spaceSize, Color color) {
+    unsafe {
+        stark_raylib_DrawLineDashed(startPos, endPos, dashSize, spaceSize, color);
+    }
+    return;
+}
+
+[LinkName("DrawLineStrip")]
+internal unsafe ffi fn void stark_raylib_DrawLineStrip(rawptr<Vector2> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus DrawLineStrip(borrow Vector2[] points, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawLineStrip(&points[0], (i32[min max])points.Length, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawLineBezier")]
+internal unsafe ffi fn void stark_raylib_DrawLineBezier(Vector2 startPos, Vector2 endPos, f32 thick, Color color);
+public fn void DrawLineBezier(Vector2 startPos, Vector2 endPos, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawLineBezier(startPos, endPos, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircle")]
+internal unsafe ffi fn void stark_raylib_DrawCircle(i32[min max] centerX, i32[min max] centerY, f32 radius, Color color);
+public fn void DrawCircle(i32[min max] centerX, i32[min max] centerY, f32 radius, Color color) {
+    unsafe {
+        stark_raylib_DrawCircle(centerX, centerY, radius, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircleSector")]
+internal unsafe ffi fn void stark_raylib_DrawCircleSector(Vector2 center, f32 radius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color);
+public fn void DrawCircleSector(Vector2 center, f32 radius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawCircleSector(center, radius, startAngle, endAngle, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircleSectorLines")]
+internal unsafe ffi fn void stark_raylib_DrawCircleSectorLines(Vector2 center, f32 radius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color);
+public fn void DrawCircleSectorLines(Vector2 center, f32 radius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawCircleSectorLines(center, radius, startAngle, endAngle, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircleGradient")]
+internal unsafe ffi fn void stark_raylib_DrawCircleGradient(i32[min max] centerX, i32[min max] centerY, f32 radius, Color inner, Color outer);
+public fn void DrawCircleGradient(i32[min max] centerX, i32[min max] centerY, f32 radius, Color inner, Color outer) {
+    unsafe {
+        stark_raylib_DrawCircleGradient(centerX, centerY, radius, inner, outer);
+    }
+    return;
+}
+
+[LinkName("DrawCircleV")]
+internal unsafe ffi fn void stark_raylib_DrawCircleV(Vector2 center, f32 radius, Color color);
+public fn void DrawCircleV(Vector2 center, f32 radius, Color color) {
+    unsafe {
+        stark_raylib_DrawCircleV(center, radius, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircleLines")]
+internal unsafe ffi fn void stark_raylib_DrawCircleLines(i32[min max] centerX, i32[min max] centerY, f32 radius, Color color);
+public fn void DrawCircleLines(i32[min max] centerX, i32[min max] centerY, f32 radius, Color color) {
+    unsafe {
+        stark_raylib_DrawCircleLines(centerX, centerY, radius, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircleLinesV")]
+internal unsafe ffi fn void stark_raylib_DrawCircleLinesV(Vector2 center, f32 radius, Color color);
+public fn void DrawCircleLinesV(Vector2 center, f32 radius, Color color) {
+    unsafe {
+        stark_raylib_DrawCircleLinesV(center, radius, color);
+    }
+    return;
+}
+
+[LinkName("DrawEllipse")]
+internal unsafe ffi fn void stark_raylib_DrawEllipse(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipse(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipse(centerX, centerY, radiusH, radiusV, color);
+    }
+    return;
+}
+
+[LinkName("DrawEllipseV")]
+internal unsafe ffi fn void stark_raylib_DrawEllipseV(Vector2 center, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipseV(Vector2 center, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipseV(center, radiusH, radiusV, color);
+    }
+    return;
+}
+
+[LinkName("DrawEllipseLines")]
+internal unsafe ffi fn void stark_raylib_DrawEllipseLines(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipseLines(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipseLines(centerX, centerY, radiusH, radiusV, color);
+    }
+    return;
+}
+
+[LinkName("DrawEllipseLinesV")]
+internal unsafe ffi fn void stark_raylib_DrawEllipseLinesV(Vector2 center, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipseLinesV(Vector2 center, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipseLinesV(center, radiusH, radiusV, color);
+    }
+    return;
+}
+
+[LinkName("DrawRing")]
+internal unsafe ffi fn void stark_raylib_DrawRing(Vector2 center, f32 innerRadius, f32 outerRadius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color);
+public fn void DrawRing(Vector2 center, f32 innerRadius, f32 outerRadius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawRing(center, innerRadius, outerRadius, startAngle, endAngle, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawRingLines")]
+internal unsafe ffi fn void stark_raylib_DrawRingLines(Vector2 center, f32 innerRadius, f32 outerRadius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color);
+public fn void DrawRingLines(Vector2 center, f32 innerRadius, f32 outerRadius, f32 startAngle, f32 endAngle, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawRingLines(center, innerRadius, outerRadius, startAngle, endAngle, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangle")]
+internal unsafe ffi fn void stark_raylib_DrawRectangle(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color);
+public fn void DrawRectangle(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangle(posX, posY, width, height, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleV")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleV(Vector2 position, Vector2 size, Color color);
+public fn void DrawRectangleV(Vector2 position, Vector2 size, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleV(position, size, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleRec")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleRec(Rectangle rec, Color color);
+public fn void DrawRectangleRec(Rectangle rec, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleRec(rec, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectanglePro")]
+internal unsafe ffi fn void stark_raylib_DrawRectanglePro(Rectangle rec, Vector2 origin, f32 rotation, Color color);
+public fn void DrawRectanglePro(Rectangle rec, Vector2 origin, f32 rotation, Color color) {
+    unsafe {
+        stark_raylib_DrawRectanglePro(rec, origin, rotation, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleGradientV")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleGradientV(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color top, Color bottom);
+public fn void DrawRectangleGradientV(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color top, Color bottom) {
+    unsafe {
+        stark_raylib_DrawRectangleGradientV(posX, posY, width, height, top, bottom);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleGradientH")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleGradientH(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color left, Color right);
+public fn void DrawRectangleGradientH(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color left, Color right) {
+    unsafe {
+        stark_raylib_DrawRectangleGradientH(posX, posY, width, height, left, right);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleGradientEx")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleGradientEx(Rectangle rec, Color topLeft, Color bottomLeft, Color topRight, Color bottomRight);
+public fn void DrawRectangleGradientEx(Rectangle rec, Color topLeft, Color bottomLeft, Color topRight, Color bottomRight) {
+    unsafe {
+        stark_raylib_DrawRectangleGradientEx(rec, topLeft, bottomLeft, topRight, bottomRight);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleLines")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleLines(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color);
+public fn void DrawRectangleLines(i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleLines(posX, posY, width, height, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleLinesEx")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleLinesEx(Rectangle rec, f32 lineThick, Color color);
+public fn void DrawRectangleLinesEx(Rectangle rec, f32 lineThick, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleLinesEx(rec, lineThick, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleRounded")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleRounded(Rectangle rec, f32 roundness, i32[min max] segments, Color color);
+public fn void DrawRectangleRounded(Rectangle rec, f32 roundness, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleRounded(rec, roundness, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleRoundedLines")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleRoundedLines(Rectangle rec, f32 roundness, i32[min max] segments, Color color);
+public fn void DrawRectangleRoundedLines(Rectangle rec, f32 roundness, i32[min max] segments, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleRoundedLines(rec, roundness, segments, color);
+    }
+    return;
+}
+
+[LinkName("DrawRectangleRoundedLinesEx")]
+internal unsafe ffi fn void stark_raylib_DrawRectangleRoundedLinesEx(Rectangle rec, f32 roundness, i32[min max] segments, f32 lineThick, Color color);
+public fn void DrawRectangleRoundedLinesEx(Rectangle rec, f32 roundness, i32[min max] segments, f32 lineThick, Color color) {
+    unsafe {
+        stark_raylib_DrawRectangleRoundedLinesEx(rec, roundness, segments, lineThick, color);
+    }
+    return;
+}
+
+[LinkName("DrawTriangle")]
+internal unsafe ffi fn void stark_raylib_DrawTriangle(Vector2 v1, Vector2 v2, Vector2 v3, Color color);
+public fn void DrawTriangle(Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
+    unsafe {
+        stark_raylib_DrawTriangle(v1, v2, v3, color);
+    }
+    return;
+}
+
+[LinkName("DrawTriangleLines")]
+internal unsafe ffi fn void stark_raylib_DrawTriangleLines(Vector2 v1, Vector2 v2, Vector2 v3, Color color);
+public fn void DrawTriangleLines(Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
+    unsafe {
+        stark_raylib_DrawTriangleLines(v1, v2, v3, color);
+    }
+    return;
+}
+
+[LinkName("DrawTriangleFan")]
+internal unsafe ffi fn void stark_raylib_DrawTriangleFan(rawptr<Vector2> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus DrawTriangleFan(borrow Vector2[] points, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawTriangleFan(&points[0], (i32[min max])points.Length, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawTriangleStrip")]
+internal unsafe ffi fn void stark_raylib_DrawTriangleStrip(rawptr<Vector2> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus DrawTriangleStrip(borrow Vector2[] points, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawTriangleStrip(&points[0], (i32[min max])points.Length, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawPoly")]
+internal unsafe ffi fn void stark_raylib_DrawPoly(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, Color color);
+public fn void DrawPoly(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, Color color) {
+    unsafe {
+        stark_raylib_DrawPoly(center, sides, radius, rotation, color);
+    }
+    return;
+}
+
+[LinkName("DrawPolyLines")]
+internal unsafe ffi fn void stark_raylib_DrawPolyLines(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, Color color);
+public fn void DrawPolyLines(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, Color color) {
+    unsafe {
+        stark_raylib_DrawPolyLines(center, sides, radius, rotation, color);
+    }
+    return;
+}
+
+[LinkName("DrawPolyLinesEx")]
+internal unsafe ffi fn void stark_raylib_DrawPolyLinesEx(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, f32 lineThick, Color color);
+public fn void DrawPolyLinesEx(Vector2 center, i32[min max] sides, f32 radius, f32 rotation, f32 lineThick, Color color) {
+    unsafe {
+        stark_raylib_DrawPolyLinesEx(center, sides, radius, rotation, lineThick, color);
+    }
+    return;
+}
+
+[LinkName("DrawSplineLinear")]
+internal unsafe ffi fn void stark_raylib_DrawSplineLinear(rawptr<Vector2> points, i32[min max] pointCount, f32 thick, Color color);
+public fn RaylibStatus DrawSplineLinear(borrow Vector2[] points, f32 thick, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawSplineLinear(&points[0], (i32[min max])points.Length, thick, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawSplineBasis")]
+internal unsafe ffi fn void stark_raylib_DrawSplineBasis(rawptr<Vector2> points, i32[min max] pointCount, f32 thick, Color color);
+public fn RaylibStatus DrawSplineBasis(borrow Vector2[] points, f32 thick, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawSplineBasis(&points[0], (i32[min max])points.Length, thick, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawSplineCatmullRom")]
+internal unsafe ffi fn void stark_raylib_DrawSplineCatmullRom(rawptr<Vector2> points, i32[min max] pointCount, f32 thick, Color color);
+public fn RaylibStatus DrawSplineCatmullRom(borrow Vector2[] points, f32 thick, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawSplineCatmullRom(&points[0], (i32[min max])points.Length, thick, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawSplineBezierQuadratic")]
+internal unsafe ffi fn void stark_raylib_DrawSplineBezierQuadratic(rawptr<Vector2> points, i32[min max] pointCount, f32 thick, Color color);
+public fn RaylibStatus DrawSplineBezierQuadratic(borrow Vector2[] points, f32 thick, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawSplineBezierQuadratic(&points[0], (i32[min max])points.Length, thick, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawSplineBezierCubic")]
+internal unsafe ffi fn void stark_raylib_DrawSplineBezierCubic(rawptr<Vector2> points, i32[min max] pointCount, f32 thick, Color color);
+public fn RaylibStatus DrawSplineBezierCubic(borrow Vector2[] points, f32 thick, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawSplineBezierCubic(&points[0], (i32[min max])points.Length, thick, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawSplineSegmentLinear")]
+internal unsafe ffi fn void stark_raylib_DrawSplineSegmentLinear(Vector2 p1, Vector2 p2, f32 thick, Color color);
+public fn void DrawSplineSegmentLinear(Vector2 p1, Vector2 p2, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawSplineSegmentLinear(p1, p2, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawSplineSegmentBasis")]
+internal unsafe ffi fn void stark_raylib_DrawSplineSegmentBasis(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 thick, Color color);
+public fn void DrawSplineSegmentBasis(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawSplineSegmentBasis(p1, p2, p3, p4, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawSplineSegmentCatmullRom")]
+internal unsafe ffi fn void stark_raylib_DrawSplineSegmentCatmullRom(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 thick, Color color);
+public fn void DrawSplineSegmentCatmullRom(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawSplineSegmentCatmullRom(p1, p2, p3, p4, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawSplineSegmentBezierQuadratic")]
+internal unsafe ffi fn void stark_raylib_DrawSplineSegmentBezierQuadratic(Vector2 p1, Vector2 c2, Vector2 p3, f32 thick, Color color);
+public fn void DrawSplineSegmentBezierQuadratic(Vector2 p1, Vector2 c2, Vector2 p3, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawSplineSegmentBezierQuadratic(p1, c2, p3, thick, color);
+    }
+    return;
+}
+
+[LinkName("DrawSplineSegmentBezierCubic")]
+internal unsafe ffi fn void stark_raylib_DrawSplineSegmentBezierCubic(Vector2 p1, Vector2 c2, Vector2 c3, Vector2 p4, f32 thick, Color color);
+public fn void DrawSplineSegmentBezierCubic(Vector2 p1, Vector2 c2, Vector2 c3, Vector2 p4, f32 thick, Color color) {
+    unsafe {
+        stark_raylib_DrawSplineSegmentBezierCubic(p1, c2, c3, p4, thick, color);
+    }
+    return;
+}
+
+[LinkName("GetSplinePointLinear")]
+internal unsafe ffi fn Vector2 stark_raylib_GetSplinePointLinear(Vector2 startPos, Vector2 endPos, f32 t);
+public fn Vector2 GetSplinePointLinear(Vector2 startPos, Vector2 endPos, f32 t) {
+    unsafe {
+        return stark_raylib_GetSplinePointLinear(startPos, endPos, t);
+    }
+}
+
+[LinkName("GetSplinePointBasis")]
+internal unsafe ffi fn Vector2 stark_raylib_GetSplinePointBasis(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 t);
+public fn Vector2 GetSplinePointBasis(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 t) {
+    unsafe {
+        return stark_raylib_GetSplinePointBasis(p1, p2, p3, p4, t);
+    }
+}
+
+[LinkName("GetSplinePointCatmullRom")]
+internal unsafe ffi fn Vector2 stark_raylib_GetSplinePointCatmullRom(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 t);
+public fn Vector2 GetSplinePointCatmullRom(Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4, f32 t) {
+    unsafe {
+        return stark_raylib_GetSplinePointCatmullRom(p1, p2, p3, p4, t);
+    }
+}
+
+[LinkName("GetSplinePointBezierQuad")]
+internal unsafe ffi fn Vector2 stark_raylib_GetSplinePointBezierQuad(Vector2 p1, Vector2 c2, Vector2 p3, f32 t);
+public fn Vector2 GetSplinePointBezierQuad(Vector2 p1, Vector2 c2, Vector2 p3, f32 t) {
+    unsafe {
+        return stark_raylib_GetSplinePointBezierQuad(p1, c2, p3, t);
+    }
+}
+
+[LinkName("GetSplinePointBezierCubic")]
+internal unsafe ffi fn Vector2 stark_raylib_GetSplinePointBezierCubic(Vector2 p1, Vector2 c2, Vector2 c3, Vector2 p4, f32 t);
+public fn Vector2 GetSplinePointBezierCubic(Vector2 p1, Vector2 c2, Vector2 c3, Vector2 p4, f32 t) {
+    unsafe {
+        return stark_raylib_GetSplinePointBezierCubic(p1, c2, c3, p4, t);
+    }
+}
+
+[LinkName("CheckCollisionRecs")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionRecs(Rectangle rec1, Rectangle rec2);
+public fn bool CheckCollisionRecs(Rectangle rec1, Rectangle rec2) {
+    unsafe {
+        return stark_raylib_CheckCollisionRecs(rec1, rec2);
+    }
+}
+
+[LinkName("CheckCollisionCircles")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionCircles(Vector2 center1, f32 radius1, Vector2 center2, f32 radius2);
+public fn bool CheckCollisionCircles(Vector2 center1, f32 radius1, Vector2 center2, f32 radius2) {
+    unsafe {
+        return stark_raylib_CheckCollisionCircles(center1, radius1, center2, radius2);
+    }
+}
+
+[LinkName("CheckCollisionCircleRec")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionCircleRec(Vector2 center, f32 radius, Rectangle rec);
+public fn bool CheckCollisionCircleRec(Vector2 center, f32 radius, Rectangle rec) {
+    unsafe {
+        return stark_raylib_CheckCollisionCircleRec(center, radius, rec);
+    }
+}
+
+[LinkName("CheckCollisionCircleLine")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionCircleLine(Vector2 center, f32 radius, Vector2 p1, Vector2 p2);
+public fn bool CheckCollisionCircleLine(Vector2 center, f32 radius, Vector2 p1, Vector2 p2) {
+    unsafe {
+        return stark_raylib_CheckCollisionCircleLine(center, radius, p1, p2);
+    }
+}
+
+[LinkName("CheckCollisionPointRec")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionPointRec(Vector2 point, Rectangle rec);
+public fn bool CheckCollisionPointRec(Vector2 point, Rectangle rec) {
+    unsafe {
+        return stark_raylib_CheckCollisionPointRec(point, rec);
+    }
+}
+
+[LinkName("CheckCollisionPointCircle")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionPointCircle(Vector2 point, Vector2 center, f32 radius);
+public fn bool CheckCollisionPointCircle(Vector2 point, Vector2 center, f32 radius) {
+    unsafe {
+        return stark_raylib_CheckCollisionPointCircle(point, center, radius);
+    }
+}
+
+[LinkName("CheckCollisionPointTriangle")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionPointTriangle(Vector2 point, Vector2 p1, Vector2 p2, Vector2 p3);
+public fn bool CheckCollisionPointTriangle(Vector2 point, Vector2 p1, Vector2 p2, Vector2 p3) {
+    unsafe {
+        return stark_raylib_CheckCollisionPointTriangle(point, p1, p2, p3);
+    }
+}
+
+[LinkName("CheckCollisionPointLine")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionPointLine(Vector2 point, Vector2 p1, Vector2 p2, i32[min max] threshold);
+public fn bool CheckCollisionPointLine(Vector2 point, Vector2 p1, Vector2 p2, i32[min max] threshold) {
+    unsafe {
+        return stark_raylib_CheckCollisionPointLine(point, p1, p2, threshold);
+    }
+}
+
+[LinkName("CheckCollisionPointPoly")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionPointPoly(Vector2 point, rawptr<Vector2> points, i32[min max] pointCount);
+public fn bool CheckCollisionPointPoly(Vector2 point, borrow Vector2[] points) {
+    if (points.Length == 0 || points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return false;
+    }
+
+    unsafe {
+        return stark_raylib_CheckCollisionPointPoly(point, &points[0], (i32[min max])points.Length);
+    }
+}
+
+[LinkName("CheckCollisionLines")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionLines(Vector2 startPos1, Vector2 endPos1, Vector2 startPos2, Vector2 endPos2, rawmutptr<Vector2> collisionPoint);
+public fn CollisionPointResult CheckCollisionLines(Vector2 startPos1, Vector2 endPos1, Vector2 startPos2, Vector2 endPos2) {
+    stack mut Vector2 collisionPoint = DefaultVector2();
+    stack mut bool hit = false;
+    unsafe {
+        hit = stark_raylib_CheckCollisionLines(startPos1, endPos1, startPos2, endPos2, &collisionPoint);
+    }
+    return new CollisionPointResult()
+    {
+        Hit = hit,
+        Point = collisionPoint
+    };
+}
+
+[LinkName("GetCollisionRec")]
+internal unsafe ffi fn Rectangle stark_raylib_GetCollisionRec(Rectangle rec1, Rectangle rec2);
+public fn Rectangle GetCollisionRec(Rectangle rec1, Rectangle rec2) {
+    unsafe {
+        return stark_raylib_GetCollisionRec(rec1, rec2);
+    }
+}

@@ -1,0 +1,6 @@
+export import Compiler.Mir.PackageImage.Loader.CompilerEffectAbiFactsLoader
+export import Compiler.Mir.PackageImage.Loader.CompilerLayoutNativeFactsLoader
+export import Compiler.Mir.PackageImage.Loader.CompilerFunctionFactsLoader
+module Compiler.Mir.PackageImage.Loader.CompilerFactsSectionLoader
+
+// Compatibility facade for compiler-fact manifest loaders.

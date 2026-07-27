@@ -1,0 +1,583 @@
+import Compiler.Sdk.TargetDescriptor
+import System.Text
+module Compiler.Sdk.TargetCompatibility
+
+public enum SdkTargetCompatibilityReason
+{
+    Compatible,
+    Architecture,
+    OperatingSystem,
+    Abi,
+    PointerWidth,
+    Endianness,
+    DataLayout,
+    CDataModel,
+    RelocationModel,
+    CodeModel,
+    Cpu,
+    RequiredFeature,
+    DeploymentMinimum,
+}
+
+public finite law ascii SdkTargetCompatibilityReasonName(SdkTargetCompatibilityReason reason)
+{
+    switch (reason)
+    {
+        case SdkTargetCompatibilityReason.Compatible: return "compatible";
+        case SdkTargetCompatibilityReason.Architecture: return "architecture";
+        case SdkTargetCompatibilityReason.OperatingSystem: return "operating system";
+        case SdkTargetCompatibilityReason.Abi: return "ABI";
+        case SdkTargetCompatibilityReason.PointerWidth: return "pointer width";
+        case SdkTargetCompatibilityReason.Endianness: return "endianness";
+        case SdkTargetCompatibilityReason.DataLayout: return "data layout";
+        case SdkTargetCompatibilityReason.CDataModel: return "C data model";
+        case SdkTargetCompatibilityReason.RelocationModel: return "relocation model";
+        case SdkTargetCompatibilityReason.CodeModel: return "code model";
+        case SdkTargetCompatibilityReason.Cpu: return "CPU baseline";
+        case SdkTargetCompatibilityReason.RequiredFeature: return "required target feature";
+        case SdkTargetCompatibilityReason.DeploymentMinimum: return "deployment minimum";
+    }
+}
+
+internal fn bool SdkTargetTextEquals(ascii left, ascii right)
+    where overlap(left, right)
+{
+    return System.Text.Equals(left, right);
+}
+
+internal inline finite law bool SdkCompatibilityTrimUnit(i8[min max] unit)
+{
+    return unit == 9
+        || unit == 10
+        || unit == 11
+        || unit == 12
+        || unit == 13
+        || unit == 32;
+}
+
+internal inline finite law i8[min max] SdkCompatibilityLowerUnit(i8[min max] unit)
+{
+    if (unit >= 65 && unit <= 90)
+    {
+        return unit + 32;
+    }
+    return unit;
+}
+
+internal finite law bool SdkTargetTextEqualsTrimmedIgnoreCase(ascii value, ascii expectedLower)
+    where overlap(value, expectedLower)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        stack i64[min max] expectedLength = System.Text.AsciiLength(expectedLower);
+        if (valueLength < 0 || expectedLength < 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expectedLower);
+        if ((valueData == null && valueLength != 0)
+            || (expectedData == null && expectedLength != 0))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && SdkCompatibilityTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && SdkCompatibilityTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+        if (end - start != expectedLength)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+        {
+            if (SdkCompatibilityLowerUnit(*(&valueData[start + index])) != *(&expectedData[index]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+internal finite law bool SdkTargetTextsEqualTrimmedIgnoreCase(ascii left, ascii right)
+    where overlap(left, right)
+{
+    unsafe
+    {
+        stack i64[min max] leftLength = System.Text.AsciiLength(left);
+        stack i64[min max] rightLength = System.Text.AsciiLength(right);
+        if (leftLength < 0 || rightLength < 0)
+        {
+            return false;
+        }
+        stack rawptr<i8[min max]> leftData = System.Text.AsciiData(left);
+        stack rawptr<i8[min max]> rightData = System.Text.AsciiData(right);
+        if ((leftData == null && leftLength != 0) || (rightData == null && rightLength != 0))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] leftStart = 0;
+        while willexit (leftStart < leftLength && SdkCompatibilityTrimUnit(*(&leftData[leftStart])))
+        {
+            leftStart += 1;
+        }
+        stack mut i64[min max] leftEnd = leftLength;
+        while willexit (leftEnd > leftStart && SdkCompatibilityTrimUnit(*(&leftData[leftEnd - 1])))
+        {
+            leftEnd -= 1;
+        }
+        stack mut i64[min max] rightStart = 0;
+        while willexit (rightStart < rightLength && SdkCompatibilityTrimUnit(*(&rightData[rightStart])))
+        {
+            rightStart += 1;
+        }
+        stack mut i64[min max] rightEnd = rightLength;
+        while willexit (rightEnd > rightStart && SdkCompatibilityTrimUnit(*(&rightData[rightEnd - 1])))
+        {
+            rightEnd -= 1;
+        }
+        if (leftEnd - leftStart != rightEnd - rightStart)
+        {
+            return false;
+        }
+
+        for willexit (
+            stack mut i64[min max] index = 0;
+            index < leftEnd - leftStart;
+            index += 1)
+        {
+            if (SdkCompatibilityLowerUnit(*(&leftData[leftStart + index]))
+                != SdkCompatibilityLowerUnit(*(&rightData[rightStart + index])))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+public finite law bool SdkArchitecturesMatch(ascii left, ascii right)
+    where overlap(left, right)
+{
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "arm64")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "aarch64"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "arm64")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "aarch64");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "x86_64")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "amd64"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "x86_64")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "amd64");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "x86"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "x86");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "arm"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "arm");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "riscv64"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "riscv64");
+    }
+    return false;
+}
+
+public finite law bool SdkOperatingSystemsMatch(ascii left, ascii right)
+    where overlap(left, right)
+{
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "macos")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "macosx")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "darwin"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "macos")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "macosx")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "darwin");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "linux"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "linux");
+    }
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "windows"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "windows");
+    }
+    return false;
+}
+
+public finite law bool SdkAbisMatch(ascii left, ascii right)
+    where overlap(left, right)
+{
+    if (SdkTargetTextEqualsTrimmedIgnoreCase(left, "darwin")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "macos")
+        || SdkTargetTextEqualsTrimmedIgnoreCase(left, "macosx"))
+    {
+        return SdkTargetTextEqualsTrimmedIgnoreCase(right, "darwin")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "macos")
+            || SdkTargetTextEqualsTrimmedIgnoreCase(right, "macosx");
+    }
+    return SdkTargetTextsEqualTrimmedIgnoreCase(left, right)
+        && !SdkTargetTextEqualsTrimmedIgnoreCase(left, "");
+}
+
+internal struct SdkNumericVersion
+{
+    u32[0 2147483647] Major;
+    u32[0 2147483647] Minor;
+    u32[0 2147483647] Build;
+    u32[0 2147483647] Revision;
+
+    SdkNumericVersion()
+    {
+        self.Major = 0;
+        self.Minor = 0;
+        self.Build = 0;
+        self.Revision = 0;
+    }
+}
+
+internal enum SdkDeploymentMinimumState
+{
+    None,
+    Valid,
+    Invalid,
+}
+
+internal fn bool SetSdkNumericVersionComponent(
+    mut borrow SdkNumericVersion version,
+    u8[0 3] index,
+    u32[0 2147483647] value)
+{
+    switch (index)
+    {
+        case 0: version.Major = value; return true;
+        case 1: version.Minor = value; return true;
+        case 2: version.Build = value; return true;
+        case 3: version.Revision = value; return true;
+    }
+}
+
+internal unsafe fn bool TryParseSdkNumericVersionRange(
+    rawptr<i8[min max]> data,
+    i64[min max] untrimmedStart,
+    i64[min max] untrimmedEnd,
+    mut borrow SdkNumericVersion version)
+{
+    stack mut i64[min max] start = untrimmedStart;
+    while willexit (start < untrimmedEnd && SdkCompatibilityTrimUnit(*(&data[start])))
+    {
+        start += 1;
+    }
+    stack mut i64[min max] end = untrimmedEnd;
+    while willexit (end > start && SdkCompatibilityTrimUnit(*(&data[end - 1])))
+    {
+        end -= 1;
+    }
+    if (start == end)
+    {
+        return false;
+    }
+
+    stack mut u8[0 3] component = 0;
+    stack mut u32[0 2147483647] value = 0;
+    stack mut bool hasDigit = false;
+    for willexit (stack mut i64[min max] index = start; index < end; index += 1)
+    {
+        stack i8[min max] unit = *(&data[index]);
+        if (unit >= 48 && unit <= 57)
+        {
+            stack u8[0 9] digit = (u8[0 9])(unit - 48);
+            if (value > 214748364 || (value == 214748364 && digit > 7))
+            {
+                return false;
+            }
+            value = (u32[0 2147483647])(value * 10 + digit);
+            hasDigit = true;
+            continue;
+        }
+
+        if (unit != 46 || !hasDigit || component == 3)
+        {
+            return false;
+        }
+        SetSdkNumericVersionComponent(version, component, value);
+        component += 1;
+        value = 0;
+        hasDigit = false;
+    }
+
+    if (!hasDigit || component == 0)
+    {
+        return false;
+    }
+    SetSdkNumericVersionComponent(version, component, value);
+    return true;
+}
+
+internal fn bool TryParseSdkNumericVersion(ascii text, mut borrow SdkNumericVersion version)
+{
+    unsafe
+    {
+        stack i64[min max] length = System.Text.AsciiLength(text);
+        if (length <= 0)
+        {
+            return false;
+        }
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        return data != null && TryParseSdkNumericVersionRange(data, 0, length, version);
+    }
+}
+
+internal unsafe fn bool SdkRangeStartsWithLower(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] end,
+    ascii expectedLower)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expectedLower);
+    if (expectedLength <= 0 || end - start < expectedLength)
+    {
+        return false;
+    }
+    stack rawptr<i8[min max]> expected = System.Text.AsciiData(expectedLower);
+    if (expected == null)
+    {
+        return false;
+    }
+    for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+    {
+        if (SdkCompatibilityLowerUnit(*(&data[start + index])) != *(&expected[index]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+internal fn bool TryParseSdkTripleDeploymentMinimum(
+    ascii triple,
+    mut borrow SdkNumericVersion version)
+    where overlap(triple, version)
+{
+    unsafe
+    {
+        stack i64[min max] length = System.Text.AsciiLength(triple);
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(triple);
+        if (length <= 0 || data == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] componentStart = 0;
+        for willexit (stack mut i64[min max] index = 0; index <= length; index += 1)
+        {
+            if (index < length && *(&data[index]) != 45)
+            {
+                continue;
+            }
+
+            stack mut i64[min max] prefixLength = 0;
+            if (SdkRangeStartsWithLower(data, componentStart, index, "macosx"))
+            {
+                prefixLength = 6;
+            }
+            else if (SdkRangeStartsWithLower(data, componentStart, index, "macos"))
+            {
+                prefixLength = 5;
+            }
+            if (prefixLength != 0 && componentStart + prefixLength < index)
+            {
+                return TryParseSdkNumericVersionRange(
+                    data,
+                    componentStart + prefixLength,
+                    index,
+                    version);
+            }
+            if (index < length)
+            {
+                componentStart = index + 1;
+            }
+        }
+        return false;
+    }
+}
+
+internal fn SdkDeploymentMinimumState GetSdkDeploymentMinimum(
+    mut borrow SdkTargetDescriptor target,
+    mut borrow SdkNumericVersion version)
+    where overlap(target, version)
+{
+    stack ascii explicitMinimum = target.MinimumOperatingSystemVersion();
+    if (!SdkTargetTextEqualsTrimmedIgnoreCase(explicitMinimum, ""))
+    {
+        return TryParseSdkNumericVersion(explicitMinimum, version)
+            ? SdkDeploymentMinimumState.Valid
+            : SdkDeploymentMinimumState.Invalid;
+    }
+
+    return TryParseSdkTripleDeploymentMinimum(target.LlvmTriple(), version)
+        ? SdkDeploymentMinimumState.Valid
+        : SdkDeploymentMinimumState.None;
+}
+
+internal finite law i8[-1 1] CompareSdkNumericVersions(
+    SdkNumericVersion left,
+    SdkNumericVersion right)
+{
+    if (left.Major != right.Major)
+    {
+        if (left.Major < right.Major) return -1;
+        return 1;
+    }
+    if (left.Minor != right.Minor)
+    {
+        if (left.Minor < right.Minor) return -1;
+        return 1;
+    }
+    if (left.Build != right.Build)
+    {
+        if (left.Build < right.Build) return -1;
+        return 1;
+    }
+    if (left.Revision != right.Revision)
+    {
+        if (left.Revision < right.Revision) return -1;
+        return 1;
+    }
+    return 0;
+}
+
+public fn bool SdkDeploymentMinimumIsCompatible(
+    mut borrow SdkTargetDescriptor sdk,
+    mut borrow SdkTargetDescriptor active)
+    where overlap(sdk, active)
+{
+    stack mut SdkNumericVersion sdkMinimum = new();
+    stack SdkDeploymentMinimumState sdkState = GetSdkDeploymentMinimum(sdk, sdkMinimum);
+    if (sdkState == SdkDeploymentMinimumState.None)
+    {
+        return true;
+    }
+    if (sdkState == SdkDeploymentMinimumState.Invalid)
+    {
+        return false;
+    }
+
+    stack mut SdkNumericVersion activeMinimum = new();
+    if (GetSdkDeploymentMinimum(active, activeMinimum) != SdkDeploymentMinimumState.Valid)
+    {
+        return false;
+    }
+    return CompareSdkNumericVersions(activeMinimum, sdkMinimum) >= 0;
+}
+
+internal fn bool SdkCpuCompatible(ascii baseline, ascii active)
+    where overlap(baseline, active)
+{
+    return System.Text.AsciiLength(baseline) == 0
+        || System.Text.Equals(baseline, "generic")
+        || System.Text.Equals(baseline, active);
+}
+
+internal fn bool SdkFeaturePresent(
+    mut borrow SdkTargetDescriptor active,
+    ascii required)
+    where overlap(active, required)
+{
+    stack u64[0 2 ** 63 - 1] count = active.BaselineFeatureCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (System.Text.Equals(active.BaselineFeatureAt(index), required))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public fn SdkTargetCompatibilityReason CompareSdkTargets(
+    mut borrow SdkTargetDescriptor sdk,
+    mut borrow SdkTargetDescriptor active)
+    where overlap(sdk, active)
+{
+    if (!SdkArchitecturesMatch(sdk.Architecture(), active.Architecture()))
+    {
+        return SdkTargetCompatibilityReason.Architecture;
+    }
+    if (!SdkOperatingSystemsMatch(sdk.OperatingSystem(), active.OperatingSystem()))
+    {
+        return SdkTargetCompatibilityReason.OperatingSystem;
+    }
+    if (!SdkAbisMatch(sdk.Abi(), active.Abi()))
+    {
+        return SdkTargetCompatibilityReason.Abi;
+    }
+    if (sdk.PointerBitWidth() != active.PointerBitWidth())
+    {
+        return SdkTargetCompatibilityReason.PointerWidth;
+    }
+    if (sdk.Endianness() != active.Endianness())
+    {
+        return SdkTargetCompatibilityReason.Endianness;
+    }
+    if (!SdkTargetTextEquals(sdk.DataLayout(), active.DataLayout()))
+    {
+        return SdkTargetCompatibilityReason.DataLayout;
+    }
+    if (!SdkTargetTextEquals(sdk.CDataModel(), active.CDataModel()))
+    {
+        return SdkTargetCompatibilityReason.CDataModel;
+    }
+    if (!SdkTargetTextEquals(sdk.RelocationModel(), active.RelocationModel()))
+    {
+        return SdkTargetCompatibilityReason.RelocationModel;
+    }
+    if (!SdkTargetTextEquals(sdk.CodeModel(), active.CodeModel()))
+    {
+        return SdkTargetCompatibilityReason.CodeModel;
+    }
+    if (!SdkCpuCompatible(sdk.BaselineCpu(), active.BaselineCpu()))
+    {
+        return SdkTargetCompatibilityReason.Cpu;
+    }
+
+    stack u64[0 2 ** 63 - 1] featureCount = sdk.BaselineFeatureCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < featureCount; index += 1)
+    {
+        if (!SdkFeaturePresent(active, sdk.BaselineFeatureAt(index)))
+        {
+            return SdkTargetCompatibilityReason.RequiredFeature;
+        }
+    }
+
+    if (!SdkDeploymentMinimumIsCompatible(sdk, active))
+    {
+        return SdkTargetCompatibilityReason.DeploymentMinimum;
+    }
+
+    return SdkTargetCompatibilityReason.Compatible;
+}
+
+public fn bool SdkTargetsAreCompatible(
+    mut borrow SdkTargetDescriptor sdk,
+    mut borrow SdkTargetDescriptor active)
+    where overlap(sdk, active)
+{
+    return CompareSdkTargets(sdk, active) == SdkTargetCompatibilityReason.Compatible;
+}

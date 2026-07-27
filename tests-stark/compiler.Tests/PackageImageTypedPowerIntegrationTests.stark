@@ -1,0 +1,35 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedPowerIntegrationTests
+
+// Ported from PackageImageTypedPowerIntegrationTests.ManifestBackedTypedPowerBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedPowerBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed power bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkg-image-typed-power-manifest-backed",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Observe(3, 4, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, i32[min max] exponent, T tag)
+{
+    return value ** exponent;
+}
+""",
+            "Facade.Observe",
+            "",
+            81);
+    }
+}

@@ -1,0 +1,138 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedMemberModel
+module Compiler.Typing.TypedMemberLookup
+
+internal finite law TypedIdentifierContext TypedMemberIdentifierContext(TypedMemberContext context)
+{
+    if (context == TypedMemberContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedMemberContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal finite law TypedCallContext TypedMemberCallContext(TypedMemberContext context)
+{
+    if (context == TypedMemberContext.GlobalInitializer)
+    {
+        return TypedCallContext.GlobalInitializer;
+    }
+
+    if (context == TypedMemberContext.FunctionBody)
+    {
+        return TypedCallContext.FunctionBody;
+    }
+
+    return TypedCallContext.Unknown;
+}
+
+internal fn u32[0 max] TypedMemberIdentifierIndexForNode(
+    borrow TypedIdentifierExpressionTable identifiers,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedIdentifierContext identifierContext = TypedMemberIdentifierContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = identifiers.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && identifiers.ContextAt(index) == identifierContext
+            && identifiers.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && identifiers.OwnerNameTokenAt(index) == ownerNameToken
+            && identifiers.FunctionNameTokenAt(index) == functionNameToken
+            && identifiers.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && identifiers.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedMemberCallIndexForNode(
+    borrow TypedCallExpressionTable calls,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedCallContext callContext = TypedMemberCallContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = calls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && calls.ContextAt(index) == callContext
+            && calls.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && calls.OwnerNameTokenAt(index) == ownerNameToken
+            && calls.FunctionNameTokenAt(index) == functionNameToken
+            && calls.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && calls.CallNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedMemberExpressionIndexForNode(
+    borrow TypedMemberExpressionTable table,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.ContextAt(index) == context
+            && table.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && table.OwnerNameTokenAt(index) == ownerNameToken
+            && table.FunctionNameTokenAt(index) == functionNameToken
+            && table.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && table.MemberNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedMemberDeclarationIndexForTypeHead(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    u32[0 max] typeHeadToken)
+{
+    stack u32[0 max] declarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, typeHeadToken);
+    if (declarationIndexPlusOne == 0)
+    {
+        return 0;
+    }
+
+    return (u32[0 max])(declarationIndexPlusOne - 1);
+}

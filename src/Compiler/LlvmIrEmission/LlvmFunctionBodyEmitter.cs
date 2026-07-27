@@ -11,11 +11,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string AsciiHashHelperName = "__stark_ascii_hash";
+    private const string UnicodeHashHelperName = "__stark_unicode_hash";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
     private const string HeapFreeHelperName = "__stark_heap_free";
+    private const string ArenaEnterHelperName = "__stark_arena_enter";
+    private const string ArenaLeaveHelperName = "__stark_arena_leave";
+    private const string ArenaAllocateHelperName = "__stark_arena_alloc";
+    private const string ArenaTryAllocateHelperName = "__stark_arena_try_alloc";
+    private const string ArenaDynamicStorageAllocateHelperName = "__stark_arena_dynamic_alloc";
+    private const string ArenaDynamicStorageReserveHelperName = "__stark_arena_dynamic_reserve";
+    private const string ArenaDynamicStorageTryReserveHelperName = "__stark_arena_dynamic_try_reserve";
+    private const string ArenaDynamicStorageTryReserveCapacityHelperName = "__stark_arena_dynamic_try_reserve_capacity";
+    private const string ArenaFrameSlotName = "%__stark_arena_frame";
+    private const string ArenaFrameLlvmType = "{ ptr, ptr, ptr }";
     private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
     private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
     private const string RuntimeTryReallocateHelperName = "__stark_runtime_try_realloc";
@@ -64,16 +76,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly IReadOnlyDictionary<string, string> _sameParameterCanonicalRootKeys;
     private readonly ScopedNoAliasMetadataModel? _scopedNoAliasMetadata;
     private readonly IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? _parameterEffects;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _constProvenanceLocalNames;
     private readonly HashSet<string> _invariantLocalNames;
     private readonly IReadOnlyDictionary<string, SsaValue> _singleStoreLocalValues;
     private readonly HashSet<string> _tailCallResultNames;
     private readonly List<string> _entryStaticAllocas = [];
     private readonly Dictionary<string, string> _localStorageClasses;
+    private readonly bool _usesArenaAllocator;
+    private bool _arenaFrameSlotQueued;
     private readonly Dictionary<string, bool> _aggregateValueMaterializationRequirements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indirectAggregateValueSlots = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _deferredAggregateValueNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LocalSlotAlias> _localSlotAliases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _directAggregateAliasCandidateLocalNames;
     private readonly Dictionary<string, SsaAllocateLocalInstruction> _deferredAliasLocalAllocations = new(StringComparer.Ordinal);
@@ -81,10 +96,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _materializedAliasCandidateLocalNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _valueAliases = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FreshDynamicStoragePointer> _freshDynamicLocalStoragePointers = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedSeparateStoragePairs = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<int, RawPointerLoopIntrinsicPlan> _embeddedOptimizedRawPointerLoopPlansByPreheader =
         new Dictionary<int, RawPointerLoopIntrinsicPlan>();
     private HashSet<int> _embeddedOptimizedRawPointerLoopSkippedBlockIds = new();
     private HashSet<int> _embeddedOptimizedRawPointerLoopExitBlockIds = new();
+    private BlockDominanceIndex? _blockDominance;
     private readonly Dictionary<int, string> _blockExitLabels = [];
     private SourceLocation? _currentDebugLocation;
     private SsaBasicBlock? _currentBlock;
@@ -122,6 +140,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _isStrictFp = isStrictFp;
         _resolveParameterEffects = resolveParameterEffects;
         _resolveFunctionMemoryEffects = resolveFunctionMemoryEffects;
+        _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(context.LoadedModules);
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
@@ -143,9 +162,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _sameParameterCanonicalRootKeys = BuildSameParameterCanonicalRootKeys();
         _scopedNoAliasMetadata = BuildScopedNoAliasMetadata(parameterEffects);
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
+        _usesArenaAllocator = UsesArenaAllocator(ssaFunction);
         _singleStoreLocalValues = CollectSingleStoreLocalValues();
         _directAggregateAliasCandidateLocalNames = CollectDirectAggregateAliasCandidateLocalNames();
-        _constProvenanceLocalNames = CollectConstProvenanceLocalNames();
         _invariantLocalNames = CollectInvariantLocalNames();
         _tailCallResultNames = CollectTailCallResultNames(
             ssaFunction,
@@ -157,7 +176,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _assumptionsByBlock = BuildAssumptionsByBlock();
     }
 
-    public static bool MayEmitAssumeIntrinsic(SsaFunction function)
+    public static bool MayEmitAssumeIntrinsic(SsaFunction function, SsaFunctionFactModel? valueFacts = null)
     {
         if (function.SameGroups.Any(static group =>
                 group.ParameterNames.Distinct(StringComparer.Ordinal).Count() >= 2))
@@ -166,6 +185,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var valueDefinitions = CollectValueDefinitions(function);
+        if (MayEmitSeparateStorageAssume(function, valueDefinitions, valueFacts?.Values))
+        {
+            return true;
+        }
+
         var blockOrderById = CollectBlockOrder(function);
         var predecessorCounts = CountPredecessors(function);
 

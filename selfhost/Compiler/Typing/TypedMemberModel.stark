@@ -1,0 +1,797 @@
+export import Compiler.Typing.TypedMemberKinds
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedMemberModel
+
+public struct TypedMemberExpressionTable
+{
+    internal dynamic TypedMemberContext Contexts;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] MemberNodes;
+    internal dynamic u32[0 max] ReceiverNodes;
+    internal dynamic u32[0 max] MemberNameTokens;
+    internal dynamic TypedMemberReceiverKind ReceiverKinds;
+    internal dynamic u32[0 max] ReceiverDeclarationIndices;
+    internal dynamic u32[0 max] ReceiverNameTokens;
+    internal dynamic TypedSignatureTypeKind ReceiverTypeKinds;
+    internal dynamic u32[0 max] ReceiverTypeHeadTokens;
+    internal dynamic u32[0 max] ReceiverTypePrimaryTokens;
+    internal dynamic u32[0 max] ReceiverTypeStartTokens;
+    internal dynamic u32[0 max] ReceiverTypeEndTokens;
+    internal dynamic u32[0 max] ReceiverRangeStartTokens;
+    internal dynamic u32[0 max] ReceiverRangeEndTokens;
+    internal dynamic u32[0 max] ReceiverElementCountStartTokens;
+    internal dynamic u32[0 max] ReceiverElementCountEndTokens;
+    internal dynamic u32[0 max] ReceiverBitWidths;
+    internal dynamic u32[0 max] ReceiverTypeArgumentCounts;
+    internal dynamic u32[0 max] ReceiverComptimeArgumentCounts;
+    internal dynamic u32[0 max] ReceiverTypeFlags;
+    internal dynamic TypedMemberTargetKind TargetKinds;
+    internal dynamic u32[0 max] TargetDeclarationIndices;
+    internal dynamic u32[0 max] TargetSymbolIndices;
+    internal dynamic u32[0 max] TargetNameTokens;
+    internal dynamic u32[0 max] CandidateStarts;
+    internal dynamic u32[0 max] CandidateCounts;
+    internal dynamic u32[0 max] MemberFlags;
+    internal dynamic TypedSignatureTypeKind TypeKinds;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] RangeStartTokens;
+    internal dynamic u32[0 max] RangeEndTokens;
+    internal dynamic u32[0 max] ElementCountStartTokens;
+    internal dynamic u32[0 max] ElementCountEndTokens;
+    internal dynamic u32[0 max] BitWidths;
+    internal dynamic u32[0 max] TypeArgumentCounts;
+    internal dynamic u32[0 max] ComptimeArgumentCounts;
+    internal dynamic u32[0 max] TypeFlags;
+
+    internal dynamic u32[0 max] CandidateMemberIndices;
+    internal dynamic TypedMemberTargetKind CandidateKinds;
+    internal dynamic u32[0 max] CandidateSignatureIndices;
+    internal dynamic u32[0 max] CandidateNameTokens;
+    internal dynamic u32[0 max] CandidateParameterCounts;
+    internal dynamic TypedSignatureTypeKind CandidateReturnTypeKinds;
+    internal dynamic u32[0 max] CandidateReturnTypeHeadTokens;
+    internal dynamic u32[0 max] CandidateReturnTypePrimaryTokens;
+    internal dynamic u32[0 max] CandidateReturnTypeStartTokens;
+    internal dynamic u32[0 max] CandidateReturnTypeEndTokens;
+    internal dynamic u32[0 max] CandidateReturnRangeStartTokens;
+    internal dynamic u32[0 max] CandidateReturnRangeEndTokens;
+    internal dynamic u32[0 max] CandidateReturnElementCountStartTokens;
+    internal dynamic u32[0 max] CandidateReturnElementCountEndTokens;
+    internal dynamic u32[0 max] CandidateReturnBitWidths;
+    internal dynamic u32[0 max] CandidateReturnTypeArgumentCounts;
+    internal dynamic u32[0 max] CandidateReturnComptimeArgumentCounts;
+    internal dynamic u32[0 max] CandidateReturnTypeFlags;
+
+    TypedMemberExpressionTable()
+    {
+        self.Contexts = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.MemberNodes = new();
+        self.ReceiverNodes = new();
+        self.MemberNameTokens = new();
+        self.ReceiverKinds = new();
+        self.ReceiverDeclarationIndices = new();
+        self.ReceiverNameTokens = new();
+        self.ReceiverTypeKinds = new();
+        self.ReceiverTypeHeadTokens = new();
+        self.ReceiverTypePrimaryTokens = new();
+        self.ReceiverTypeStartTokens = new();
+        self.ReceiverTypeEndTokens = new();
+        self.ReceiverRangeStartTokens = new();
+        self.ReceiverRangeEndTokens = new();
+        self.ReceiverElementCountStartTokens = new();
+        self.ReceiverElementCountEndTokens = new();
+        self.ReceiverBitWidths = new();
+        self.ReceiverTypeArgumentCounts = new();
+        self.ReceiverComptimeArgumentCounts = new();
+        self.ReceiverTypeFlags = new();
+        self.TargetKinds = new();
+        self.TargetDeclarationIndices = new();
+        self.TargetSymbolIndices = new();
+        self.TargetNameTokens = new();
+        self.CandidateStarts = new();
+        self.CandidateCounts = new();
+        self.MemberFlags = new();
+        self.TypeKinds = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.RangeStartTokens = new();
+        self.RangeEndTokens = new();
+        self.ElementCountStartTokens = new();
+        self.ElementCountEndTokens = new();
+        self.BitWidths = new();
+        self.TypeArgumentCounts = new();
+        self.ComptimeArgumentCounts = new();
+        self.TypeFlags = new();
+
+        self.CandidateMemberIndices = new();
+        self.CandidateKinds = new();
+        self.CandidateSignatureIndices = new();
+        self.CandidateNameTokens = new();
+        self.CandidateParameterCounts = new();
+        self.CandidateReturnTypeKinds = new();
+        self.CandidateReturnTypeHeadTokens = new();
+        self.CandidateReturnTypePrimaryTokens = new();
+        self.CandidateReturnTypeStartTokens = new();
+        self.CandidateReturnTypeEndTokens = new();
+        self.CandidateReturnRangeStartTokens = new();
+        self.CandidateReturnRangeEndTokens = new();
+        self.CandidateReturnElementCountStartTokens = new();
+        self.CandidateReturnElementCountEndTokens = new();
+        self.CandidateReturnBitWidths = new();
+        self.CandidateReturnTypeArgumentCounts = new();
+        self.CandidateReturnComptimeArgumentCounts = new();
+        self.CandidateReturnTypeFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedMemberExpressionTable self)
+    {
+        return self.MemberNodes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] CandidateCount(borrow TypedMemberExpressionTable self)
+    {
+        return self.CandidateMemberIndices.Length;
+    }
+
+    public law TypedMemberContext ContextAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberContext context = TypedMemberContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] MemberNodeAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.MemberNodes.Length)
+        {
+            node = self.MemberNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] ReceiverNodeAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ReceiverNodes.Length)
+        {
+            node = self.ReceiverNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] MemberNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.MemberNameTokens.Length)
+        {
+            token = self.MemberNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedMemberReceiverKind ReceiverKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberReceiverKind kind = TypedMemberReceiverKind.Unknown;
+        if (index < self.ReceiverKinds.Length)
+        {
+            kind = self.ReceiverKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ReceiverDeclarationIndexAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.ReceiverDeclarationIndices.Length)
+        {
+            value = self.ReceiverDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ReceiverNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ReceiverNameTokens.Length)
+        {
+            token = self.ReceiverNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedSignatureTypeKind ReceiverTypeKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.ReceiverTypeKinds.Length)
+        {
+            kind = self.ReceiverTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ReceiverTypeHeadTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ReceiverTypeHeadTokens.Length)
+        {
+            token = self.ReceiverTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ReceiverTypePrimaryTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ReceiverTypePrimaryTokens.Length)
+        {
+            token = self.ReceiverTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ReceiverTypeFlagsAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ReceiverTypeFlags.Length)
+        {
+            flags = self.ReceiverTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law TypedMemberTargetKind TargetKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberTargetKind kind = TypedMemberTargetKind.Unknown;
+        if (index < self.TargetKinds.Length)
+        {
+            kind = self.TargetKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TargetDeclarationIndexAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetDeclarationIndices.Length)
+        {
+            value = self.TargetDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetSymbolIndexPlusOneAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetSymbolIndices.Length)
+        {
+            value = self.TargetSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetNameTokens.Length)
+        {
+            token = self.TargetNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateStartIndexPlusOneAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.CandidateStarts.Length)
+        {
+            value = self.CandidateStarts[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] CandidateCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.CandidateCounts.Length)
+        {
+            value = self.CandidateCounts[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] MemberFlagsAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.MemberFlags.Length)
+        {
+            flags = self.MemberFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law TypedSignatureTypeKind TypeKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TypeKinds.Length)
+        {
+            kind = self.TypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeStartTokens.Length)
+        {
+            token = self.RangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeEndTokens.Length)
+        {
+            token = self.RangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountStartTokens.Length)
+        {
+            token = self.ElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountEndTokens.Length)
+        {
+            token = self.ElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] BitWidthAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.BitWidths.Length)
+        {
+            width = self.BitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TypeArgumentCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TypeArgumentCounts.Length)
+        {
+            count = self.TypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ComptimeArgumentCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ComptimeArgumentCounts.Length)
+        {
+            count = self.ComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TypeFlagsAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TypeFlags.Length)
+        {
+            flags = self.TypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool ReceiverResolvedAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedMemberFlagPresent(self.MemberFlagsAt(index), TypedMemberFlagReceiverResolved());
+    }
+
+    public law bool IsResolvedAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedMemberFlagPresent(self.MemberFlagsAt(index), TypedMemberFlagResolved());
+    }
+
+    public law bool IsFieldAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedMemberFlagPresent(self.MemberFlagsAt(index), TypedMemberFlagField());
+    }
+
+    public law bool HasMethodCandidatesAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedMemberFlagPresent(self.MemberFlagsAt(index), TypedMemberFlagMethodCandidate());
+    }
+
+    public law bool IsIntegerSignedAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool IsIntegerUnsignedAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool HasIntegerRangeAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool RangeStartsAtMinAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeStartsAtMin());
+    }
+
+    public law bool RangeEndsAtMaxAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeEndsAtMax());
+    }
+
+    public law bool IsRawMutablePointerAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRawMutablePointer());
+    }
+
+    public law bool HasElementCountExpressionAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasElementCountExpression());
+    }
+
+    public law u32[0 max] CandidateMemberIndexPlusOneAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.CandidateMemberIndices.Length)
+        {
+            value = self.CandidateMemberIndices[index];
+        }
+
+        return value;
+    }
+
+    public law TypedMemberTargetKind CandidateKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberTargetKind kind = TypedMemberTargetKind.Unknown;
+        if (index < self.CandidateKinds.Length)
+        {
+            kind = self.CandidateKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] CandidateSignatureIndexPlusOneAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.CandidateSignatureIndices.Length)
+        {
+            value = self.CandidateSignatureIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] CandidateNameTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateNameTokens.Length)
+        {
+            token = self.CandidateNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateParameterCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CandidateParameterCounts.Length)
+        {
+            count = self.CandidateParameterCounts[index];
+        }
+
+        return count;
+    }
+
+    public law TypedSignatureTypeKind CandidateReturnTypeKindAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.CandidateReturnTypeKinds.Length)
+        {
+            kind = self.CandidateReturnTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] CandidateReturnTypeHeadTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnTypeHeadTokens.Length)
+        {
+            token = self.CandidateReturnTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnTypePrimaryTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnTypePrimaryTokens.Length)
+        {
+            token = self.CandidateReturnTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnTypeStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnTypeStartTokens.Length)
+        {
+            token = self.CandidateReturnTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnTypeEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnTypeEndTokens.Length)
+        {
+            token = self.CandidateReturnTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnRangeStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnRangeStartTokens.Length)
+        {
+            token = self.CandidateReturnRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnRangeEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnRangeEndTokens.Length)
+        {
+            token = self.CandidateReturnRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnElementCountStartTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnElementCountStartTokens.Length)
+        {
+            token = self.CandidateReturnElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnElementCountEndTokenAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CandidateReturnElementCountEndTokens.Length)
+        {
+            token = self.CandidateReturnElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CandidateReturnBitWidthAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.CandidateReturnBitWidths.Length)
+        {
+            width = self.CandidateReturnBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] CandidateReturnTypeArgumentCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CandidateReturnTypeArgumentCounts.Length)
+        {
+            count = self.CandidateReturnTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CandidateReturnComptimeArgumentCountAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CandidateReturnComptimeArgumentCounts.Length)
+        {
+            count = self.CandidateReturnComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CandidateReturnTypeFlagsAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.CandidateReturnTypeFlags.Length)
+        {
+            flags = self.CandidateReturnTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool CandidateReturnIsIntegerSignedAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.CandidateReturnTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool CandidateReturnHasIntegerRangeAt(borrow TypedMemberExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.CandidateReturnTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+
+}

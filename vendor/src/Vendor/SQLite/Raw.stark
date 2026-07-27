@@ -1,0 +1,739 @@
+import System.C
+import Vendor.SQLite.Types
+export import Vendor.SQLite.Types
+module Vendor.SQLite.Raw
+
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_libversion();
+public unsafe ffi(c) fn rawptr<System.C.c_char> stark_sqlite_version_variable();
+public unsafe ffi(c) fn rawptr<System.C.c_char> stark_sqlite_temp_directory();
+public unsafe ffi(c) fn rawptr<System.C.c_char> stark_sqlite_data_directory();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_set_temp_directory(rawptr<System.C.c_char> value);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_set_data_directory(rawptr<System.C.c_char> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_libversion_number();
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_sourceid();
+public unsafe ffi(c) fn System.C.c_int sqlite3_threadsafe();
+public unsafe ffi(c) fn System.C.c_int sqlite3_initialize();
+public unsafe ffi(c) fn System.C.c_int sqlite3_shutdown();
+public unsafe ffi(c) fn System.C.c_int sqlite3_os_init();
+public unsafe ffi(c) fn System.C.c_int sqlite3_os_end();
+public unsafe ffi(c) fn System.C.c_int sqlite3_global_recover();
+public unsafe ffi(c) fn void sqlite3_thread_cleanup();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory8_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory16_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory(
+    System.C.c_ulong directoryType,
+    rawptr<System.C.c_void> value);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory8(
+    System.C.c_ulong directoryType,
+    rawptr<System.C.c_char> value);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_win32_set_directory16(
+    System.C.c_ulong directoryType,
+    rawptr<System.C.c_void> value);
+public unsafe ffi varargs fn System.C.c_int sqlite3_config(System.C.c_int op);
+public unsafe ffi(c) fn System.C.c_int sqlite3_enable_shared_cache(System.C.c_int enabled);
+public unsafe ffi(c) fn System.C.c_int sqlite3_compileoption_used(rawptr<System.C.c_char> optionName);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_compileoption_get(System.C.c_int index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_keyword_count();
+public unsafe ffi(c) fn System.C.c_int sqlite3_keyword_name(
+    System.C.c_int index,
+    rawmutptr<rawptr<System.C.c_char>> name,
+    rawmutptr<System.C.c_int> length);
+public unsafe ffi(c) fn System.C.c_int sqlite3_keyword_check(rawptr<System.C.c_char> name, System.C.c_int length);
+public unsafe ffi(c) fn System.C.c_int sqlite3_complete(rawptr<System.C.c_char> sql);
+public unsafe ffi(c) fn System.C.c_int sqlite3_complete16(rawptr<System.C.c_void> sql);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_errstr(System.C.c_int code);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_errmsg(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_errmsg16(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_errcode(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_extended_errcode(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_error_offset(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_set_errmsg(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int errorCode,
+    rawptr<System.C.c_char> message);
+public unsafe ffi(c) fn System.C.c_int sqlite3_extended_result_codes(rawmutptr<SQLite3Native> database, System.C.c_int enabled);
+public unsafe ffi(c) fn System.C.c_int sqlite3_close(rawmutptr<SQLite3Native> database);
+public unsafe ffi varargs fn System.C.c_int sqlite3_db_config(rawmutptr<SQLite3Native> database, System.C.c_int op);
+public unsafe ffi(c) fn System.C.c_int sqlite3_busy_handler(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_busy_timeout(rawmutptr<SQLite3Native> database, System.C.c_int milliseconds);
+public unsafe ffi(c) fn System.C.c_int sqlite3_set_authorizer(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_trace(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_profile(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_trace_v2(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_uint mask,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn void sqlite3_progress_handler(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int instructionInterval,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_enable_load_extension(rawmutptr<SQLite3Native> database, System.C.c_int enabled);
+public unsafe ffi(c) fn System.C.c_int sqlite3_load_extension(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> fileName,
+    rawptr<System.C.c_char> entryPoint,
+    rawmutptr<rawmutptr<System.C.c_char>> errorMessage);
+public unsafe ffi(c) fn System.C.c_int sqlite3_auto_extension(rawptr<i8[min max]> entryPoint);
+public unsafe ffi(c) fn System.C.c_int sqlite3_cancel_auto_extension(rawptr<i8[min max]> entryPoint);
+public unsafe ffi(c) fn void sqlite3_reset_auto_extension();
+public unsafe ffi(c) fn System.C.c_int sqlite3_overload_function(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> functionName,
+    System.C.c_int argumentCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_file_control(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> databaseName,
+    System.C.c_int operation,
+    rawmutptr<System.C.c_void> argument);
+public unsafe ffi(c) fn rawmutptr<SQLite3FileNative> sqlite3_database_file_object(rawptr<System.C.c_char> filename);
+public unsafe ffi(c) fn rawmutptr<SQLite3VfsNative> sqlite3_vfs_find(rawptr<System.C.c_char> name);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vfs_register(rawmutptr<SQLite3VfsNative> vfs, System.C.c_int makeDefault);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vfs_unregister(rawmutptr<SQLite3VfsNative> vfs);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_module(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    rawptr<SQLite3ModuleNative> moduleHandle,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_module_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    rawptr<SQLite3ModuleNative> moduleHandle,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn System.C.c_int sqlite3_drop_modules(
+    rawmutptr<SQLite3Native> database,
+    rawptr<rawptr<System.C.c_char>> modulesToKeep);
+public unsafe ffi(c) fn System.C.c_int sqlite3_declare_vtab(rawmutptr<SQLite3Native> database, rawptr<System.C.c_char> sql);
+public unsafe ffi varargs fn System.C.c_int sqlite3_vtab_config(rawmutptr<SQLite3Native> database, System.C.c_int op);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_on_conflict(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_nochange(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_vtab_collation(
+    rawmutptr<SQLite3IndexInfoNative> indexInfo,
+    System.C.c_int constraintIndex);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_distinct(rawmutptr<SQLite3IndexInfoNative> indexInfo);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_in(
+    rawmutptr<SQLite3IndexInfoNative> indexInfo,
+    System.C.c_int constraintIndex,
+    System.C.c_int handleAllAtOnce);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_rhs_value(
+    rawmutptr<SQLite3IndexInfoNative> indexInfo,
+    System.C.c_int constraintIndex,
+    rawmutptr<rawmutptr<SQLite3ValueNative>> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_in_first(
+    rawmutptr<SQLite3ValueNative> values,
+    rawmutptr<rawmutptr<SQLite3ValueNative>> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_vtab_in_next(
+    rawmutptr<SQLite3ValueNative> values,
+    rawmutptr<rawmutptr<SQLite3ValueNative>> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_setlk_timeout(rawmutptr<SQLite3Native> database, System.C.c_int milliseconds, System.C.c_int flags);
+public unsafe ffi varargs fn void sqlite3_log(System.C.c_int errorCode, rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn System.C.c_int sqlite3_memory_alarm(
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData,
+    i64[min max] threshold);
+public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_mprintf(rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vmprintf(rawptr<System.C.c_char> format, System.C.VaList args);
+public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_snprintf(
+    System.C.c_int byteCount,
+    rawmutptr<System.C.c_char> buffer,
+    rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vsnprintf(
+    System.C.c_int byteCount,
+    rawmutptr<System.C.c_char> buffer,
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+public unsafe ffi varargs fn void sqlite3_str_appendf(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn void sqlite3_str_vappendf(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> format, System.C.VaList args);
+public unsafe ffi varargs fn System.C.c_int sqlite3_test_control(System.C.c_int operation);
+public unsafe ffi(c) fn System.C.c_int sqlite3_open(
+    rawptr<System.C.c_char> filename,
+    rawmutptr<rawmutptr<SQLite3Native>> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_open16(
+    rawptr<System.C.c_void> filename,
+    rawmutptr<rawmutptr<SQLite3Native>> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_open_v2(
+    rawptr<System.C.c_char> filename,
+    rawmutptr<rawmutptr<SQLite3Native>> database,
+    System.C.c_int flags,
+    rawptr<System.C.c_char> vfs);
+public unsafe ffi(c) fn System.C.c_int sqlite3_exec(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    rawptr<System.C.c_void> callback,
+    rawptr<System.C.c_void> callbackContext,
+    rawmutptr<rawmutptr<System.C.c_char>> errorMessage);
+public unsafe ffi(c) fn System.C.c_int sqlite3_get_table(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    rawmutptr<rawmutptr<System.C.c_void>> table,
+    rawmutptr<System.C.c_int> rowCount,
+    rawmutptr<System.C.c_int> columnCount,
+    rawmutptr<rawmutptr<System.C.c_char>> errorMessage);
+public unsafe ffi(c) fn rawptr<System.C.c_char> stark_sqlite_table_entry(
+    rawmutptr<System.C.c_void> table,
+    u64[0 max] index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    System.C.c_int byteCount,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_char>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    System.C.c_int byteCount,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_char>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare_v3(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    System.C.c_int byteCount,
+    System.C.c_uint prepFlags,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_char>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare16(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_void> sql,
+    System.C.c_int byteCount,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_void>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare16_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_void> sql,
+    System.C.c_int byteCount,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_void>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_prepare16_v3(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_void> sql,
+    System.C.c_int byteCount,
+    System.C.c_uint prepFlags,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_void>> tail);
+public unsafe ffi(c) fn System.C.c_int sqlite3_step(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_reset(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_clear_bindings(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_null(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_int(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, System.C.c_int value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_int64(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, i64[min max] value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_double(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, f64 value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_zeroblob(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_zeroblob64(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, u64[0 max] byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_value(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_pointer(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawmutptr<System.C.c_void> pointer,
+    rawptr<System.C.c_char> typeName,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_char> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text16_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text64_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_char> text,
+    u64[0 max] byteCount,
+    System.C.c_uint encoding);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_blob_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<u8[0 max]> data,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_blob64_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<u8[0 max]> data,
+    u64[0 max] byteCount);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_v2_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> data,
+    System.C.c_int count,
+    System.C.c_int flags);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_v2_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> data,
+    System.C.c_int count,
+    System.C.c_int flags);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_text_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> values,
+    System.C.c_int count);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_text_v2_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> values,
+    System.C.c_int count);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_blob_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> values,
+    System.C.c_int count);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_carray_bind_blob_v2_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_void> values,
+    System.C.c_int count);
+public unsafe ffi(c) fn void stark_sqlite_result_text_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_char> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void stark_sqlite_result_text16_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void stark_sqlite_result_text16le_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void stark_sqlite_result_text16be_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> text,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void stark_sqlite_result_text64_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_char> text,
+    u64[0 max] byteCount,
+    System.C.c_uint encoding);
+public unsafe ffi(c) fn void stark_sqlite_result_blob_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> data,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void stark_sqlite_result_blob64_transient(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> data,
+    u64[0 max] byteCount);
+public unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> stark_sqlite_function_argument(
+    SQLiteFunctionArguments values,
+    System.C.c_int index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_parameter_count(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_bind_parameter_index(rawmutptr<SQLite3StatementNative> statement, rawptr<System.C.c_char> name);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_bind_parameter_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_column_count(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_data_count(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_column_int(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn i64[min max] sqlite3_column_int64(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn f64 sqlite3_column_double(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_blob(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<u8[0 max]> sqlite3_column_text(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_text16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn System.C.c_int sqlite3_column_bytes(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn System.C.c_int sqlite3_column_bytes16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn System.C.c_int sqlite3_column_type(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> sqlite3_column_value(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_name16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_decltype(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_decltype16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_database_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_database_name16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_table_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_table_name16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_origin_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_origin_name16(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_sql(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_expanded_sql(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_normalized_sql_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_v2_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_normalized_sql(
+    rawmutptr<SQLite3StatementNative> statement,
+    rawmutptr<rawptr<System.C.c_char>> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_i64(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    System.C.c_int operation,
+    System.C.c_int flags,
+    rawmutptr<i64[min max]> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_int(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    System.C.c_int operation,
+    System.C.c_int flags,
+    rawmutptr<System.C.c_int> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_double(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    System.C.c_int operation,
+    System.C.c_int flags,
+    rawmutptr<f64> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_text(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    System.C.c_int operation,
+    System.C.c_int flags,
+    rawmutptr<rawptr<System.C.c_char>> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_stmt_scanstatus_reset(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_snapshot_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_snapshot_get(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schema,
+    rawmutptr<rawmutptr<SQLite3SnapshotNative>> snapshot);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_snapshot_open(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schema,
+    rawmutptr<SQLite3SnapshotNative> snapshot);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_snapshot_cmp(
+    rawmutptr<SQLite3SnapshotNative> left,
+    rawmutptr<SQLite3SnapshotNative> right,
+    rawmutptr<System.C.c_int> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_snapshot_recover(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schema);
+public unsafe ffi(c) fn System.C.c_int sqlite3_expired(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_transfer_bindings(rawmutptr<SQLite3StatementNative> source, rawmutptr<SQLite3StatementNative> destination);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stmt_readonly(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stmt_busy(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stmt_isexplain(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stmt_explain(rawmutptr<SQLite3StatementNative> statement, System.C.c_int mode);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stmt_status(rawmutptr<SQLite3StatementNative> statement, System.C.c_int operation, System.C.c_int resetFlag);
+public unsafe ffi(c) fn rawmutptr<SQLite3Native> sqlite3_db_handle(rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn i64[min max] sqlite3_last_insert_rowid(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn void sqlite3_set_last_insert_rowid(rawmutptr<SQLite3Native> database, i64[min max] rowId);
+public unsafe ffi(c) fn System.C.c_int sqlite3_changes(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn i64[min max] sqlite3_changes64(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_total_changes(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn i64[min max] sqlite3_total_changes64(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn void sqlite3_interrupt(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_is_interrupted(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_limit(rawmutptr<SQLite3Native> database, System.C.c_int id, System.C.c_int newValue);
+public unsafe ffi(c) fn System.C.c_int sqlite3_get_autocommit(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_db_name(rawmutptr<SQLite3Native> database, System.C.c_int index);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_db_filename(rawmutptr<SQLite3Native> database, rawptr<System.C.c_char> schemaName);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_filename_database(rawptr<System.C.c_char> filename);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_filename_journal(rawptr<System.C.c_char> filename);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_filename_wal(rawptr<System.C.c_char> filename);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_create_filename(
+    rawptr<System.C.c_char> databaseName,
+    rawptr<System.C.c_char> journalName,
+    rawptr<System.C.c_char> walName,
+    System.C.c_int parameterCount,
+    rawptr<System.C.c_void> parameters);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_uri_parameter(rawptr<System.C.c_char> filename, rawptr<System.C.c_char> parameterName);
+public unsafe ffi(c) fn System.C.c_int sqlite3_uri_boolean(rawptr<System.C.c_char> filename, rawptr<System.C.c_char> parameterName, System.C.c_int defaultValue);
+public unsafe ffi(c) fn i64[min max] sqlite3_uri_int64(rawptr<System.C.c_char> filename, rawptr<System.C.c_char> parameterName, i64[min max] defaultValue);
+public unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_uri_key(rawptr<System.C.c_char> filename, System.C.c_int index);
+public unsafe ffi(c) fn System.C.c_int sqlite3_db_readonly(rawmutptr<SQLite3Native> database, rawptr<System.C.c_char> schemaName);
+public unsafe ffi(c) fn System.C.c_int sqlite3_txn_state(rawmutptr<SQLite3Native> database, rawptr<System.C.c_char> schemaName);
+public unsafe ffi(c) fn rawmutptr<SQLite3StatementNative> sqlite3_next_stmt(rawmutptr<SQLite3Native> database, rawmutptr<SQLite3StatementNative> statement);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_commit_hook(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_rollback_hook(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_autovacuum_pages(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_update_hook(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_unlock_notify(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_db_release_memory(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_db_cacheflush(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn rawmutptr<SQLite3MutexNative> sqlite3_db_mutex(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn rawmutptr<SQLite3BackupNative> sqlite3_backup_init(
+    rawmutptr<SQLite3Native> destination,
+    rawptr<System.C.c_char> destinationName,
+    rawmutptr<SQLite3Native> source,
+    rawptr<System.C.c_char> sourceName);
+public unsafe ffi(c) fn System.C.c_int sqlite3_backup_step(rawmutptr<SQLite3BackupNative> backup, System.C.c_int pageCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_backup_remaining(rawmutptr<SQLite3BackupNative> backup);
+public unsafe ffi(c) fn System.C.c_int sqlite3_backup_pagecount(rawmutptr<SQLite3BackupNative> backup);
+public unsafe ffi(c) fn System.C.c_int sqlite3_blob_open(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schemaName,
+    rawptr<System.C.c_char> tableName,
+    rawptr<System.C.c_char> columnName,
+    i64[min max] rowId,
+    System.C.c_int flags,
+    rawmutptr<rawmutptr<SQLite3BlobNative>> blob);
+public unsafe ffi(c) fn System.C.c_int sqlite3_blob_reopen(rawmutptr<SQLite3BlobNative> blob, i64[min max] rowId);
+public unsafe ffi(c) fn System.C.c_int sqlite3_blob_bytes(rawmutptr<SQLite3BlobNative> blob);
+public unsafe ffi(c) fn System.C.c_int sqlite3_blob_read(
+    rawmutptr<SQLite3BlobNative> blob,
+    rawmutptr<System.C.c_void> destination,
+    System.C.c_int byteCount,
+    System.C.c_int offset);
+public unsafe ffi(c) fn System.C.c_int sqlite3_blob_write(
+    rawmutptr<SQLite3BlobNative> blob,
+    rawptr<System.C.c_void> source,
+    System.C.c_int byteCount,
+    System.C.c_int offset);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_malloc(System.C.c_int size);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_malloc64(u64[0 max] size);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_realloc(rawmutptr<System.C.c_void> memory, System.C.c_int size);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_realloc64(rawmutptr<System.C.c_void> memory, u64[0 max] size);
+public unsafe ffi(c) fn u64[0 max] sqlite3_msize(rawmutptr<System.C.c_void> memory);
+public unsafe ffi(c) fn rawmutptr<SQLite3MutexNative> sqlite3_mutex_alloc(System.C.c_int kind);
+public unsafe ffi(c) fn void sqlite3_mutex_enter(rawmutptr<SQLite3MutexNative> mutex);
+public unsafe ffi(c) fn System.C.c_int sqlite3_mutex_try(rawmutptr<SQLite3MutexNative> mutex);
+public unsafe ffi(c) fn void sqlite3_mutex_leave(rawmutptr<SQLite3MutexNative> mutex);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_mutex_held_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_mutex_notheld_available();
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_mutex_held(
+    rawmutptr<SQLite3MutexNative> mutex,
+    rawmutptr<System.C.c_int> output);
+public unsafe ffi(c) fn System.C.c_int stark_sqlite_mutex_notheld(
+    rawmutptr<SQLite3MutexNative> mutex,
+    rawmutptr<System.C.c_int> output);
+public unsafe ffi(c) fn rawmutptr<SQLite3StringNative> sqlite3_str_new(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_str_finish(rawmutptr<SQLite3StringNative> builder);
+public unsafe ffi(c) fn void sqlite3_str_append(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> value, System.C.c_int byteCount);
+public unsafe ffi(c) fn void sqlite3_str_appendall(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> value);
+public unsafe ffi(c) fn void sqlite3_str_appendchar(rawmutptr<SQLite3StringNative> builder, System.C.c_int count, System.C.c_char value);
+public unsafe ffi(c) fn void sqlite3_str_reset(rawmutptr<SQLite3StringNative> builder);
+public unsafe ffi(c) fn void sqlite3_str_truncate(rawmutptr<SQLite3StringNative> builder, System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_str_errcode(rawmutptr<SQLite3StringNative> builder);
+public unsafe ffi(c) fn System.C.c_int sqlite3_str_length(rawmutptr<SQLite3StringNative> builder);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_str_value(rawmutptr<SQLite3StringNative> builder);
+public unsafe ffi(c) fn rawmutptr<u8[0 max]> sqlite3_serialize(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schemaName,
+    rawmutptr<i64[min max]> byteCount,
+    System.C.c_uint flags);
+public unsafe ffi(c) fn System.C.c_int sqlite3_deserialize(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schemaName,
+    rawmutptr<u8[0 max]> data,
+    i64[min max] byteCount,
+    i64[min max] bufferSize,
+    System.C.c_uint flags);
+public unsafe ffi(c) fn System.C.c_int sqlite3_wal_autocheckpoint(rawmutptr<SQLite3Native> database, System.C.c_int pageCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_wal_checkpoint(rawmutptr<SQLite3Native> database, rawptr<System.C.c_char> schemaName);
+public unsafe ffi(c) fn System.C.c_int sqlite3_wal_checkpoint_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schemaName,
+    System.C.c_int mode,
+    rawmutptr<System.C.c_int> logFrameCount,
+    rawmutptr<System.C.c_int> checkpointedFrameCount);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_wal_hook(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_preupdate_hook(
+    rawmutptr<SQLite3Native> database,
+    rawptr<i8[min max]> callback,
+    rawmutptr<System.C.c_void> userData);
+public unsafe ffi(c) fn System.C.c_int sqlite3_preupdate_old(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int column,
+    rawmutptr<rawmutptr<SQLite3ValueNative>> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_preupdate_new(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int column,
+    rawmutptr<rawmutptr<SQLite3ValueNative>> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_preupdate_count(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_preupdate_depth(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_preupdate_blobwrite(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn i64[min max] sqlite3_memory_used();
+public unsafe ffi(c) fn i64[min max] sqlite3_memory_highwater(System.C.c_int resetFlag);
+public unsafe ffi(c) fn System.C.c_int sqlite3_release_memory(System.C.c_int byteCount);
+public unsafe ffi(c) fn void sqlite3_soft_heap_limit(System.C.c_int limit);
+public unsafe ffi(c) fn i64[min max] sqlite3_soft_heap_limit64(i64[min max] limit);
+public unsafe ffi(c) fn i64[min max] sqlite3_hard_heap_limit64(i64[min max] limit);
+public unsafe ffi(c) fn void sqlite3_randomness(System.C.c_int byteCount, rawmutptr<System.C.c_void> destination);
+public unsafe ffi(c) fn System.C.c_int sqlite3_sleep(System.C.c_int milliseconds);
+public unsafe ffi(c) fn System.C.c_int sqlite3_stricmp(rawptr<System.C.c_char> left, rawptr<System.C.c_char> right);
+public unsafe ffi(c) fn System.C.c_int sqlite3_strnicmp(rawptr<System.C.c_char> left, rawptr<System.C.c_char> right, System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_strglob(rawptr<System.C.c_char> pattern, rawptr<System.C.c_char> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_strlike(rawptr<System.C.c_char> pattern, rawptr<System.C.c_char> value, System.C.c_uint escape);
+public unsafe ffi(c) fn System.C.c_int sqlite3_system_errno(rawmutptr<SQLite3Native> database);
+public unsafe ffi(c) fn System.C.c_int sqlite3_status(
+    System.C.c_int operation,
+    rawmutptr<System.C.c_int> current,
+    rawmutptr<System.C.c_int> highWater,
+    System.C.c_int resetFlag);
+public unsafe ffi(c) fn System.C.c_int sqlite3_status64(
+    System.C.c_int operation,
+    rawmutptr<i64[min max]> current,
+    rawmutptr<i64[min max]> highWater,
+    System.C.c_int resetFlag);
+public unsafe ffi(c) fn System.C.c_int sqlite3_db_status(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int operation,
+    rawmutptr<System.C.c_int> current,
+    rawmutptr<System.C.c_int> highWater,
+    System.C.c_int resetFlag);
+public unsafe ffi(c) fn System.C.c_int sqlite3_db_status64(
+    rawmutptr<SQLite3Native> database,
+    System.C.c_int operation,
+    rawmutptr<i64[min max]> current,
+    rawmutptr<i64[min max]> highWater,
+    System.C.c_int resetFlag);
+public unsafe ffi(c) fn System.C.c_int sqlite3_table_column_metadata(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> schemaName,
+    rawptr<System.C.c_char> tableName,
+    rawptr<System.C.c_char> columnName,
+    rawmutptr<rawptr<System.C.c_char>> dataType,
+    rawmutptr<rawptr<System.C.c_char>> collation,
+    rawmutptr<System.C.c_int> notNull,
+    rawmutptr<System.C.c_int> primaryKey,
+    rawmutptr<System.C.c_int> autoIncrement);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_collation(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> compare);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_collation_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> compare,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_collation16(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_void> name,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> compare);
+public unsafe ffi(c) fn System.C.c_int sqlite3_collation_needed(
+    rawmutptr<SQLite3Native> database,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> callback);
+public unsafe ffi(c) fn System.C.c_int sqlite3_collation_needed16(
+    rawmutptr<SQLite3Native> database,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> callback);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_function(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    System.C.c_int argumentCount,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> callback,
+    rawptr<System.C.c_void> step,
+    rawptr<System.C.c_void> finalizer);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_function16(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_void> name,
+    System.C.c_int argumentCount,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> callback,
+    rawptr<System.C.c_void> step,
+    rawptr<System.C.c_void> finalizer);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_function_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    System.C.c_int argumentCount,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> callback,
+    rawptr<System.C.c_void> step,
+    rawptr<System.C.c_void> finalizer,
+    rawptr<System.C.c_void> destroy);
+public unsafe ffi(c) fn System.C.c_int sqlite3_create_window_function(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    System.C.c_int argumentCount,
+    System.C.c_int textRepresentation,
+    rawmutptr<System.C.c_void> userData,
+    rawptr<i8[min max]> step,
+    rawptr<i8[min max]> finalizer,
+    rawptr<i8[min max]> value,
+    rawptr<i8[min max]> inverse,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_aggregate_context(
+    rawmutptr<SQLite3ContextNative> context,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_aggregate_count(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_user_data(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn rawmutptr<SQLite3Native> sqlite3_context_db_handle(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_get_auxdata(rawmutptr<SQLite3ContextNative> context, System.C.c_int argumentIndex);
+public unsafe ffi(c) fn void sqlite3_set_auxdata(
+    rawmutptr<SQLite3ContextNative> context,
+    System.C.c_int argumentIndex,
+    rawmutptr<System.C.c_void> data,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_get_clientdata(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name);
+public unsafe ffi(c) fn System.C.c_int sqlite3_set_clientdata(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> name,
+    rawmutptr<System.C.c_void> data,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_value_blob(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn f64 sqlite3_value_double(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_int(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn i64[min max] sqlite3_value_int64(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_value_pointer(rawmutptr<SQLite3ValueNative> value, rawptr<System.C.c_char> typeName);
+public unsafe ffi(c) fn rawptr<u8[0 max]> sqlite3_value_text(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_value_text16(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_value_text16le(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_value_text16be(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_bytes(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_bytes16(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_type(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_numeric_type(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_nochange(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_frombind(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_int sqlite3_value_encoding(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn System.C.c_uint sqlite3_value_subtype(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> sqlite3_value_dup(rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn void sqlite3_result_double(rawmutptr<SQLite3ContextNative> context, f64 value);
+public unsafe ffi(c) fn void sqlite3_result_error(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_char> message,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void sqlite3_result_error16(
+    rawmutptr<SQLite3ContextNative> context,
+    rawptr<System.C.c_void> message,
+    System.C.c_int byteCount);
+public unsafe ffi(c) fn void sqlite3_result_error_code(rawmutptr<SQLite3ContextNative> context, System.C.c_int code);
+public unsafe ffi(c) fn void sqlite3_result_error_nomem(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn void sqlite3_result_error_toobig(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn void sqlite3_result_int(rawmutptr<SQLite3ContextNative> context, System.C.c_int value);
+public unsafe ffi(c) fn void sqlite3_result_int64(rawmutptr<SQLite3ContextNative> context, i64[min max] value);
+public unsafe ffi(c) fn void sqlite3_result_null(rawmutptr<SQLite3ContextNative> context);
+public unsafe ffi(c) fn void sqlite3_result_pointer(
+    rawmutptr<SQLite3ContextNative> context,
+    rawmutptr<System.C.c_void> pointer,
+    rawptr<System.C.c_char> typeName,
+    rawptr<i8[min max]> destroy);
+public unsafe ffi(c) fn void sqlite3_result_subtype(rawmutptr<SQLite3ContextNative> context, System.C.c_uint subtype);
+public unsafe ffi(c) fn void sqlite3_result_value(rawmutptr<SQLite3ContextNative> context, rawmutptr<SQLite3ValueNative> value);
+public unsafe ffi(c) fn void sqlite3_result_zeroblob(rawmutptr<SQLite3ContextNative> context, System.C.c_int byteCount);
+public unsafe ffi(c) fn System.C.c_int sqlite3_result_zeroblob64(rawmutptr<SQLite3ContextNative> context, u64[0 max] byteCount);

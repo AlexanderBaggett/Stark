@@ -222,8 +222,112 @@ internal sealed class SsaIrValidator
             if (TryResolveSystemRuntimeBuiltin(function, out var runtimeBuiltin))
             {
                 ValidateSystemRuntimeBuiltinContract(function, runtimeBuiltin);
+                continue;
+            }
+
+            if (TryResolveSystemThreadingAtomicBuiltin(function, out var atomicBuiltin))
+            {
+                ValidateSystemThreadingAtomicBuiltinContract(function, atomicBuiltin);
             }
         }
+    }
+
+    private bool TryResolveSystemThreadingAtomicBuiltin(
+        TypedFunctionSignature function,
+        out SystemThreadingAtomicBuiltin builtin)
+    {
+        return SystemThreadingAtomicFacts.TryGetAtomicBuiltin(CurrentModuleName, function.DisplaySourceName, out builtin)
+            || SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName: string.Empty, function.Name, out builtin);
+    }
+
+    /// <summary>
+    /// Validates one System.Threading atomic builtin declaration against the contract the
+    /// LLVM lowering relies on (doc 12 §5): operation arity, a borrowed atomic-struct
+    /// receiver (mutable for mutating operations), value-typed operands, the right return
+    /// type, and the value stored as the struct's single storage field at offset 0.
+    /// </summary>
+    private void ValidateSystemThreadingAtomicBuiltinContract(
+        TypedFunctionSignature function,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var expectedParameterCount = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Load => 1,
+            SystemThreadingAtomicOperation.CompareExchange => 3,
+            _ => 2
+        };
+
+        if (function.Parameters.Count != expectedParameterCount)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' expects exactly {expectedParameterCount} parameter(s) including the receiver.");
+            return;
+        }
+
+        var receiverType = function.Parameters[0].Type;
+        if (receiverType.Kind != StarkTypeKind.Named
+            || receiverType.BorrowKind != StarkBorrowKind.Borrow
+            || !IsSystemThreadingAtomicReceiverTypeName(receiverType.NamedType, builtin.AtomicTypeName))
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' must take 'borrow {builtin.AtomicTypeName} self' as its first parameter.");
+            return;
+        }
+
+        if (builtin.Operation != SystemThreadingAtomicOperation.Load && !receiverType.IsMutableView)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' mutates the value and must take 'mut borrow {builtin.AtomicTypeName} self'.");
+            return;
+        }
+
+        if (ResolveNamedTypeSymbol(receiverType) is { } atomicStructType
+            && !SystemThreadingAtomicFacts.HasValidAtomicFieldLayout(atomicStructType, builtin))
+        {
+            ReportBuiltin(function, SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+            return;
+        }
+
+        foreach (var parameter in function.Parameters.Skip(1))
+        {
+            if (!IsSystemThreadingAtomicValueType(parameter.Type, builtin))
+            {
+                ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' parameter '{parameter.Name}' must match the atomic value type.");
+                return;
+            }
+        }
+
+        var returnTypeIsValid = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Store => function.ReturnType.Kind == StarkTypeKind.Void,
+            SystemThreadingAtomicOperation.CompareExchange => function.ReturnType.Kind == StarkTypeKind.Bool,
+            _ => IsSystemThreadingAtomicValueType(function.ReturnType, builtin)
+        };
+
+        if (!returnTypeIsValid)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' has the wrong return type for operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static bool IsSystemThreadingAtomicReceiverTypeName(string? namedType, string atomicTypeName)
+    {
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(namedType, atomicTypeName, StringComparison.Ordinal)
+            || string.Equals(namedType, SystemThreadingAtomicFacts.ModuleName + "." + atomicTypeName, StringComparison.Ordinal);
+    }
+
+    private static bool IsSystemThreadingAtomicValueType(StarkTypeSymbol type, SystemThreadingAtomicBuiltin builtin)
+    {
+        if (builtin.IsBool)
+        {
+            return type.Kind == StarkTypeKind.Bool;
+        }
+
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth == builtin.ValueBitWidth
+            && type.IsUnsigned == builtin.IsUnsigned;
     }
 
     private IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures()
@@ -257,11 +361,26 @@ internal sealed class SsaIrValidator
                 functions[strategy.SymbolName] = FunctionOverloadFacts.InstantiateSignature(
                     templateSignature,
                     strategy.TypeArguments,
-                    strategy.SymbolName);
+                    strategy.SymbolName,
+                    ResolveAssociatedTypeForValidation,
+                    strategy.ComptimeValueArguments);
             }
         }
 
         return functions;
+    }
+
+    private StarkTypeSymbol? ResolveAssociatedTypeForValidation(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            _namedTypes,
+            out var targetType)
+                ? targetType
+                : null;
     }
 
     private bool IsOpenGenericBuiltinSignature(TypedFunctionSignature function)
@@ -641,7 +760,11 @@ internal sealed class SsaIrValidator
             }
         }
 
-        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        if (!SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                _typeModel?.Overloads ?? new Dictionary<string, IReadOnlyList<TypedFunctionSignature>>(StringComparer.Ordinal),
+                out _,
+                out _))
         {
             ReportBuiltin(function, $"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
             return;
@@ -777,7 +900,94 @@ internal sealed class SsaIrValidator
                 ValidateInstruction(function, instruction, valueDefinitions, localDefinitions, currentAbi);
             }
 
-            ValidateTerminator(function, block.Terminator, blockIds, valueDefinitions);
+            ValidateTerminator(function, block.Terminator, blockIds, valueDefinitions, localDefinitions, currentAbi);
+        }
+
+        ValidateArenaFrameShape(function);
+    }
+
+    private void ValidateArenaFrameShape(SsaFunction function)
+    {
+        var usesArenaFrame = false;
+        var enterCount = 0;
+        var leaveCount = 0;
+
+        foreach (var block in function.Blocks)
+        {
+            for (var index = 0; index < block.Instructions.Count; index++)
+            {
+                var instruction = block.Instructions[index];
+                switch (instruction)
+                {
+                    case SsaArenaFrameEnterInstruction enter:
+                        enterCount++;
+                        if (block.Id != function.EntryBlockId)
+                        {
+                            Report(function, enter.Location, "arena frame enter must be emitted in the entry block.");
+                        }
+
+                        if (index != 0)
+                        {
+                            Report(function, enter.Location, "arena frame enter must be the first SSA instruction in the entry block.");
+                        }
+
+                        break;
+                    case SsaArenaFrameLeaveInstruction leave:
+                        leaveCount++;
+                        if (block.Terminator.Kind != SsaTerminatorKind.Return)
+                        {
+                            Report(function, leave.Location, "arena frame leave must be emitted only in blocks that return.");
+                        }
+
+                        if (index != block.Instructions.Count - 1)
+                        {
+                            Report(function, leave.Location, "arena frame leave must be the final SSA instruction before return.");
+                        }
+
+                        break;
+                    case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                        usesArenaFrame = true;
+                        break;
+                }
+            }
+        }
+
+        if (!usesArenaFrame)
+        {
+            return;
+        }
+
+        if (enterCount != 1)
+        {
+            Report(function, function.Location, $"arena-using function must emit exactly one arena frame enter, found {enterCount}.");
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            if (block.Terminator.Kind == SsaTerminatorKind.Return)
+            {
+                if (block.Instructions.LastOrDefault() is not SsaArenaFrameLeaveInstruction)
+                {
+                    Report(function, block.Terminator.Location, "arena-using return block must end with arena frame leave before return.");
+                }
+
+                continue;
+            }
+
+            if (block.Terminator.Kind == SsaTerminatorKind.TailCall)
+            {
+                Report(function, block.Terminator.Location, "arena-using function cannot lower a tail call while arena frame cleanup is pending.");
+            }
+        }
+
+        var returnBlockCount = function.Blocks.Count(static block => block.Terminator.Kind == SsaTerminatorKind.Return);
+        if (leaveCount != returnBlockCount)
+        {
+            Report(function, function.Location, $"arena-using function must emit one arena frame leave per return block, found {leaveCount} leave(s) for {returnBlockCount} return block(s).");
         }
     }
 
@@ -975,12 +1185,15 @@ internal sealed class SsaIrValidator
             switch (abiParameter.Kind)
             {
                 case AbiParameterKind.Direct:
-                    ValidateValueShape(
-                        function,
-                        abiParameter.SourceType,
-                        abiParameter.LlvmType,
-                        $"function '{function.Name}' ABI parameter {index + 1} direct LLVM type",
-                        location);
+                    if (!CAbiAggregateClassifier.IsCarrierType(abiParameter.SourceType, abiParameter.LlvmType))
+                    {
+                        ValidateValueShape(
+                            function,
+                            abiParameter.SourceType,
+                            abiParameter.LlvmType,
+                            $"function '{function.Name}' ABI parameter {index + 1} direct LLVM type",
+                            location);
+                    }
                     break;
                 case AbiParameterKind.IndirectIn:
                     ValidateRawPointerType(function, abiParameter.LlvmType, $"function '{function.Name}' ABI parameter {index + 1} indirect LLVM type", location);
@@ -1004,6 +1217,11 @@ internal sealed class SsaIrValidator
             return;
         }
 
+        if (CAbiAggregateClassifier.IsCarrierType(function.ReturnType, llvmReturnType))
+        {
+            return;
+        }
+
         Report(function, location, $"{usage} type '{llvmReturnType.DisplayName}' does not match expected LLVM value shape '{function.ReturnType.DisplayName}'.");
     }
 
@@ -1017,9 +1235,11 @@ internal sealed class SsaIrValidator
         switch (instruction)
         {
             case SsaValueInstruction valueInstruction:
+                ValidateScopedNoAliasGroups(function, valueInstruction.ScopedNoAliasGroups, valueInstruction.Location);
                 ValidateRValue(function, valueInstruction.Value, valueDefinitions, localDefinitions, currentAbi, valueInstruction.Location);
                 break;
             case SsaCallInstruction call:
+                ValidateScopedNoAliasGroups(function, call.ScopedNoAliasGroups, call.Location);
                 foreach (var argument in call.Arguments)
                 {
                     ValidateValue(function, argument, valueDefinitions, call.Location);
@@ -1029,6 +1249,7 @@ internal sealed class SsaIrValidator
                 ValidateDirectCall(function, call, localDefinitions, currentAbi, call.Location);
                 break;
             case SsaIndirectCallInstruction indirectCall:
+                ValidateScopedNoAliasGroups(function, indirectCall.ScopedNoAliasGroups, indirectCall.Location);
                 ValidateValue(function, indirectCall.Target, valueDefinitions, indirectCall.Location);
                 foreach (var argument in indirectCall.Arguments)
                 {
@@ -1039,7 +1260,7 @@ internal sealed class SsaIrValidator
                 ValidateIndirectCall(function, indirectCall, localDefinitions, currentAbi, indirectCall.Location);
                 break;
             case SsaAllocateLocalInstruction allocateLocal:
-                if (allocateLocal.StorageClass is not ("stack" or "match" or "heap"))
+                if (allocateLocal.StorageClass is not ("stack" or "match" or "heap" or "arena"))
                 {
                     Report(function, allocateLocal.Location, $"local '{allocateLocal.LocalName}' has invalid storage class '{allocateLocal.StorageClass}'.");
                 }
@@ -1059,11 +1280,15 @@ internal sealed class SsaIrValidator
                 }
 
                 break;
+            case SsaArenaFrameEnterInstruction:
+            case SsaArenaFrameLeaveInstruction:
+                break;
             case SsaStoreLocalInstruction storeLocal:
                 ValidateLocalExists(function, storeLocal.LocalName, localDefinitions, storeLocal.Location);
                 ValidateValue(function, storeLocal.Value, valueDefinitions, storeLocal.Location);
                 break;
             case SsaStoreIndirectInstruction storeIndirect:
+                ValidateScopedNoAliasGroups(function, storeIndirect.ScopedNoAliasGroups, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Address, valueDefinitions, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Value, valueDefinitions, storeIndirect.Location);
                 ValidateRawPointerValue(function, storeIndirect.Address, "indirect store address", storeIndirect.Location);
@@ -1071,6 +1296,7 @@ internal sealed class SsaIrValidator
                 ValidateValueShape(function, storeIndirect.ValueType, storeIndirect.Value.Type, "indirect store value", storeIndirect.Location);
                 break;
             case SsaCopyMemoryInstruction copyMemory:
+                ValidateScopedNoAliasGroups(function, copyMemory.ScopedNoAliasGroups, copyMemory.Location);
                 ValidateValue(function, copyMemory.DestinationAddress, valueDefinitions, copyMemory.Location);
                 ValidateValue(function, copyMemory.SourceAddress, valueDefinitions, copyMemory.Location);
                 ValidateRawPointerValue(function, copyMemory.DestinationAddress, "copy destination address", copyMemory.Location);
@@ -1087,6 +1313,163 @@ internal sealed class SsaIrValidator
                 Report(function, null, $"unsupported SSA instruction type '{instruction.GetType().Name}' reached validation.");
                 break;
         }
+    }
+
+    private void ValidateScopedNoAliasGroups(
+        SsaFunction function,
+        IReadOnlyList<ScopedNoAliasGroup>? groups,
+        SourceLocation? fallbackLocation)
+    {
+        if (groups is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var seenScopeIds = new HashSet<string>(StringComparer.Ordinal);
+        var parameterNames = function.Parameters
+            .Select(static parameter => parameter.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var group in groups)
+        {
+            var proof = group.ProofCarrier;
+            var location = proof?.Location ?? fallbackLocation;
+            if (string.IsNullOrWhiteSpace(group.ScopeId))
+            {
+                Report(function, location, "scoped noalias group is missing a scope id.");
+            }
+            else if (!seenScopeIds.Add(group.ScopeId))
+            {
+                Report(function, location, $"scoped noalias group '{group.ScopeId}' is attached more than once to the same SSA instruction.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, group.ScopeId, group.RootKeys, location, "scoped noalias group");
+
+            if (proof is null)
+            {
+                Report(function, fallbackLocation, $"scoped noalias group '{group.ScopeId}' is missing its alias proof carrier.");
+                continue;
+            }
+
+            if (!Enum.IsDefined(typeof(AliasProofCarrierKind), proof.Kind))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' has unknown proof kind '{(int)proof.Kind}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(proof.ProofId))
+            {
+                Report(function, location, "alias proof carrier is missing a proof id.");
+            }
+            else if (!string.Equals(proof.ProofId, group.ScopeId, StringComparison.Ordinal))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' does not match scoped noalias group '{group.ScopeId}'.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, proof.ProofId, proof.RootKeys, location, "alias proof carrier");
+
+            if (!RootSetsEqual(group.RootKeys, proof.RootKeys))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' roots do not match scoped noalias group '{group.ScopeId}' roots.");
+            }
+        }
+    }
+
+    private void ValidateAliasProofRoots(
+        SsaFunction function,
+        ISet<string> parameterNames,
+        string proofId,
+        IReadOnlyList<string> rootKeys,
+        SourceLocation? location,
+        string usage)
+    {
+        var roots = rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .ToArray();
+        var distinctRoots = roots
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (roots.Length < 2)
+        {
+            Report(function, location, $"{usage} '{proofId}' must name at least two memory roots.");
+        }
+
+        if (roots.Length != rootKeys.Count || distinctRoots.Length != roots.Length)
+        {
+            Report(function, location, $"{usage} '{proofId}' contains blank or duplicate memory roots.");
+        }
+
+        foreach (var root in distinctRoots)
+        {
+            if (!IsValidAliasProofRootKey(root))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses invalid memory-root key '{root}'.");
+                continue;
+            }
+
+            if (!TryGetAliasProofParameterName(root, out var parameterName)
+                || !parameterNames.Contains(parameterName))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses unknown parameter memory-root key '{root}'.");
+            }
+        }
+    }
+
+    private static bool RootSetsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        var leftRoots = CanonicalAliasProofRoots(left);
+        var rightRoots = CanonicalAliasProofRoots(right);
+        return leftRoots.SequenceEqual(rightRoots, StringComparer.Ordinal);
+    }
+
+    private static string[] CanonicalAliasProofRoots(IReadOnlyList<string> rootKeys)
+    {
+        return rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static rootKey => rootKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool IsValidAliasProofRootKey(string rootKey)
+    {
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var suffixStart = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (suffixStart < 0)
+        {
+            return rootKey.Length > "param:".Length;
+        }
+
+        return suffixStart > "param:".Length
+            && rootKey.EndsWith(']')
+            && rootKey.Length > suffixStart + 2;
+    }
+
+    private static bool TryGetAliasProofParameterName(string rootKey, out string parameterName)
+    {
+        parameterName = string.Empty;
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var nameStart = "param:".Length;
+        var nameEnd = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (nameEnd < 0)
+        {
+            nameEnd = rootKey.Length;
+        }
+
+        if (nameEnd <= nameStart)
+        {
+            return false;
+        }
+
+        parameterName = rootKey[nameStart..nameEnd];
+        return true;
     }
 
     private void ValidateRValue(
@@ -1369,6 +1752,20 @@ internal sealed class SsaIrValidator
             case SsaLoadLocalRValue loadLocal:
                 ValidateLocalExists(function, loadLocal.LocalName, localDefinitions, location);
                 break;
+            case SsaDynVTableSlotRValue vtableSlot:
+                ValidateValue(function, vtableSlot.VtablePointer, valueDefinitions, location);
+                ValidateRawPointerValue(function, vtableSlot.VtablePointer, "dyn vtable slot base", location);
+                if (vtableSlot.SlotIndex < 0)
+                {
+                    Report(function, location, $"dyn vtable slot index '{vtableSlot.SlotIndex}' must be non-negative.");
+                }
+
+                if (vtableSlot.Type.Kind != StarkTypeKind.FunctionPointer)
+                {
+                    Report(function, location, $"dyn vtable slot result must be a function pointer, but found '{vtableSlot.Type.DisplayName}'.");
+                }
+
+                break;
             default:
                 Report(function, location, $"unsupported SSA rvalue type '{value.GetType().Name}' reached validation.");
                 break;
@@ -1491,6 +1888,7 @@ internal sealed class SsaIrValidator
                 or StarkTypeKind.Ascii
                 or StarkTypeKind.Unicode,
             IndexedElementOperationFamily.ClosureComponent => normalizedType.Kind == StarkTypeKind.Closure,
+            IndexedElementOperationFamily.DynTraitComponent => normalizedType.Kind == StarkTypeKind.DynTrait,
             _ => false
         };
 
@@ -1535,9 +1933,37 @@ internal sealed class SsaIrValidator
             StarkTypeKind.FixedArray => TryGetFixedArrayElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Dynamic => TryGetDynamicStorageElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             StarkTypeKind.Closure => TryGetClosureElementType(function, aggregateType, index, usage, location, out elementType),
+            StarkTypeKind.DynTrait => TryGetDynTraitElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Named => TryGetNamedAggregateElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             _ => ReportInvalidAggregateElementAccess(function, aggregateType, usage, "aggregate or view", location)
         };
+    }
+
+    // The fat-pointer components of a `dyn Trait` value: slot 0 is the erased data
+    // pointer (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
+    private bool TryGetDynTraitElementType(
+        SsaFunction function,
+        StarkTypeSymbol aggregateType,
+        int index,
+        string usage,
+        SourceLocation? location,
+        out StarkTypeSymbol elementType)
+    {
+        elementType = index switch
+        {
+            0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            1 => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(aggregateType),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (index is 0 or 1)
+        {
+            return true;
+        }
+
+        Report(function, location, $"{usage} index {index} is out of range for trait object '{aggregateType.DisplayName}'.");
+        return false;
     }
 
     private bool TryGetClosureElementType(
@@ -1845,19 +2271,44 @@ internal sealed class SsaIrValidator
         AbiFunctionSignature? currentAbi,
         SourceLocation? location)
     {
-        if (call.Target.Type.FunctionPointerReturnType is null
-            || call.Target.Type.FunctionPointerParameterTypes is null)
+        if (!TryBuildIndirectCallAbi(function, call, location, out var abiCallee))
         {
-            Report(function, location, "indirect call target is missing function-pointer ABI metadata.");
             return;
         }
 
-        if (call.Target.Type.FunctionPointerParameterTypes.Count != call.Arguments.Count)
+        var parameterTypes = call.Target.Type.FunctionPointerParameterTypes!;
+        if (parameterTypes.Count != call.Arguments.Count)
         {
             Report(
                 function,
                 location,
-                $"indirect call argument count mismatch: expected {call.Target.Type.FunctionPointerParameterTypes.Count}, got {call.Arguments.Count}.");
+                $"indirect call argument count mismatch: expected {parameterTypes.Count}, got {call.Arguments.Count}.");
+        }
+
+        ValidateCallArgumentAbi(
+            function,
+            "indirect call",
+            call.Arguments,
+            abiCallee,
+            call.IndirectArgumentAddresses,
+            call.IndirectArgumentLocalNames,
+            localDefinitions,
+            currentAbi,
+            location);
+    }
+
+    private bool TryBuildIndirectCallAbi(
+        SsaFunction function,
+        ISsaIndirectCallOperation call,
+        SourceLocation? location,
+        out AbiFunctionSignature abiCallee)
+    {
+        if (call.Target.Type.FunctionPointerReturnType is null
+            || call.Target.Type.FunctionPointerParameterTypes is null)
+        {
+            Report(function, location, "indirect call target is missing function-pointer ABI metadata.");
+            abiCallee = null!;
+            return false;
         }
 
         var signature = new TypedFunctionSignature(
@@ -1872,25 +2323,18 @@ internal sealed class SsaIrValidator
                         index)))
                 .ToArray(),
             Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: call.Target.Type.FunctionPointerIsTailCallable,
             DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
-        var abiCallee = LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
+            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: call.Target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
+        abiCallee = LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
             "$indirect",
             isFfi: false,
             _namedTypes,
             _enumLayouts);
-        ValidateCallArgumentAbi(
-            function,
-            "indirect call",
-            call.Arguments,
-            abiCallee,
-            call.IndirectArgumentAddresses,
-            call.IndirectArgumentLocalNames,
-            localDefinitions,
-            currentAbi,
-            location);
+        return true;
     }
 
     private void ValidateCallArity(
@@ -2061,7 +2505,9 @@ internal sealed class SsaIrValidator
         SsaFunction function,
         SsaTerminator terminator,
         ISet<int> blockIds,
-        ISet<string> valueDefinitions)
+        ISet<string> valueDefinitions,
+        IReadOnlyDictionary<string, StarkTypeSymbol> localDefinitions,
+        AbiFunctionSignature? currentAbi)
     {
         foreach (var target in terminator.Targets)
         {
@@ -2166,12 +2612,168 @@ internal sealed class SsaIrValidator
                 }
 
                 break;
+            case SsaTerminatorKind.TailCall:
+                if (terminator.Targets.Count != 0)
+                {
+                    Report(function, terminator.Location, $"tail-call terminator requires zero targets, but found {terminator.Targets.Count}.");
+                }
+
+                if (terminator.TailDirectCall is null && terminator.TailIndirectCall is null)
+                {
+                    Report(function, terminator.Location, "tail-call terminator is missing its call operation.");
+                    break;
+                }
+
+                if (terminator.TailDirectCall is not null && terminator.TailIndirectCall is not null)
+                {
+                    Report(function, terminator.Location, "tail-call terminator cannot carry both direct and indirect call operations.");
+                    break;
+                }
+
+                if (terminator.TailDirectCall is { } directTailCall)
+                {
+                    foreach (var argument in directTailCall.Arguments)
+                    {
+                        ValidateValue(function, argument, valueDefinitions, terminator.Location);
+                    }
+
+                    ValidateOptionalValues(function, directTailCall.IndirectArgumentAddresses, valueDefinitions, terminator.Location);
+                    ValidateDirectCall(function, directTailCall, localDefinitions, currentAbi, terminator.Location);
+                    if (_abiModel.Functions.TryGetValue(directTailCall.FunctionName, out var directTailCalleeAbi))
+                    {
+                        ValidateMustTailAbi(function, currentAbi, directTailCalleeAbi, directTailCall.Text, terminator.Location);
+                    }
+
+                    ValidateTailCallResult(function, directTailCall.Type, terminator.Location);
+                }
+                else if (terminator.TailIndirectCall is { } indirectTailCall)
+                {
+                    ValidateValue(function, indirectTailCall.Target, valueDefinitions, terminator.Location);
+                    foreach (var argument in indirectTailCall.Arguments)
+                    {
+                        ValidateValue(function, argument, valueDefinitions, terminator.Location);
+                    }
+
+                    ValidateOptionalValues(function, indirectTailCall.IndirectArgumentAddresses, valueDefinitions, terminator.Location);
+                    ValidateIndirectCall(function, indirectTailCall, localDefinitions, currentAbi, terminator.Location);
+                    if (TryBuildIndirectCallAbi(function, indirectTailCall, terminator.Location, out var indirectTailCalleeAbi))
+                    {
+                        ValidateMustTailAbi(function, currentAbi, indirectTailCalleeAbi, indirectTailCall.Text, terminator.Location);
+                    }
+
+                    ValidateTailCallResult(function, indirectTailCall.Type, terminator.Location);
+                }
+
+                break;
             case SsaTerminatorKind.Unreachable:
                 break;
             default:
                 Report(function, terminator.Location, $"unsupported SSA terminator kind '{terminator.Kind}' reached validation.");
                 break;
         }
+    }
+
+    private void ValidateTailCallResult(
+        SsaFunction function,
+        StarkTypeSymbol resultType,
+        SourceLocation? location)
+    {
+        if (function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            if (resultType.Kind != StarkTypeKind.Void)
+            {
+                Report(function, location, $"void tail-call terminator carries result type '{resultType.DisplayName}'.");
+            }
+
+            return;
+        }
+
+        if (resultType.Kind == StarkTypeKind.Void)
+        {
+            Report(function, location, $"tail-call terminator is missing return value for function return type '{function.ReturnType.DisplayName}'.");
+            return;
+        }
+
+        if (!IsReturnCompatible(function.ReturnType, resultType))
+        {
+            Report(function, location, $"tail-call result type '{resultType.DisplayName}' cannot be assigned to function return type '{function.ReturnType.DisplayName}'.");
+        }
+    }
+
+    private void ValidateMustTailAbi(
+        SsaFunction function,
+        AbiFunctionSignature? callerAbi,
+        AbiFunctionSignature calleeAbi,
+        string callText,
+        SourceLocation? location)
+    {
+        if (callerAbi is null)
+        {
+            Report(function, location, $"tail call '{callText}' is missing caller ABI lowering.");
+            return;
+        }
+
+        if (!callerAbi.UsesTailCallingConvention)
+        {
+            Report(function, location, $"tail call '{callText}' requires caller '{function.Name}' to lower with tailcc.");
+        }
+
+        if (!calleeAbi.UsesTailCallingConvention)
+        {
+            Report(function, location, $"tail call '{callText}' targets a function that did not lower with tailcc.");
+        }
+
+        if (calleeAbi.IsFfi || calleeAbi.IsVarargs || calleeAbi.FfiAbi is not null)
+        {
+            Report(function, location, $"tail call '{callText}' targets an FFI or varargs ABI.");
+        }
+
+        if (callerAbi.ReturnsIndirect)
+        {
+            Report(function, location, $"tail call '{callText}' is inside caller '{function.Name}' with an indirect-return ABI shape.");
+        }
+
+        if (calleeAbi.ReturnsIndirect)
+        {
+            Report(function, location, $"tail call '{callText}' targets an indirect-return ABI shape.");
+        }
+
+        foreach (var parameter in calleeAbi.UserParameters.Where(IsUnsupportedMustTailParameter))
+        {
+            Report(function, location, $"tail call '{callText}' targets parameter '{parameter.SourceName}' of type '{parameter.SourceType.DisplayName}' with a hidden indirect ABI shape.");
+        }
+
+        var callerReturnType = MapValidationLlvmType(callerAbi.LlvmReturnType);
+        var calleeReturnType = MapValidationLlvmType(calleeAbi.LlvmReturnType);
+        if (!string.Equals(callerReturnType, calleeReturnType, StringComparison.Ordinal))
+        {
+            Report(function, location, $"tail call '{callText}' return ABI '{calleeAbi.LlvmReturnType.DisplayName}' does not match caller return ABI '{callerAbi.LlvmReturnType.DisplayName}'.");
+        }
+
+        var callerParameters = callerAbi.UserParameters;
+        var calleeParameters = calleeAbi.UserParameters;
+        if (callerParameters.Count != calleeParameters.Count)
+        {
+            Report(function, location, $"tail call '{callText}' has {calleeParameters.Count} ABI parameter(s), but caller '{function.Name}' has {callerParameters.Count}.");
+            return;
+        }
+
+        for (var index = 0; index < callerParameters.Count; index++)
+        {
+            var callerType = MapValidationLlvmType(callerParameters[index].LlvmType);
+            var calleeType = MapValidationLlvmType(calleeParameters[index].LlvmType);
+            if (!string.Equals(callerType, calleeType, StringComparison.Ordinal))
+            {
+                Report(function, location, $"tail call '{callText}' ABI parameter {index + 1} type '{calleeParameters[index].LlvmType.DisplayName}' does not match caller parameter type '{callerParameters[index].LlvmType.DisplayName}'.");
+            }
+        }
+    }
+
+    private static bool IsUnsupportedMustTailParameter(AbiParameterSymbol parameter)
+    {
+        return parameter.Kind != AbiParameterKind.Direct
+            && (parameter.Kind != AbiParameterKind.IndirectIn
+                || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter));
     }
 
     private void ValidateSwitchConditionType(
@@ -2455,6 +3057,20 @@ internal sealed class SsaIrValidator
             && !valueDefinitions.Contains(reference.Name))
         {
             Report(function, location, $"value reference '%{reference.Name}' is not defined in this SSA function.");
+            if (Environment.GetEnvironmentVariable("STARK_DEBUG_SSA_VALIDATE") == "1")
+            {
+                Console.Error.WriteLine($"[ssa-validate-debug] function '{function.Name}' missing '%{reference.Name}'; blocks:");
+                foreach (var debugBlock in function.Blocks)
+                {
+                    var names = debugBlock.Phis.Select(static phi => phi.ResultName)
+                        .Concat(debugBlock.Instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.ResultName));
+                    Console.Error.WriteLine($"  block {debugBlock.Id} '{debugBlock.Label}': defs [{string.Join(", ", names)}] terminator {debugBlock.Terminator.Kind} -> [{string.Join(", ", debugBlock.Terminator.Targets)}]");
+                    foreach (var debugPhi in debugBlock.Phis)
+                    {
+                        Console.Error.WriteLine($"    phi {debugPhi.ResultName}: {string.Join(", ", debugPhi.Incomings.Select(static incoming => $"[{(incoming.Value is SsaValueReference r ? "%" + r.Name : incoming.Value.GetType().Name)} from {incoming.PredecessorBlockId}]"))}");
+                    }
+                }
+            }
         }
 
         switch (value)
@@ -2546,6 +3162,13 @@ internal sealed class SsaIrValidator
         SsaGlobalAddressValue globalAddress,
         SourceLocation? location)
     {
+        // Synthesized trait-object vtables are emitted by the module surface emitter,
+        // not the user/global type model, so they are not in the known-global set.
+        if (DynTraitFacts.IsVtableGlobalName(globalAddress.GlobalName))
+        {
+            return;
+        }
+
         if (!TryGetKnownGlobal(function, globalAddress.GlobalName, "global address", location, out var global))
         {
             return;
@@ -2759,7 +3382,6 @@ internal sealed class SsaIrValidator
         SourceLocation? location)
     {
         var aggregateType = NormalizeType(elementAddress.AggregateType);
-        var expectedElementType = aggregateType;
         if (aggregateType.Kind == StarkTypeKind.FixedArray)
         {
             if (aggregateType.ElementType is not { } fixedArrayElementType)
@@ -2768,10 +3390,24 @@ internal sealed class SsaIrValidator
                 return;
             }
 
-            expectedElementType = fixedArrayElementType;
+            // A fixed-array aggregate type reaches element addressing two ways:
+            // indexing into a fixed array (result pointee is the array element)
+            // and addressing an element of dynamic or raw storage whose element
+            // type is itself a fixed array (result pointee is the whole array).
+            // Accept either pointee shape.
+            if (elementAddress.Type.Kind == StarkTypeKind.RawPointer
+                && elementAddress.Type.ElementType is { } pointeeType
+                && (HaveSameLlvmValueShape(fixedArrayElementType, pointeeType)
+                    || HaveSameLlvmValueShape(aggregateType, pointeeType)))
+            {
+                return;
+            }
+
+            ValidatePointerElementShape(function, elementAddress.Type, fixedArrayElementType, "element address result", location);
+            return;
         }
 
-        ValidatePointerElementShape(function, elementAddress.Type, expectedElementType, "element address result", location);
+        ValidatePointerElementShape(function, elementAddress.Type, aggregateType, "element address result", location);
     }
 
     private void ValidateRawPointerValue(
@@ -3119,6 +3755,11 @@ internal sealed class SsaIrValidator
 
     private void ValidateConversion(SsaFunction function, SsaConvertRValue convert, SourceLocation? location)
     {
+        if (IsPointerBackedBorrowRuntimePointerConversion(convert.Operand.Type, convert.TargetType))
+        {
+            return;
+        }
+
         var sourceType = NormalizeType(convert.Operand.Type);
         var targetType = NormalizeType(convert.TargetType);
         if (HaveSameLlvmValueShape(sourceType, targetType))
@@ -3149,6 +3790,10 @@ internal sealed class SsaIrValidator
                 return;
             case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.RawPointer:
                 return;
+            case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.FunctionPointer:
+                return;
+            case StarkTypeKind.FunctionPointer when targetType.Kind == StarkTypeKind.RawPointer:
+                return;
             case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.Integer:
                 ValidateConcreteIntegerType(function, targetType, "conversion target", location);
                 return;
@@ -3156,6 +3801,27 @@ internal sealed class SsaIrValidator
                 Report(function, location, $"conversion from '{convert.Operand.Type.DisplayName}' to '{convert.TargetType.DisplayName}' is not supported by SSA LLVM emission.");
                 return;
         }
+    }
+
+    private static bool IsPointerBackedBorrowRuntimePointerConversion(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(sourceType)
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.ElementType is { } targetElementType)
+        {
+            return HaveSameLlvmValueShape(StarkTypeSymbols.BorrowReturnValueType(sourceType), targetElementType);
+        }
+
+        if (sourceType.Kind == StarkTypeKind.RawPointer
+            && sourceType.ElementType is { } sourceElementType
+            && StarkTypeSymbols.IsPointerBackedBorrowType(targetType))
+        {
+            return HaveSameLlvmValueShape(sourceElementType, StarkTypeSymbols.BorrowReturnValueType(targetType));
+        }
+
+        return false;
     }
 
     private void ValidateConcreteIntegerType(
@@ -3267,8 +3933,13 @@ internal sealed class SsaIrValidator
             return true;
         }
 
-        return normalized.ClosureParameterTypes is { Count: > 0 }
-            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder);
+        if (normalized.ClosureParameterTypes is { Count: > 0 }
+            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder))
+        {
+            return true;
+        }
+
+        return normalized.Kind == StarkTypeKind.AssociatedType;
     }
 
     private string CurrentModuleName => _typeModel?.ModuleName ?? _ssa.ModuleName;
@@ -3627,6 +4298,48 @@ internal sealed class SsaIrValidator
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)
     {
         return LlvmAggregateEmissionSupport.ResolveNamedTypeSymbol(type, _namedTypes);
+    }
+
+    private string MapValidationLlvmType(StarkTypeSymbol type)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return "ptr";
+        }
+
+        return NormalizeType(type).Kind switch
+        {
+            StarkTypeKind.Void => "void",
+            StarkTypeKind.Bool => "i1",
+            StarkTypeKind.Integer => $"i{type.BitWidth}",
+            StarkTypeKind.Float when type.BitWidth == 16 => "half",
+            StarkTypeKind.Float when type.BitWidth == 32 => "float",
+            StarkTypeKind.Float when type.BitWidth == 64 => "double",
+            StarkTypeKind.Float when type.BitWidth == 80 => "x86_fp80",
+            StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => "ptr",
+            StarkTypeKind.LlvmVector when type.ElementType is not null && type.FixedLength is int vectorLength => $"<{vectorLength} x {MapValidationLlvmType(type.ElementType)}>",
+            StarkTypeKind.LlvmStruct when type.TypeArguments is { Count: > 0 } fields => $"{{ {string.Join(", ", fields.Select(MapValidationLlvmType))} }}",
+            StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
+                ? "{ ptr, ptr, ptr }"
+                : "{ ptr, ptr }",
+            StarkTypeKind.DynTrait => "{ ptr, ptr }",
+            StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapValidationLlvmType(type.ElementType)}]",
+            StarkTypeKind.Slice => "{ ptr, i64 }",
+            StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",
+            StarkTypeKind.Ascii => "%ascii",
+            StarkTypeKind.Unicode => "%unicode",
+            StarkTypeKind.Named when type.NamedType is not null
+                                     && _namedTypes.TryGetValue(type.NamedType, out var namedType)
+                                     && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                         || (namedType.Kind == DeclarationKind.Enum && _enumLayouts.ContainsKey(namedType.Name)))
+                => $"%{type.NamedType}",
+            StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { } resolvedNamedType
+                                     && LlvmAggregateEmissionSupport.TryGetScalarizableNamedAggregateFields(resolvedNamedType, _enumLayouts, out var orderedFields)
+                => $"{{ {string.Join(", ", orderedFields.Select(field => MapValidationLlvmType(field.Type)))} }}",
+            StarkTypeKind.Named => "ptr",
+            _ => "ptr"
+        };
     }
 
     private static string DescribeAsmArchitecture(StarkAsmArchitecture architecture)

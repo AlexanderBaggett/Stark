@@ -1,0 +1,408 @@
+import Compiler.Ir
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.Model
+import Compiler.Ssa
+module SsaFoundationTests
+
+
+internal fn bool BuildGeneratedMirFacts(
+    borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> facts)
+{
+    stack mut IrTable<ValueFacts> parameterFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> returnFacts = new();
+    return BuildMirValueRangeFacts(
+        instructions,
+        parameterFacts,
+        facts,
+        globalFacts,
+        returnFacts);
+}
+
+internal fn bool AddMirFactRowsForFourValues(
+    borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> facts)
+{
+    if (!BuildGeneratedMirFacts(instructions, facts))
+    {
+        return false;
+    }
+
+    stack mut ValueFacts rich = facts.Get(1);
+    rich.SetCallingAbi(AbiKind.CAbi);
+    rich.MarkVolatile();
+    rich.SetTextConstant(7, 11, 13, 9, 2);
+    return facts.Replace(1, rich);
+}
+
+public fn bool DenseMirToSsaLoweringPreservesArtifactsAndEveryValueFact()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack MirValueId pointer = MirStackAlloc(mirInstructions, 64, 32);
+    stack MirValueId left = MirConstInt(mirInstructions, 20);
+    stack MirValueId right = MirConstInt(mirInstructions, 22);
+    stack MirValueId sum = MirAdd(mirInstructions, left, right);
+
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnBlock(mirBlocks, sum);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId function = MirDefineFunction(mirFunctions, entry, entry, 1, pointer, 4);
+
+    stack mut IrTable<ValueFacts> mirFacts = new();
+    if (!AddMirFactRowsForFourValues(mirInstructions, mirFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    if (!LowerMirModuleToSsa(
+        mirInstructions,
+        mirBlocks,
+        mirFunctions,
+        mirFacts,
+        ssaInstructions,
+        ssaBlocks,
+        ssaFunctions,
+        ssaFacts))
+    {
+        return false;
+    }
+
+    stack SsaInstruction loweredSum = ssaInstructions.Get(sum.Index());
+    stack SsaBlock loweredEntry = ssaBlocks.Get(entry.Index());
+    stack SsaFunction loweredFunction = ssaFunctions.Get(function.Index());
+    stack ValueFacts loweredFacts = ValueFactsForSsaValue(ssaFacts, SsaValueIdOf(pointer.Index()));
+    return ssaInstructions.Count() == 4
+        && ssaBlocks.Count() == 1
+        && ssaFunctions.Count() == 1
+        && ssaFacts.Count() == 4
+        && loweredSum.Opcode() == MirOp.Add
+        && loweredSum.OperandA().Index() == left.Index()
+        && loweredSum.OperandB().Index() == right.Index()
+        && loweredSum.OriginMirValueId().Index() == sum.Index()
+        && loweredEntry.Terminator() == MirTermKind.Return
+        && loweredEntry.Slot0Index() == sum.Index()
+        && loweredEntry.OriginMirBlockId().Index() == entry.Index()
+        && loweredFunction.EntryBlock().Index() == entry.Index()
+        && loweredFunction.FirstBlockIndex() == entry.Index()
+        && loweredFunction.OwnedBlockCount() == 1
+        && loweredFunction.FirstInstructionIndex() == pointer.Index()
+        && loweredFunction.OwnedInstructionCount() == 4
+        && loweredFunction.OriginMirFunctionId().Index() == function.Index()
+        && loweredFacts.HasAlignment()
+        && loweredFacts.AlignmentBytes() == 32
+        && loweredFacts.HasCallingAbi()
+        && loweredFacts.CallingAbi() == AbiKind.CAbi
+        && loweredFacts.HasNoAlias()
+        && loweredFacts.Volatile()
+        && loweredFacts.KnownNonNull()
+        && loweredFacts.HasTextConstant()
+        && loweredFacts.TextConstantRowIndex() == 7
+        && loweredFacts.TextConstantPayloadStart() == 11
+        && loweredFacts.TextConstantPayloadByteLength() == 13
+        && loweredFacts.TextConstantCodePointLength() == 9
+        && loweredFacts.TextConstantStorageEncodingCode() == 2;
+}
+
+public fn bool MirToSsaRejectsMissingValueFactRowsBeforeProducingArtifacts()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack MirValueId value = MirConstInt(mirInstructions, 1);
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnBlock(mirBlocks, value);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId function = MirDefineFunction(mirFunctions, entry, entry, 1, value, 1);
+    stack mut IrTable<ValueFacts> missingFacts = new();
+
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    return function.IsValid()
+        && !MirModuleCanLowerToSsa(mirInstructions, mirBlocks, mirFunctions, missingFacts)
+        && !LowerMirModuleToSsa(
+            mirInstructions,
+            mirBlocks,
+            mirFunctions,
+            missingFacts,
+            ssaInstructions,
+            ssaBlocks,
+            ssaFunctions,
+            ssaFacts)
+        && ssaInstructions.IsEmpty()
+        && ssaBlocks.IsEmpty()
+        && ssaFunctions.IsEmpty()
+        && ssaFacts.IsEmpty();
+}
+
+public fn bool MirToSsaRejectsMalformedFunctionRanges()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack MirValueId value = MirConstInt(mirInstructions, 1);
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnBlock(mirBlocks, value);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId malformed = MirDefineFunction(
+        mirFunctions,
+        MirBlockIdOf(99),
+        entry,
+        1,
+        value,
+        1);
+    stack mut IrTable<ValueFacts> mirFacts = new();
+    stack mut ValueFacts empty = new();
+    if (mirFacts.Add(empty) != 1)
+    {
+        return false;
+    }
+
+    return malformed.IsValid()
+        && !MirModuleCanLowerToSsa(mirInstructions, mirBlocks, mirFunctions, mirFacts);
+}
+
+public fn bool MirToSsaPreservesBodylessDeclarationRows()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId declaration = MirDefineFunction(
+        mirFunctions,
+        MirBlockIdOf(0),
+        MirBlockIdOf(0),
+        0,
+        MirValueIdOf(0),
+        0);
+    stack mut IrTable<ValueFacts> mirFacts = new();
+
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    if (!LowerMirModuleToSsa(
+        mirInstructions,
+        mirBlocks,
+        mirFunctions,
+        mirFacts,
+        ssaInstructions,
+        ssaBlocks,
+        ssaFunctions,
+        ssaFacts))
+    {
+        return false;
+    }
+
+    stack SsaFunction lowered = ssaFunctions.Get(declaration.Index());
+    return declaration.IsValid()
+        && ssaInstructions.IsEmpty()
+        && ssaBlocks.IsEmpty()
+        && ssaFunctions.Count() == 1
+        && ssaFacts.IsEmpty()
+        && !lowered.EntryBlock().IsValid()
+        && lowered.OwnedBlockCount() == 0
+        && lowered.OwnedInstructionCount() == 0
+        && lowered.OriginMirFunctionId().Index() == declaration.Index();
+}
+
+public fn bool MirToSsaReportsTypedBinaryMismatchBeforePublishingOutputs()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack MirValueId left = MirConstIntTyped(mirInstructions, MirType.I32, 1);
+    stack MirValueId right = MirConstIntTyped(mirInstructions, MirType.I64, 2);
+    stack MirValueId sum = MirAddTyped(mirInstructions, MirType.I64, left, right);
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnBlock(mirBlocks, sum);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId function = MirDefineFunction(mirFunctions, entry, entry, 1, left, 3);
+    stack mut IrTable<ValueFacts> mirFacts = new();
+    if (!BuildGeneratedMirFacts(mirInstructions, mirFacts))
+    {
+        return false;
+    }
+
+    stack mut SsaValidationStatus status = SsaValidationStatus.Ok;
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    return function.IsValid()
+        && !LowerMirModuleToSsaChecked(
+            mirInstructions,
+            mirBlocks,
+            mirFunctions,
+            mirFacts,
+            status,
+            ssaInstructions,
+            ssaBlocks,
+            ssaFunctions,
+            ssaFacts)
+        && status == SsaValidationStatus.OperandTypeMismatch
+        && ssaInstructions.IsEmpty()
+        && ssaBlocks.IsEmpty()
+        && ssaFunctions.IsEmpty()
+        && ssaFacts.IsEmpty();
+}
+
+public fn bool MirToSsaReportsMissingBlockInstructionRangesBeforePublishingOutputs()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack MirValueId value = MirConstInt(mirInstructions, 1);
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnBlock(mirBlocks, value);
+    stack MirBlockId second = MirReturnBlock(mirBlocks, value);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId function = MirDefineFunction(mirFunctions, entry, entry, 2, value, 1);
+    stack mut IrTable<ValueFacts> mirFacts = new();
+    if (!BuildGeneratedMirFacts(mirInstructions, mirFacts))
+    {
+        return false;
+    }
+
+    stack mut SsaValidationStatus status = SsaValidationStatus.Ok;
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    return function.IsValid()
+        && second.IsValid()
+        && !LowerMirModuleToSsaChecked(
+            mirInstructions,
+            mirBlocks,
+            mirFunctions,
+            mirFacts,
+            status,
+            ssaInstructions,
+            ssaBlocks,
+            ssaFunctions,
+            ssaFacts)
+        && status == SsaValidationStatus.BlockInstructionRangesRequired
+        && ssaInstructions.IsEmpty()
+        && ssaBlocks.IsEmpty()
+        && ssaFunctions.IsEmpty()
+        && ssaFacts.IsEmpty();
+}
+
+public fn bool MirToSsaRejectsInvalidBackendFactsAndConditionTypes()
+{
+    stack mut IrTable<MirInstruction> factInstructions = new();
+    stack MirValueId pointer = MirStackAlloc(factInstructions, 16, 8);
+    stack mut IrTable<MirBlock> factBlocks = new();
+    stack MirBlockId factEntry = MirReturnBlock(factBlocks, pointer);
+    stack mut IrTable<MirFunction> factFunctions = new();
+    stack MirFuncId factFunction = MirDefineFunction(factFunctions, factEntry, factEntry, 1, pointer, 1);
+    stack mut IrTable<ValueFacts> invalidFacts = new();
+    if (!BuildGeneratedMirFacts(factInstructions, invalidFacts))
+    {
+        return false;
+    }
+
+    stack mut ValueFacts invalidAlignment = invalidFacts.Get(1);
+    invalidAlignment.SetAlignment(3);
+    if (!invalidFacts.Replace(1, invalidAlignment))
+    {
+        return false;
+    }
+
+    stack mut SsaValidationStatus factStatus = SsaValidationStatus.Ok;
+    stack mut IrTable<SsaInstruction> factSsaInstructions = new();
+    stack mut IrTable<SsaBlock> factSsaBlocks = new();
+    stack mut IrTable<SsaFunction> factSsaFunctions = new();
+    stack mut IrTable<ValueFacts> factSsaFacts = new();
+    if (LowerMirModuleToSsaChecked(
+            factInstructions,
+            factBlocks,
+            factFunctions,
+            invalidFacts,
+            factStatus,
+            factSsaInstructions,
+            factSsaBlocks,
+            factSsaFunctions,
+            factSsaFacts)
+        || factStatus != SsaValidationStatus.BackendFactValueInvalid)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> branchInstructions = new();
+    stack MirValueId condition = MirConstInt(branchInstructions, 1);
+    stack mut IrTable<MirBlock> branchBlocks = new();
+    stack MirBlockId branchEntry = MirCondBlock(
+        branchBlocks,
+        condition,
+        MirBlockIdOf(1),
+        MirBlockIdOf(1));
+    stack mut IrTable<MirFunction> branchFunctions = new();
+    stack MirFuncId branchFunction = MirDefineFunction(
+        branchFunctions,
+        branchEntry,
+        branchEntry,
+        1,
+        condition,
+        1);
+    stack mut IrTable<ValueFacts> branchFacts = new();
+    if (!BuildGeneratedMirFacts(branchInstructions, branchFacts))
+    {
+        return false;
+    }
+
+    stack mut SsaValidationStatus branchStatus = SsaValidationStatus.Ok;
+    stack mut IrTable<SsaInstruction> branchSsaInstructions = new();
+    stack mut IrTable<SsaBlock> branchSsaBlocks = new();
+    stack mut IrTable<SsaFunction> branchSsaFunctions = new();
+    stack mut IrTable<ValueFacts> branchSsaFacts = new();
+    return factFunction.IsValid()
+        && branchFunction.IsValid()
+        && !LowerMirModuleToSsaChecked(
+            branchInstructions,
+            branchBlocks,
+            branchFunctions,
+            branchFacts,
+            branchStatus,
+            branchSsaInstructions,
+            branchSsaBlocks,
+            branchSsaFunctions,
+            branchSsaFacts)
+        && branchStatus == SsaValidationStatus.ConditionTypeMismatch;
+}
+
+public fn bool MirToSsaPreservesZeroInstructionReturnVoidBody()
+{
+    stack mut IrTable<MirInstruction> mirInstructions = new();
+    stack mut IrTable<MirBlock> mirBlocks = new();
+    stack MirBlockId entry = MirReturnVoidBlock(mirBlocks);
+    stack mut IrTable<MirFunction> mirFunctions = new();
+    stack MirFuncId function = MirDefineFunction(
+        mirFunctions,
+        entry,
+        entry,
+        1,
+        MirValueIdOf(0),
+        0);
+    stack mut IrTable<ValueFacts> mirFacts = new();
+
+    stack mut SsaValidationStatus status = SsaValidationStatus.FunctionRangeInvalid;
+    stack mut IrTable<SsaInstruction> ssaInstructions = new();
+    stack mut IrTable<SsaBlock> ssaBlocks = new();
+    stack mut IrTable<SsaFunction> ssaFunctions = new();
+    stack mut IrTable<ValueFacts> ssaFacts = new();
+    return function.IsValid()
+        && LowerMirModuleToSsaChecked(
+            mirInstructions,
+            mirBlocks,
+            mirFunctions,
+            mirFacts,
+            status,
+            ssaInstructions,
+            ssaBlocks,
+            ssaFunctions,
+            ssaFacts)
+        && status == SsaValidationStatus.Ok
+        && ssaInstructions.IsEmpty()
+        && ssaBlocks.Count() == 1
+        && ssaFunctions.Count() == 1
+        && ssaFacts.IsEmpty();
+}

@@ -1,0 +1,36 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedAssignmentExpressionIntegrationTests
+
+// Ported from PackageImageTypedAssignmentExpressionIntegrationTests.ManifestBackedTypedAssignmentExpressionsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedAssignmentExpressionsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed typed assignment expression bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkgimg-typed-assignment-expression-manifest-backed",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Observe(7, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max] current = 1;
+    return current += value;
+}
+""",
+            "Facade.Observe",
+            "",
+            8);
+    }
+}

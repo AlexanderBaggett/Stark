@@ -1,0 +1,17 @@
+struct Pair
+{
+    i64[min max] A;
+    i64[min max] B;
+
+    Pair()
+    {
+        self.A = 3;
+        self.B = 4;
+    }
+}
+
+export fn i64[min max] main()
+{
+    stack Pair pair = new();
+    return pair.A + pair.B;
+}

@@ -1,0 +1,548 @@
+import System.C
+import System.Memory
+module Vendor.STB.Image
+
+public const StbImageMaxNativeInputLength = 2147483647;
+
+public enum ImageChannels
+{
+    Original,
+    Gray,
+    GrayAlpha,
+    Rgb,
+    Rgba,
+}
+
+public enum StbImageError
+{
+    Memory(System.Memory.MemoryError),
+    SourceTooLarge,
+    InvalidArgument,
+    InvalidDimensions,
+    UnsupportedChannels,
+    DestinationTooSmall,
+    DecodeFailed,
+    EncodeFailed,
+    ResizeFailed,
+}
+
+public enum StbImageStatus
+{
+    [Ok] Ok,
+    [Err] Err(StbImageError),
+}
+
+public struct Image
+{
+    u32[0 max] WidthValue;
+    u32[0 max] HeightValue;
+    u8[0 4] ChannelCount;
+    dynamic u8[0 max] PixelBytes;
+
+    Image()
+    {
+        self.WidthValue = 0;
+        self.HeightValue = 0;
+        self.ChannelCount = 0;
+        self.PixelBytes = new();
+    }
+
+    public inline finite law u32[0 max] Width(borrow Image self)
+    {
+        return self.WidthValue;
+    }
+
+    public inline finite law u32[0 max] Height(borrow Image self)
+    {
+        return self.HeightValue;
+    }
+
+    public inline finite law u8[0 4] Channels(borrow Image self)
+    {
+        return self.ChannelCount;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] PixelByteLength(borrow Image self)
+    {
+        return self.PixelBytes.Length;
+    }
+
+    public inline finite law bool IsEmpty(borrow Image self)
+    {
+        return self.PixelBytes.Length == 0;
+    }
+
+    public finite law retborrow u8[0 max][] Pixels(borrow Image self)
+    {
+        return self.PixelBytes[0, self.PixelBytes.Length];
+    }
+
+    public finite retborrow mut u8[0 max][] MutablePixels(mut borrow Image self)
+    {
+        return self.PixelBytes[0, self.PixelBytes.Length];
+    }
+}
+
+public enum ImageResult
+{
+    [Ok] Ok(Image),
+    [Err] Err(StbImageError),
+}
+
+[LinkName("stbi_load_from_memory")]
+internal unsafe ffi(c) fn rawmutptr<u8[0 max]> stbi_load_from_memory_alias(
+    rawptr<u8[0 max]> buffer,
+    System.C.c_int length,
+    rawmutptr<System.C.c_int> width,
+    rawmutptr<System.C.c_int> height,
+    rawmutptr<System.C.c_int> channelsInFile,
+    System.C.c_int desiredChannels);
+
+[LinkName("stbi_load")]
+internal unsafe ffi(c) fn rawmutptr<u8[0 max]> stbi_load_alias(
+    ascii filename,
+    rawmutptr<System.C.c_int> width,
+    rawmutptr<System.C.c_int> height,
+    rawmutptr<System.C.c_int> channelsInFile,
+    System.C.c_int desiredChannels);
+
+[LinkName("stbi_image_free")]
+internal unsafe ffi(c) fn void stbi_image_free_alias(rawmutptr<u8[0 max]> value);
+
+[LinkName("stbi_write_png")]
+internal unsafe ffi(c) fn System.C.c_int stbi_write_png_alias(
+    ascii filename,
+    System.C.c_int width,
+    System.C.c_int height,
+    System.C.c_int channels,
+    rawptr<u8[0 max]> data,
+    System.C.c_int strideInBytes);
+
+[LinkName("stbi_write_bmp")]
+internal unsafe ffi(c) fn System.C.c_int stbi_write_bmp_alias(
+    ascii filename,
+    System.C.c_int width,
+    System.C.c_int height,
+    System.C.c_int channels,
+    rawptr<u8[0 max]> data);
+
+[LinkName("stbi_write_tga")]
+internal unsafe ffi(c) fn System.C.c_int stbi_write_tga_alias(
+    ascii filename,
+    System.C.c_int width,
+    System.C.c_int height,
+    System.C.c_int channels,
+    rawptr<u8[0 max]> data);
+
+[LinkName("stbir_resize_uint8_linear")]
+internal unsafe ffi(c) fn rawmutptr<u8[0 max]> stbir_resize_uint8_linear_alias(
+    rawptr<u8[0 max]> inputPixels,
+    System.C.c_int inputWidth,
+    System.C.c_int inputHeight,
+    System.C.c_int inputStrideInBytes,
+    rawmutptr<u8[0 max]> outputPixels,
+    System.C.c_int outputWidth,
+    System.C.c_int outputHeight,
+    System.C.c_int outputStrideInBytes,
+    System.C.c_int pixelLayout);
+
+internal inline finite law StbImageError FromMemoryError(System.Memory.MemoryError error)
+{
+    return StbImageError.Memory(error);
+}
+
+internal finite law System.C.c_int NativeDesiredChannels(ImageChannels channels)
+{
+    switch (channels)
+    {
+        case ImageChannels.Original:
+            return 0;
+        case ImageChannels.Gray:
+            return 1;
+        case ImageChannels.GrayAlpha:
+            return 2;
+        case ImageChannels.Rgb:
+            return 3;
+        case ImageChannels.Rgba:
+            return 4;
+    }
+}
+
+internal finite law u8[0 4] RequestedChannelCount(ImageChannels channels, System.C.c_int channelsInFile)
+{
+    switch (channels)
+    {
+        case ImageChannels.Original:
+            if (channelsInFile < 1 || channelsInFile > 4)
+            {
+                return 0;
+            }
+
+            return (u8[1 4])channelsInFile;
+        case ImageChannels.Gray:
+            return 1;
+        case ImageChannels.GrayAlpha:
+            return 2;
+        case ImageChannels.Rgb:
+            return 3;
+        case ImageChannels.Rgba:
+            return 4;
+    }
+}
+
+internal finite law u64[0 2 ** 63 - 1] PixelByteLengthOrZero(
+    u32[0 max] width,
+    u32[0 max] height,
+    u8[0 4] channels)
+{
+    if (width == 0 || height == 0 || channels == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] safeWidth = (u64[0 2 ** 63 - 1])width;
+    stack u64[0 2 ** 63 - 1] safeHeight = (u64[0 2 ** 63 - 1])height;
+    stack u64[0 2 ** 63 - 1] safeChannels = (u64[0 2 ** 63 - 1])channels;
+    stack u64[0 2 ** 63 - 1] maxLength = 2 ** 63 - 1;
+
+    if (safeWidth > maxLength / safeHeight)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] pixels = safeWidth * safeHeight;
+    if (pixels > maxLength / safeChannels)
+    {
+        return 0;
+    }
+
+    return pixels * safeChannels;
+}
+
+internal finite law System.C.c_int NativeStrideOrZero(borrow Image image)
+{
+    if (image.WidthValue == 0 || image.ChannelCount == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] safeWidth = (u64[0 2 ** 63 - 1])image.WidthValue;
+    stack u64[0 2 ** 63 - 1] safeChannels = (u64[0 2 ** 63 - 1])image.ChannelCount;
+    if (safeWidth > (u64[0 2 ** 63 - 1])StbImageMaxNativeInputLength / safeChannels)
+    {
+        return 0;
+    }
+
+    return (i32[min max])(safeWidth * safeChannels);
+}
+
+internal unsafe fn ImageResult CopyLoadedImage(
+    rawmutptr<u8[0 max]> nativePixels,
+    System.C.c_int nativeWidth,
+    System.C.c_int nativeHeight,
+    System.C.c_int nativeChannelsInFile,
+    ImageChannels requestedChannels)
+{
+    unsafe
+    {
+        if (nativePixels == null)
+        {
+            return ImageResult.Err(StbImageError.DecodeFailed);
+        }
+
+        if (nativeWidth <= 0 || nativeHeight <= 0)
+        {
+            stbi_image_free_alias(nativePixels);
+            return ImageResult.Err(StbImageError.InvalidDimensions);
+        }
+
+        stack u8[0 4] channelCount = RequestedChannelCount(requestedChannels, nativeChannelsInFile);
+        if (channelCount == 0)
+        {
+            stbi_image_free_alias(nativePixels);
+            return ImageResult.Err(StbImageError.UnsupportedChannels);
+        }
+
+        stack u32[0 max] width = (u32[0 max])nativeWidth;
+        stack u32[0 max] height = (u32[0 max])nativeHeight;
+        stack u64[0 2 ** 63 - 1] byteLength = PixelByteLengthOrZero(width, height, channelCount);
+        if (byteLength == 0)
+        {
+            stbi_image_free_alias(nativePixels);
+            return ImageResult.Err(StbImageError.InvalidDimensions);
+        }
+
+        stack mut Image image = new();
+        image.WidthValue = width;
+        image.HeightValue = height;
+        image.ChannelCount = channelCount;
+        if (!image.PixelBytes.TryReserve(byteLength))
+        {
+            stbi_image_free_alias(nativePixels);
+            return ImageResult.Err(FromMemoryError(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        stack init u8[0 max][] destination = init image.PixelBytes[image.PixelBytes.Length, byteLength];
+        System.Memory.InitializeUnsignedBytesFromPointerDisjoint(
+            byteLength,
+            (rawptr<u8[0 max]>)nativePixels,
+            destination);
+        stbi_image_free_alias(nativePixels);
+        return ImageResult.Ok(image);
+    }
+}
+
+public fn ImageResult LoadFromMemory(borrow u8[0 max][] encoded, ImageChannels requestedChannels)
+{
+    if (encoded.Length == 0)
+    {
+        return ImageResult.Err(StbImageError.InvalidArgument);
+    }
+
+    if (encoded.Length > StbImageMaxNativeInputLength)
+    {
+        return ImageResult.Err(StbImageError.SourceTooLarge);
+    }
+
+    unsafe
+    {
+        stack mut System.C.c_int width = 0;
+        stack mut System.C.c_int height = 0;
+        stack mut System.C.c_int channelsInFile = 0;
+        stack rawmutptr<u8[0 max]> pixels = stbi_load_from_memory_alias(
+            &encoded[0],
+            (i32[min max])encoded.Length,
+            &width,
+            &height,
+            &channelsInFile,
+            NativeDesiredChannels(requestedChannels));
+        return CopyLoadedImage(pixels, width, height, channelsInFile, requestedChannels);
+    }
+}
+
+public fn ImageResult LoadFromFile(ascii filename, ImageChannels requestedChannels)
+{
+    unsafe
+    {
+        stack mut System.C.c_int width = 0;
+        stack mut System.C.c_int height = 0;
+        stack mut System.C.c_int channelsInFile = 0;
+        stack rawmutptr<u8[0 max]> pixels = stbi_load_alias(
+            filename,
+            &width,
+            &height,
+            &channelsInFile,
+            NativeDesiredChannels(requestedChannels));
+        return CopyLoadedImage(pixels, width, height, channelsInFile, requestedChannels);
+    }
+}
+
+internal fn StbImageStatus ValidateImageForWrite(borrow Image image)
+{
+    if (image.IsEmpty())
+    {
+        return StbImageStatus.Err(StbImageError.InvalidArgument);
+    }
+
+    if (image.WidthValue == 0 || image.HeightValue == 0)
+    {
+        return StbImageStatus.Err(StbImageError.InvalidDimensions);
+    }
+
+    if (image.ChannelCount < 1 || image.ChannelCount > 4)
+    {
+        return StbImageStatus.Err(StbImageError.UnsupportedChannels);
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedLength = PixelByteLengthOrZero(
+        image.WidthValue,
+        image.HeightValue,
+        image.ChannelCount);
+    if (expectedLength == 0 || expectedLength > image.PixelBytes.Length)
+    {
+        return StbImageStatus.Err(StbImageError.InvalidDimensions);
+    }
+
+    return StbImageStatus.Ok;
+}
+
+public fn StbImageStatus WritePng(ascii filename, borrow Image image)
+{
+    switch (ValidateImageForWrite(image))
+    {
+        case StbImageStatus.Err(var error):
+            return StbImageStatus.Err(error);
+        case StbImageStatus.Ok:
+            break;
+    }
+
+    stack System.C.c_int stride = NativeStrideOrZero(image);
+    if (stride == 0)
+    {
+        return StbImageStatus.Err(StbImageError.InvalidDimensions);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = stbi_write_png_alias(
+            filename,
+            (i32[min max])image.WidthValue,
+            (i32[min max])image.HeightValue,
+            image.ChannelCount,
+            &image.PixelBytes[0],
+            stride);
+        if (status == 0)
+        {
+            return StbImageStatus.Err(StbImageError.EncodeFailed);
+        }
+
+        return StbImageStatus.Ok;
+    }
+}
+
+public fn StbImageStatus WriteBmp(ascii filename, borrow Image image)
+{
+    switch (ValidateImageForWrite(image))
+    {
+        case StbImageStatus.Err(var error):
+            return StbImageStatus.Err(error);
+        case StbImageStatus.Ok:
+            break;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = stbi_write_bmp_alias(
+            filename,
+            (i32[min max])image.WidthValue,
+            (i32[min max])image.HeightValue,
+            image.ChannelCount,
+            &image.PixelBytes[0]);
+        if (status == 0)
+        {
+            return StbImageStatus.Err(StbImageError.EncodeFailed);
+        }
+
+        return StbImageStatus.Ok;
+    }
+}
+
+public fn StbImageStatus WriteTga(ascii filename, borrow Image image)
+{
+    switch (ValidateImageForWrite(image))
+    {
+        case StbImageStatus.Err(var error):
+            return StbImageStatus.Err(error);
+        case StbImageStatus.Ok:
+            break;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = stbi_write_tga_alias(
+            filename,
+            (i32[min max])image.WidthValue,
+            (i32[min max])image.HeightValue,
+            image.ChannelCount,
+            &image.PixelBytes[0]);
+        if (status == 0)
+        {
+            return StbImageStatus.Err(StbImageError.EncodeFailed);
+        }
+
+        return StbImageStatus.Ok;
+    }
+}
+
+public fn StbImageStatus ResizeLinearInto(
+    borrow Image source,
+    borrow mut u8[0 max][] destination,
+    u32[1 max] outputWidth,
+    u32[1 max] outputHeight)
+{
+    switch (ValidateImageForWrite(source))
+    {
+        case StbImageStatus.Err(var error):
+            return StbImageStatus.Err(error);
+        case StbImageStatus.Ok:
+            break;
+    }
+
+    stack u64[0 2 ** 63 - 1] requiredLength = PixelByteLengthOrZero(
+        outputWidth,
+        outputHeight,
+        source.ChannelCount);
+    if (requiredLength == 0)
+    {
+        return StbImageStatus.Err(StbImageError.InvalidDimensions);
+    }
+
+    if (destination.Length < requiredLength)
+    {
+        return StbImageStatus.Err(StbImageError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<u8[0 max]> resized = stbir_resize_uint8_linear_alias(
+            &source.PixelBytes[0],
+            (i32[min max])source.WidthValue,
+            (i32[min max])source.HeightValue,
+            0,
+            &destination[0],
+            (i32[min max])outputWidth,
+            (i32[min max])outputHeight,
+            0,
+            source.ChannelCount);
+        if (resized == null)
+        {
+            return StbImageStatus.Err(StbImageError.ResizeFailed);
+        }
+
+        return StbImageStatus.Ok;
+    }
+}
+
+public fn ImageResult ResizeLinear(
+    borrow Image source,
+    u32[1 max] outputWidth,
+    u32[1 max] outputHeight)
+{
+    switch (ValidateImageForWrite(source))
+    {
+        case StbImageStatus.Err(var error):
+            return ImageResult.Err(error);
+        case StbImageStatus.Ok:
+            break;
+    }
+
+    stack u64[0 2 ** 63 - 1] requiredLength = PixelByteLengthOrZero(
+        outputWidth,
+        outputHeight,
+        source.ChannelCount);
+    if (requiredLength == 0)
+    {
+        return ImageResult.Err(StbImageError.InvalidDimensions);
+    }
+
+    stack mut Image destinationImage = new();
+    destinationImage.WidthValue = outputWidth;
+    destinationImage.HeightValue = outputHeight;
+    destinationImage.ChannelCount = source.ChannelCount;
+    if (!destinationImage.PixelBytes.TryReserve(requiredLength))
+    {
+        return ImageResult.Err(FromMemoryError(System.Memory.MemoryError.OutOfMemory));
+    }
+
+    stack init u8[0 max][] initialized = init destinationImage.PixelBytes[destinationImage.PixelBytes.Length, requiredLength];
+    System.Memory.FillUnsignedBytes(initialized, 0, requiredLength);
+
+    stack mut u8[0 max][] destination = destinationImage.PixelBytes[0, destinationImage.PixelBytes.Length];
+    switch (ResizeLinearInto(source, destination, outputWidth, outputHeight))
+    {
+        case StbImageStatus.Err(var error):
+            return ImageResult.Err(error);
+        case StbImageStatus.Ok:
+            return ImageResult.Ok(destinationImage);
+    }
+}

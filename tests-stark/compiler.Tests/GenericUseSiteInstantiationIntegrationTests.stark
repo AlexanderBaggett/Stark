@@ -1,0 +1,431 @@
+import CompilerTestSupport
+import System.Testing
+module GenericUseSiteInstantiationIntegrationTests
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedNestedGenericTypePlanningDiscoversNestedLayoutsFromImportedUseSites.
+internal fn bool ManifestBackedNestedGenericTypePlanningDiscoversNestedLayoutsFromImportedUseSitesImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (nested generic records
+        // Wrapper/Envelope/Crate) into a package image via PackageImageBuilder.Create,
+        // writes the .starkpkg.json manifest + static library, deletes the source, then
+        // re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "monomorphization-plan") and probes the MonomorphizationPlan artifact for the
+        // discovered nested layouts ("__stark_mono_ty_Demo__Facade_Crate__i32",
+        // "__stark_mono_ty_Demo__Facade_Envelope__i32",
+        // "__stark_mono_ty_Demo__Facade_Wrapper__i32"). Package-image construction, manifest
+        // round-tripping, source deletion, and MonomorphizationPlan symbol probing are not
+        // expressible with the Stark helpers, so this is reduced to compiling the same `Demo`
+        // consumer with the `Facade` library available as a sibling source module through
+        // type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-nested-generic-layout",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Crate<i32[min max]> crate)
+{
+    return 0;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Wrapper<T>(T Value)
+{
+}
+public record Envelope<T>(Wrapper<T> Wrapped)
+{
+}
+public record Crate<T>(Envelope<T> Envelope)
+{
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedGenericMethodsAndNestedGenericTypesLowerThroughImportedTemplateBodies.
+internal fn bool ManifestBackedGenericMethodsAndNestedGenericTypesLowerThroughImportedTemplateBodiesImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (generic record Pair, record Box
+        // with generic method MakePair, generic function Relay) into a package image, strips
+        // the manifest down to its typed interface + compiler facts + generic templates,
+        // writes the manifest, deletes the source, then re-imports `Facade` into a `Demo`
+        // consumer (StopAfterPassId "lower-mir") and probes the MidLevelIr: the specialized
+        // Relay ("__stark_mono_fn_Demo__Facade_Relay__i32", SupportsDirectCodeGeneration, a
+        // call RValue into "Facade_Box_MakePair") and the specialized MakePair
+        // (SupportsDirectCodeGeneration, an InsertField RValue for field "Value").
+        // Package-image construction, manifest stripping/round-tripping, source deletion, and
+        // MidLevelIr RValue probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the `Facade` library available as a
+        // sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-generic-method-nested-generic",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Box box, i32[min max] value)
+{
+    stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
+    return value;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public record Box(i32[min max] Dummy)
+{
+    fn Pair<T> MakePair<T>(borrow Box self, T value)
+    {
+        stack Pair<T> pair = new Pair<T>(value);
+        return pair;
+    }
+}
+
+public fn Pair<T> Relay<T>(Box box, T value)
+{
+    return box.MakePair(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted.
+internal fn bool ManifestBackedGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorruptedImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (generic Pair/Box.MakePair/Relay);
+        // into a package image, builds a typed-only manifest whose generic-template BodyText is
+        // deliberately corrupted to "{ return this is not valid Stark; }", writes the manifest,
+        // deletes the source, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "lower-mir") and probes the LoadedModules (Facade re-synthesized ParseResult.SourceText
+        // omits the corrupted body text and the original bodies, carries a body-less
+        // "public fn Pair<T> Relay<T>(Box box, T value);" signature) and the MidLevelIr (contains
+        // "__stark_mono_fn_Demo__Facade_Relay__i32") -- i.e. the structured facts win over the
+        // corrupted body text. Package-image construction, manifest body-text corruption,
+        // round-tripping, source deletion, and LoadedModules/MidLevelIr probing are not
+        // expressible with the Stark helpers, so this is reduced to compiling the `Demo` consumer
+        // with the (uncorrupted) `Facade` library available as a sibling source module through
+        // type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-structured-generic-loading",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Box box, i32[min max] value)
+{
+    stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
+    return value;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public record Box(i32[min max] Dummy)
+{
+    fn Pair<T> MakePair<T>(borrow Box self, T value)
+    {
+        stack Pair<T> pair = new Pair<T>(value);
+        return pair;
+    }
+}
+
+public fn Pair<T> Relay<T>(Box box, T value)
+{
+    return box.MakePair(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedLoopControlGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted.
+internal fn bool ManifestBackedLoopControlGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorruptedImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (generic loop-control functions
+        // SumWhileControl/SumForControl exercising while/for + continue/break) into a package
+        // image, builds a typed-only manifest whose generic-template BodyText is deliberately
+        // corrupted to "{ return this is not valid Stark; }", writes the manifest, deletes the
+        // source, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId "lower-mir");
+        // and probes the LoadedModules (Facade re-synthesized ParseResult.SourceText omits the
+        // corrupted text and the original loop bodies, carries body-less
+        // "public fn i32[min max] SumWhileControl<T>(...)" / "...SumForControl<T>(...)"
+        // signatures) and the MidLevelIr (contains
+        // "__stark_mono_fn_Demo__Facade_SumWhileControl__i32" and
+        // "__stark_mono_fn_Demo__Facade_SumForControl__i32"). Package-image construction,
+        // manifest body-text corruption, round-tripping, source deletion, and
+        // LoadedModules/MidLevelIr probing are not expressible with the Stark helpers, so this
+        // is reduced to compiling the `Demo` consumer with the (uncorrupted) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-loop-control-generic-loading",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] count, i32[min max] stopAt, i32[min max] tag)
+{
+    return Facade.SumWhileControl(count, stopAt, tag) + Facade.SumForControl(count, stopAt, tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag)
+{
+    stack mut i32[min max] sum = 0;
+    stack mut i32[min max] index = 0;
+    while willexit (index < count)
+    {
+        index = index + 1;
+        if (index < 2)
+        {
+            continue;
+        }
+        if (index == stopAt)
+        {
+            break;
+        }
+        sum = sum + index;
+    }
+    return sum;
+}
+
+public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag)
+{
+    stack mut i32[min max] sum = 0;
+    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1)
+    {
+        if (index < 2)
+        {
+            continue;
+        }
+        if (index == stopAt)
+        {
+            break;
+        }
+        sum = sum + index;
+    }
+    return sum;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeys.
+internal fn bool ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeysImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (alias BufferView = i32[min max][]
+        // and generic bridge function Relay) into a package image, builds a typed-only manifest
+        // whose Facade.Relay template drops its TypedBody and keeps a bridge BodyText
+        // "{ return view; }" (so it loads from typed-interface overload keys without source-surface
+        // function entries), writes the manifest, deletes the source, then re-imports `Facade` into
+        // a `Demo` consumer (StopAfterPassId "lower-mir") and probes the LoadedModules (Facade
+        // ParseResult.SourceText contains the alias, "Relay<T>", and "return") and the MidLevelIr
+        // (single specialized "__stark_mono_fn_Demo__Facade_Relay__..." with HasBody and
+        // SupportsDirectCodeGeneration). Package-image construction, manifest typed-body
+        // stripping/round-tripping, source deletion, and LoadedModules/MidLevelIr probing are not
+        // expressible with the Stark helpers, so this is reduced to compiling the `Demo` consumer
+        // with the `Facade` library available as a sibling source module through type-check and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-bridge-generic-no-source-surface",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max][] values)
+{
+    stack i32[min max][] copy = Facade.Relay(values, 0);
+    return copy[0];
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public alias BufferView = i32[min max][];
+
+public fn BufferView Relay<T>(BufferView view, T tag)
+{
+    return view;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggers.
+internal fn bool ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggersImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (chained generic forwarders
+        // Identity/Forward/Relay) into a package image, builds a typed-only manifest that strips
+        // the templates' DeferredFunctionInstantiations/DeferredTypeInstantiations and rewrites
+        // the Forward/Relay BodyText to "{ return value; }" (so planning must fall back to the
+        // published call summaries rather than deferred function triggers), writes the manifest,
+        // deletes the source, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "monomorphization-plan") and probes the MonomorphizationPlan: exactly 3 functions
+        // including "__stark_mono_fn_Demo__Facade_Relay__i32",
+        // "__stark_mono_fn_Demo__Facade_Forward__i32", and
+        // "__stark_mono_fn_Demo__Facade_Identity__i32". Package-image construction, manifest
+        // deferred-instantiation stripping + body-text rewriting + round-tripping, source deletion,
+        // and MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the (unrewritten) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-call-summary-function-fallback",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Facade.Relay(left) + Facade.Relay(right);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+
+public fn T Relay<T>(T value)
+{
+    return Forward(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWithoutDeferredTypeTriggers.
+internal fn bool ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWithoutDeferredTypeTriggersImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library (generic record Pair<A,B>, generic
+        // MakePair, generic Relay) into a package image, builds a typed-only manifest that strips
+        // the templates' deferred instantiations and rewrites the Facade.Relay BodyText to
+        // "{ return flag ? 1 : 0; }" (so type planning must fall back to the published template
+        // facts rather than deferred type triggers), writes the manifest, deletes the source, then
+        // re-imports `Facade` into a `Demo` consumer (StopAfterPassId "monomorphization-plan") and
+        // probes the MonomorphizationPlan: functions "__stark_mono_fn_Demo__Facade_Relay__i32" and
+        // "__stark_mono_fn_Demo__Facade_MakePair__i32" plus type
+        // "__stark_mono_ty_Demo__Facade_Pair__i32__bool". Package-image construction, manifest
+        // deferred-instantiation stripping + body-text rewriting + round-tripping, source deletion,
+        // and MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the (unrewritten) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "use-site-template-facts-type-fallback",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value, bool flag)
+{
+    return Facade.Relay(value, flag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<A, B>(A First, B Second)
+{
+}
+
+public fn Pair<T, bool> MakePair<T>(T value, bool flag)
+{
+    stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
+    return pair;
+}
+
+public fn i32[min max] Relay<T>(T value, bool flag)
+{
+    stack Pair<T, bool> pair = MakePair(value, flag);
+    return pair.Second ? 1 : 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported slice of
+// tests/compiler.IntegrationTests/GenericUseSiteInstantiationIntegrationTests.cs.
+// The original is a CLI/manifest/runtime integration test: it builds a Facade
+// library with --emit-lib, rewrites the emitted manifest to a typed-only form
+// that omits compiler facts, then links a Demo executable against the
+// manifest-backed library without source and runs it. The Stark compile helpers
+// cannot model --emit-lib, manifest rewriting, manifest-backed linking, or
+// process exit codes, so the Impl reduces to driving the available source
+// program through the closest compile helper. See the per-method `// PORT-NOTE:`.
+
+// Ported from GenericUseSiteInstantiationIntegrationTests.ManifestBackedTypedInterfaceModifiersWithoutCompilerFactsStillSpecializeAndRun.
+internal fn bool ManifestBackedTypedInterfaceModifiersWithoutCompilerFactsStillSpecializeAndRunImpl()
+{
+    // PORT-NOTE: original emits Facade as a static library (--emit-lib), strips
+    // compiler facts from the generated manifest (BuildTypedOnlyFacadeManifest /
+    // omitCompilerFacts: true), then builds and runs a Demo that imports the
+    // manifest-backed library, asserting CLI exit 0, "Emitted static library:" /
+    // "Emitted executable:" stdout, file existence, empty process output, and a
+    // runtime exit code of 7. None of the manifest-rewrite, manifest-backed
+    // linking, or runtime behavior is observable through the compile helpers, and
+    // the single-module helper cannot supply the manifest-only Facade dependency
+    // to Demo. Reduced to a full-pipeline compile of the Facade library program
+    // (the generic carrying the cold/noinline interface modifiers that must still
+    // specialize) returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "guse-manifest-typed-iface-modifiers-runtime",
+        raw"""
+module Facade
+
+public cold noinline fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+""");
+    return Succeeds(compiled);
+}

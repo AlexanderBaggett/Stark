@@ -1,4 +1,5 @@
 import System
+import System.Console
 import System.Text
 module BuildYourOwnGitObjects
 
@@ -60,9 +61,6 @@ export unsafe fn i32[min max] main() {
         return 1;
     }
 
-    if (System.Console.WriteLine("Object demo-commit") != System.IO.IOStatus.Ok) {
-        return 2;
-    }
-
+    WriteLine("Object demo-commit");
     return 0;
 }

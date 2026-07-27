@@ -1,0 +1,414 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallArguments
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallTargets
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedCalls
+
+internal fn System.Memory.MemoryStatus AppendTypedCallsFromGlobalDeclaration(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    if (!TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] assignToken = TypedGlobalFindAssignToken(stream, item);
+    if (assignToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack ExprTree tree = ParseExpression(stream, (u32[0 max])(assignToken + 1));
+    stack StatementList emptyBody = new();
+    stack u64[0 2 ** 63 - 1] count = tree.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])index;
+        if (tree.NodeKindAt(node) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] calleeNode = tree.LeftAt(node);
+            stack bool calleeIsIdentifier = tree.NodeKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier;
+            stack mut u32[0 max] calleeNameToken = 0;
+            if (calleeIsIdentifier)
+            {
+                calleeNameToken = tree.TokenAt(calleeNode);
+            }
+            else if (tree.NodeKindAt(calleeNode) == Compiler.Parsing.ExprKind.Member)
+            {
+                calleeNameToken = tree.TokenAt(calleeNode);
+            }
+
+            stack mut u32[0 max] callIndexPlusOne = 0;
+            stack mut u32[0 max] signatureIndexPlusOne = 0;
+            stack mut u32[0 max] parameterOffset = 0;
+            stack mut u32[0 max] callableTypeStartToken = 0;
+            stack mut u32[0 max] callableTypeEndToken = 0;
+            switch (AppendTypedCallExpression(
+                table,
+                source,
+                stream,
+                signatures,
+                literals,
+                identifiers,
+                members,
+                tree,
+                emptyBody,
+                false,
+                TypedCallContext.GlobalInitializer,
+                declarationIndex,
+                TypedGlobalFindNameToken(stream, item),
+                0,
+                0,
+                node,
+                calleeNode,
+                tree.TokenAt(node),
+                calleeNameToken,
+                tree.CallArgCount(node),
+                calleeIsIdentifier,
+                callIndexPlusOne,
+                signatureIndexPlusOne,
+                parameterOffset,
+                callableTypeStartToken,
+                callableTypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (AppendTypedCallArgumentsFromTree(
+                table,
+                source,
+                stream,
+                signatures,
+                tree,
+                node,
+                callIndexPlusOne,
+                signatureIndexPlusOne,
+                parameterOffset,
+                callableTypeStartToken,
+                callableTypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var argumentError):
+                    return System.Memory.MemoryStatus.Err(argumentError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedCallsFromBodyStatement(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack ExprTree emptyTree = new();
+    stack u32[0 max] start = (u32[0 max])(body.ExprStartAt(statementIndex) + 1);
+    stack mut u32[0 max] end = (u32[0 max])body.ExprNodeCount();
+    if (statementIndex + 1 < statementCount)
+    {
+        end = body.ExprStartAt((u64[0 2 ** 63 - 1])(statementIndex + 1));
+    }
+
+    if (start > end)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] endIndex = (u64[0 2 ** 63 - 1])end;
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])start; nodeIndex <= endIndex; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] calleeNode = body.ExprLeftAt(node);
+            stack bool calleeIsIdentifier = body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier;
+            stack mut u32[0 max] calleeNameToken = 0;
+            if (calleeIsIdentifier)
+            {
+                calleeNameToken = body.ExprTokenAt(calleeNode);
+            }
+            else if (body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Member)
+            {
+                calleeNameToken = body.ExprTokenAt(calleeNode);
+            }
+
+            stack mut u32[0 max] callIndexPlusOne = 0;
+            stack mut u32[0 max] signatureIndexPlusOne = 0;
+            stack mut u32[0 max] parameterOffset = 0;
+            stack mut u32[0 max] callableTypeStartToken = 0;
+            stack mut u32[0 max] callableTypeEndToken = 0;
+            switch (AppendTypedCallExpression(
+                table,
+                source,
+                stream,
+                signatures,
+                literals,
+                identifiers,
+                members,
+                emptyTree,
+                body,
+                true,
+                TypedCallContext.FunctionBody,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                (u32[0 max])(statementIndex + 1),
+                node,
+                calleeNode,
+                body.ExprTokenAt(node),
+                calleeNameToken,
+                body.ExprCallArgCountAt(node),
+                calleeIsIdentifier,
+                callIndexPlusOne,
+                signatureIndexPlusOne,
+                parameterOffset,
+                callableTypeStartToken,
+                callableTypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (AppendTypedCallArgumentsFromBody(
+                table,
+                source,
+                stream,
+                signatures,
+                body,
+                node,
+                callIndexPlusOne,
+                signatureIndexPlusOne,
+                parameterOffset,
+                callableTypeStartToken,
+                callableTypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var argumentError):
+                    return System.Memory.MemoryStatus.Err(argumentError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedCallsFromBody(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedCallsFromBodyStatement(
+            table,
+            source,
+            stream,
+            signatures,
+            literals,
+            identifiers,
+            members,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedCallsForFunction(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    return AppendTypedCallsFromBody(
+        table,
+        source,
+        stream,
+        signatures,
+        literals,
+        identifiers,
+        members,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedCallsForMemberFunctions(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedCallsForFunction(table, source, stream, signatures, literals, identifiers, members, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn ParseResult<TypedCallExpressionTable> BuildTypedCallExpressionsFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members)
+{
+    stack mut TypedCallExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedCallsFromGlobalDeclaration(
+            table,
+            source,
+            stream,
+            signatures,
+            literals,
+            identifiers,
+            members,
+            item,
+            (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedCallsForFunction(table, source, stream, signatures, literals, identifiers, members, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedCallsForMemberFunctions(table, source, stream, signatures, literals, identifiers, members, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return ParseResult<TypedCallExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedCallExpressionTable>.Ok(table);
+}

@@ -1,0 +1,214 @@
+import Compiler.Typing.TypedMemberKinds
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedMemberModelRows
+
+internal fn System.Memory.MemoryStatus AppendTypedMemberRow(
+    mut borrow TypedMemberExpressionTable table,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] memberNode,
+    u32[0 max] receiverNode,
+    u32[0 max] memberNameToken,
+    TypedMemberReceiverKind receiverKind,
+    u32[0 max] receiverDeclarationIndex,
+    u32[0 max] receiverNameToken,
+    TypedSignatureTypeKind receiverTypeKind,
+    u32[0 max] receiverTypeHeadToken,
+    u32[0 max] receiverTypePrimaryToken,
+    u32[0 max] receiverTypeStartToken,
+    u32[0 max] receiverTypeEndToken,
+    u32[0 max] receiverRangeStartToken,
+    u32[0 max] receiverRangeEndToken,
+    u32[0 max] receiverElementCountStartToken,
+    u32[0 max] receiverElementCountEndToken,
+    u32[0 max] receiverBitWidth,
+    u32[0 max] receiverTypeArgumentCount,
+    u32[0 max] receiverComptimeArgumentCount,
+    u32[0 max] receiverTypeFlags,
+    TypedMemberTargetKind targetKind,
+    u32[0 max] targetDeclarationIndex,
+    u32[0 max] targetSymbolIndexPlusOne,
+    u32[0 max] targetNameToken,
+    u32[0 max] candidateStartIndexPlusOne,
+    u32[0 max] candidateCount,
+    u32[0 max] memberFlags,
+    TypedSignatureTypeKind typeKind,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] rangeStartToken,
+    u32[0 max] rangeEndToken,
+    u32[0 max] elementCountStartToken,
+    u32[0 max] elementCountEndToken,
+    u32[0 max] bitWidth,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeArgumentCount,
+    u32[0 max] typeFlags,
+    out u32[0 max] memberIndexPlusOne)
+{
+    memberIndexPlusOne = 0;
+    if (!table.Contexts.TryReserve(1)
+        || !table.OwnerDeclarationIndices.TryReserve(1)
+        || !table.OwnerNameTokens.TryReserve(1)
+        || !table.FunctionNameTokens.TryReserve(1)
+        || !table.StatementIndices.TryReserve(1)
+        || !table.MemberNodes.TryReserve(1)
+        || !table.ReceiverNodes.TryReserve(1)
+        || !table.MemberNameTokens.TryReserve(1)
+        || !table.ReceiverKinds.TryReserve(1)
+        || !table.ReceiverDeclarationIndices.TryReserve(1)
+        || !table.ReceiverNameTokens.TryReserve(1)
+        || !table.ReceiverTypeKinds.TryReserve(1)
+        || !table.ReceiverTypeHeadTokens.TryReserve(1)
+        || !table.ReceiverTypePrimaryTokens.TryReserve(1)
+        || !table.ReceiverTypeStartTokens.TryReserve(1)
+        || !table.ReceiverTypeEndTokens.TryReserve(1)
+        || !table.ReceiverRangeStartTokens.TryReserve(1)
+        || !table.ReceiverRangeEndTokens.TryReserve(1)
+        || !table.ReceiverElementCountStartTokens.TryReserve(1)
+        || !table.ReceiverElementCountEndTokens.TryReserve(1)
+        || !table.ReceiverBitWidths.TryReserve(1)
+        || !table.ReceiverTypeArgumentCounts.TryReserve(1)
+        || !table.ReceiverComptimeArgumentCounts.TryReserve(1)
+        || !table.ReceiverTypeFlags.TryReserve(1)
+        || !table.TargetKinds.TryReserve(1)
+        || !table.TargetDeclarationIndices.TryReserve(1)
+        || !table.TargetSymbolIndices.TryReserve(1)
+        || !table.TargetNameTokens.TryReserve(1)
+        || !table.CandidateStarts.TryReserve(1)
+        || !table.CandidateCounts.TryReserve(1)
+        || !table.MemberFlags.TryReserve(1)
+        || !table.TypeKinds.TryReserve(1)
+        || !table.TypeHeadTokens.TryReserve(1)
+        || !table.TypePrimaryTokens.TryReserve(1)
+        || !table.TypeStartTokens.TryReserve(1)
+        || !table.TypeEndTokens.TryReserve(1)
+        || !table.RangeStartTokens.TryReserve(1)
+        || !table.RangeEndTokens.TryReserve(1)
+        || !table.ElementCountStartTokens.TryReserve(1)
+        || !table.ElementCountEndTokens.TryReserve(1)
+        || !table.BitWidths.TryReserve(1)
+        || !table.TypeArgumentCounts.TryReserve(1)
+        || !table.ComptimeArgumentCounts.TryReserve(1)
+        || !table.TypeFlags.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    memberIndexPlusOne = (u32[0 max])(table.MemberNodes.Length + 1);
+    init table.Contexts[table.Contexts.Length] = context;
+    init table.OwnerDeclarationIndices[table.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+    init table.OwnerNameTokens[table.OwnerNameTokens.Length] = ownerNameToken;
+    init table.FunctionNameTokens[table.FunctionNameTokens.Length] = functionNameToken;
+    init table.StatementIndices[table.StatementIndices.Length] = statementIndexPlusOne;
+    init table.MemberNodes[table.MemberNodes.Length] = memberNode;
+    init table.ReceiverNodes[table.ReceiverNodes.Length] = receiverNode;
+    init table.MemberNameTokens[table.MemberNameTokens.Length] = memberNameToken;
+    init table.ReceiverKinds[table.ReceiverKinds.Length] = receiverKind;
+    init table.ReceiverDeclarationIndices[table.ReceiverDeclarationIndices.Length] = receiverDeclarationIndex;
+    init table.ReceiverNameTokens[table.ReceiverNameTokens.Length] = receiverNameToken;
+    init table.ReceiverTypeKinds[table.ReceiverTypeKinds.Length] = receiverTypeKind;
+    init table.ReceiverTypeHeadTokens[table.ReceiverTypeHeadTokens.Length] = receiverTypeHeadToken;
+    init table.ReceiverTypePrimaryTokens[table.ReceiverTypePrimaryTokens.Length] = receiverTypePrimaryToken;
+    init table.ReceiverTypeStartTokens[table.ReceiverTypeStartTokens.Length] = receiverTypeStartToken;
+    init table.ReceiverTypeEndTokens[table.ReceiverTypeEndTokens.Length] = receiverTypeEndToken;
+    init table.ReceiverRangeStartTokens[table.ReceiverRangeStartTokens.Length] = receiverRangeStartToken;
+    init table.ReceiverRangeEndTokens[table.ReceiverRangeEndTokens.Length] = receiverRangeEndToken;
+    init table.ReceiverElementCountStartTokens[table.ReceiverElementCountStartTokens.Length] = receiverElementCountStartToken;
+    init table.ReceiverElementCountEndTokens[table.ReceiverElementCountEndTokens.Length] = receiverElementCountEndToken;
+    init table.ReceiverBitWidths[table.ReceiverBitWidths.Length] = receiverBitWidth;
+    init table.ReceiverTypeArgumentCounts[table.ReceiverTypeArgumentCounts.Length] = receiverTypeArgumentCount;
+    init table.ReceiverComptimeArgumentCounts[table.ReceiverComptimeArgumentCounts.Length] = receiverComptimeArgumentCount;
+    init table.ReceiverTypeFlags[table.ReceiverTypeFlags.Length] = receiverTypeFlags;
+    init table.TargetKinds[table.TargetKinds.Length] = targetKind;
+    init table.TargetDeclarationIndices[table.TargetDeclarationIndices.Length] = targetDeclarationIndex;
+    init table.TargetSymbolIndices[table.TargetSymbolIndices.Length] = targetSymbolIndexPlusOne;
+    init table.TargetNameTokens[table.TargetNameTokens.Length] = targetNameToken;
+    init table.CandidateStarts[table.CandidateStarts.Length] = candidateStartIndexPlusOne;
+    init table.CandidateCounts[table.CandidateCounts.Length] = candidateCount;
+    init table.MemberFlags[table.MemberFlags.Length] = memberFlags;
+    init table.TypeKinds[table.TypeKinds.Length] = typeKind;
+    init table.TypeHeadTokens[table.TypeHeadTokens.Length] = typeHeadToken;
+    init table.TypePrimaryTokens[table.TypePrimaryTokens.Length] = typePrimaryToken;
+    init table.TypeStartTokens[table.TypeStartTokens.Length] = typeStartToken;
+    init table.TypeEndTokens[table.TypeEndTokens.Length] = typeEndToken;
+    init table.RangeStartTokens[table.RangeStartTokens.Length] = rangeStartToken;
+    init table.RangeEndTokens[table.RangeEndTokens.Length] = rangeEndToken;
+    init table.ElementCountStartTokens[table.ElementCountStartTokens.Length] = elementCountStartToken;
+    init table.ElementCountEndTokens[table.ElementCountEndTokens.Length] = elementCountEndToken;
+    init table.BitWidths[table.BitWidths.Length] = bitWidth;
+    init table.TypeArgumentCounts[table.TypeArgumentCounts.Length] = typeArgumentCount;
+    init table.ComptimeArgumentCounts[table.ComptimeArgumentCounts.Length] = comptimeArgumentCount;
+    init table.TypeFlags[table.TypeFlags.Length] = typeFlags;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedMemberCandidate(
+    mut borrow TypedMemberExpressionTable table,
+    u32[0 max] memberIndexPlusOne,
+    TypedMemberTargetKind candidateKind,
+    u32[0 max] signatureIndexPlusOne,
+    u32[0 max] candidateNameToken,
+    u32[0 max] candidateParameterCount,
+    TypedSignatureTypeKind returnTypeKind,
+    u32[0 max] returnTypeHeadToken,
+    u32[0 max] returnTypePrimaryToken,
+    u32[0 max] returnTypeStartToken,
+    u32[0 max] returnTypeEndToken,
+    u32[0 max] returnRangeStartToken,
+    u32[0 max] returnRangeEndToken,
+    u32[0 max] returnElementCountStartToken,
+    u32[0 max] returnElementCountEndToken,
+    u32[0 max] returnBitWidth,
+    u32[0 max] returnTypeArgumentCount,
+    u32[0 max] returnComptimeArgumentCount,
+    u32[0 max] returnTypeFlags)
+{
+    if (!table.CandidateMemberIndices.TryReserve(1)
+        || !table.CandidateKinds.TryReserve(1)
+        || !table.CandidateSignatureIndices.TryReserve(1)
+        || !table.CandidateNameTokens.TryReserve(1)
+        || !table.CandidateParameterCounts.TryReserve(1)
+        || !table.CandidateReturnTypeKinds.TryReserve(1)
+        || !table.CandidateReturnTypeHeadTokens.TryReserve(1)
+        || !table.CandidateReturnTypePrimaryTokens.TryReserve(1)
+        || !table.CandidateReturnTypeStartTokens.TryReserve(1)
+        || !table.CandidateReturnTypeEndTokens.TryReserve(1)
+        || !table.CandidateReturnRangeStartTokens.TryReserve(1)
+        || !table.CandidateReturnRangeEndTokens.TryReserve(1)
+        || !table.CandidateReturnElementCountStartTokens.TryReserve(1)
+        || !table.CandidateReturnElementCountEndTokens.TryReserve(1)
+        || !table.CandidateReturnBitWidths.TryReserve(1)
+        || !table.CandidateReturnTypeArgumentCounts.TryReserve(1)
+        || !table.CandidateReturnComptimeArgumentCounts.TryReserve(1)
+        || !table.CandidateReturnTypeFlags.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init table.CandidateMemberIndices[table.CandidateMemberIndices.Length] = memberIndexPlusOne;
+    init table.CandidateKinds[table.CandidateKinds.Length] = candidateKind;
+    init table.CandidateSignatureIndices[table.CandidateSignatureIndices.Length] = signatureIndexPlusOne;
+    init table.CandidateNameTokens[table.CandidateNameTokens.Length] = candidateNameToken;
+    init table.CandidateParameterCounts[table.CandidateParameterCounts.Length] = candidateParameterCount;
+    init table.CandidateReturnTypeKinds[table.CandidateReturnTypeKinds.Length] = returnTypeKind;
+    init table.CandidateReturnTypeHeadTokens[table.CandidateReturnTypeHeadTokens.Length] = returnTypeHeadToken;
+    init table.CandidateReturnTypePrimaryTokens[table.CandidateReturnTypePrimaryTokens.Length] = returnTypePrimaryToken;
+    init table.CandidateReturnTypeStartTokens[table.CandidateReturnTypeStartTokens.Length] = returnTypeStartToken;
+    init table.CandidateReturnTypeEndTokens[table.CandidateReturnTypeEndTokens.Length] = returnTypeEndToken;
+    init table.CandidateReturnRangeStartTokens[table.CandidateReturnRangeStartTokens.Length] = returnRangeStartToken;
+    init table.CandidateReturnRangeEndTokens[table.CandidateReturnRangeEndTokens.Length] = returnRangeEndToken;
+    init table.CandidateReturnElementCountStartTokens[table.CandidateReturnElementCountStartTokens.Length] = returnElementCountStartToken;
+    init table.CandidateReturnElementCountEndTokens[table.CandidateReturnElementCountEndTokens.Length] = returnElementCountEndToken;
+    init table.CandidateReturnBitWidths[table.CandidateReturnBitWidths.Length] = returnBitWidth;
+    init table.CandidateReturnTypeArgumentCounts[table.CandidateReturnTypeArgumentCounts.Length] = returnTypeArgumentCount;
+    init table.CandidateReturnComptimeArgumentCounts[table.CandidateReturnComptimeArgumentCounts.Length] = returnComptimeArgumentCount;
+    init table.CandidateReturnTypeFlags[table.CandidateReturnTypeFlags.Length] = returnTypeFlags;
+    return System.Memory.MemoryStatus.Ok;
+}

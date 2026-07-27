@@ -1,0 +1,938 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.ManifestModel
+import Compiler.Sdk.TargetDescriptor
+import System.IO
+import System.IO.File
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Sdk.ManifestLoading
+
+public enum SdkManifestLoadResult
+{
+    [Ok] Ok(SdkManifest),
+    [Err] Err(SdkDiagnosticList),
+}
+
+internal struct SdkManifestMemberMask
+{
+    u32[0 max] Value;
+
+    SdkManifestMemberMask()
+    {
+        self.Value = 0;
+    }
+}
+
+internal struct SdkJsonForwardChild
+{
+    u64[0 2 ** 63 - 1] Node;
+
+    SdkJsonForwardChild()
+    {
+        self.Node = 0;
+    }
+}
+
+internal inline fn bool SelectSdkJsonForwardChild(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] container,
+    u64[0 2 ** 63 - 1] ordinal,
+    mut borrow SdkJsonForwardChild cursor)
+{
+    stack mut u64[0 2 ** 63 - 1] selected = 0;
+    if (ordinal == 0)
+    {
+        if (!document.TryFirstChild(container, selected))
+        {
+            return false;
+        }
+    }
+    else if (!document.TryNextSibling(container, cursor.Node, selected))
+    {
+        return false;
+    }
+
+    cursor.Node = selected;
+    return true;
+}
+
+internal inline fn bool ClaimSdkManifestMember(
+    mut borrow SdkManifestMemberMask seen,
+    u32[0 max] bit)
+{
+    if ((seen.Value & bit) != 0)
+    {
+        return false;
+    }
+
+    seen.Value = (u32[0 max])(seen.Value | bit);
+    return true;
+}
+
+internal fn SdkManifestLoadResult SdkManifestFailure(
+    SdkDiagnosticCode code,
+    ascii message,
+    ascii path)
+{
+    stack mut SdkDiagnosticList diagnostics = new();
+    diagnostics.Append(code, message, path);
+    return SdkManifestLoadResult.Err(diagnostics);
+}
+
+internal fn bool AppendSdkManifestText(
+    mut borrow OwnedAscii destination,
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    bool allowNull,
+    out bool present)
+{
+    present = false;
+    if (document.KindAt(node) == JsonKind.Null && allowNull)
+    {
+        return true;
+    }
+    if (document.KindAt(node) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(node);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    switch (destination.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            present = true;
+            return true;
+    }
+}
+
+internal fn bool AppendRequiredSdkManifestText(
+    mut borrow OwnedAscii destination,
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node)
+{
+    stack mut bool present = false;
+    return AppendSdkManifestText(destination, document, node, false, present) && present;
+}
+
+internal fn bool AppendOptionalSdkManifestText(
+    mut borrow OwnedAscii destination,
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    out bool present)
+{
+    return AppendSdkManifestText(destination, document, node, true, present);
+}
+
+internal fn bool AppendSdkManifestOwnedText(
+    mut borrow dynamic OwnedAscii destination,
+    ascii value)
+{
+    stack mut OwnedAscii copied = new();
+    switch (copied.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    if (!destination.TryReserve(1))
+    {
+        return false;
+    }
+    init destination[destination.Length] = copied;
+    return true;
+}
+
+internal fn bool ParseSdkManifestTextArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow dynamic OwnedAscii destination)
+{
+    if (document.KindAt(node) != JsonKind.Array)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    if (!destination.TryReserve(count))
+    {
+        return false;
+    }
+
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)
+            || document.KindAt(cursor.Node) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii value = document.TextAt(cursor.Node);
+        if (System.Text.AsciiLength(value) <= 0 || !AppendSdkManifestOwnedText(destination, value))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+internal fn bool ParseSdkManifestU32(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    out u32[0 max] value)
+{
+    value = 0;
+    if (document.KindAt(node) != JsonKind.Number)
+    {
+        return false;
+    }
+
+    switch (document.I64At(node))
+    {
+        case JsonResult<i64[min max]>.Err(var error):
+            return false;
+        case JsonResult<i64[min max]>.Ok(var parsed):
+            if (parsed < 0 || parsed > (i64[min max])(2 ** 32 - 1))
+            {
+                return false;
+            }
+            value = (u32[0 max])parsed;
+            return true;
+    }
+}
+
+internal fn bool SdkManifestSha256ShapeIsValid(mut borrow OwnedAscii value)
+{
+    return value.Length() == 64;
+}
+
+internal fn bool ParseSdkTargetDescriptor(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow SdkTargetDescriptor destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] idNode = 0;
+    stack mut u64[0 2 ** 63 - 1] tripleNode = 0;
+    stack mut u64[0 2 ** 63 - 1] architectureNode = 0;
+    stack mut u64[0 2 ** 63 - 1] operatingSystemNode = 0;
+    stack mut u64[0 2 ** 63 - 1] abiNode = 0;
+    stack mut u64[0 2 ** 63 - 1] pointerWidthNode = 0;
+    stack mut u64[0 2 ** 63 - 1] endiannessNode = 0;
+    stack mut u64[0 2 ** 63 - 1] dataLayoutNode = 0;
+    stack mut u64[0 2 ** 63 - 1] baselineCpuNode = 0;
+    stack mut u64[0 2 ** 63 - 1] baselineFeaturesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] relocationModelNode = 0;
+    stack mut u64[0 2 ** 63 - 1] codeModelNode = 0;
+    stack mut u64[0 2 ** 63 - 1] cDataModelNode = 0;
+    stack mut u64[0 2 ** 63 - 1] minimumOsNode = 0;
+
+    stack u64[0 2 ** 63 - 1] memberCount = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < memberCount; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor))
+        {
+            return false;
+        }
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "id"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            idNode = member;
+        }
+        else if (System.Text.Equals(key, "llvmTriple"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            tripleNode = member;
+        }
+        else if (System.Text.Equals(key, "architecture"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4)) return false;
+            architectureNode = member;
+        }
+        else if (System.Text.Equals(key, "operatingSystem"))
+        {
+            if (!ClaimSdkManifestMember(seen, 8)) return false;
+            operatingSystemNode = member;
+        }
+        else if (System.Text.Equals(key, "abi"))
+        {
+            if (!ClaimSdkManifestMember(seen, 16)) return false;
+            abiNode = member;
+        }
+        else if (System.Text.Equals(key, "pointerBitWidth"))
+        {
+            if (!ClaimSdkManifestMember(seen, 32)) return false;
+            pointerWidthNode = member;
+        }
+        else if (System.Text.Equals(key, "endianness"))
+        {
+            if (!ClaimSdkManifestMember(seen, 64)) return false;
+            endiannessNode = member;
+        }
+        else if (System.Text.Equals(key, "dataLayout"))
+        {
+            if (!ClaimSdkManifestMember(seen, 128)) return false;
+            dataLayoutNode = member;
+        }
+        else if (System.Text.Equals(key, "baselineCpu"))
+        {
+            if (!ClaimSdkManifestMember(seen, 256)) return false;
+            baselineCpuNode = member;
+        }
+        else if (System.Text.Equals(key, "baselineFeatures"))
+        {
+            if (!ClaimSdkManifestMember(seen, 512)) return false;
+            baselineFeaturesNode = member;
+        }
+        else if (System.Text.Equals(key, "relocationModel"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1024)) return false;
+            relocationModelNode = member;
+        }
+        else if (System.Text.Equals(key, "codeModel"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2048)) return false;
+            codeModelNode = member;
+        }
+        else if (System.Text.Equals(key, "cDataModel"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4096)) return false;
+            cDataModelNode = member;
+        }
+        else if (System.Text.Equals(key, "minimumOperatingSystemVersion"))
+        {
+            if (!ClaimSdkManifestMember(seen, 8192)) return false;
+            minimumOsNode = member;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    // Identity, ABI, layout width, endianness, and relocation are required.
+    if ((seen.Value & 1151) != 1151)
+    {
+        return false;
+    }
+
+    if (!AppendRequiredSdkManifestText(destination.IdValue, document, idNode)
+        || !AppendRequiredSdkManifestText(destination.LlvmTripleValue, document, tripleNode)
+        || !AppendRequiredSdkManifestText(destination.ArchitectureValue, document, architectureNode)
+        || !AppendRequiredSdkManifestText(destination.OperatingSystemValue, document, operatingSystemNode)
+        || !AppendRequiredSdkManifestText(destination.AbiValue, document, abiNode)
+        || !ParseSdkManifestU32(document, pointerWidthNode, destination.PointerBitWidthValue)
+        || destination.PointerBitWidthValue == 0
+        || !AppendRequiredSdkManifestText(destination.RelocationModelValue, document, relocationModelNode))
+    {
+        return false;
+    }
+
+    if (document.KindAt(endiannessNode) != JsonKind.Text)
+    {
+        return false;
+    }
+    stack ascii endianness = document.TextAt(endiannessNode);
+    if (System.Text.Equals(endianness, "little"))
+    {
+        destination.EndiannessValue = SdkTargetEndianness.Little;
+    }
+    else if (System.Text.Equals(endianness, "big"))
+    {
+        destination.EndiannessValue = SdkTargetEndianness.Big;
+    }
+    else
+    {
+        return false;
+    }
+
+    stack mut bool present = false;
+    if ((seen.Value & 128) != 0
+        && !AppendOptionalSdkManifestText(destination.DataLayoutValue, document, dataLayoutNode, present)) return false;
+    if ((seen.Value & 256) != 0
+        && !AppendOptionalSdkManifestText(destination.BaselineCpuValue, document, baselineCpuNode, present)) return false;
+    if ((seen.Value & 512) != 0
+        && document.KindAt(baselineFeaturesNode) != JsonKind.Null
+        && !ParseSdkManifestTextArray(document, baselineFeaturesNode, destination.BaselineFeatureValues)) return false;
+    if ((seen.Value & 2048) != 0
+        && !AppendOptionalSdkManifestText(destination.CodeModelValue, document, codeModelNode, present)) return false;
+    if ((seen.Value & 4096) != 0
+        && !AppendOptionalSdkManifestText(destination.CDataModelValue, document, cDataModelNode, present)) return false;
+    if ((seen.Value & 8192) != 0
+        && !AppendOptionalSdkManifestText(destination.MinimumOperatingSystemVersionValue, document, minimumOsNode, present)) return false;
+    return true;
+}
+
+internal fn bool ParseSdkModuleOwnership(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow SdkModuleOwnership destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object)
+    {
+        return false;
+    }
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] packageNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "name"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            nameNode = member;
+        }
+        else if (System.Text.Equals(key, "package"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            packageNode = member;
+        }
+        else return false;
+    }
+    return seen.Value == 3
+        && AppendRequiredSdkManifestText(destination.ModuleNameValue, document, nameNode)
+        && AppendRequiredSdkManifestText(destination.PackageIdValue, document, packageNode);
+}
+
+internal fn bool ParseSdkPackageDependency(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow SdkPackageDependency destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object) return false;
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] idNode = 0;
+    stack mut u64[0 2 ** 63 - 1] apiNode = 0;
+    stack mut u64[0 2 ** 63 - 1] contentNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "id"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            idNode = member;
+        }
+        else if (System.Text.Equals(key, "apiHash"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            apiNode = member;
+        }
+        else if (System.Text.Equals(key, "contentHash"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4)) return false;
+            contentNode = member;
+        }
+        else return false;
+    }
+    if ((seen.Value & 1) == 0
+        || !AppendRequiredSdkManifestText(destination.PackageIdValue, document, idNode)) return false;
+    if ((seen.Value & 2) != 0
+        && !AppendOptionalSdkManifestText(destination.ApiHashValue, document, apiNode, destination.HasApiHashValue)) return false;
+    if ((seen.Value & 4) != 0
+        && !AppendOptionalSdkManifestText(destination.ContentHashValue, document, contentNode, destination.HasContentHashValue)) return false;
+    return destination.HasApiHashValue == destination.HasContentHashValue
+        && (!destination.HasApiHashValue
+            || (SdkManifestSha256ShapeIsValid(destination.ApiHashValue)
+                && SdkManifestSha256ShapeIsValid(destination.ContentHashValue)));
+}
+
+internal fn bool ParseSdkNativeChecksum(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow SdkNativeFileChecksum destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object) return false;
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] pathNode = 0;
+    stack mut u64[0 2 ** 63 - 1] shaNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "path"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            pathNode = member;
+        }
+        else if (System.Text.Equals(key, "sha256"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            shaNode = member;
+        }
+        else return false;
+    }
+    return seen.Value == 3
+        && AppendRequiredSdkManifestText(destination.PathValue, document, pathNode)
+        && AppendRequiredSdkManifestText(destination.Sha256Value, document, shaNode)
+        && SdkManifestSha256ShapeIsValid(destination.Sha256Value);
+}
+
+internal fn bool ParseSdkNativeChecksumArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow dynamic SdkNativeFileChecksum destination)
+{
+    if (document.KindAt(node) != JsonKind.Array) return false;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    if (!destination.TryReserve(count)) return false;
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack mut SdkNativeFileChecksum checksum = new();
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)
+            || !ParseSdkNativeChecksum(document, cursor.Node, checksum)) return false;
+        init destination[destination.Length] = checksum;
+    }
+    return true;
+}
+
+internal fn bool ParseSdkNativeDescriptor(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow SdkNativePackageDescriptor destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object) return false;
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] artifactsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] includesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] libraryDirectoriesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] runtimeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] licensesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] checksumsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] librariesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] linkArgumentsNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "artifacts"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            artifactsNode = member;
+        }
+        else if (System.Text.Equals(key, "includeDirectories"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            includesNode = member;
+        }
+        else if (System.Text.Equals(key, "libraryDirectories"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4)) return false;
+            libraryDirectoriesNode = member;
+        }
+        else if (System.Text.Equals(key, "runtimeFiles"))
+        {
+            if (!ClaimSdkManifestMember(seen, 8)) return false;
+            runtimeNode = member;
+        }
+        else if (System.Text.Equals(key, "licenseFiles"))
+        {
+            if (!ClaimSdkManifestMember(seen, 16)) return false;
+            licensesNode = member;
+        }
+        else if (System.Text.Equals(key, "fileChecksums"))
+        {
+            if (!ClaimSdkManifestMember(seen, 32)) return false;
+            checksumsNode = member;
+        }
+        else if (System.Text.Equals(key, "libraries"))
+        {
+            if (!ClaimSdkManifestMember(seen, 64)) return false;
+            librariesNode = member;
+        }
+        else if (System.Text.Equals(key, "linkArguments"))
+        {
+            if (!ClaimSdkManifestMember(seen, 128)) return false;
+            linkArgumentsNode = member;
+        }
+        else return false;
+    }
+
+    if ((seen.Value & 1) != 0 && !ParseSdkManifestTextArray(document, artifactsNode, destination.ArtifactPathValues)) return false;
+    if ((seen.Value & 2) != 0 && !ParseSdkManifestTextArray(document, includesNode, destination.IncludeDirectoryValues)) return false;
+    if ((seen.Value & 4) != 0 && !ParseSdkManifestTextArray(document, libraryDirectoriesNode, destination.LibraryDirectoryValues)) return false;
+    if ((seen.Value & 8) != 0 && !ParseSdkManifestTextArray(document, runtimeNode, destination.RuntimeFileValues)) return false;
+    if ((seen.Value & 16) != 0 && !ParseSdkManifestTextArray(document, licensesNode, destination.LicenseFileValues)) return false;
+    if ((seen.Value & 32) != 0 && !ParseSdkNativeChecksumArray(document, checksumsNode, destination.FileChecksumValues)) return false;
+    if ((seen.Value & 64) != 0 && !ParseSdkManifestTextArray(document, librariesNode, destination.LibraryValues)) return false;
+    if ((seen.Value & 128) != 0 && !ParseSdkManifestTextArray(document, linkArgumentsNode, destination.LinkArgumentValues)) return false;
+    return true;
+}
+
+internal fn bool ParseSdkDependencyArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow dynamic SdkPackageDependency destination)
+{
+    if (document.KindAt(node) != JsonKind.Array) return false;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    if (!destination.TryReserve(count)) return false;
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack mut SdkPackageDependency dependency = new();
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)
+            || !ParseSdkPackageDependency(document, cursor.Node, dependency)) return false;
+        init destination[destination.Length] = dependency;
+    }
+    return true;
+}
+
+internal fn bool ParseSdkPackageDescriptor(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    SdkDistributionKind distributionKind,
+    mut borrow SdkPackageDescriptor destination)
+    where overlap_all(destination)
+{
+    if (document.KindAt(node) != JsonKind.Object) return false;
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] idNode = 0;
+    stack mut u64[0 2 ** 63 - 1] versionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] profileNode = 0;
+    stack mut u64[0 2 ** 63 - 1] imageNode = 0;
+    stack mut u64[0 2 ** 63 - 1] libraryNode = 0;
+    stack mut u64[0 2 ** 63 - 1] apiNode = 0;
+    stack mut u64[0 2 ** 63 - 1] contentNode = 0;
+    stack mut u64[0 2 ** 63 - 1] imageShaNode = 0;
+    stack mut u64[0 2 ** 63 - 1] libraryShaNode = 0;
+    stack mut u64[0 2 ** 63 - 1] dependenciesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] nativeNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "id"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            idNode = member;
+        }
+        else if (System.Text.Equals(key, "version"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            versionNode = member;
+        }
+        else if (System.Text.Equals(key, "profile"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4)) return false;
+            profileNode = member;
+        }
+        else if (System.Text.Equals(key, "image"))
+        {
+            if (!ClaimSdkManifestMember(seen, 8)) return false;
+            imageNode = member;
+        }
+        else if (System.Text.Equals(key, "library"))
+        {
+            if (!ClaimSdkManifestMember(seen, 16)) return false;
+            libraryNode = member;
+        }
+        else if (System.Text.Equals(key, "apiHash"))
+        {
+            if (!ClaimSdkManifestMember(seen, 32)) return false;
+            apiNode = member;
+        }
+        else if (System.Text.Equals(key, "contentHash"))
+        {
+            if (!ClaimSdkManifestMember(seen, 64)) return false;
+            contentNode = member;
+        }
+        else if (System.Text.Equals(key, "imageSha256"))
+        {
+            if (!ClaimSdkManifestMember(seen, 128)) return false;
+            imageShaNode = member;
+        }
+        else if (System.Text.Equals(key, "librarySha256"))
+        {
+            if (!ClaimSdkManifestMember(seen, 256)) return false;
+            libraryShaNode = member;
+        }
+        else if (System.Text.Equals(key, "dependencies"))
+        {
+            if (!ClaimSdkManifestMember(seen, 512)) return false;
+            dependenciesNode = member;
+        }
+        else if (System.Text.Equals(key, "native"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1024)) return false;
+            nativeNode = member;
+        }
+        else return false;
+    }
+
+    if ((seen.Value & 15) != 15
+        || !AppendRequiredSdkManifestText(destination.IdValue, document, idNode)
+        || !AppendRequiredSdkManifestText(destination.VersionValue, document, versionNode)
+        || !AppendRequiredSdkManifestText(destination.ProfileValue, document, profileNode)
+        || !AppendRequiredSdkManifestText(destination.ImagePathValue, document, imageNode)) return false;
+
+    if (!System.Text.OwnedAsciiEqualsAscii(destination.ProfileValue, "dev")
+        && !System.Text.OwnedAsciiEqualsAscii(destination.ProfileValue, "release")) return false;
+    if (distributionKind == SdkDistributionKind.Release
+        && !System.Text.OwnedAsciiEqualsAscii(destination.ProfileValue, "release")) return false;
+
+    if ((seen.Value & 16) != 0
+        && !AppendOptionalSdkManifestText(destination.LibraryPathValue, document, libraryNode, destination.HasLibraryPathValue)) return false;
+    if ((seen.Value & 32) != 0
+        && !AppendOptionalSdkManifestText(destination.ApiHashValue, document, apiNode, destination.HasApiHashValue)) return false;
+    if ((seen.Value & 64) != 0
+        && !AppendOptionalSdkManifestText(destination.ContentHashValue, document, contentNode, destination.HasContentHashValue)) return false;
+    if ((seen.Value & 128) != 0
+        && !AppendOptionalSdkManifestText(destination.ImageSha256Value, document, imageShaNode, destination.HasImageSha256Value)) return false;
+    if ((seen.Value & 256) != 0
+        && !AppendOptionalSdkManifestText(destination.LibrarySha256Value, document, libraryShaNode, destination.HasLibrarySha256Value)) return false;
+
+    if (destination.HasApiHashValue != destination.HasContentHashValue) return false;
+    if (destination.HasApiHashValue
+        && (!SdkManifestSha256ShapeIsValid(destination.ApiHashValue)
+            || !SdkManifestSha256ShapeIsValid(destination.ContentHashValue))) return false;
+    if (destination.HasImageSha256Value
+        && !SdkManifestSha256ShapeIsValid(destination.ImageSha256Value)) return false;
+    if (destination.HasLibrarySha256Value
+        && !SdkManifestSha256ShapeIsValid(destination.LibrarySha256Value)) return false;
+    if (distributionKind == SdkDistributionKind.Release
+        && (!destination.HasImageSha256Value || !destination.HasLibrarySha256Value)) return false;
+
+    if ((seen.Value & 512) != 0
+        && !ParseSdkDependencyArray(document, dependenciesNode, destination.DependencyValues)) return false;
+    if ((seen.Value & 1024) != 0
+        && document.KindAt(nativeNode) != JsonKind.Null
+        && !ParseSdkNativeDescriptor(document, nativeNode, destination.NativeValue)) return false;
+    return true;
+}
+
+internal fn bool ParseSdkModuleArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow dynamic SdkModuleOwnership destination)
+{
+    if (document.KindAt(node) != JsonKind.Array) return false;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    if (!destination.TryReserve(count)) return false;
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack mut SdkModuleOwnership ownership = new();
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)
+            || !ParseSdkModuleOwnership(document, cursor.Node, ownership)) return false;
+        init destination[destination.Length] = ownership;
+    }
+    return true;
+}
+
+internal fn bool ParseSdkPackageArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    SdkDistributionKind distributionKind,
+    mut borrow dynamic SdkPackageDescriptor destination)
+{
+    if (document.KindAt(node) != JsonKind.Array) return false;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(node);
+    if (!destination.TryReserve(count)) return false;
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack mut SdkPackageDescriptor package = new();
+        if (!SelectSdkJsonForwardChild(document, node, index, cursor)
+            || !ParseSdkPackageDescriptor(document, cursor.Node, distributionKind, package)) return false;
+        init destination[destination.Length] = package;
+    }
+    return true;
+}
+
+internal fn bool ParseSdkManifestDocument(
+    mut borrow JsonDocument document,
+    mut borrow SdkManifest destination)
+    where overlap_all(destination)
+{
+    if (document.Count() == 0 || document.KindAt(0) != JsonKind.Object) return false;
+    stack mut SdkManifestMemberMask seen = new();
+    stack mut u64[0 2 ** 63 - 1] schemaNode = 0;
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u64[0 2 ** 63 - 1] versionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compatibilityNode = 0;
+    stack mut u64[0 2 ** 63 - 1] packageFormatNode = 0;
+    stack mut u64[0 2 ** 63 - 1] targetNode = 0;
+    stack mut u64[0 2 ** 63 - 1] modulesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] packagesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] developmentRootsNode = 0;
+    stack u64[0 2 ** 63 - 1] count = document.ChildCountAt(0);
+    stack mut SdkJsonForwardChild cursor = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!SelectSdkJsonForwardChild(document, 0, index, cursor)) return false;
+        stack u64[0 2 ** 63 - 1] member = cursor.Node;
+        stack ascii key = document.KeyAt(member);
+        if (System.Text.Equals(key, "schemaVersion"))
+        {
+            if (!ClaimSdkManifestMember(seen, 1)) return false;
+            schemaNode = member;
+        }
+        else if (System.Text.Equals(key, "kind"))
+        {
+            if (!ClaimSdkManifestMember(seen, 2)) return false;
+            kindNode = member;
+        }
+        else if (System.Text.Equals(key, "sdkVersion"))
+        {
+            if (!ClaimSdkManifestMember(seen, 4)) return false;
+            versionNode = member;
+        }
+        else if (System.Text.Equals(key, "compilerCompatibility"))
+        {
+            if (!ClaimSdkManifestMember(seen, 8)) return false;
+            compatibilityNode = member;
+        }
+        else if (System.Text.Equals(key, "packageFormatVersion"))
+        {
+            if (!ClaimSdkManifestMember(seen, 16)) return false;
+            packageFormatNode = member;
+        }
+        else if (System.Text.Equals(key, "target"))
+        {
+            if (!ClaimSdkManifestMember(seen, 32)) return false;
+            targetNode = member;
+        }
+        else if (System.Text.Equals(key, "modules"))
+        {
+            if (!ClaimSdkManifestMember(seen, 64)) return false;
+            modulesNode = member;
+        }
+        else if (System.Text.Equals(key, "packages"))
+        {
+            if (!ClaimSdkManifestMember(seen, 128)) return false;
+            packagesNode = member;
+        }
+        else if (System.Text.Equals(key, "developmentSourceRoots"))
+        {
+            if (!ClaimSdkManifestMember(seen, 256)) return false;
+            developmentRootsNode = member;
+        }
+        else return false;
+    }
+
+    if ((seen.Value & 255) != 255
+        || !ParseSdkManifestU32(document, schemaNode, destination.SchemaVersionValue)
+        || !AppendRequiredSdkManifestText(destination.SdkVersionValue, document, versionNode)
+        || !AppendRequiredSdkManifestText(destination.CompilerCompatibilityValue, document, compatibilityNode)) return false;
+
+    if (document.KindAt(kindNode) != JsonKind.Text) return false;
+    stack ascii kind = document.TextAt(kindNode);
+    if (System.Text.Equals(kind, "release")) destination.KindValue = SdkDistributionKind.Release;
+    else if (System.Text.Equals(kind, "development")) destination.KindValue = SdkDistributionKind.Development;
+    else if (System.Text.Equals(kind, "stage")) destination.KindValue = SdkDistributionKind.Stage;
+    else return false;
+
+    if (!ParseSdkManifestU32(document, packageFormatNode, destination.PackageFormatVersionValue)
+        || !ParseSdkTargetDescriptor(document, targetNode, destination.TargetValue)
+        || !ParseSdkModuleArray(document, modulesNode, destination.ModuleValues)
+        || !ParseSdkPackageArray(document, packagesNode, destination.KindValue, destination.PackageValues)) return false;
+    if ((seen.Value & 256) != 0
+        && !ParseSdkManifestTextArray(document, developmentRootsNode, destination.DevelopmentSourceRootValues)) return false;
+
+    if (destination.KindValue != SdkDistributionKind.Development
+        && (destination.ModuleValues.Length == 0 || destination.PackageValues.Length == 0)) return false;
+    if (destination.KindValue != SdkDistributionKind.Development
+        && destination.DevelopmentSourceRootValues.Length != 0) return false;
+    return true;
+}
+
+public unsafe fn SdkManifestLoadResult ParseSdkManifestText(ascii source, ascii manifestPath)
+{
+    switch (System.Json.ParseText(source))
+    {
+        case JsonResult<JsonDocument>.Err(var error):
+            return SdkManifestFailure(
+                SdkDiagnosticCode.ManifestMalformed,
+                "SDK manifest JSON is malformed.",
+                manifestPath);
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut SdkManifest manifest = new();
+            if (!ParseSdkManifestDocument(document, manifest))
+            {
+                return SdkManifestFailure(
+                    SdkDiagnosticCode.ManifestMalformed,
+                    "SDK manifest has missing, duplicate, unknown, or invalid members.",
+                    manifestPath);
+            }
+
+            if (manifest.SchemaVersionValue != 1)
+            {
+                return SdkManifestFailure(
+                    SdkDiagnosticCode.SchemaIncompatible,
+                    "SDK manifest schemaVersion must be 1.",
+                    manifestPath);
+            }
+            if (!System.Text.OwnedAsciiEqualsAscii(manifest.CompilerCompatibilityValue, "stark-sdk-v1"))
+            {
+                return SdkManifestFailure(
+                    SdkDiagnosticCode.CompilerIncompatible,
+                    "SDK compilerCompatibility must be 'stark-sdk-v1'.",
+                    manifestPath);
+            }
+            if (manifest.PackageFormatVersionValue != 2)
+            {
+                return SdkManifestFailure(
+                    SdkDiagnosticCode.PackageFormatIncompatible,
+                    "SDK packageFormatVersion must be 2.",
+                    manifestPath);
+            }
+            return SdkManifestLoadResult.Ok(manifest);
+    }
+}
+
+public unsafe fn SdkManifestLoadResult LoadSdkManifestFile(ascii path)
+{
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<OwnedAscii>.Err(var error):
+            return SdkManifestFailure(
+                SdkDiagnosticCode.ManifestMissing,
+                "SDK manifest file could not be read.",
+                path);
+        case System.IO.IOResult<OwnedAscii>.Ok(var loaded):
+            stack mut OwnedAscii text = loaded;
+            return ParseSdkManifestText(text.View(), path);
+    }
+}

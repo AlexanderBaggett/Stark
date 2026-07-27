@@ -1,0 +1,3839 @@
+import Compiler.Typing
+import Compiler.Parsing
+import Compiler.Lexing
+import System.Testing
+import System.Text
+[Collection("typing")]
+module TypingTests
+
+fn bool LexOk(LexResult<TokenStream> result, out TokenStream stream)
+{
+    switch (result)
+    {
+        case LexResult<TokenStream>.Err(var error):
+            stream = new();
+            return false;
+        case LexResult<TokenStream>.Ok(var value):
+            stream = value;
+            return true;
+    }
+}
+
+// Finds the keyword token of the sole function declaration in an already-lexed
+// stream. False when the stream is not a single function.
+fn bool FirstFunctionKeyword(borrow TokenStream stream, out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    return true;
+                }
+            }
+
+            return false;
+    }
+}
+
+fn bool BuildTypedSignatureTableForSource(ascii source, out TokenStream stream, out TypedFunctionSignatureTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedFunctionSignatures(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return false;
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedSignatureIndexByName(borrow TypedFunctionSignatureTable table, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildTypedGlobalTableForSource(ascii source, out TokenStream stream, out TypedGlobalDeclarationTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedGlobalDeclarations(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedGlobalDeclarationTable>.Err(var globalError):
+            return false;
+        case ParseResult<TypedGlobalDeclarationTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedGlobalIndexByName(borrow TypedGlobalDeclarationTable table, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildTypedFieldTableForSource(ascii source, out TokenStream stream, out TypedFieldDeclarationTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedStructRecordFields(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return false;
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedFieldIndexByName(borrow TypedFieldDeclarationTable table, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildTypedEnumPayloadTableForSource(ascii source, out TokenStream stream, out TypedEnumPayloadTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedEnumPayloads(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return false;
+        case ParseResult<TypedEnumPayloadTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedEnumLayoutTableForSource(ascii source, out TokenStream stream, out TypedEnumLayoutTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedEnumLayouts(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedEnumLayoutFoldInputsForSource(ascii source, out TokenStream stream, out DeclarationList declarations, out TypedEnumLayoutTable table)
+{
+    stream = new();
+    declarations = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            parsedDeclarations = decls;
+    }
+
+    switch (BuildTypedEnumLayouts(source, parsedStream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtTable):
+            stream = parsedStream;
+            declarations = parsedDeclarations;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] FirstTokenText(ascii source, borrow TokenStream stream, ascii text)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, index);
+            if (System.Text.Equals(actual, text))
+            {
+                found = (u32[0 max])index;
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool EnumLayoutQueryFoldsU64(
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u64[0 max] expected)
+{
+    stack mut TypedLayoutQueryConstant constant = new();
+    return TryFoldEnumLayoutComptimeQueryCall(declarations, table, source, stream, queryNameToken, constant)
+        && constant.IsU64()
+        && constant.U64Value() == expected;
+}
+
+fn bool EnumLayoutQueryFoldsBool(
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    bool expected)
+{
+    stack mut TypedLayoutQueryConstant constant = new();
+    return TryFoldEnumLayoutComptimeQueryCall(declarations, table, source, stream, queryNameToken, constant)
+        && constant.IsBool()
+        && constant.BoolValue() == expected;
+}
+
+fn u32[0 max] TypedEnumPayloadIndexByVariantAndOrdinal(
+    borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii variantName,
+    u32[0 max] payloadOrdinal)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.PayloadOrdinalAt(index) == payloadOrdinal)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.VariantNameTokenAt(index));
+            if (System.Text.Equals(actual, variantName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedEnumLayoutVariantIndexByName(
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii variantName)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.RowKindAt(index) == TypedEnumLayoutRowKind.Variant)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.VariantNameTokenAt(index));
+            if (System.Text.Equals(actual, variantName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedEnumLayoutPayloadIndexByVariantAndOrdinal(
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii variantName,
+    u32[0 max] payloadOrdinal)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.RowKindAt(index) == TypedEnumLayoutRowKind.Payload
+            && table.PayloadOrdinalAt(index) == payloadOrdinal)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.VariantNameTokenAt(index));
+            if (System.Text.Equals(actual, variantName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedEnumPayloadIndexByPayloadName(
+    borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii payloadName)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.PayloadNameTokenAt(index) != 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.PayloadNameTokenAt(index));
+            if (System.Text.Equals(actual, payloadName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildTypedLocalDeclarationTableForSource(ascii source, out TokenStream stream, out TypedLocalDeclarationTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedLocalDeclarations(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedLocalDeclarationTable>.Err(var localError):
+            return false;
+        case ParseResult<TypedLocalDeclarationTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedStorageSelectorTableForSource(ascii source, out TokenStream stream, out TypedStorageSelectorTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedStorageSelectors(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedStorageSelectorTable>.Err(var selectorError):
+            return false;
+        case ParseResult<TypedStorageSelectorTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedLiteralExpressionTableForSource(ascii source, out TokenStream stream, out TypedLiteralExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedLiteralExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return false;
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedIdentifierExpressionTableForSource(ascii source, out TokenStream stream, out TypedIdentifierExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedIdentifierExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return false;
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedCallExpressionTableForSource(ascii source, out TokenStream stream, out TypedCallExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedCallExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedCallExpressionTable>.Err(var callError):
+            return false;
+        case ParseResult<TypedCallExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedMemberExpressionTableForSource(ascii source, out TokenStream stream, out TypedMemberExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedMemberExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedMemberExpressionTable>.Err(var memberError):
+            return false;
+        case ParseResult<TypedMemberExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedIndexExpressionTableForSource(ascii source, out TokenStream stream, out TypedIndexExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedIndexExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedIndexExpressionTable>.Err(var indexError):
+            return false;
+        case ParseResult<TypedIndexExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedConversionExpressionTableForSource(ascii source, out TokenStream stream, out TypedConversionExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedConversionExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedConversionExpressionTable>.Err(var conversionError):
+            return false;
+        case ParseResult<TypedConversionExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedAssignmentExpressionTableForSource(ascii source, out TokenStream stream, out TypedAssignmentExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedAssignmentExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedAssignmentExpressionTable>.Err(var assignmentError):
+            return false;
+        case ParseResult<TypedAssignmentExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn bool BuildTypedReturnExpressionTableForSource(ascii source, out TokenStream stream, out TypedReturnExpressionTable table)
+{
+    stream = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedReturnExpressions(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedReturnExpressionTable>.Err(var returnError):
+            return false;
+        case ParseResult<TypedReturnExpressionTable>.Ok(var builtTable):
+            stream = parsedStream;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedLocalDeclarationIndexByFunctionAndName(
+    borrow TypedLocalDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii functionName,
+    ascii localName)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actualFunction = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.FunctionNameTokenAt(index));
+            stack ascii actualLocal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(actualFunction, functionName) && System.Text.Equals(actualLocal, localName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedIdentifierNthByName(
+    borrow TypedIdentifierExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii name,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                if (seen == ordinal)
+                {
+                    found = (u32[0 max])(index + 1);
+                }
+
+                seen = (u32[0 max])(seen + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedCallNthByName(
+    borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii name,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.CalleeNameTokenAt(index) != 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.CalleeNameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                if (seen == ordinal)
+                {
+                    found = (u32[0 max])(index + 1);
+                }
+
+                seen = (u32[0 max])(seen + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedCallArgumentByCallAndOrdinal(
+    borrow TypedCallExpressionTable table,
+    u32[0 max] callIndexPlusOne,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.ArgumentCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.ArgumentCallIndexPlusOneAt(index) == callIndexPlusOne
+            && table.ArgumentOrdinalAt(index) == ordinal)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedMemberNthByName(
+    borrow TypedMemberExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii name,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.MemberNameTokenAt(index) != 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.MemberNameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                if (seen == ordinal)
+                {
+                    found = (u32[0 max])(index + 1);
+                }
+
+                seen = (u32[0 max])(seen + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedMemberCandidateByMemberAndOrdinal(
+    borrow TypedMemberExpressionTable table,
+    u32[0 max] memberIndexPlusOne,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.CandidateCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.CandidateMemberIndexPlusOneAt(index) == memberIndexPlusOne)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedIndexNthByAccessKind(
+    borrow TypedIndexExpressionTable table,
+    TypedIndexAccessKind accessKind,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.AccessKindAt(index) == accessKind)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedAssignmentNthByOperatorKind(
+    borrow TypedAssignmentExpressionTable table,
+    TypedAssignmentOperatorKind operatorKind,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.OperatorKindAt(index) == operatorKind)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedAssignmentNthByTargetKind(
+    borrow TypedAssignmentExpressionTable table,
+    TypedAssignmentTargetKind targetKind,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.TargetKindAt(index) == targetKind)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedAssignmentNthByIdentifierTargetKind(
+    borrow TypedAssignmentExpressionTable table,
+    TypedIdentifierTargetKind targetKind,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.IdentifierTargetKindAt(index) == targetKind)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedConversionNthByFunctionName(
+    borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii functionName,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actualFunction = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.FunctionNameTokenAt(index));
+            if (System.Text.Equals(actualFunction, functionName))
+            {
+                if (seen == ordinal)
+                {
+                    found = (u32[0 max])(index + 1);
+                }
+
+                seen = (u32[0 max])(seen + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedReturnNthByFunctionName(
+    borrow TypedReturnExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii functionName,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actualFunction = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.FunctionNameTokenAt(index));
+            if (System.Text.Equals(actualFunction, functionName))
+            {
+                if (seen == ordinal)
+                {
+                    found = (u32[0 max])(index + 1);
+                }
+
+                seen = (u32[0 max])(seen + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedStorageSelectorIndexBySubject(
+    borrow TypedStorageSelectorTable table,
+    ascii source,
+    borrow TokenStream stream,
+    TypedStorageSelectorContext context,
+    ascii subjectName)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.ContextAt(index) == context && table.SubjectTokenAt(index) != 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.SubjectTokenAt(index));
+            if (System.Text.Equals(actual, subjectName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedLiteralIndexByTextAndKind(
+    borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    TypedLiteralKind kind,
+    ascii literalText)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.LiteralKindAt(index) == kind)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.LiteralTokenAt(index));
+            if (System.Text.Equals(actual, literalText))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedLiteralNthTextKind(
+    borrow TypedLiteralExpressionTable table,
+    TypedTextLiteralKind textKind,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.TextLiteralKindAt(index) == textKind)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedStorageSelectorCountByContext(borrow TypedStorageSelectorTable table, TypedStorageSelectorContext context)
+{
+    stack mut u32[0 max] total = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (table.ContextAt(index) == context)
+        {
+            total = (u32[0 max])(total + 1);
+        }
+    }
+
+    return total;
+}
+
+fn u32[0 max] TypedStorageSelectorNthByContext(
+    borrow TypedStorageSelectorTable table,
+    TypedStorageSelectorContext context,
+    u32[0 max] ordinal)
+{
+    stack mut u32[0 max] seen = 0;
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.ContextAt(index) == context)
+        {
+            if (seen == ordinal)
+            {
+                found = (u32[0 max])(index + 1);
+            }
+
+            seen = (u32[0 max])(seen + 1);
+        }
+    }
+
+    return found;
+}
+
+[Fact]
+fn bool ClassifiesParameterTypes()
+{
+    // Each parameter's type-primary token maps to its value type: i32 -> Int,
+    // f64 -> Float, bool -> Bool, ascii -> Text, and a user type Foo -> Unknown.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 a, f64 b, bool c, ascii d, Foo e) { }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            if (signature.ParamCount() != 5)
+            {
+                return false;
+            }
+
+            return MapTypeToken(stream, signature.ParamTypeTokenAt(0)) == ExprType.Int
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(1)) == ExprType.Float
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(2)) == ExprType.Bool
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(3)) == ExprType.Text
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(4)) == ExprType.Unknown;
+    }
+}
+
+[Fact]
+fn bool TypedFunctionSignaturesCaptureScalarRangeAndPointerFacts()
+{
+    stack ascii source = raw"""
+    unsafe fn i32[0 max] Fill(
+        out rawmutptr<i8[min max]>[length] buffer,
+        u64[1 16] length,
+        borrow bool flag)
+        where dead_on_return(buffer)
+    {
+        return 0;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionSignatureTable table = new();
+    if (!BuildTypedSignatureTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] fillSlot = TypedSignatureIndexByName(table, source, stream, "Fill");
+    if (fillSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] fillIndex = (u64[0 2 ** 63 - 1])(fillSlot - 1);
+    stack u32[0 max] returnSlot = table.ReturnTypeSlotIndexPlusOneAt(fillIndex);
+    stack u32[0 max] bufferSlot = table.ParameterTypeSlotIndexPlusOneAt(fillIndex, 0);
+    stack u32[0 max] lengthSlot = table.ParameterTypeSlotIndexPlusOneAt(fillIndex, 1);
+    stack u32[0 max] flagSlot = table.ParameterTypeSlotIndexPlusOneAt(fillIndex, 2);
+    if (returnSlot == 0 || bufferSlot == 0 || lengthSlot == 0 || flagSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = (u64[0 2 ** 63 - 1])(returnSlot - 1);
+    stack u64[0 2 ** 63 - 1] bufferIndex = (u64[0 2 ** 63 - 1])(bufferSlot - 1);
+    stack u64[0 2 ** 63 - 1] lengthIndex = (u64[0 2 ** 63 - 1])(lengthSlot - 1);
+    stack u64[0 2 ** 63 - 1] flagIndex = (u64[0 2 ** 63 - 1])(flagSlot - 1);
+
+    return table.Count() == 1
+        && table.TypeSlotCount() == 4
+        && table.ParamCountAt(fillIndex) == 3
+        && table.TypeKindAt(returnIndex) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(returnIndex) == 32
+        && table.IsIntegerSignedAt(returnIndex)
+        && table.HasIntegerRangeAt(returnIndex)
+        && table.RangeStartTokenAt(returnIndex) != 0
+        && table.TypeKindAt(bufferIndex) == TypedSignatureTypeKind.RawPointer
+        && table.IsOutAt(bufferIndex)
+        && table.IsRawMutablePointerAt(bufferIndex)
+        && table.HasElementCountExpressionAt(bufferIndex)
+        && table.ElementCountStartTokenAt(bufferIndex) != 0
+        && table.IsDeadOnReturnAt(bufferIndex)
+        && table.TypeKindAt(lengthIndex) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(lengthIndex) == 64
+        && table.IsIntegerUnsignedAt(lengthIndex)
+        && table.HasIntegerRangeAt(lengthIndex)
+        && table.TypeKindAt(flagIndex) == TypedSignatureTypeKind.Bool
+        && table.IsBorrowAt(flagIndex);
+}
+
+[Fact]
+fn bool TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts()
+{
+    stack ascii source = raw"""
+    struct Mapper<T>
+    {
+        tail finite law fn fnptr<tail fn bool(out u32[0 max]) where dead_on_return(arg0)> Make<U, comptime u8[1 8] N>(
+            borrow T[N] values,
+            dynamic U items);
+    }
+
+    fn T Pick<T, comptime u8[1 8] N>(T value)
+    {
+        return value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionSignatureTable table = new();
+    if (!BuildTypedSignatureTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] makeSlot = TypedSignatureIndexByName(table, source, stream, "Make");
+    stack u32[0 max] pickSlot = TypedSignatureIndexByName(table, source, stream, "Pick");
+    if (makeSlot == 0 || pickSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] makeIndex = (u64[0 2 ** 63 - 1])(makeSlot - 1);
+    stack u64[0 2 ** 63 - 1] pickIndex = (u64[0 2 ** 63 - 1])(pickSlot - 1);
+    stack u64[0 2 ** 63 - 1] makeReturn = (u64[0 2 ** 63 - 1])(table.ReturnTypeSlotIndexPlusOneAt(makeIndex) - 1);
+    stack u64[0 2 ** 63 - 1] makeValues = (u64[0 2 ** 63 - 1])(table.ParameterTypeSlotIndexPlusOneAt(makeIndex, 0) - 1);
+    stack u64[0 2 ** 63 - 1] makeItems = (u64[0 2 ** 63 - 1])(table.ParameterTypeSlotIndexPlusOneAt(makeIndex, 1) - 1);
+    stack u64[0 2 ** 63 - 1] pickReturn = (u64[0 2 ** 63 - 1])(table.ReturnTypeSlotIndexPlusOneAt(pickIndex) - 1);
+    stack u64[0 2 ** 63 - 1] pickValue = (u64[0 2 ** 63 - 1])(table.ParameterTypeSlotIndexPlusOneAt(pickIndex, 0) - 1);
+
+    return table.Count() == 2
+        && table.TypeSlotCount() == 5
+        && table.OwnerKindAt(makeIndex) == TypedSignatureOwnerKind.MemberMethod
+        && table.GenericParamCountAt(makeIndex) == 1
+        && table.ComptimeGenericParamCountAt(makeIndex) == 1
+        && table.TypeKindAt(makeReturn) == TypedSignatureTypeKind.FunctionPointer
+        && table.IsTailCallableAt(makeReturn)
+        && table.IsDeadOnReturnAt(makeReturn)
+        && table.TypeKindAt(makeValues) == TypedSignatureTypeKind.FixedArray
+        && table.IsBorrowAt(makeValues)
+        && table.HasElementCountExpressionAt(makeValues)
+        && table.TypeHeadIsGenericParameterAt(makeValues)
+        && table.TypeKindAt(makeItems) == TypedSignatureTypeKind.Dynamic
+        && table.TypeHeadIsGenericParameterAt(makeItems)
+        && table.OwnerKindAt(pickIndex) == TypedSignatureOwnerKind.TopLevelFunction
+        && table.GenericParamCountAt(pickIndex) == 1
+        && table.ComptimeGenericParamCountAt(pickIndex) == 1
+        && table.TypeKindAt(pickReturn) == TypedSignatureTypeKind.GenericParameter
+        && table.TypeHeadIsGenericParameterAt(pickReturn)
+        && table.TypeKindAt(pickValue) == TypedSignatureTypeKind.GenericParameter
+        && table.TypeHeadIsGenericParameterAt(pickValue);
+}
+
+[Fact]
+fn bool TypedGlobalDeclarationsCaptureStorageBindingAndBackendFacts()
+{
+    stack ascii source = raw"""
+    const Limit = 5;
+    const u8 Count = 80;
+    static mut rawmutptr<i8[min max]>[Count] Buffer = null;
+    heap dyn Speaker Boxed = null;
+    arena Widget Temp = new Widget();
+    register u64[0 max] Ticks = 0;
+    fn void skip() { }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedGlobalDeclarationTable table = new();
+    if (!BuildTypedGlobalTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] limitSlot = TypedGlobalIndexByName(table, source, stream, "Limit");
+    stack u32[0 max] countSlot = TypedGlobalIndexByName(table, source, stream, "Count");
+    stack u32[0 max] bufferSlot = TypedGlobalIndexByName(table, source, stream, "Buffer");
+    stack u32[0 max] boxedSlot = TypedGlobalIndexByName(table, source, stream, "Boxed");
+    stack u32[0 max] tempSlot = TypedGlobalIndexByName(table, source, stream, "Temp");
+    stack u32[0 max] ticksSlot = TypedGlobalIndexByName(table, source, stream, "Ticks");
+    if (limitSlot == 0 || countSlot == 0 || bufferSlot == 0 || boxedSlot == 0 || tempSlot == 0 || ticksSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] limit = (u64[0 2 ** 63 - 1])(limitSlot - 1);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+    stack u64[0 2 ** 63 - 1] buffer = (u64[0 2 ** 63 - 1])(bufferSlot - 1);
+    stack u64[0 2 ** 63 - 1] boxed = (u64[0 2 ** 63 - 1])(boxedSlot - 1);
+    stack u64[0 2 ** 63 - 1] temp = (u64[0 2 ** 63 - 1])(tempSlot - 1);
+    stack u64[0 2 ** 63 - 1] ticks = (u64[0 2 ** 63 - 1])(ticksSlot - 1);
+
+    return table.Count() == 6
+        && table.IsConstAt(limit)
+        && table.StorageKindAt(limit) == TypedGlobalStorageKind.Const
+        && !table.HasExplicitTypeAt(limit)
+        && table.HasInitializerAt(limit)
+        && table.IsConstAt(count)
+        && table.HasExplicitTypeAt(count)
+        && table.TypeKindAt(count) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(count) == 8
+        && table.IsIntegerUnsignedAt(count)
+        && table.StorageKindAt(buffer) == TypedGlobalStorageKind.Static
+        && table.IsMutableAt(buffer)
+        && table.TypeKindAt(buffer) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerAt(buffer)
+        && table.HasElementCountExpressionAt(buffer)
+        && table.ElementCountStartTokenAt(buffer) != 0
+        && table.StorageKindAt(boxed) == TypedGlobalStorageKind.Heap
+        && table.TypeKindAt(boxed) == TypedSignatureTypeKind.Dynamic
+        && table.StorageKindAt(temp) == TypedGlobalStorageKind.Arena
+        && table.TypeKindAt(temp) == TypedSignatureTypeKind.Named
+        && table.StorageKindAt(ticks) == TypedGlobalStorageKind.Register
+        && table.IsImmutableAt(ticks)
+        && table.TypeKindAt(ticks) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(ticks) == 64
+        && table.IsIntegerUnsignedAt(ticks)
+        && table.HasIntegerRangeAt(ticks)
+        && table.RangeEndsAtMaxAt(ticks);
+}
+
+[Fact]
+fn bool TypedGlobalDeclarationsCaptureConstArraysAndStaticScalars()
+{
+    stack ascii source = raw"""
+    const f64[4] Weights = { 1.0, 0.5, 0.25, 0.125 };
+    static bool Ready = false;
+    static mut i32[min max] Counter = 0;
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedGlobalDeclarationTable table = new();
+    if (!BuildTypedGlobalTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] weightsSlot = TypedGlobalIndexByName(table, source, stream, "Weights");
+    stack u32[0 max] readySlot = TypedGlobalIndexByName(table, source, stream, "Ready");
+    stack u32[0 max] counterSlot = TypedGlobalIndexByName(table, source, stream, "Counter");
+    if (weightsSlot == 0 || readySlot == 0 || counterSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] weights = (u64[0 2 ** 63 - 1])(weightsSlot - 1);
+    stack u64[0 2 ** 63 - 1] ready = (u64[0 2 ** 63 - 1])(readySlot - 1);
+    stack u64[0 2 ** 63 - 1] counter = (u64[0 2 ** 63 - 1])(counterSlot - 1);
+
+    return table.Count() == 3
+        && table.IsConstAt(weights)
+        && table.TypeKindAt(weights) == TypedSignatureTypeKind.FixedArray
+        && table.BitWidthAt(weights) == 64
+        && table.HasElementCountExpressionAt(weights)
+        && table.ElementCountStartTokenAt(weights) != 0
+        && table.StorageKindAt(ready) == TypedGlobalStorageKind.Static
+        && table.IsImmutableAt(ready)
+        && table.TypeKindAt(ready) == TypedSignatureTypeKind.Bool
+        && table.StorageKindAt(counter) == TypedGlobalStorageKind.Static
+        && table.IsMutableAt(counter)
+        && table.TypeKindAt(counter) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(counter) == 32
+        && table.IsIntegerSignedAt(counter)
+        && table.HasIntegerRangeAt(counter)
+        && table.RangeStartsAtMinAt(counter)
+        && table.RangeEndsAtMaxAt(counter);
+}
+
+[Fact]
+fn bool TypedStructFieldsCaptureBackendTypeFacts()
+{
+    stack ascii source = raw"""
+    struct Buffer<T, comptime u8[1 8] N>
+    {
+        T[N] Values;
+        rawmutptr<i8[min max]>[N] Data;
+        dynamic T Items;
+        Ascii Name[64];
+        u32[0 max] Count;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedFieldDeclarationTable table = new();
+    if (!BuildTypedFieldTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] valuesSlot = TypedFieldIndexByName(table, source, stream, "Values");
+    stack u32[0 max] dataSlot = TypedFieldIndexByName(table, source, stream, "Data");
+    stack u32[0 max] itemsSlot = TypedFieldIndexByName(table, source, stream, "Items");
+    stack u32[0 max] nameSlot = TypedFieldIndexByName(table, source, stream, "Name");
+    stack u32[0 max] countSlot = TypedFieldIndexByName(table, source, stream, "Count");
+    if (valuesSlot == 0 || dataSlot == 0 || itemsSlot == 0 || nameSlot == 0 || countSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] values = (u64[0 2 ** 63 - 1])(valuesSlot - 1);
+    stack u64[0 2 ** 63 - 1] data = (u64[0 2 ** 63 - 1])(dataSlot - 1);
+    stack u64[0 2 ** 63 - 1] items = (u64[0 2 ** 63 - 1])(itemsSlot - 1);
+    stack u64[0 2 ** 63 - 1] name = (u64[0 2 ** 63 - 1])(nameSlot - 1);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+
+    return table.Count() == 5
+        && table.OwnerKindAt(values) == DeclarationKind.Struct
+        && table.FieldOrdinalAt(values) == 0
+        && table.TypeKindAt(values) == TypedSignatureTypeKind.FixedArray
+        && table.TypeHeadIsGenericParameterAt(values)
+        && table.HasElementCountExpressionAt(values)
+        && table.TypeKindAt(data) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerAt(data)
+        && table.HasElementCountExpressionAt(data)
+        && table.TypeKindAt(items) == TypedSignatureTypeKind.Dynamic
+        && table.TypeHeadIsGenericParameterAt(items)
+        && table.TypeKindAt(name) == TypedSignatureTypeKind.Text
+        && table.IsOwnedTextAt(name)
+        && table.HasStorageCapacityAt(name)
+        && table.StorageCapacityStartTokenAt(name) != 0
+        && table.TypeKindAt(count) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(count) == 32
+        && table.IsIntegerUnsignedAt(count)
+        && table.HasIntegerRangeAt(count)
+        && table.RangeEndsAtMaxAt(count);
+}
+
+[Fact]
+fn bool TypedRecordFieldsCaptureHeaderAndBodyFacts()
+{
+    stack ascii source = raw"""
+    record Pair<T>(T First, u32[0 max] Count)
+    {
+        bool Ready;
+        List<T> Items;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedFieldDeclarationTable table = new();
+    if (!BuildTypedFieldTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstSlot = TypedFieldIndexByName(table, source, stream, "First");
+    stack u32[0 max] countSlot = TypedFieldIndexByName(table, source, stream, "Count");
+    stack u32[0 max] readySlot = TypedFieldIndexByName(table, source, stream, "Ready");
+    stack u32[0 max] itemsSlot = TypedFieldIndexByName(table, source, stream, "Items");
+    if (firstSlot == 0 || countSlot == 0 || readySlot == 0 || itemsSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] first = (u64[0 2 ** 63 - 1])(firstSlot - 1);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+    stack u64[0 2 ** 63 - 1] ready = (u64[0 2 ** 63 - 1])(readySlot - 1);
+    stack u64[0 2 ** 63 - 1] items = (u64[0 2 ** 63 - 1])(itemsSlot - 1);
+
+    return table.Count() == 4
+        && table.OwnerKindAt(first) == DeclarationKind.Record
+        && table.FieldOrdinalAt(first) == 0
+        && table.FieldOrdinalAt(count) == 1
+        && table.FieldOrdinalAt(ready) == 2
+        && table.FieldOrdinalAt(items) == 3
+        && table.TypeKindAt(first) == TypedSignatureTypeKind.GenericParameter
+        && table.TypeHeadIsGenericParameterAt(first)
+        && table.TypeKindAt(count) == TypedSignatureTypeKind.Integer
+        && table.IsIntegerUnsignedAt(count)
+        && table.HasIntegerRangeAt(count)
+        && table.TypeKindAt(ready) == TypedSignatureTypeKind.Bool
+        && table.TypeKindAt(items) == TypedSignatureTypeKind.Named
+        && table.TypeArgumentCountAt(items) == 1;
+}
+
+[Fact]
+fn bool TypedEnumPayloadsCaptureTupleNamedAndFromFacts()
+{
+    stack ascii source = raw"""
+    enum LoadResult<T, comptime u8[1 8] N>
+    {
+        [Ok] Done(T[N], rawmutptr<i8[min max]>[N]),
+        Move { X: i32[min max], Y: u32[0 max] },
+        [Err] Io from IOError,
+        End
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumPayloadTable table = new();
+    if (!BuildTypedEnumPayloadTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] doneValueSlot = TypedEnumPayloadIndexByVariantAndOrdinal(table, source, stream, "Done", 0);
+    stack u32[0 max] doneDataSlot = TypedEnumPayloadIndexByVariantAndOrdinal(table, source, stream, "Done", 1);
+    stack u32[0 max] xSlot = TypedEnumPayloadIndexByPayloadName(table, source, stream, "X");
+    stack u32[0 max] ySlot = TypedEnumPayloadIndexByPayloadName(table, source, stream, "Y");
+    stack u32[0 max] ioSlot = TypedEnumPayloadIndexByVariantAndOrdinal(table, source, stream, "Io", 0);
+    if (doneValueSlot == 0 || doneDataSlot == 0 || xSlot == 0 || ySlot == 0 || ioSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] doneValue = (u64[0 2 ** 63 - 1])(doneValueSlot - 1);
+    stack u64[0 2 ** 63 - 1] doneData = (u64[0 2 ** 63 - 1])(doneDataSlot - 1);
+    stack u64[0 2 ** 63 - 1] x = (u64[0 2 ** 63 - 1])(xSlot - 1);
+    stack u64[0 2 ** 63 - 1] y = (u64[0 2 ** 63 - 1])(ySlot - 1);
+    stack u64[0 2 ** 63 - 1] io = (u64[0 2 ** 63 - 1])(ioSlot - 1);
+
+    return table.Count() == 5
+        && table.PayloadKindAt(doneValue) == TypedEnumPayloadKind.Positional
+        && table.VariantRoleAt(doneValue) == TypedEnumVariantRole.Ok
+        && table.VariantOrdinalAt(doneValue) == 0
+        && table.PayloadOrdinalAt(doneValue) == 0
+        && table.TypeKindAt(doneValue) == TypedSignatureTypeKind.FixedArray
+        && table.TypeHeadIsGenericParameterAt(doneValue)
+        && table.HasElementCountExpressionAt(doneValue)
+        && table.ElementCountStartTokenAt(doneValue) != 0
+        && table.PayloadKindAt(doneData) == TypedEnumPayloadKind.Positional
+        && table.VariantRoleAt(doneData) == TypedEnumVariantRole.Ok
+        && table.PayloadOrdinalAt(doneData) == 1
+        && table.TypeKindAt(doneData) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerAt(doneData)
+        && table.HasElementCountExpressionAt(doneData)
+        && table.PayloadKindAt(x) == TypedEnumPayloadKind.Named
+        && table.VariantOrdinalAt(x) == 1
+        && table.PayloadNameTokenAt(x) != 0
+        && table.TypeKindAt(x) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(x) == 32
+        && table.IsIntegerSignedAt(x)
+        && table.HasIntegerRangeAt(x)
+        && table.RangeStartsAtMinAt(x)
+        && table.RangeEndsAtMaxAt(x)
+        && table.PayloadKindAt(y) == TypedEnumPayloadKind.Named
+        && table.TypeKindAt(y) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(y) == 32
+        && table.IsIntegerUnsignedAt(y)
+        && table.HasIntegerRangeAt(y)
+        && table.RangeEndsAtMaxAt(y)
+        && table.PayloadKindAt(io) == TypedEnumPayloadKind.From
+        && table.VariantRoleAt(io) == TypedEnumVariantRole.Err
+        && table.VariantOrdinalAt(io) == 2
+        && table.IsErrorFunnelAt(io)
+        && table.TypeKindAt(io) == TypedSignatureTypeKind.Named;
+}
+
+[Fact]
+fn bool TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts()
+{
+    stack ascii source = raw"""
+    enum Weird<T>
+    {
+        [Ok][Err] Both(dynamic T),
+        Named { Items: List<T>, Flag: bool }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumPayloadTable table = new();
+    if (!BuildTypedEnumPayloadTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] bothSlot = TypedEnumPayloadIndexByVariantAndOrdinal(table, source, stream, "Both", 0);
+    stack u32[0 max] itemsSlot = TypedEnumPayloadIndexByPayloadName(table, source, stream, "Items");
+    stack u32[0 max] flagSlot = TypedEnumPayloadIndexByPayloadName(table, source, stream, "Flag");
+    if (bothSlot == 0 || itemsSlot == 0 || flagSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] both = (u64[0 2 ** 63 - 1])(bothSlot - 1);
+    stack u64[0 2 ** 63 - 1] items = (u64[0 2 ** 63 - 1])(itemsSlot - 1);
+    stack u64[0 2 ** 63 - 1] flag = (u64[0 2 ** 63 - 1])(flagSlot - 1);
+
+    return table.Count() == 3
+        && table.PayloadKindAt(both) == TypedEnumPayloadKind.Positional
+        && table.VariantRoleAt(both) == TypedEnumVariantRole.OkErr
+        && table.TypeKindAt(both) == TypedSignatureTypeKind.Dynamic
+        && table.TypeHeadIsGenericParameterAt(both)
+        && table.PayloadKindAt(items) == TypedEnumPayloadKind.Named
+        && table.TypeKindAt(items) == TypedSignatureTypeKind.Named
+        && table.TypeArgumentCountAt(items) == 1
+        && table.PayloadKindAt(flag) == TypedEnumPayloadKind.Named
+        && table.TypeKindAt(flag) == TypedSignatureTypeKind.Bool;
+}
+
+[Fact]
+fn bool TypedEnumLayoutsCaptureCompactTagsAndScalarPayloadOffsets()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Data");
+    stack u32[0 max] emptyVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Empty");
+    stack u32[0 max] otherVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Other");
+    stack u32[0 max] dataPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Data", 0);
+    stack u32[0 max] otherPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Other", 0);
+    if (dataVariantSlot == 0 || emptyVariantSlot == 0 || otherVariantSlot == 0 || dataPayloadSlot == 0 || otherPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] dataVariant = (u64[0 2 ** 63 - 1])(dataVariantSlot - 1);
+    stack u64[0 2 ** 63 - 1] emptyVariant = (u64[0 2 ** 63 - 1])(emptyVariantSlot - 1);
+    stack u64[0 2 ** 63 - 1] otherVariant = (u64[0 2 ** 63 - 1])(otherVariantSlot - 1);
+    stack u64[0 2 ** 63 - 1] dataPayload = (u64[0 2 ** 63 - 1])(dataPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] otherPayload = (u64[0 2 ** 63 - 1])(otherPayloadSlot - 1);
+
+    return table.Count() == 5
+        && table.RowKindAt(dataVariant) == TypedEnumLayoutRowKind.Variant
+        && table.VariantTagAt(dataVariant) == 1
+        && table.PayloadCountAt(dataVariant) == 1
+        && table.SizeBytesAt(dataVariant) == 1
+        && table.AlignmentBytesAt(dataVariant) == 1
+        && table.BitWidthAt(dataVariant) == 8
+        && table.HasConcreteLayoutAt(dataVariant)
+        && table.VariantTagAt(emptyVariant) == 0
+        && table.PayloadCountAt(emptyVariant) == 0
+        && table.VariantTagAt(otherVariant) == 2
+        && table.RowKindAt(dataPayload) == TypedEnumLayoutRowKind.Payload
+        && table.StorageFieldOrdinalAt(dataPayload) == 1
+        && table.OffsetBytesAt(dataPayload) == 1
+        && table.SizeBytesAt(dataPayload) == 1
+        && table.AlignmentBytesAt(dataPayload) == 1
+        && table.HasConcreteLayoutAt(dataPayload)
+        && table.RowKindAt(otherPayload) == TypedEnumLayoutRowKind.Payload
+        && table.StorageFieldOrdinalAt(otherPayload) == 2
+        && table.OffsetBytesAt(otherPayload) == 4
+        && table.SizeBytesAt(otherPayload) == 4
+        && table.AlignmentBytesAt(otherPayload) == 4
+        && table.HasConcreteLayoutAt(otherPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutsCaptureRolesFunnelsArraysAndUnknownPayloads()
+{
+    stack ascii source = raw"""
+    enum Result<T>
+    {
+        [Ok] Data(u16[0 max][3]),
+        [Err] Io from IOError,
+        Generic(T)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Data");
+    stack u32[0 max] ioVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Io");
+    stack u32[0 max] dataPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Data", 0);
+    stack u32[0 max] ioPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Io", 0);
+    stack u32[0 max] genericPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Generic", 0);
+    if (dataVariantSlot == 0 || ioVariantSlot == 0 || dataPayloadSlot == 0 || ioPayloadSlot == 0 || genericPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] dataVariant = (u64[0 2 ** 63 - 1])(dataVariantSlot - 1);
+    stack u64[0 2 ** 63 - 1] ioVariant = (u64[0 2 ** 63 - 1])(ioVariantSlot - 1);
+    stack u64[0 2 ** 63 - 1] dataPayload = (u64[0 2 ** 63 - 1])(dataPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] ioPayload = (u64[0 2 ** 63 - 1])(ioPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] genericPayload = (u64[0 2 ** 63 - 1])(genericPayloadSlot - 1);
+
+    return table.Count() == 6
+        && table.VariantRoleAt(dataVariant) == TypedEnumVariantRole.Ok
+        && table.VariantRoleAt(ioVariant) == TypedEnumVariantRole.Err
+        && table.IsErrorFunnelAt(ioVariant)
+        && table.TypeKindAt(dataPayload) == TypedSignatureTypeKind.FixedArray
+        && table.OffsetBytesAt(dataPayload) == 2
+        && table.SizeBytesAt(dataPayload) == 6
+        && table.AlignmentBytesAt(dataPayload) == 2
+        && table.HasConcreteLayoutAt(dataPayload)
+        && table.PayloadKindAt(ioPayload) == TypedEnumPayloadKind.From
+        && table.IsErrorFunnelAt(ioPayload)
+        && !table.HasConcreteLayoutAt(ioPayload)
+        && table.TypeKindAt(genericPayload) == TypedSignatureTypeKind.GenericParameter
+        && !table.HasConcreteLayoutAt(genericPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutsResolveNamedAggregatePayloadLayouts()
+{
+    stack ascii source = raw"""
+    struct Point
+    {
+        u8[0 max] X;
+        u32[0 max] Y;
+    }
+
+    record Header(u16[0 max] Kind, bool Ready)
+    {
+    }
+
+    struct Envelope
+    {
+        Point Location;
+        u16[0 max] Count;
+    }
+
+    enum Packet
+    {
+        Empty,
+        PointPayload(Point),
+        HeaderPayload(Header),
+        Wrapped(Envelope)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] pointPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "PointPayload", 0);
+    stack u32[0 max] headerPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "HeaderPayload", 0);
+    stack u32[0 max] wrappedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Wrapped", 0);
+    if (pointPayloadSlot == 0 || headerPayloadSlot == 0 || wrappedPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] pointPayload = (u64[0 2 ** 63 - 1])(pointPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] headerPayload = (u64[0 2 ** 63 - 1])(headerPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] wrappedPayload = (u64[0 2 ** 63 - 1])(wrappedPayloadSlot - 1);
+
+    return table.Count() == 7
+        && table.TypeKindAt(pointPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(pointPayload) == 4
+        && table.SizeBytesAt(pointPayload) == 8
+        && table.AlignmentBytesAt(pointPayload) == 4
+        && table.HasConcreteLayoutAt(pointPayload)
+        && table.TypeKindAt(headerPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(headerPayload) == 12
+        && table.SizeBytesAt(headerPayload) == 4
+        && table.AlignmentBytesAt(headerPayload) == 2
+        && table.HasConcreteLayoutAt(headerPayload)
+        && table.TypeKindAt(wrappedPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(wrappedPayload) == 16
+        && table.SizeBytesAt(wrappedPayload) == 12
+        && table.AlignmentBytesAt(wrappedPayload) == 4
+        && table.HasConcreteLayoutAt(wrappedPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutsResolveGenericAggregatePayloadLayouts()
+{
+    stack ascii source = raw"""
+    struct Box<T>
+    {
+        T Value;
+    }
+
+    struct Pair<A, B>
+    {
+        A First;
+        B Second;
+    }
+
+    struct Buffer<T, comptime u8[1 8] N>
+    {
+        T[N] Items;
+        u16[0 max] Count;
+    }
+
+    struct Wrapped<T, comptime u8[1 8] N>
+    {
+        Buffer<T, comptime N> Inner;
+    }
+
+    enum Packet
+    {
+        Empty,
+        Boxed(Box<u32[0 max]>),
+        Paired(Pair<u8[0 max], u32[0 max]>),
+        Buffered(Buffer<u16[0 max], 3>),
+        WrappedPayload(Wrapped<u8[0 max], 2>)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] boxedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Boxed", 0);
+    stack u32[0 max] pairedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Paired", 0);
+    stack u32[0 max] bufferedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "Buffered", 0);
+    stack u32[0 max] wrappedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "WrappedPayload", 0);
+    if (boxedPayloadSlot == 0 || pairedPayloadSlot == 0 || bufferedPayloadSlot == 0 || wrappedPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] boxedPayload = (u64[0 2 ** 63 - 1])(boxedPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] pairedPayload = (u64[0 2 ** 63 - 1])(pairedPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] bufferedPayload = (u64[0 2 ** 63 - 1])(bufferedPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] wrappedPayload = (u64[0 2 ** 63 - 1])(wrappedPayloadSlot - 1);
+
+    return table.Count() == 9
+        && table.TypeKindAt(boxedPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(boxedPayload) == 4
+        && table.SizeBytesAt(boxedPayload) == 4
+        && table.AlignmentBytesAt(boxedPayload) == 4
+        && table.HasConcreteLayoutAt(boxedPayload)
+        && table.TypeKindAt(pairedPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(pairedPayload) == 8
+        && table.SizeBytesAt(pairedPayload) == 8
+        && table.AlignmentBytesAt(pairedPayload) == 4
+        && table.HasConcreteLayoutAt(pairedPayload)
+        && table.TypeKindAt(bufferedPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(bufferedPayload) == 16
+        && table.SizeBytesAt(bufferedPayload) == 8
+        && table.AlignmentBytesAt(bufferedPayload) == 2
+        && table.HasConcreteLayoutAt(bufferedPayload)
+        && table.TypeKindAt(wrappedPayload) == TypedSignatureTypeKind.Named
+        && table.OffsetBytesAt(wrappedPayload) == 24
+        && table.SizeBytesAt(wrappedPayload) == 4
+        && table.AlignmentBytesAt(wrappedPayload) == 2
+        && table.HasConcreteLayoutAt(wrappedPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutsPreserveControlledAggregatePayloadLayouts()
+{
+    stack ascii source = raw"""
+    [StructLayout(C), Pack(1)]
+    struct Tight
+    {
+        u8[0 max] Tag;
+        u32[0 max] Length;
+    }
+
+    [StructLayout(C), Pack(1), Align(4)]
+    struct PackedAligned
+    {
+        u8[0 max] Tag;
+        u32[0 max] Length;
+    }
+
+    [StructLayout(Explicit), Align(4)]
+    struct WordParts
+    {
+        [FieldOffset(0)] u32[0 max] Whole;
+        [FieldOffset(0)] u16[0 max] Low;
+        [FieldOffset(2)] u16[0 max] High;
+    }
+
+    enum Packet
+    {
+        Empty,
+        TightPayload(Tight),
+        WordPayload(WordParts),
+        AlignedPayload(PackedAligned)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] tightPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "TightPayload", 0);
+    stack u32[0 max] wordPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "WordPayload", 0);
+    stack u32[0 max] alignedPayloadSlot = TypedEnumLayoutPayloadIndexByVariantAndOrdinal(table, source, stream, "AlignedPayload", 0);
+    if (tightPayloadSlot == 0 || wordPayloadSlot == 0 || alignedPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] tightPayload = (u64[0 2 ** 63 - 1])(tightPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] wordPayload = (u64[0 2 ** 63 - 1])(wordPayloadSlot - 1);
+    stack u64[0 2 ** 63 - 1] alignedPayload = (u64[0 2 ** 63 - 1])(alignedPayloadSlot - 1);
+
+    return table.Count() == 7
+        && table.OffsetBytesAt(tightPayload) == 1
+        && table.SizeBytesAt(tightPayload) == 5
+        && table.AlignmentBytesAt(tightPayload) == 1
+        && table.HasConcreteLayoutAt(tightPayload)
+        && !table.IsMisalignedAt(tightPayload)
+        && table.OffsetBytesAt(wordPayload) == 8
+        && table.SizeBytesAt(wordPayload) == 4
+        && table.AlignmentBytesAt(wordPayload) == 4
+        && table.HasConcreteLayoutAt(wordPayload)
+        && !table.IsMisalignedAt(wordPayload)
+        && table.OffsetBytesAt(alignedPayload) == 12
+        && table.SizeBytesAt(alignedPayload) == 8
+        && table.AlignmentBytesAt(alignedPayload) == 4
+        && table.HasConcreteLayoutAt(alignedPayload)
+        && !table.IsMisalignedAt(alignedPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutQueriesExposeCtfeFoldConstants()
+{
+    stack ascii source = raw"""
+    enum Packet<T>
+    {
+        Empty,
+        Data(u8[0 max]),
+        Other(u32[0 max]),
+        Generic(T)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Data");
+    if (dataVariantSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] dataVariant = (u64[0 2 ** 63 - 1])(dataVariantSlot - 1);
+    stack u32[0 max] packetOwner = table.OwnerDeclarationIndexAt(dataVariant);
+
+    stack mut u64[0 max] tagOffset = 0;
+    stack mut u64[0 max] tagSize = 0;
+    stack mut u64[0 max] tagAlign = 0;
+    stack mut bool tagMisaligned = true;
+    if (!table.TryGetEnumTagLayout(packetOwner, tagOffset, tagSize, tagAlign, tagMisaligned))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] emptyTag = 99;
+    stack mut u64[0 max] dataTag = 99;
+    stack mut u64[0 max] otherTag = 99;
+    stack mut u64[0 max] genericTag = 99;
+    if (!table.TryGetEnumVariantTag(packetOwner, 0, emptyTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 1, dataTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 2, otherTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 3, genericTag))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] emptyPayloadCount = 99;
+    stack mut u64[0 max] dataPayloadCount = 99;
+    stack mut u64[0 max] genericPayloadCount = 99;
+    if (!table.TryGetEnumVariantPayloadCount(packetOwner, 0, emptyPayloadCount)
+        || !table.TryGetEnumVariantPayloadCount(packetOwner, 1, dataPayloadCount)
+        || !table.TryGetEnumVariantPayloadCount(packetOwner, 3, genericPayloadCount))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] dataOffset = 0;
+    stack mut u64[0 max] dataSize = 0;
+    stack mut u64[0 max] dataAlign = 0;
+    stack mut bool dataMisaligned = true;
+    stack mut u64[0 max] otherOffset = 0;
+    stack mut u64[0 max] otherSize = 0;
+    stack mut u64[0 max] otherAlign = 0;
+    stack mut bool otherMisaligned = true;
+    if (!table.TryGetEnumVariantPayloadLayout(packetOwner, 1, 0, dataOffset, dataSize, dataAlign, dataMisaligned)
+        || !table.TryGetEnumVariantPayloadLayout(packetOwner, 2, 0, otherOffset, otherSize, otherAlign, otherMisaligned))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] missing = 0;
+    stack mut u64[0 max] missingSize = 0;
+    stack mut u64[0 max] missingAlign = 0;
+    stack mut bool missingMisaligned = false;
+
+    return tagOffset == 0
+        && tagSize == 1
+        && tagAlign == 1
+        && !tagMisaligned
+        && emptyTag == 0
+        && dataTag == 1
+        && otherTag == 2
+        && genericTag == 3
+        && emptyPayloadCount == 0
+        && dataPayloadCount == 1
+        && genericPayloadCount == 1
+        && dataOffset == 1
+        && dataSize == 1
+        && dataAlign == 1
+        && !dataMisaligned
+        && otherOffset == 4
+        && otherSize == 4
+        && otherAlign == 4
+        && !otherMisaligned
+        && !table.TryGetEnumVariantTag(packetOwner, 4, missing)
+        && !table.TryGetEnumVariantPayloadLayout(packetOwner, 0, 0, missing, missingSize, missingAlign, missingMisaligned)
+        && !table.TryGetEnumVariantPayloadLayout(packetOwner, 3, 0, missing, missingSize, missingAlign, missingMisaligned);
+}
+
+[Fact]
+fn bool TypedEnumLayoutSystemCompilerQueriesFoldToTypedConstants()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Empty,
+        Data(u8[0 max]),
+        Other(u32[0 max])
+    }
+
+    fn u64[0 max] TagOffset()
+    {
+        return comptime System.Compiler.EnumTagOffset<Packet>();
+    }
+
+    fn u64[0 max] TagSize()
+    {
+        return comptime System.Compiler.EnumTagSize<Packet>();
+    }
+
+    fn u64[0 max] TagAlign()
+    {
+        return comptime System.Compiler.EnumTagAlign<Packet>();
+    }
+
+    fn bool TagMisaligned()
+    {
+        return comptime System.Compiler.EnumTagIsMisaligned<Packet>();
+    }
+
+    fn u64[0 max] OtherTag()
+    {
+        return comptime System.Compiler.EnumVariantTag<Packet, +2>();
+    }
+
+    fn u64[0 max] EmptyPayloadCount()
+    {
+        return comptime System.Compiler.EnumVariantPayloadCount<Packet, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadOffset()
+    {
+        return comptime System.Compiler.EnumVariantPayloadOffset<Packet, 2, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadSize()
+    {
+        return comptime System.Compiler.EnumVariantPayloadSize<Packet, 2, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadAlign()
+    {
+        return comptime System.Compiler.EnumVariantPayloadAlign<Packet, 2, 0>();
+    }
+
+    fn bool OtherPayloadMisaligned()
+    {
+        return comptime System.Compiler.EnumVariantPayloadIsMisaligned<Packet, 2, 0>();
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutFoldInputsForSource(source, stream, declarations, table))
+    {
+        return false;
+    }
+
+    return EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagOffset"), 0)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagSize"), 1)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagAlign"), 1)
+        && EnumLayoutQueryFoldsBool(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagIsMisaligned"), false)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantTag"), 2)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadCount"), 0)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadOffset"), 4)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadSize"), 4)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadAlign"), 4)
+        && EnumLayoutQueryFoldsBool(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadIsMisaligned"), false);
+}
+
+[Fact]
+fn bool TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts()
+{
+    stack ascii source = raw"""
+    fn void Work<T, comptime u8[1 8] N>(borrow T[N] input)
+    {
+        stack mut u32[0 max] count = 0;
+        arena T[N] values = input;
+        register rawmutptr<i8[min max]>[N] data = null;
+        heap dynamic T items = new();
+        const Limit = 4;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLocalDeclarationTable table = new();
+    if (!BuildTypedLocalDeclarationTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] countSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Work", "count");
+    stack u32[0 max] valuesSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Work", "values");
+    stack u32[0 max] dataSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Work", "data");
+    stack u32[0 max] itemsSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Work", "items");
+    stack u32[0 max] limitSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Work", "Limit");
+    if (countSlot == 0 || valuesSlot == 0 || dataSlot == 0 || itemsSlot == 0 || limitSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+    stack u64[0 2 ** 63 - 1] values = (u64[0 2 ** 63 - 1])(valuesSlot - 1);
+    stack u64[0 2 ** 63 - 1] data = (u64[0 2 ** 63 - 1])(dataSlot - 1);
+    stack u64[0 2 ** 63 - 1] items = (u64[0 2 ** 63 - 1])(itemsSlot - 1);
+    stack u64[0 2 ** 63 - 1] limit = (u64[0 2 ** 63 - 1])(limitSlot - 1);
+
+    return table.Count() == 5
+        && table.OwnerKindAt(count) == TypedLocalDeclarationOwnerKind.TopLevelFunction
+        && table.StorageKindAt(count) == TypedGlobalStorageKind.Stack
+        && table.IsMutableAt(count)
+        && table.TypeKindAt(count) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(count) == 32
+        && table.IsIntegerUnsignedAt(count)
+        && table.HasIntegerRangeAt(count)
+        && table.RangeEndsAtMaxAt(count)
+        && table.HasInitializerAt(count)
+        && table.InitializerExprRootAt(count) != 0
+        && table.StorageKindAt(values) == TypedGlobalStorageKind.Arena
+        && table.TypeKindAt(values) == TypedSignatureTypeKind.FixedArray
+        && table.TypeHeadIsGenericParameterAt(values)
+        && table.HasElementCountExpressionAt(values)
+        && table.StorageKindAt(data) == TypedGlobalStorageKind.Register
+        && table.TypeKindAt(data) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerAt(data)
+        && table.HasElementCountExpressionAt(data)
+        && table.StorageKindAt(items) == TypedGlobalStorageKind.Heap
+        && table.TypeKindAt(items) == TypedSignatureTypeKind.Dynamic
+        && table.TypeHeadIsGenericParameterAt(items)
+        && table.StorageKindAt(limit) == TypedGlobalStorageKind.Const
+        && !table.HasExplicitTypeAt(limit)
+        && table.TypeKindAt(limit) == TypedSignatureTypeKind.Unknown
+        && table.HasInitializerAt(limit);
+}
+
+[Fact]
+fn bool TypedLocalDeclarationsCaptureMemberLoopAndCallableFacts()
+{
+    stack ascii source = raw"""
+    struct Runner<T>
+    {
+        fn void Run<T2, comptime u8[1 8] N>(borrow T2[N] input)
+        {
+            stack fnptr<tail fn bool(out u32[0 max]) where dead_on_return(arg0)> callback = Pick;
+            for willexit (stack u32[0 max] i = 0; i < N; i += 1)
+            {
+                stack borrow T2 item = input[i];
+            }
+            for willexit (borrow T2 value in input)
+            {
+                value;
+            }
+        }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLocalDeclarationTable table = new();
+    if (!BuildTypedLocalDeclarationTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] callbackSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Run", "callback");
+    stack u32[0 max] iSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Run", "i");
+    stack u32[0 max] itemSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Run", "item");
+    stack u32[0 max] valueSlot = TypedLocalDeclarationIndexByFunctionAndName(table, source, stream, "Run", "value");
+    if (callbackSlot == 0 || iSlot == 0 || itemSlot == 0 || valueSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] callback = (u64[0 2 ** 63 - 1])(callbackSlot - 1);
+    stack u64[0 2 ** 63 - 1] i = (u64[0 2 ** 63 - 1])(iSlot - 1);
+    stack u64[0 2 ** 63 - 1] item = (u64[0 2 ** 63 - 1])(itemSlot - 1);
+    stack u64[0 2 ** 63 - 1] value = (u64[0 2 ** 63 - 1])(valueSlot - 1);
+
+    return table.Count() == 4
+        && table.OwnerKindAt(callback) == TypedLocalDeclarationOwnerKind.MemberMethod
+        && table.OwnerNameTokenAt(callback) != 0
+        && table.StorageKindAt(callback) == TypedGlobalStorageKind.Stack
+        && table.TypeKindAt(callback) == TypedSignatureTypeKind.FunctionPointer
+        && table.IsTailCallableAt(callback)
+        && table.IsDeadOnReturnAt(callback)
+        && table.HasInitializerAt(callback)
+        && table.StorageKindAt(i) == TypedGlobalStorageKind.Stack
+        && table.TypeKindAt(i) == TypedSignatureTypeKind.Integer
+        && table.IsIntegerUnsignedAt(i)
+        && table.HasInitializerAt(i)
+        && table.StorageKindAt(item) == TypedGlobalStorageKind.Stack
+        && table.TypeKindAt(item) == TypedSignatureTypeKind.GenericParameter
+        && table.IsBorrowAt(item)
+        && table.TypeHeadIsGenericParameterAt(item)
+        && table.DepthAt(item) > 0
+        && table.StorageKindAt(value) == TypedGlobalStorageKind.Unknown
+        && table.TypeKindAt(value) == TypedSignatureTypeKind.GenericParameter
+        && table.IsBorrowAt(value)
+        && table.TypeHeadIsGenericParameterAt(value)
+        && !table.HasInitializerAt(value);
+}
+
+[Fact]
+fn bool TypedStorageSelectorsCaptureDeclarationFacts()
+{
+    stack ascii source = raw"""
+    const Limit = 8;
+    static mut u32[0 max] Counter = 0;
+    arena Node Root = new();
+    struct Node { }
+    fn void Work(dynamic Node items)
+    {
+        stack mut u32[0 max] count = 0;
+        arena Node root = new();
+        register u32[0 max] temp = 1;
+        heap dynamic Node owned = new();
+        const LocalLimit = 4;
+        for willexit (borrow Node value in items)
+        {
+            value;
+        }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedStorageSelectorTable table = new();
+    if (!BuildTypedStorageSelectorTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] rootSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.GlobalDeclaration, "Root");
+    stack u32[0 max] counterSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.GlobalDeclaration, "Counter");
+    stack u32[0 max] countSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.LocalDeclaration, "count");
+    stack u32[0 max] tempSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.LocalDeclaration, "temp");
+    stack u32[0 max] ownedSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.LocalDeclaration, "owned");
+    stack u32[0 max] localLimitSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.LocalDeclaration, "LocalLimit");
+    if (rootSlot == 0 || counterSlot == 0 || countSlot == 0 || tempSlot == 0 || ownedSlot == 0 || localLimitSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] root = (u64[0 2 ** 63 - 1])(rootSlot - 1);
+    stack u64[0 2 ** 63 - 1] counter = (u64[0 2 ** 63 - 1])(counterSlot - 1);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+    stack u64[0 2 ** 63 - 1] temp = (u64[0 2 ** 63 - 1])(tempSlot - 1);
+    stack u64[0 2 ** 63 - 1] owned = (u64[0 2 ** 63 - 1])(ownedSlot - 1);
+    stack u64[0 2 ** 63 - 1] localLimit = (u64[0 2 ** 63 - 1])(localLimitSlot - 1);
+
+    return table.Count() == 8
+        && TypedStorageSelectorCountByContext(table, TypedStorageSelectorContext.GlobalDeclaration) == 3
+        && TypedStorageSelectorCountByContext(table, TypedStorageSelectorContext.LocalDeclaration) == 5
+        && TypedStorageSelectorCountByContext(table, TypedStorageSelectorContext.NewExpression) == 0
+        && table.StorageKindAt(root) == TypedGlobalStorageKind.Arena
+        && table.UsesArenaFrameAt(root)
+        && table.HasGlobalLifetimeAt(root)
+        && table.StorageKindAt(counter) == TypedGlobalStorageKind.Static
+        && table.HasGlobalLifetimeAt(counter)
+        && table.StorageKindAt(count) == TypedGlobalStorageKind.Stack
+        && table.StatementIndexPlusOneAt(count) != 0
+        && table.HasStableAddressAt(count)
+        && table.StorageKindAt(temp) == TypedGlobalStorageKind.Register
+        && table.RequestsRegisterStorageAt(temp)
+        && !table.HasStableAddressAt(temp)
+        && table.StorageKindAt(owned) == TypedGlobalStorageKind.Heap
+        && table.UsesHeapAllocatorAt(owned)
+        && table.StorageKindAt(localLimit) == TypedGlobalStorageKind.Const
+        && table.IsConstSelectorAt(localLimit);
+}
+
+[Fact]
+fn bool TypedStorageSelectorsCaptureArenaNewFacts()
+{
+    stack ascii source = raw"""
+    struct Node { }
+    fn void Build(u32[0 max] count)
+    {
+        stack mut dynamic Node tokens = new(arena, count + 4, 16);
+        stack mut dynamic Node more = new(arena, 32);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedStorageSelectorTable table = new();
+    if (!BuildTypedStorageSelectorTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstNewSlot = TypedStorageSelectorNthByContext(table, TypedStorageSelectorContext.NewExpression, 0);
+    stack u32[0 max] secondNewSlot = TypedStorageSelectorNthByContext(table, TypedStorageSelectorContext.NewExpression, 1);
+    stack u32[0 max] tokensSlot = TypedStorageSelectorIndexBySubject(table, source, stream, TypedStorageSelectorContext.LocalDeclaration, "tokens");
+    if (firstNewSlot == 0 || secondNewSlot == 0 || tokensSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstNew = (u64[0 2 ** 63 - 1])(firstNewSlot - 1);
+    stack u64[0 2 ** 63 - 1] secondNew = (u64[0 2 ** 63 - 1])(secondNewSlot - 1);
+    stack u64[0 2 ** 63 - 1] tokens = (u64[0 2 ** 63 - 1])(tokensSlot - 1);
+    stack ascii firstSelector = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.SelectorTokenAt(firstNew));
+    stack ascii secondSelector = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.SelectorTokenAt(secondNew));
+
+    return table.Count() == 4
+        && TypedStorageSelectorCountByContext(table, TypedStorageSelectorContext.LocalDeclaration) == 2
+        && TypedStorageSelectorCountByContext(table, TypedStorageSelectorContext.NewExpression) == 2
+        && table.StorageKindAt(tokens) == TypedGlobalStorageKind.Stack
+        && table.StorageKindAt(firstNew) == TypedGlobalStorageKind.Arena
+        && table.IsNewExpressionAt(firstNew)
+        && table.UsesArenaFrameAt(firstNew)
+        && table.ExprNodeAt(firstNew) != 0
+        && table.NewArgumentCountAt(firstNew) == 3
+        && table.HasCapacityExpressionAt(firstNew)
+        && table.HasAlignmentExpressionAt(firstNew)
+        && System.Text.Equals(firstSelector, "arena")
+        && table.StorageKindAt(secondNew) == TypedGlobalStorageKind.Arena
+        && table.NewArgumentCountAt(secondNew) == 2
+        && table.HasCapacityExpressionAt(secondNew)
+        && !table.HasAlignmentExpressionAt(secondNew)
+        && System.Text.Equals(secondSelector, "arena");
+}
+
+[Fact]
+fn bool TypedLiteralExpressionsCaptureScalarFacts()
+{
+    stack ascii source = raw"""
+    const Limit = 255;
+    fn void Demo()
+    {
+        127;
+        128;
+        1.5;
+        1.5f;
+        true;
+        false;
+        null;
+        "hi";
+        '\n';
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLiteralExpressionTable table = new();
+    if (!BuildTypedLiteralExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] limitSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Integer, "255");
+    stack u32[0 max] smallSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Integer, "127");
+    stack u32[0 max] widerSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Integer, "128");
+    stack u32[0 max] float64Slot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Float, "1.5");
+    stack u32[0 max] float32Slot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Float, "1.5f");
+    stack u32[0 max] trueSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Bool, "true");
+    stack u32[0 max] falseSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Bool, "false");
+    stack u32[0 max] nullSlot = TypedLiteralIndexByTextAndKind(table, source, stream, TypedLiteralKind.Null, "null");
+    if (limitSlot == 0
+        || smallSlot == 0
+        || widerSlot == 0
+        || float64Slot == 0
+        || float32Slot == 0
+        || trueSlot == 0
+        || falseSlot == 0
+        || nullSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] limit = (u64[0 2 ** 63 - 1])(limitSlot - 1);
+    stack u64[0 2 ** 63 - 1] small = (u64[0 2 ** 63 - 1])(smallSlot - 1);
+    stack u64[0 2 ** 63 - 1] wider = (u64[0 2 ** 63 - 1])(widerSlot - 1);
+    stack u64[0 2 ** 63 - 1] float64 = (u64[0 2 ** 63 - 1])(float64Slot - 1);
+    stack u64[0 2 ** 63 - 1] float32 = (u64[0 2 ** 63 - 1])(float32Slot - 1);
+    stack u64[0 2 ** 63 - 1] trueLiteral = (u64[0 2 ** 63 - 1])(trueSlot - 1);
+    stack u64[0 2 ** 63 - 1] falseLiteral = (u64[0 2 ** 63 - 1])(falseSlot - 1);
+    stack u64[0 2 ** 63 - 1] nullLiteral = (u64[0 2 ** 63 - 1])(nullSlot - 1);
+
+    return table.Count() == 10
+        && table.ContextAt(limit) == TypedLiteralContext.GlobalInitializer
+        && table.OwnerNameTokenAt(limit) != 0
+        && table.StatementIndexPlusOneAt(limit) == 0
+        && table.ContextAt(small) == TypedLiteralContext.FunctionBody
+        && table.FunctionNameTokenAt(small) != 0
+        && table.StatementIndexPlusOneAt(small) != 0
+        && table.TypeKindAt(limit) == TypedSignatureTypeKind.Integer
+        && table.TypeKindAt(small) == TypedSignatureTypeKind.Integer
+        && table.TypeKindAt(wider) == TypedSignatureTypeKind.Integer
+        && table.ParsedOkAt(limit)
+        && table.ParsedOkAt(small)
+        && table.ParsedOkAt(wider)
+        && table.IntegerMagnitudeAt(limit) == (u1024[0 max])255
+        && table.IntegerMagnitudeAt(small) == (u1024[0 max])127
+        && table.IntegerMagnitudeAt(wider) == (u1024[0 max])128
+        && table.BitWidthAt(small) == 8
+        && table.BitWidthAt(wider) == 16
+        && table.BitWidthAt(limit) == 16
+        && table.IsIntegerSignedAt(limit)
+        && table.HasIntegerRangeAt(limit)
+        && !table.IsCompileTimeIntegerAt(limit)
+        && table.TypeKindAt(float64) == TypedSignatureTypeKind.Float
+        && table.TypeKindAt(float32) == TypedSignatureTypeKind.Float
+        && table.BitWidthAt(float64) == 64
+        && table.BitWidthAt(float32) == 32
+        && table.ParsedOkAt(float64)
+        && table.ParsedOkAt(float32)
+        && table.FloatValueAt(float64) == 1.5
+        && table.FloatValueAt(float32) == 1.5
+        && table.TypeKindAt(trueLiteral) == TypedSignatureTypeKind.Bool
+        && table.BoolValueAt(trueLiteral) == 1
+        && table.BoolValueAt(falseLiteral) == 0
+        && table.LiteralKindAt(nullLiteral) == TypedLiteralKind.Null
+        && table.TypeKindAt(nullLiteral) == TypedSignatureTypeKind.Unknown
+        && table.ParsedOkAt(nullLiteral);
+}
+
+[Fact]
+fn bool TypedLiteralExpressionsCaptureTextFacts()
+{
+    stack ascii source = raw"""
+    fn void Demo()
+    {
+        "hi";
+        '\n';
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLiteralExpressionTable table = new();
+    if (!BuildTypedLiteralExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] stringSlot = TypedLiteralNthTextKind(table, TypedTextLiteralKind.String, 0);
+    stack u32[0 max] characterSlot = TypedLiteralNthTextKind(table, TypedTextLiteralKind.Character, 0);
+    if (stringSlot == 0 || characterSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] stringLiteral = (u64[0 2 ** 63 - 1])(stringSlot - 1);
+    stack u64[0 2 ** 63 - 1] characterLiteral = (u64[0 2 ** 63 - 1])(characterSlot - 1);
+
+    return table.Count() == 2
+        && table.IsTextLiteralAt(stringLiteral)
+        && table.IsTextLiteralAt(characterLiteral)
+        && table.TypeKindAt(stringLiteral) == TypedSignatureTypeKind.Text
+        && table.TypeKindAt(characterLiteral) == TypedSignatureTypeKind.Text
+        && table.TextLiteralKindAt(stringLiteral) == TypedTextLiteralKind.String
+        && table.TextLiteralKindAt(characterLiteral) == TypedTextLiteralKind.Character
+        && table.ParsedOkAt(stringLiteral)
+        && table.ParsedOkAt(characterLiteral)
+        && table.UsesUtf8TextStorageAt(stringLiteral)
+        && table.UsesUtf8TextStorageAt(characterLiteral)
+        && table.TextByteLengthAt(stringLiteral) == 2
+        && table.TextCodePointLengthAt(stringLiteral) == 2
+        && table.TextByteLengthAt(characterLiteral) == 1
+        && table.TextCodePointLengthAt(characterLiteral) == 1
+        && table.CharacterCodePointAt(characterLiteral) == 10;
+}
+
+[Fact]
+fn bool TypedIdentifierExpressionsResolveValueAndDeclarationTargets()
+{
+    stack ascii source = raw"""
+    const i32[min max] GlobalCount = 3;
+    const i32[min max] Mirror = GlobalCount;
+    static mut bool Flag = false;
+    struct Box { }
+    fn i32[min max] Sum(i32[min max] value)
+    {
+        stack i32[min max] local = value;
+        local;
+        value;
+        GlobalCount;
+        Flag;
+        Sum;
+        Box;
+        Missing;
+        return value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedIdentifierExpressionTable table = new();
+    if (!BuildTypedIdentifierExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] mirrorGlobalSlot = TypedIdentifierNthByName(table, source, stream, "GlobalCount", 0);
+    stack u32[0 max] bodyGlobalSlot = TypedIdentifierNthByName(table, source, stream, "GlobalCount", 1);
+    stack u32[0 max] firstValueSlot = TypedIdentifierNthByName(table, source, stream, "value", 0);
+    stack u32[0 max] localSlot = TypedIdentifierNthByName(table, source, stream, "local", 0);
+    stack u32[0 max] flagSlot = TypedIdentifierNthByName(table, source, stream, "Flag", 0);
+    stack u32[0 max] sumSlot = TypedIdentifierNthByName(table, source, stream, "Sum", 0);
+    stack u32[0 max] boxSlot = TypedIdentifierNthByName(table, source, stream, "Box", 0);
+    stack u32[0 max] missingSlot = TypedIdentifierNthByName(table, source, stream, "Missing", 0);
+    if (mirrorGlobalSlot == 0
+        || bodyGlobalSlot == 0
+        || firstValueSlot == 0
+        || localSlot == 0
+        || flagSlot == 0
+        || sumSlot == 0
+        || boxSlot == 0
+        || missingSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] mirrorGlobal = (u64[0 2 ** 63 - 1])(mirrorGlobalSlot - 1);
+    stack u64[0 2 ** 63 - 1] bodyGlobal = (u64[0 2 ** 63 - 1])(bodyGlobalSlot - 1);
+    stack u64[0 2 ** 63 - 1] firstValue = (u64[0 2 ** 63 - 1])(firstValueSlot - 1);
+    stack u64[0 2 ** 63 - 1] local = (u64[0 2 ** 63 - 1])(localSlot - 1);
+    stack u64[0 2 ** 63 - 1] flag = (u64[0 2 ** 63 - 1])(flagSlot - 1);
+    stack u64[0 2 ** 63 - 1] sum = (u64[0 2 ** 63 - 1])(sumSlot - 1);
+    stack u64[0 2 ** 63 - 1] box = (u64[0 2 ** 63 - 1])(boxSlot - 1);
+    stack u64[0 2 ** 63 - 1] missing = (u64[0 2 ** 63 - 1])(missingSlot - 1);
+
+    return table.Count() == 10
+        && table.ContextAt(mirrorGlobal) == TypedIdentifierContext.GlobalInitializer
+        && table.IsGlobalAt(mirrorGlobal)
+        && table.StorageKindAt(mirrorGlobal) == TypedGlobalStorageKind.Const
+        && table.BindingKindAt(mirrorGlobal) == TypedGlobalBindingKind.Const
+        && table.TypeKindAt(mirrorGlobal) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(mirrorGlobal) == 32
+        && table.IsIntegerSignedAt(mirrorGlobal)
+        && table.HasIntegerRangeAt(mirrorGlobal)
+        && table.ContextAt(firstValue) == TypedIdentifierContext.FunctionBody
+        && table.IsParameterAt(firstValue)
+        && table.TargetParameterOrdinalPlusOneAt(firstValue) == 1
+        && table.TypeKindAt(firstValue) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(firstValue) == 32
+        && table.IsIntegerSignedAt(firstValue)
+        && table.HasIntegerRangeAt(firstValue)
+        && table.IsLocalAt(local)
+        && table.StorageKindAt(local) == TypedGlobalStorageKind.Stack
+        && table.BindingKindAt(local) == TypedGlobalBindingKind.Immutable
+        && table.TypeKindAt(local) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(local) == 32
+        && table.IsGlobalAt(bodyGlobal)
+        && table.StorageKindAt(bodyGlobal) == TypedGlobalStorageKind.Const
+        && table.IsGlobalAt(flag)
+        && table.StorageKindAt(flag) == TypedGlobalStorageKind.Static
+        && table.BindingKindAt(flag) == TypedGlobalBindingKind.Mutable
+        && table.TypeKindAt(flag) == TypedSignatureTypeKind.Bool
+        && table.IsFunctionAt(sum)
+        && table.DeclarationKindAt(sum) == DeclarationKind.Function
+        && table.TargetSymbolIndexPlusOneAt(sum) != 0
+        && table.IsTypeDeclarationAt(box)
+        && table.DeclarationKindAt(box) == DeclarationKind.Struct
+        && table.TypeKindAt(box) == TypedSignatureTypeKind.Named
+        && !table.IsResolvedAt(missing);
+}
+
+[Fact]
+fn bool TypedIdentifierExpressionsRespectLexicalShadowing()
+{
+    stack ascii source = raw"""
+    fn void Shadow(i32[min max] value)
+    {
+        value;
+        if (true)
+        {
+            stack bool value = true;
+            value;
+        }
+        value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedIdentifierExpressionTable table = new();
+    if (!BuildTypedIdentifierExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstValueSlot = TypedIdentifierNthByName(table, source, stream, "value", 0);
+    stack u32[0 max] innerValueSlot = TypedIdentifierNthByName(table, source, stream, "value", 1);
+    stack u32[0 max] lastValueSlot = TypedIdentifierNthByName(table, source, stream, "value", 2);
+    if (firstValueSlot == 0 || innerValueSlot == 0 || lastValueSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstValue = (u64[0 2 ** 63 - 1])(firstValueSlot - 1);
+    stack u64[0 2 ** 63 - 1] innerValue = (u64[0 2 ** 63 - 1])(innerValueSlot - 1);
+    stack u64[0 2 ** 63 - 1] lastValue = (u64[0 2 ** 63 - 1])(lastValueSlot - 1);
+
+    return table.Count() == 3
+        && table.IsParameterAt(firstValue)
+        && table.TypeKindAt(firstValue) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(firstValue) == 32
+        && table.IsLocalAt(innerValue)
+        && table.StorageKindAt(innerValue) == TypedGlobalStorageKind.Stack
+        && table.BindingKindAt(innerValue) == TypedGlobalBindingKind.Immutable
+        && table.TypeKindAt(innerValue) == TypedSignatureTypeKind.Bool
+        && table.TargetStatementIndexPlusOneAt(innerValue) != 0
+        && table.IsParameterAt(lastValue)
+        && table.TypeKindAt(lastValue) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(lastValue) == 32;
+}
+
+[Fact]
+fn bool TypedCallExpressionsCaptureDirectFunctionFacts()
+{
+    stack ascii source = raw"""
+    fn i32[min max] Add(i32[min max] left, i32[min max] right)
+    {
+        return left;
+    }
+
+    const i32[min max] Seed = Add(1, 2);
+
+    fn void Demo()
+    {
+        Add(3, 4);
+        Missing(5);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] globalAddSlot = TypedCallNthByName(table, source, stream, "Add", 0);
+    stack u32[0 max] bodyAddSlot = TypedCallNthByName(table, source, stream, "Add", 1);
+    stack u32[0 max] missingSlot = TypedCallNthByName(table, source, stream, "Missing", 0);
+    if (globalAddSlot == 0 || bodyAddSlot == 0 || missingSlot == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] globalFirstArgSlot = TypedCallArgumentByCallAndOrdinal(table, globalAddSlot, 0);
+    stack u32[0 max] globalSecondArgSlot = TypedCallArgumentByCallAndOrdinal(table, globalAddSlot, 1);
+    if (globalFirstArgSlot == 0 || globalSecondArgSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] globalAdd = (u64[0 2 ** 63 - 1])(globalAddSlot - 1);
+    stack u64[0 2 ** 63 - 1] bodyAdd = (u64[0 2 ** 63 - 1])(bodyAddSlot - 1);
+    stack u64[0 2 ** 63 - 1] missing = (u64[0 2 ** 63 - 1])(missingSlot - 1);
+    stack u64[0 2 ** 63 - 1] globalFirstArg = (u64[0 2 ** 63 - 1])(globalFirstArgSlot - 1);
+    stack u64[0 2 ** 63 - 1] globalSecondArg = (u64[0 2 ** 63 - 1])(globalSecondArgSlot - 1);
+
+    return table.Count() == 3
+        && table.ArgumentCount() == 5
+        && table.ContextAt(globalAdd) == TypedCallContext.GlobalInitializer
+        && table.TargetKindAt(globalAdd) == TypedCallTargetKind.DirectFunction
+        && table.IsResolvedAt(globalAdd)
+        && table.IsDirectAt(globalAdd)
+        && table.ArityMatchesAt(globalAdd)
+        && table.SignatureIndexPlusOneAt(globalAdd) != 0
+        && table.ArgumentCountAt(globalAdd) == 2
+        && table.ParameterCountAt(globalAdd) == 2
+        && table.ReturnTypeKindAt(globalAdd) == TypedSignatureTypeKind.Integer
+        && table.ReturnBitWidthAt(globalAdd) == 32
+        && table.ReturnIsIntegerSignedAt(globalAdd)
+        && table.ReturnHasIntegerRangeAt(globalAdd)
+        && table.ArgumentExpectedTypeKindAt(globalFirstArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(globalFirstArg) == 32
+        && table.ArgumentExpectedIsIntegerSignedAt(globalFirstArg)
+        && table.ArgumentExpectedHasIntegerRangeAt(globalFirstArg)
+        && table.ArgumentExpectedTypeKindAt(globalSecondArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(globalSecondArg) == 32
+        && table.ContextAt(bodyAdd) == TypedCallContext.FunctionBody
+        && table.TargetKindAt(bodyAdd) == TypedCallTargetKind.DirectFunction
+        && table.ArityMatchesAt(bodyAdd)
+        && table.TargetKindAt(missing) == TypedCallTargetKind.Unknown
+        && !table.IsResolvedAt(missing)
+        && table.ArgumentCountAt(missing) == 1
+        && table.ParameterCountAt(missing) == 0
+        && table.ReturnTypeKindAt(missing) == TypedSignatureTypeKind.Unknown;
+}
+
+[Fact]
+fn bool TypedCallExpressionsResolveDirectFunctionOverloads()
+{
+    stack ascii source = raw"""
+    fn i32[min max] Pick(i32[min max] value)
+    {
+        return value;
+    }
+
+    fn bool Pick(bool value)
+    {
+        return value;
+    }
+
+    const i32[min max] Seed = Pick(1);
+
+    fn void Demo(i32[min max] typed, bool flag)
+    {
+        Pick(true);
+        Pick(typed);
+        Pick(flag);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] intLiteralSlot = TypedCallNthByName(table, source, stream, "Pick", 0);
+    stack u32[0 max] boolLiteralSlot = TypedCallNthByName(table, source, stream, "Pick", 1);
+    stack u32[0 max] intParamSlot = TypedCallNthByName(table, source, stream, "Pick", 2);
+    stack u32[0 max] boolParamSlot = TypedCallNthByName(table, source, stream, "Pick", 3);
+    if (intLiteralSlot == 0 || boolLiteralSlot == 0 || intParamSlot == 0 || boolParamSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] intLiteral = (u64[0 2 ** 63 - 1])(intLiteralSlot - 1);
+    stack u64[0 2 ** 63 - 1] boolLiteral = (u64[0 2 ** 63 - 1])(boolLiteralSlot - 1);
+    stack u64[0 2 ** 63 - 1] intParam = (u64[0 2 ** 63 - 1])(intParamSlot - 1);
+    stack u64[0 2 ** 63 - 1] boolParam = (u64[0 2 ** 63 - 1])(boolParamSlot - 1);
+
+    return table.Count() == 4
+        && table.OverloadCandidateCountAt(intLiteral) == 2
+        && table.OverloadViableCandidateCountAt(intLiteral) == 1
+        && table.OverloadBestCandidateCountAt(intLiteral) == 1
+        && table.OverloadResolvedAt(intLiteral)
+        && table.IsResolvedAt(intLiteral)
+        && table.ArityMatchesAt(intLiteral)
+        && table.ReturnTypeKindAt(intLiteral) == TypedSignatureTypeKind.Integer
+        && table.ReturnBitWidthAt(intLiteral) == 32
+        && table.OverloadCandidateCountAt(boolLiteral) == 2
+        && table.OverloadViableCandidateCountAt(boolLiteral) == 1
+        && table.OverloadBestCandidateCountAt(boolLiteral) == 1
+        && table.OverloadResolvedAt(boolLiteral)
+        && table.ReturnTypeKindAt(boolLiteral) == TypedSignatureTypeKind.Bool
+        && table.OverloadResolvedAt(intParam)
+        && table.ReturnTypeKindAt(intParam) == TypedSignatureTypeKind.Integer
+        && table.ReturnBitWidthAt(intParam) == 32
+        && table.OverloadResolvedAt(boolParam)
+        && table.ReturnTypeKindAt(boolParam) == TypedSignatureTypeKind.Bool;
+}
+
+[Fact]
+fn bool TypedCallExpressionsReportAmbiguousAndNoMatchOverloads()
+{
+    stack ascii source = raw"""
+    fn i32[min max] Same(i32[min max] value)
+    {
+        return value;
+    }
+
+    fn i64[min max] Same(i32[min max] value)
+    {
+        return value;
+    }
+
+    fn i32[min max] NeedInt(i32[min max] value)
+    {
+        return value;
+    }
+
+    fn void Demo(i32[min max] value, bool flag)
+    {
+        Same(value);
+        NeedInt(flag);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] sameSlot = TypedCallNthByName(table, source, stream, "Same", 0);
+    stack u32[0 max] needIntSlot = TypedCallNthByName(table, source, stream, "NeedInt", 0);
+    if (sameSlot == 0 || needIntSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] sameCall = (u64[0 2 ** 63 - 1])(sameSlot - 1);
+    stack u64[0 2 ** 63 - 1] needInt = (u64[0 2 ** 63 - 1])(needIntSlot - 1);
+
+    return table.TargetKindAt(sameCall) == TypedCallTargetKind.DirectFunction
+        && table.IsDirectAt(sameCall)
+        && !table.IsResolvedAt(sameCall)
+        && table.OverloadAmbiguousAt(sameCall)
+        && table.OverloadCandidateCountAt(sameCall) == 2
+        && table.OverloadViableCandidateCountAt(sameCall) == 2
+        && table.OverloadBestCandidateCountAt(sameCall) == 2
+        && table.SignatureIndexPlusOneAt(sameCall) == 0
+        && table.ReturnTypeKindAt(sameCall) == TypedSignatureTypeKind.Unknown
+        && table.TargetKindAt(needInt) == TypedCallTargetKind.DirectFunction
+        && table.IsDirectAt(needInt)
+        && !table.IsResolvedAt(needInt)
+        && table.OverloadNoMatchAt(needInt)
+        && table.OverloadCandidateCountAt(needInt) == 1
+        && table.OverloadViableCandidateCountAt(needInt) == 0
+        && table.OverloadBestCandidateCountAt(needInt) == 0
+        && table.SignatureIndexPlusOneAt(needInt) == 0
+        && table.ReturnTypeKindAt(needInt) == TypedSignatureTypeKind.Unknown;
+}
+
+[Fact]
+fn bool TypedCallExpressionsResolveMethodCalls()
+{
+    stack ascii source = raw"""
+    struct Counter
+    {
+        u32[0 max] Count;
+
+        fn i32[min max] Next(i32[min max] delta)
+        {
+            return delta;
+        }
+
+        fn u64[0 max] Read(borrow Counter self)
+        {
+            return self.Count;
+        }
+
+        static fn Counter Create(bool flag)
+        {
+            return new Counter();
+        }
+    }
+
+    fn void Demo(Counter counter, bool flag)
+    {
+        counter.Next(1);
+        counter.Read();
+        Counter.Create(flag);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] nextSlot = TypedCallNthByName(table, source, stream, "Next", 0);
+    stack u32[0 max] readSlot = TypedCallNthByName(table, source, stream, "Read", 0);
+    stack u32[0 max] createSlot = TypedCallNthByName(table, source, stream, "Create", 0);
+    if (nextSlot == 0 || readSlot == 0 || createSlot == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] nextArgSlot = TypedCallArgumentByCallAndOrdinal(table, nextSlot, 0);
+    stack u32[0 max] createArgSlot = TypedCallArgumentByCallAndOrdinal(table, createSlot, 0);
+    if (nextArgSlot == 0 || createArgSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(nextSlot - 1);
+    stack u64[0 2 ** 63 - 1] read = (u64[0 2 ** 63 - 1])(readSlot - 1);
+    stack u64[0 2 ** 63 - 1] create = (u64[0 2 ** 63 - 1])(createSlot - 1);
+    stack u64[0 2 ** 63 - 1] nextArg = (u64[0 2 ** 63 - 1])(nextArgSlot - 1);
+    stack u64[0 2 ** 63 - 1] createArg = (u64[0 2 ** 63 - 1])(createArgSlot - 1);
+    stack ascii createReturnHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.ReturnTypeHeadTokenAt(create));
+
+    return table.Count() == 3
+        && table.ArgumentCount() == 2
+        && table.TargetKindAt(next) == TypedCallTargetKind.InstanceMethod
+        && table.IsResolvedAt(next)
+        && table.IsDirectAt(next)
+        && table.OverloadResolvedAt(next)
+        && table.OverloadCandidateCountAt(next) == 1
+        && table.OverloadViableCandidateCountAt(next) == 1
+        && table.OverloadBestCandidateCountAt(next) == 1
+        && table.SignatureIndexPlusOneAt(next) != 0
+        && table.TargetSymbolIndexPlusOneAt(next) == table.SignatureIndexPlusOneAt(next)
+        && table.ArityMatchesAt(next)
+        && table.ArgumentCountAt(next) == 1
+        && table.ParameterCountAt(next) == 1
+        && table.ReturnTypeKindAt(next) == TypedSignatureTypeKind.Integer
+        && table.ReturnBitWidthAt(next) == 32
+        && table.ArgumentExpectedTypeKindAt(nextArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(nextArg) == 32
+        && table.ArgumentExpectedIsIntegerSignedAt(nextArg)
+        && table.TargetKindAt(read) == TypedCallTargetKind.InstanceMethod
+        && table.IsResolvedAt(read)
+        && table.IsDirectAt(read)
+        && table.OverloadResolvedAt(read)
+        && table.ArityMatchesAt(read)
+        && table.ArgumentCountAt(read) == 0
+        && table.ParameterCountAt(read) == 1
+        && table.ReturnTypeKindAt(read) == TypedSignatureTypeKind.Integer
+        && table.ReturnBitWidthAt(read) == 64
+        && table.ReturnHasIntegerRangeAt(read)
+        && table.TargetKindAt(create) == TypedCallTargetKind.StaticMethod
+        && table.IsResolvedAt(create)
+        && table.IsDirectAt(create)
+        && table.OverloadResolvedAt(create)
+        && table.ArityMatchesAt(create)
+        && table.ArgumentCountAt(create) == 1
+        && table.ParameterCountAt(create) == 1
+        && table.ReturnTypeKindAt(create) == TypedSignatureTypeKind.Named
+        && System.Text.Equals(createReturnHead, "Counter")
+        && table.ArgumentExpectedTypeKindAt(createArg) == TypedSignatureTypeKind.Bool;
+}
+
+[Fact]
+fn bool TypedCallExpressionsReportAmbiguousAndNoMatchMethods()
+{
+    stack ascii source = raw"""
+    struct Counter
+    {
+        fn i32[min max] Same(i32[min max] value)
+        {
+            return value;
+        }
+
+        fn i64[min max] Same(i32[min max] value)
+        {
+            return value;
+        }
+
+        fn i32[min max] NeedInt(i32[min max] value)
+        {
+            return value;
+        }
+    }
+
+    fn void Demo(Counter counter, i32[min max] value, bool flag)
+    {
+        counter.Same(value);
+        counter.NeedInt(flag);
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] sameSlot = TypedCallNthByName(table, source, stream, "Same", 0);
+    stack u32[0 max] needIntSlot = TypedCallNthByName(table, source, stream, "NeedInt", 0);
+    if (sameSlot == 0 || needIntSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] sameCall = (u64[0 2 ** 63 - 1])(sameSlot - 1);
+    stack u64[0 2 ** 63 - 1] needInt = (u64[0 2 ** 63 - 1])(needIntSlot - 1);
+
+    return table.TargetKindAt(sameCall) == TypedCallTargetKind.InstanceMethod
+        && table.IsDirectAt(sameCall)
+        && !table.IsResolvedAt(sameCall)
+        && table.OverloadAmbiguousAt(sameCall)
+        && table.OverloadCandidateCountAt(sameCall) == 2
+        && table.OverloadViableCandidateCountAt(sameCall) == 2
+        && table.OverloadBestCandidateCountAt(sameCall) == 2
+        && table.SignatureIndexPlusOneAt(sameCall) == 0
+        && table.ReturnTypeKindAt(sameCall) == TypedSignatureTypeKind.Unknown
+        && table.TargetKindAt(needInt) == TypedCallTargetKind.InstanceMethod
+        && table.IsDirectAt(needInt)
+        && !table.IsResolvedAt(needInt)
+        && table.OverloadNoMatchAt(needInt)
+        && table.OverloadCandidateCountAt(needInt) == 1
+        && table.OverloadViableCandidateCountAt(needInt) == 0
+        && table.OverloadBestCandidateCountAt(needInt) == 0
+        && table.SignatureIndexPlusOneAt(needInt) == 0
+        && table.ReturnTypeKindAt(needInt) == TypedSignatureTypeKind.Unknown;
+}
+
+[Fact]
+fn bool TypedCallExpressionsCaptureCallableValueFacts()
+{
+    stack ascii source = raw"""
+    fn bool Predicate(i32[min max] value)
+    {
+        return true;
+    }
+
+    fn void Demo(fnptr<fn bool(i32[min max])> callback, borrow closure<fn bool(i32[min max])> action)
+    {
+        callback(1);
+        stack fnptr<fn bool(i32[min max])> local = Predicate;
+        local(2);
+        action(3);
+        stack i32[min max] value = 0;
+        value();
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedCallExpressionTable table = new();
+    if (!BuildTypedCallExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] callbackSlot = TypedCallNthByName(table, source, stream, "callback", 0);
+    stack u32[0 max] localSlot = TypedCallNthByName(table, source, stream, "local", 0);
+    stack u32[0 max] actionSlot = TypedCallNthByName(table, source, stream, "action", 0);
+    stack u32[0 max] valueSlot = TypedCallNthByName(table, source, stream, "value", 0);
+    if (callbackSlot == 0 || localSlot == 0 || actionSlot == 0 || valueSlot == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] callbackArgSlot = TypedCallArgumentByCallAndOrdinal(table, callbackSlot, 0);
+    stack u32[0 max] localArgSlot = TypedCallArgumentByCallAndOrdinal(table, localSlot, 0);
+    stack u32[0 max] actionArgSlot = TypedCallArgumentByCallAndOrdinal(table, actionSlot, 0);
+    if (callbackArgSlot == 0 || localArgSlot == 0 || actionArgSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] callback = (u64[0 2 ** 63 - 1])(callbackSlot - 1);
+    stack u64[0 2 ** 63 - 1] local = (u64[0 2 ** 63 - 1])(localSlot - 1);
+    stack u64[0 2 ** 63 - 1] action = (u64[0 2 ** 63 - 1])(actionSlot - 1);
+    stack u64[0 2 ** 63 - 1] value = (u64[0 2 ** 63 - 1])(valueSlot - 1);
+    stack u64[0 2 ** 63 - 1] callbackArg = (u64[0 2 ** 63 - 1])(callbackArgSlot - 1);
+    stack u64[0 2 ** 63 - 1] localArg = (u64[0 2 ** 63 - 1])(localArgSlot - 1);
+    stack u64[0 2 ** 63 - 1] actionArg = (u64[0 2 ** 63 - 1])(actionArgSlot - 1);
+
+    return table.Count() == 4
+        && table.ArgumentCount() == 3
+        && table.TargetKindAt(callback) == TypedCallTargetKind.FunctionPointerValue
+        && table.IsResolvedAt(callback)
+        && table.IsCallableValueAt(callback)
+        && table.ArityMatchesAt(callback)
+        && table.ArgumentCountAt(callback) == 1
+        && table.ParameterCountAt(callback) == 1
+        && table.ReturnTypeKindAt(callback) == TypedSignatureTypeKind.Bool
+        && table.ArgumentExpectedTypeKindAt(callbackArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(callbackArg) == 32
+        && table.ArgumentExpectedIsIntegerSignedAt(callbackArg)
+        && table.ArgumentExpectedHasIntegerRangeAt(callbackArg)
+        && table.TargetKindAt(local) == TypedCallTargetKind.FunctionPointerValue
+        && table.IsResolvedAt(local)
+        && table.IsCallableValueAt(local)
+        && table.ArityMatchesAt(local)
+        && table.ParameterCountAt(local) == 1
+        && table.ReturnTypeKindAt(local) == TypedSignatureTypeKind.Bool
+        && table.ArgumentExpectedTypeKindAt(localArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(localArg) == 32
+        && table.TargetKindAt(action) == TypedCallTargetKind.ClosureValue
+        && table.IsResolvedAt(action)
+        && table.IsCallableValueAt(action)
+        && table.ArityMatchesAt(action)
+        && table.ParameterCountAt(action) == 1
+        && table.ReturnTypeKindAt(action) == TypedSignatureTypeKind.Bool
+        && table.ArgumentExpectedTypeKindAt(actionArg) == TypedSignatureTypeKind.Integer
+        && table.ArgumentExpectedBitWidthAt(actionArg) == 32
+        && table.TargetKindAt(value) == TypedCallTargetKind.NonCallableValue
+        && table.IsResolvedAt(value)
+        && !table.IsCallableValueAt(value)
+        && table.ArgumentCountAt(value) == 0
+        && table.ReturnTypeKindAt(value) == TypedSignatureTypeKind.Unknown;
+}
+
+[Fact]
+fn bool TypedMemberExpressionsCaptureFieldChainsAndReceiverFacts()
+{
+    stack ascii source = raw"""
+    struct Inner
+    {
+        u32[0 max] Count;
+    }
+
+    struct Box
+    {
+        Inner InnerValue;
+        rawmutptr<i8[min max]>[4] Data;
+    }
+
+    fn Box MakeBox()
+    {
+        return new Box();
+    }
+
+    const u32[0 max] Seed = MakeBox().InnerValue.Count;
+
+    fn void Demo(Box box)
+    {
+        box.InnerValue.Count;
+        box.Data;
+        new Box().InnerValue.Count;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedMemberExpressionTable table = new();
+    if (!BuildTypedMemberExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] globalInnerSlot = TypedMemberNthByName(table, source, stream, "InnerValue", 0);
+    stack u32[0 max] globalCountSlot = TypedMemberNthByName(table, source, stream, "Count", 0);
+    stack u32[0 max] dataSlot = TypedMemberNthByName(table, source, stream, "Data", 0);
+    stack u32[0 max] newInnerSlot = TypedMemberNthByName(table, source, stream, "InnerValue", 2);
+    stack u32[0 max] newCountSlot = TypedMemberNthByName(table, source, stream, "Count", 2);
+    if (globalInnerSlot == 0 || globalCountSlot == 0 || dataSlot == 0 || newInnerSlot == 0 || newCountSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] globalInner = (u64[0 2 ** 63 - 1])(globalInnerSlot - 1);
+    stack u64[0 2 ** 63 - 1] globalCount = (u64[0 2 ** 63 - 1])(globalCountSlot - 1);
+    stack u64[0 2 ** 63 - 1] data = (u64[0 2 ** 63 - 1])(dataSlot - 1);
+    stack u64[0 2 ** 63 - 1] newInner = (u64[0 2 ** 63 - 1])(newInnerSlot - 1);
+    stack u64[0 2 ** 63 - 1] newCount = (u64[0 2 ** 63 - 1])(newCountSlot - 1);
+
+    stack ascii globalInnerReceiverHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.ReceiverTypeHeadTokenAt(globalInner));
+    stack ascii globalInnerTypeHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.TypeHeadTokenAt(globalInner));
+    stack ascii newInnerReceiverHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.ReceiverTypeHeadTokenAt(newInner));
+
+    return table.Count() == 7
+        && table.CandidateCount() == 0
+        && table.ContextAt(globalInner) == TypedMemberContext.GlobalInitializer
+        && table.ReceiverKindAt(globalInner) == TypedMemberReceiverKind.Value
+        && table.ReceiverResolvedAt(globalInner)
+        && System.Text.Equals(globalInnerReceiverHead, "Box")
+        && table.TargetKindAt(globalInner) == TypedMemberTargetKind.Field
+        && table.IsResolvedAt(globalInner)
+        && table.IsFieldAt(globalInner)
+        && table.TypeKindAt(globalInner) == TypedSignatureTypeKind.Named
+        && System.Text.Equals(globalInnerTypeHead, "Inner")
+        && table.TargetKindAt(globalCount) == TypedMemberTargetKind.Field
+        && table.TypeKindAt(globalCount) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(globalCount) == 32
+        && table.IsIntegerUnsignedAt(globalCount)
+        && table.HasIntegerRangeAt(globalCount)
+        && table.RangeEndsAtMaxAt(globalCount)
+        && table.TargetKindAt(data) == TypedMemberTargetKind.Field
+        && table.TypeKindAt(data) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerAt(data)
+        && table.HasElementCountExpressionAt(data)
+        && table.ReceiverKindAt(newInner) == TypedMemberReceiverKind.Value
+        && System.Text.Equals(newInnerReceiverHead, "Box")
+        && table.TargetKindAt(newCount) == TypedMemberTargetKind.Field
+        && table.TypeKindAt(newCount) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(newCount) == 32;
+}
+
+[Fact]
+fn bool TypedMemberExpressionsCaptureMethodCandidateFacts()
+{
+    stack ascii source = raw"""
+    struct Counter
+    {
+        u32[0 max] Count;
+
+        fn i32[min max] Next(i32[min max] delta)
+        {
+            return delta;
+        }
+
+        static fn Counter Create()
+        {
+            return new Counter();
+        }
+    }
+
+    fn void Demo(Counter counter)
+    {
+        counter.Next;
+        Counter.Create;
+        counter.Count;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedMemberExpressionTable table = new();
+    if (!BuildTypedMemberExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] nextSlot = TypedMemberNthByName(table, source, stream, "Next", 0);
+    stack u32[0 max] createSlot = TypedMemberNthByName(table, source, stream, "Create", 0);
+    stack u32[0 max] countSlot = TypedMemberNthByName(table, source, stream, "Count", 0);
+    if (nextSlot == 0 || createSlot == 0 || countSlot == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] nextCandidateSlot = TypedMemberCandidateByMemberAndOrdinal(table, nextSlot, 0);
+    stack u32[0 max] createCandidateSlot = TypedMemberCandidateByMemberAndOrdinal(table, createSlot, 0);
+    if (nextCandidateSlot == 0 || createCandidateSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(nextSlot - 1);
+    stack u64[0 2 ** 63 - 1] create = (u64[0 2 ** 63 - 1])(createSlot - 1);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])(countSlot - 1);
+    stack u64[0 2 ** 63 - 1] nextCandidate = (u64[0 2 ** 63 - 1])(nextCandidateSlot - 1);
+    stack u64[0 2 ** 63 - 1] createCandidate = (u64[0 2 ** 63 - 1])(createCandidateSlot - 1);
+
+    stack ascii createReturnHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.CandidateReturnTypeHeadTokenAt(createCandidate));
+
+    return table.Count() == 3
+        && table.CandidateCount() == 2
+        && table.ReceiverKindAt(next) == TypedMemberReceiverKind.Value
+        && table.TargetKindAt(next) == TypedMemberTargetKind.InstanceMethod
+        && table.HasMethodCandidatesAt(next)
+        && table.CandidateCountAt(next) == 1
+        && table.CandidateKindAt(nextCandidate) == TypedMemberTargetKind.InstanceMethod
+        && table.CandidateParameterCountAt(nextCandidate) == 1
+        && table.CandidateReturnTypeKindAt(nextCandidate) == TypedSignatureTypeKind.Integer
+        && table.CandidateReturnBitWidthAt(nextCandidate) == 32
+        && table.CandidateReturnIsIntegerSignedAt(nextCandidate)
+        && table.CandidateReturnHasIntegerRangeAt(nextCandidate)
+        && table.TypeKindAt(next) == TypedSignatureTypeKind.Unknown
+        && table.ReceiverKindAt(create) == TypedMemberReceiverKind.StaticType
+        && table.TargetKindAt(create) == TypedMemberTargetKind.StaticMethod
+        && table.CandidateKindAt(createCandidate) == TypedMemberTargetKind.StaticMethod
+        && table.CandidateParameterCountAt(createCandidate) == 0
+        && table.CandidateReturnTypeKindAt(createCandidate) == TypedSignatureTypeKind.Named
+        && System.Text.Equals(createReturnHead, "Counter")
+        && table.TargetKindAt(count) == TypedMemberTargetKind.Field
+        && table.CandidateCountAt(count) == 0
+        && table.TypeKindAt(count) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(count) == 32
+        && table.IsIntegerUnsignedAt(count)
+        && table.HasIntegerRangeAt(count);
+}
+
+[Fact]
+fn bool TypedIndexExpressionsCaptureElementSliceAndReceiverFacts()
+{
+    stack ascii source = raw"""
+    struct Box
+    {
+        i32[min max][4] Values;
+        dynamic u32[0 max] Items;
+        rawmutptr<i8[min max]>[8] Bytes;
+        ascii Name;
+    }
+
+    fn i32[min max] Use(Box box, u64[0 max] i, u64[0 max] n)
+    {
+        box.Values[i];
+        box.Values[0, n];
+        box.Items[i];
+        box.Items[0, n];
+        box.Bytes[i];
+        box.Bytes[0, n];
+        box.Name[0, n];
+        return 0;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedIndexExpressionTable table = new();
+    if (!BuildTypedIndexExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] fixedElementSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.Element, 0);
+    stack u32[0 max] fixedSliceSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.Slice, 0);
+    stack u32[0 max] dynamicElementSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.DynamicElement, 0);
+    stack u32[0 max] dynamicSliceSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.DynamicSlice, 0);
+    stack u32[0 max] rawElementSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.RawPointerElement, 0);
+    stack u32[0 max] rawRegionSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.RawPointerRegion, 0);
+    stack u32[0 max] textSliceSlot = TypedIndexNthByAccessKind(table, TypedIndexAccessKind.TextSlice, 0);
+    if (fixedElementSlot == 0
+        || fixedSliceSlot == 0
+        || dynamicElementSlot == 0
+        || dynamicSliceSlot == 0
+        || rawElementSlot == 0
+        || rawRegionSlot == 0
+        || textSliceSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] fixedElement = (u64[0 2 ** 63 - 1])(fixedElementSlot - 1);
+    stack u64[0 2 ** 63 - 1] fixedSlice = (u64[0 2 ** 63 - 1])(fixedSliceSlot - 1);
+    stack u64[0 2 ** 63 - 1] dynamicElement = (u64[0 2 ** 63 - 1])(dynamicElementSlot - 1);
+    stack u64[0 2 ** 63 - 1] dynamicSlice = (u64[0 2 ** 63 - 1])(dynamicSliceSlot - 1);
+    stack u64[0 2 ** 63 - 1] rawElement = (u64[0 2 ** 63 - 1])(rawElementSlot - 1);
+    stack u64[0 2 ** 63 - 1] rawRegion = (u64[0 2 ** 63 - 1])(rawRegionSlot - 1);
+    stack u64[0 2 ** 63 - 1] textSlice = (u64[0 2 ** 63 - 1])(textSliceSlot - 1);
+
+    return table.Count() == 7
+        && table.ReceiverResolvedAt(fixedElement)
+        && table.ResultResolvedAt(fixedElement)
+        && table.ReceiverKindAt(fixedElement) == TypedIndexReceiverKind.FixedArray
+        && table.TypeKindAt(fixedElement) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(fixedElement) == 32
+        && table.IsIntegerSignedAt(fixedElement)
+        && table.HasIntegerRangeAt(fixedElement)
+        && table.OperationKindAt(fixedSlice) == TypedIndexOperationKind.Slice
+        && table.TypeKindAt(fixedSlice) == TypedSignatureTypeKind.Slice
+        && table.BitWidthAt(fixedSlice) == 32
+        && table.IsIntegerSignedAt(fixedSlice)
+        && table.ReceiverKindAt(dynamicElement) == TypedIndexReceiverKind.Dynamic
+        && table.TypeKindAt(dynamicElement) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(dynamicElement) == 32
+        && table.IsIntegerUnsignedAt(dynamicElement)
+        && table.TypeKindAt(dynamicSlice) == TypedSignatureTypeKind.Slice
+        && table.IsIntegerUnsignedAt(dynamicSlice)
+        && table.ReceiverKindAt(rawElement) == TypedIndexReceiverKind.RawPointer
+        && table.TypeKindAt(rawElement) == TypedSignatureTypeKind.Integer
+        && table.BitWidthAt(rawElement) == 8
+        && table.IsRawMutablePointerReceiverAt(rawElement)
+        && table.AccessKindAt(rawRegion) == TypedIndexAccessKind.RawPointerRegion
+        && table.TypeKindAt(rawRegion) == TypedSignatureTypeKind.RawPointer
+        && table.IsRawMutablePointerReceiverAt(rawRegion)
+        && table.AccessKindAt(textSlice) == TypedIndexAccessKind.TextSlice
+        && table.TypeKindAt(textSlice) == TypedSignatureTypeKind.Text
+        && table.OperationKindAt(textSlice) == TypedIndexOperationKind.Slice;
+}
+
+[Fact]
+fn bool TypedConversionExpressionsCaptureTargetOperandAndResultFacts()
+{
+    stack ascii source = raw"""
+    fn u64[0 max] Widen(u32[0 max] value)
+    {
+        return (u64[0 max])value;
+    }
+
+    fn rawptr<i32[min max]> Pointer(rawmutptr<i32[min max]> ptr)
+    {
+        return (rawptr<i32[min max]>)ptr;
+    }
+
+    fn i32[min max][] Slice(i32[min max][4] values)
+    {
+        return (i32[min max][])values;
+    }
+
+    fn unicode Wide()
+    {
+        return (unicode)"hello";
+    }
+
+    fn void Store(u32[0 max] value)
+    {
+        stack mut u64[0 max] widened = 0;
+        widened = (u64[0 max])value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedConversionExpressionTable conversions = new();
+    if (!BuildTypedConversionExpressionTableForSource(source, stream, conversions))
+    {
+        return false;
+    }
+
+    stack u32[0 max] widenSlot = TypedConversionNthByFunctionName(conversions, source, stream, "Widen", 0);
+    stack u32[0 max] pointerSlot = TypedConversionNthByFunctionName(conversions, source, stream, "Pointer", 0);
+    stack u32[0 max] sliceSlot = TypedConversionNthByFunctionName(conversions, source, stream, "Slice", 0);
+    stack u32[0 max] wideSlot = TypedConversionNthByFunctionName(conversions, source, stream, "Wide", 0);
+    stack u32[0 max] storeSlot = TypedConversionNthByFunctionName(conversions, source, stream, "Store", 0);
+    if (widenSlot == 0 || pointerSlot == 0 || sliceSlot == 0 || wideSlot == 0 || storeSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] widen = (u64[0 2 ** 63 - 1])(widenSlot - 1);
+    stack u64[0 2 ** 63 - 1] pointer = (u64[0 2 ** 63 - 1])(pointerSlot - 1);
+    stack u64[0 2 ** 63 - 1] slice = (u64[0 2 ** 63 - 1])(sliceSlot - 1);
+    stack u64[0 2 ** 63 - 1] wide = (u64[0 2 ** 63 - 1])(wideSlot - 1);
+
+    stack mut TypedReturnExpressionTable returns = new();
+    if (!BuildTypedReturnExpressionTableForSource(source, stream, returns))
+    {
+        return false;
+    }
+
+    stack u32[0 max] widenReturnSlot = TypedReturnNthByFunctionName(returns, source, stream, "Widen", 0);
+    if (widenReturnSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] widenReturn = (u64[0 2 ** 63 - 1])(widenReturnSlot - 1);
+
+    stack mut TypedAssignmentExpressionTable assignments = new();
+    if (!BuildTypedAssignmentExpressionTableForSource(source, stream, assignments))
+    {
+        return false;
+    }
+
+    stack u32[0 max] storeAssignmentSlot = TypedAssignmentNthByIdentifierTargetKind(assignments, TypedIdentifierTargetKind.Local, 0);
+    if (storeAssignmentSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] storeAssignment = (u64[0 2 ** 63 - 1])(storeAssignmentSlot - 1);
+
+    return conversions.Count() == 5
+        && conversions.ContextAt(widen) == TypedConversionContext.FunctionBody
+        && conversions.TargetResolvedAt(widen)
+        && conversions.OperandResolvedAt(widen)
+        && conversions.IsExplicitAt(widen)
+        && conversions.IsNumericConversionAt(widen)
+        && conversions.TargetTypeKindAt(widen) == TypedSignatureTypeKind.Integer
+        && conversions.TargetBitWidthAt(widen) == 64
+        && conversions.TargetIsIntegerUnsignedAt(widen)
+        && conversions.TargetHasIntegerRangeAt(widen)
+        && conversions.OperandKindAt(widen) == TypedConversionOperandKind.Identifier
+        && conversions.OperandTypeKindAt(widen) == TypedSignatureTypeKind.Integer
+        && conversions.OperandBitWidthAt(widen) == 32
+        && conversions.OperandIsIntegerUnsignedAt(widen)
+        && conversions.OperandHasIntegerRangeAt(widen)
+        && conversions.TargetTypeKindAt(pointer) == TypedSignatureTypeKind.RawPointer
+        && conversions.OperandTypeKindAt(pointer) == TypedSignatureTypeKind.RawPointer
+        && conversions.IsPointerConversionAt(pointer)
+        && !conversions.TargetIsRawMutablePointerAt(pointer)
+        && conversions.OperandIsRawMutablePointerAt(pointer)
+        && conversions.TargetTypeKindAt(slice) == TypedSignatureTypeKind.Slice
+        && conversions.OperandTypeKindAt(slice) == TypedSignatureTypeKind.FixedArray
+        && conversions.IsArrayToSliceConversionAt(slice)
+        && conversions.TargetElementCountStartTokenAt(slice) != 0
+        && conversions.OperandElementCountStartTokenAt(slice) != 0
+        && conversions.TargetTypeKindAt(wide) == TypedSignatureTypeKind.Text
+        && conversions.OperandTypeKindAt(wide) == TypedSignatureTypeKind.Text
+        && conversions.TargetIsUnicodeTextAt(wide)
+        && conversions.IsTextConversionAt(wide)
+        && returns.ValueKindAt(widenReturn) == TypedReturnValueKind.Conversion
+        && returns.ValueTypeKindAt(widenReturn) == TypedSignatureTypeKind.Integer
+        && returns.ValueBitWidthAt(widenReturn) == 64
+        && returns.ValueIsIntegerUnsignedAt(widenReturn)
+        && assignments.ValueKindAt(storeAssignment) == TypedAssignmentValueKind.Conversion
+        && assignments.ValueTypeKindAt(storeAssignment) == TypedSignatureTypeKind.Integer
+        && assignments.ValueBitWidthAt(storeAssignment) == 64
+        && assignments.ValueIsIntegerUnsignedAt(storeAssignment);
+}
+
+[Fact]
+fn bool TypedAssignmentExpressionsCaptureTargetValueAndOperatorFacts()
+{
+    stack ascii source = raw"""
+    static mut u32[0 max] Global = 0;
+
+    struct Box
+    {
+        u32[0 max] Count;
+        i32[min max][4] Values;
+    }
+
+    fn u32[0 max] Next()
+    {
+        return 1;
+    }
+
+    fn void Use(Box box, u32[0 max] value, u64[0 max] i)
+    {
+        stack mut u32[0 max] local = 0;
+        local = value;
+        local += Next();
+        box.Count = local;
+        box.Values[i] = 7;
+        Global = local;
+        local = Global;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedAssignmentExpressionTable table = new();
+    if (!BuildTypedAssignmentExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] localSlot = TypedAssignmentNthByIdentifierTargetKind(table, TypedIdentifierTargetKind.Local, 0);
+    stack u32[0 max] compoundSlot = TypedAssignmentNthByOperatorKind(table, TypedAssignmentOperatorKind.AddAssign, 0);
+    stack u32[0 max] fieldSlot = TypedAssignmentNthByTargetKind(table, TypedAssignmentTargetKind.Field, 0);
+    stack u32[0 max] indexSlot = TypedAssignmentNthByTargetKind(table, TypedAssignmentTargetKind.IndexElement, 0);
+    stack u32[0 max] globalSlot = TypedAssignmentNthByIdentifierTargetKind(table, TypedIdentifierTargetKind.Global, 0);
+    if (localSlot == 0 || compoundSlot == 0 || fieldSlot == 0 || indexSlot == 0 || globalSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] local = (u64[0 2 ** 63 - 1])(localSlot - 1);
+    stack u64[0 2 ** 63 - 1] compound = (u64[0 2 ** 63 - 1])(compoundSlot - 1);
+    stack u64[0 2 ** 63 - 1] field = (u64[0 2 ** 63 - 1])(fieldSlot - 1);
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(indexSlot - 1);
+    stack u64[0 2 ** 63 - 1] global = (u64[0 2 ** 63 - 1])(globalSlot - 1);
+
+    return table.Count() == 6
+        && table.OperatorKindAt(local) == TypedAssignmentOperatorKind.Assign
+        && table.TargetKindAt(local) == TypedAssignmentTargetKind.Identifier
+        && table.TargetResolvedAt(local)
+        && table.ValueResolvedAt(local)
+        && table.IsSimpleAt(local)
+        && table.IsPlaceTargetAt(local)
+        && table.TargetTypeKindAt(local) == TypedSignatureTypeKind.Integer
+        && table.TargetBitWidthAt(local) == 32
+        && table.TargetIsIntegerUnsignedAt(local)
+        && table.TargetHasIntegerRangeAt(local)
+        && table.ValueKindAt(local) == TypedAssignmentValueKind.Identifier
+        && table.ValueTypeKindAt(local) == TypedSignatureTypeKind.Integer
+        && table.ValueBitWidthAt(local) == 32
+        && table.ValueIsIntegerUnsignedAt(local)
+        && table.OperatorKindAt(compound) == TypedAssignmentOperatorKind.AddAssign
+        && table.IsCompoundAt(compound)
+        && table.IsNumericCompoundAt(compound)
+        && table.ValueKindAt(compound) == TypedAssignmentValueKind.Call
+        && table.ValueTypeKindAt(compound) == TypedSignatureTypeKind.Integer
+        && table.ValueBitWidthAt(compound) == 32
+        && table.TargetKindAt(field) == TypedAssignmentTargetKind.Field
+        && table.MemberTargetKindAt(field) == TypedMemberTargetKind.Field
+        && table.TargetIsIntegerUnsignedAt(field)
+        && table.TargetKindAt(index) == TypedAssignmentTargetKind.IndexElement
+        && table.IndexAccessKindAt(index) == TypedIndexAccessKind.Element
+        && table.TargetIsIntegerSignedAt(index)
+        && table.TargetBitWidthAt(index) == 32
+        && table.ValueKindAt(index) == TypedAssignmentValueKind.Literal
+        && table.IdentifierTargetKindAt(global) == TypedIdentifierTargetKind.Global
+        && table.TargetBindingKindAt(global) == TypedGlobalBindingKind.Mutable
+        && table.TargetIsIntegerUnsignedAt(global);
+}
+
+[Fact]
+fn bool TypedReturnExpressionsCaptureExpectedAndActualFacts()
+{
+    stack ascii source = raw"""
+    struct Box
+    {
+        u32[0 max] Count;
+    }
+
+    fn u32[0 max] Next()
+    {
+        return 1;
+    }
+
+    fn u32[0 max] Echo(u32[0 max] value)
+    {
+        return value;
+    }
+
+    fn u32[0 max] UseCall()
+    {
+        return Next();
+    }
+
+    fn Box Make()
+    {
+        return new Box();
+    }
+
+    fn u32[0 max] UseAssignment()
+    {
+        stack mut u32[0 max] value = 0;
+        return value = Next();
+    }
+
+    fn void Done()
+    {
+        return;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedReturnExpressionTable table = new();
+    if (!BuildTypedReturnExpressionTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] echoSlot = TypedReturnNthByFunctionName(table, source, stream, "Echo", 0);
+    stack u32[0 max] callSlot = TypedReturnNthByFunctionName(table, source, stream, "UseCall", 0);
+    stack u32[0 max] makeSlot = TypedReturnNthByFunctionName(table, source, stream, "Make", 0);
+    stack u32[0 max] assignmentSlot = TypedReturnNthByFunctionName(table, source, stream, "UseAssignment", 0);
+    stack u32[0 max] doneSlot = TypedReturnNthByFunctionName(table, source, stream, "Done", 0);
+    if (echoSlot == 0 || callSlot == 0 || makeSlot == 0 || assignmentSlot == 0 || doneSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] echo = (u64[0 2 ** 63 - 1])(echoSlot - 1);
+    stack u64[0 2 ** 63 - 1] call = (u64[0 2 ** 63 - 1])(callSlot - 1);
+    stack u64[0 2 ** 63 - 1] make = (u64[0 2 ** 63 - 1])(makeSlot - 1);
+    stack u64[0 2 ** 63 - 1] assignment = (u64[0 2 ** 63 - 1])(assignmentSlot - 1);
+    stack u64[0 2 ** 63 - 1] done = (u64[0 2 ** 63 - 1])(doneSlot - 1);
+
+    stack ascii expectedMakeName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.ExpectedTypeHeadTokenAt(make));
+    stack ascii valueMakeName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.ValueTypeHeadTokenAt(make));
+
+    return table.Count() == 6
+        && table.ContextAt(echo) == TypedReturnContext.FunctionBody
+        && table.HasValueAt(echo)
+        && table.ExpectedResolvedAt(echo)
+        && table.ValueResolvedAt(echo)
+        && table.ValueKindAt(echo) == TypedReturnValueKind.Identifier
+        && table.ExpectedTypeKindAt(echo) == TypedSignatureTypeKind.Integer
+        && table.ExpectedBitWidthAt(echo) == 32
+        && table.ExpectedIsIntegerUnsignedAt(echo)
+        && table.ExpectedHasIntegerRangeAt(echo)
+        && table.ValueTypeKindAt(echo) == TypedSignatureTypeKind.Integer
+        && table.ValueBitWidthAt(echo) == 32
+        && table.ValueIsIntegerUnsignedAt(echo)
+        && table.ValueHasIntegerRangeAt(echo)
+        && table.ValueKindAt(call) == TypedReturnValueKind.Call
+        && table.ValueTypeKindAt(call) == TypedSignatureTypeKind.Integer
+        && table.ValueBitWidthAt(call) == 32
+        && table.ValueIsIntegerUnsignedAt(call)
+        && table.ExpectedTypeKindAt(make) == TypedSignatureTypeKind.Named
+        && table.ValueKindAt(make) == TypedReturnValueKind.New
+        && table.ValueTypeKindAt(make) == TypedSignatureTypeKind.Named
+        && System.Text.Equals(expectedMakeName, "Box")
+        && System.Text.Equals(valueMakeName, "Box")
+        && table.ValueKindAt(assignment) == TypedReturnValueKind.Assignment
+        && table.ValueTypeKindAt(assignment) == TypedSignatureTypeKind.Integer
+        && table.ValueBitWidthAt(assignment) == 32
+        && table.ValueIsIntegerUnsignedAt(assignment)
+        && table.IsBareAt(done)
+        && !table.HasValueAt(done)
+        && table.ValueKindAt(done) == TypedReturnValueKind.None
+        && table.ExpectedVoidAt(done)
+        && table.ExpectedTypeKindAt(done) == TypedSignatureTypeKind.Void
+        && table.ValueTypeKindAt(done) == TypedSignatureTypeKind.Unknown;
+}
+
+[Fact]
+fn bool ClassifiesExpressionShapes()
+{
+    // Literal expression shapes include scalar values and text literals.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(raw"""fn void f(i32 a, i32 b) { 1 + 2; 1.0; a < b; !a; "x"; '\n'; }"""), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            if (body.Count() != 6)
+            {
+                return false;
+            }
+
+            stack ExprType t0 = ClassifyExprType(stream, body, body.ExprRootAt(0));
+            stack ExprType t1 = ClassifyExprType(stream, body, body.ExprRootAt(1));
+            stack ExprType t2 = ClassifyExprType(stream, body, body.ExprRootAt(2));
+            stack ExprType t3 = ClassifyExprType(stream, body, body.ExprRootAt(3));
+            stack ExprType t4 = ClassifyExprType(stream, body, body.ExprRootAt(4));
+            stack ExprType t5 = ClassifyExprType(stream, body, body.ExprRootAt(5));
+            return t0 == ExprType.Int
+                && t1 == ExprType.Float
+                && t2 == ExprType.Bool
+                && t3 == ExprType.Bool
+                && t4 == ExprType.Text
+                && t5 == ExprType.Text;
+    }
+}
+
+[Fact]
+fn bool IntegerConditionIsANonBooleanError()
+{
+    // `if (1 + 2)` has an integer condition — a basic type error.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f() { if (1 + 2) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 1;
+    }
+}
+
+[Fact]
+fn bool ComparisonAndLogicalConditionsAreBoolean()
+{
+    // `a < b` and `a == b` are boolean conditions — no errors.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 a, i32 b) { if (a < b) { } while (a == b) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 0;
+    }
+}
+
+[Fact]
+fn bool IdentifierConditionIsNotFlagged()
+{
+    // `if (flag)` types as Unknown (identifier), so the conservative checker does
+    // not flag it.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(bool flag) { if (flag) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 0;
+    }
+}

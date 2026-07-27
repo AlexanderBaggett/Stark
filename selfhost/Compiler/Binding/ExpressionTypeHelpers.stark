@@ -1,0 +1,239 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import System.Text
+module Compiler.Binding.ExpressionTypeHelpers
+
+// The declared type-primary token of the parameter/local that the reference at
+// expression node `node` resolves to, read from the lexical `ReferenceTable`
+// (which already honors shadowing and block scope). 0 when the node is not a
+// reference to a scope symbol (a declaration/unbound reference has no scope type).
+internal fn u32[0 max] ReferenceTypeTokenForNode(borrow ReferenceTable refs, borrow FunctionScope scope, u32[0 max] node)
+{
+    stack mut u32[0 max] typeToken = 0;
+    stack u64[0 2 ** 63 - 1] count = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (refs.NodeAt(index) == node)
+        {
+            stack ReferenceKind kind = refs.KindAt(index);
+            if (kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+            {
+                stack u32[0 max] target = refs.TargetAt(index);
+                if (target != 0)
+                {
+                    typeToken = scope.TypeTokenAt((u64[0 2 ** 63 - 1])(target - 1));
+                }
+            }
+        }
+    }
+
+    return typeToken;
+}
+
+// The definition name token of the struct/record declaration named by
+// `structNameToken` (matched by source text in the declaration table), or 0 when no
+// such declaration exists. `ParseStructFields` can be driven from this name token
+// (it scans forward to the struct's body `{`). Source-derived name slices are
+// compared inline with `System.Text.Equals` (overlap-permitting).
+internal fn u32[0 max] FindStructDefName(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken)
+{
+    if (structNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii structName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])structNameToken);
+    stack mut u32[0 max] structDefName = 0;
+    stack u64[0 2 ** 63 - 1] tableCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] t = 0; t < tableCount; t += 1)
+    {
+        stack ascii declName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(t));
+        if (System.Text.Equals(declName, structName))
+        {
+            structDefName = table.NameTokenAt(t);
+        }
+    }
+
+    return structDefName;
+}
+
+// The type-primary token of the data field named `fieldNameToken` of the struct/
+// record named `structNameToken` (e.g. the `i32` in `struct S { i32 count; }`), or 0
+// when not found — for value typing via `MapTypeToken`.
+internal fn u32[0 max] StructFieldTypePrimary(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken, u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    stack mut u32[0 max] primary = 0;
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return 0;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] f = 0; f < fieldCount; f += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(f));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    primary = fields.TypePrimaryAt(f);
+                }
+            }
+    }
+
+    return primary;
+}
+
+// The user-type HEAD token of the data field named `fieldNameToken` of the struct
+// named `structNameToken` (the field's own struct/record type name, e.g. `B` for a
+// field `B b;`), or 0 when not found or the field type is a built-in. Used to chain
+// member access — the head names the struct whose fields the next `.member` reads.
+internal fn u32[0 max] StructFieldTypeHead(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken, u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    stack mut u32[0 max] head = 0;
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return 0;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] f = 0; f < fieldCount; f += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(f));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    head = fields.TypeHeadAt(f);
+                }
+            }
+    }
+
+    return head;
+}
+
+// The struct/record type-name token that expression `node` evaluates to, when it is
+// a chain of identifier and member accesses over struct-typed values (e.g. `a` whose
+// type is `A`, or `a.b` whose field `b` has type `B`): an identifier yields its
+// declared type token; a `receiver.field` member yields the field's user-type head,
+// resolved against the receiver's struct (recursively). 0 when the node is not such a
+// chain or its type is not a known struct. Each recursion peels one `.member`, so it
+// terminates on the finite expression chain.
+internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        return ReferenceTypeTokenForNode(refs, scope, node);
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+        return StructFieldTypeHead(table, source, stream, receiverStruct, body.ExprTokenAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return body.ExprLeftAt(node);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] ExpressionTypeHeadToken(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        return ReferenceTypeTokenForNode(refs, scope, node);
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] receiverHead = ExpressionTypeHeadToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+        return StructFieldTypeHead(table, source, stream, receiverHead, body.ExprTokenAt(node));
+    }
+
+    return 0;
+}
+
+internal fn bool TryEnumDeclarationForTypeHead(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeHeadToken,
+    out u32[0 max] enumNameToken,
+    out u32[0 max] enumKeywordToken)
+{
+    enumNameToken = 0;
+    enumKeywordToken = 0;
+    if (typeHeadToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Enum
+            && BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), typeHeadToken))
+        {
+            enumNameToken = table.NameTokenAt(index);
+            enumKeywordToken = table.KeywordTokenAt(index);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The type of expression node `node` in `body`: its shape type from
+// `ClassifyExprType`, but when that is `Unknown`, the declared type of what the
+// node resolves to: for an identifier, the symbol it lexically resolves to (via the
+// reference table, respecting shadowing); for a member access `receiver.field` whose
+// receiver is a struct/record-typed identifier, the field's declared type (looked up
+// in that struct's declaration). This types `n` (an integer local) and `s.count`
+// (an `i32` field) as `Int`.
+internal fn ExprType TypedNodeType(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack mut ExprType nodeType = ClassifyExprType(stream, body, node);
+    if (nodeType == ExprType.Unknown)
+    {
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] typeToken = ReferenceTypeTokenForNode(refs, scope, node);
+            if (typeToken != 0)
+            {
+                nodeType = MapTypeToken(stream, typeToken);
+            }
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Member)
+        {
+            // `receiver.field`: when the receiver resolves to a struct/record (an
+            // identifier or a further member chain), type the access as the named
+            // field's declared type.
+            stack u32[0 max] structNameToken = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+            stack u32[0 max] fieldPrimary = StructFieldTypePrimary(table, source, stream, structNameToken, body.ExprTokenAt(node));
+            if (fieldPrimary != 0)
+            {
+                nodeType = MapTypeToken(stream, fieldPrimary);
+            }
+        }
+    }
+
+    return nodeType;
+}

@@ -1,0 +1,731 @@
+import Compiler.Ir
+module Compiler.Mir.Model
+
+
+// A first slice of the self-hosted compiler's MIR (mid-level IR), built on the
+// `Compiler.Ir` typed-handle substrate (docs/Internals/IrMemoryAndFactModel.md). Instructions live
+// in a dense `IrTable<MirInstruction>` the caller owns directly; each instruction's
+// result is named by a `MirValueId` (its 1-based table index), and operands are
+// raw 1-based value indices into the same table.
+//
+// The MIR builder is a set of FREE FUNCTIONS over the table rather than methods on a
+// wrapper struct: a struct field whose type is a generic aggregate (an `IrTable<T>`
+// field) currently miscompiles in the host backend (an invalid `getelementptr`), so
+// the table is passed directly instead of being wrapped. `MirInstruction` is a flat
+// record (plain enum + raw `u32`/`i64`), avoiding nested handle structs.
+
+// A MIR instruction opcode (a flat, non-generic enum).
+public enum MirOp
+{
+    // An integer constant; its value is the instruction's immediate.
+    ConstInt,
+    // A function parameter; its 0-based index rides in the immediate. Declared in the
+    // signature, so it emits no body line and is referenced as `%pK` by its uses.
+    Param,
+    // Extracts the data pointer from a concrete slice ABI parameter `{ ptr, i64 }`.
+    // The 0-based parameter index rides in the immediate.
+    SliceParamBase,
+    // Extracts the length from a concrete slice ABI parameter `{ ptr, i64 }`.
+    // The 0-based parameter index rides in the immediate.
+    SliceParamLength,
+    // Constructs a concrete slice ABI value `{ ptr, i64 }` from base pointer A
+    // and length B for calls that pass slices by value.
+    SliceValue,
+    // Constructs a text-view descriptor from MIR text constant row A. B is the
+    // payload byte start, C is payload byte length, D is code point length, and
+    // Imm is the storage encoding code.
+    TextConstantValue,
+    // Constructs a typed f32/f64 value from MIR float constant row A. B is the
+    // payload byte start, C is payload byte length, D is the bit width, and Imm
+    // is the MIR value-type storage code.
+    FloatConstantValue,
+    // Extracts constant element B from fixed-array parameter A. C is the array
+    // length, and ResType is the element type.
+    FixedArrayParamElement,
+    // Extracts constant field B from struct-value parameter A. The immediate
+    // packs field count and compact LLVM aggregate shape; optional C/D constants
+    // carry declared range lower/upper facts, and ResType is the field type.
+    StructParamField,
+    // Materializes fixed-array parameter A into an addressable stack slot. B is
+    // the array length, C is slot alignment, and D is the element type code.
+    FixedArrayParamSlot,
+    // Loads a by-value fixed-array aggregate from pointer A. B is the array
+    // length, C is load alignment, and D is the element type code.
+    FixedArrayLoad,
+    // Loads a by-value struct aggregate from pointer A. B is load alignment,
+    // and the immediate packs field count plus compact LLVM aggregate shape.
+    StructValueLoad,
+    Add,
+    Sub,
+    Mul,
+    // Explicit two's-complement wrapping arithmetic. These map to LLVM's ordinary
+    // add/sub/mul without no-wrap flags, even when ordinary proofs would permit them.
+    WrappingAdd,
+    WrappingSub,
+    WrappingMul,
+    // Explicit signed saturating arithmetic. These are distinct from ordinary ALU
+    // because overflow clamps to the destination type bounds instead of trapping.
+    SaturatingAdd,
+    SaturatingSub,
+    SaturatingMul,
+    // The rest of the integer ALU over operands A/B: signed/unsigned divide and
+    // remainder, bitwise and/or/xor, and left/arithmetic-right shifts. Map to LLVM
+    // sdiv/udiv/srem/and/or/xor/shl/ashr.
+    SDiv,
+    UDiv,
+    SRem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    AShr,
+    // Signed integer comparisons over operands A/B; each yields an i1 (LLVM `icmp`),
+    // meant to feed a `CondBranch` condition. Eq/Ne/Lt/Le/Gt/Ge map to LLVM
+    // eq/ne/slt/sle/sgt/sge.
+    CmpEq,
+    CmpNe,
+    CmpLt,
+    CmpLe,
+    CmpGt,
+    CmpGe,
+    // Zero-extends operand A to ResType. Existing boolean returns use the default i64
+    // result type; explicit integer conversions can preserve their target width.
+    ZExt,
+    // Loads the i64 value of module global `@gN` (N = the global id in the immediate);
+    // its result is the value naming this instruction.
+    LoadGlobal,
+    // Stores operand A into module global `@gN` (N = the global id in the immediate).
+    // A side-effecting instruction with no meaningful result register.
+    StoreGlobal,
+    // Allocates positive constant-sized stack storage. The allocation byte size rides
+    // in `Imm`; the requested alignment rides in A. The result is a nonnull pointer.
+    StackAlloc,
+    // Allocates positive constant-sized heap storage. The allocation byte size rides
+    // in `Imm`; the requested alignment rides in A. The result is a nonnull pointer.
+    HeapAlloc,
+    // Computes a constant byte offset within the same allocation. Operand A is the
+    // base pointer, `Imm` is the byte offset, and B is the derived alignment.
+    PtrOffset,
+    // Computes `base + baseOffset + index * elementSize` within the same allocation.
+    // Operand A is the base pointer, operand B is the proven in-bounds index, `Imm`
+    // is the base byte offset, C is element byte size, and D is derived alignment.
+    PtrIndexOffset,
+    // Computes the same indexed byte address when only runtime slice validity is known.
+    // This preserves element size and alignment without claiming LLVM `inbounds`.
+    PtrIndexOffsetUnbounded,
+    // Loads from pointer operand A. The result type is `ResType`; B is alignment.
+    LoadPtr,
+    // Stores operand B through pointer operand A. `ResType` is the stored type; C is
+    // alignment. The instruction has no meaningful result value.
+    StorePtr,
+    // Loads an enum aggregate from pointer operand A. Operand B is the enum owner
+    // TypeId index, C is alignment, and the result type is `EnumValue`.
+    LoadEnumPtr,
+    // Stores enum value operand B through pointer operand A. Operand C is the enum
+    // owner TypeId index, D is alignment, and the result type is `EnumValue`.
+    StoreEnumPtr,
+    // Opens the hidden arena frame for function-scope arena storage. Side-effecting;
+    // emits the frame alloca and arena-enter helper call.
+    ArenaFrameEnter,
+    // Allocates positive constant-sized storage from the current function arena. The
+    // allocation byte size rides in `Imm`; the requested alignment rides in A.
+    ArenaAlloc,
+    // Creates an arena-backed dynamic-storage owner. The result is a pointer to a
+    // stack slot holding `{ data, length, capacity }`; `Imm` is the constant element
+    // capacity, A is the element byte size, and B is the requested element alignment.
+    ArenaDynamicStorageInit,
+    // Grows an arena-backed dynamic-storage owner with allocate-copy semantics. The
+    // owner slot is operand A; `Imm` is the additional element count, B is the element
+    // byte size, and C is the requested element alignment.
+    ArenaDynamicStorageReserve,
+    // Fallible arena-backed dynamic growth; same operands as Reserve, result is i1.
+    ArenaDynamicStorageTryReserve,
+    // Fallible exact-capacity arena-backed dynamic growth; same operand layout, but
+    // `Imm` is the target capacity instead of an additional element count.
+    ArenaDynamicStorageTryReserveCapacity,
+    // Leaves the hidden arena frame after live values have been ended/dropped by the
+    // front end. Side-effecting; emits the arena-leave helper call.
+    ArenaFrameLeave,
+    // A 2-incoming SSA phi: result = operand A from one predecessor block, operand B
+    // from another. The two predecessor block ids are packed into the immediate as
+    // `block0 + block1 * 2**32` (decoded by div/mod 2**32), since the flat instruction
+    // has no spare fields for them. Used at a control-flow merge.
+    Phi,
+    // Calls function `@fN` where N is the callee id held in the immediate. Its result
+    // is the value naming this instruction.
+    Call,
+    // Stores one wide-call argument in a hidden linked side record. Operand A is the
+    // argument value, and `Imm` is the next CallArg record index (0 = end).
+    CallArg,
+    // Calls function `@fN` with arguments stored in a CallArg linked side table. Operand
+    // A is the first CallArg record and B is the total argument count.
+    CallWide,
+    // A call-shaped payload used only by a TailCall block terminator. Normal instruction
+    // emission skips it; terminator lowering emits `musttail call tailcc` + `ret`.
+    TailCall,
+    // Wide-argument variant of TailCall. Operand A is the first CallArg record and B is
+    // the total argument count.
+    TailCallWide,
+    // Constructs an enum value with only the variant tag set. Operand A is the enum
+    // owner TypeId index and operand B is the layout-backed variant ordinal.
+    EnumVariantTag,
+    // Inserts a payload value into an enum value. Operand A is the source enum value,
+    // operand B is the payload value, operand C is the enum owner TypeId index, operand D
+    // is the layout-backed variant ordinal, and Imm is the payload ordinal.
+    EnumPayloadInsert,
+    // Extracts the active enum tag field from enum value operand A. Operand B is the enum
+    // owner TypeId index, and ResType is the exact integer type of the stored tag.
+    EnumTagRead,
+    // Extracts a payload field from enum value operand A. Operand B is the enum owner
+    // TypeId index, C is the layout-backed variant ordinal, D is the payload ordinal, and
+    // ResType is the exact payload value type.
+    EnumPayloadExtract,
+    // Returns operand A from the function.
+    Return,
+}
+
+// A MIR value type. Untyped builders still default to `I64` so legacy integer
+// slices emit `i64` exactly as before.
+public enum MirType
+{
+    I1,
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+    Ptr,
+    EnumValue,
+}
+
+public inline finite law u32[0 max] MirTypeStorageCode(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return 1;
+        case MirType.I8:
+            return 2;
+        case MirType.I16:
+            return 3;
+        case MirType.I32:
+            return 4;
+        case MirType.I64:
+            return 5;
+        case MirType.Ptr:
+            return 6;
+        case MirType.EnumValue:
+            return 7;
+        case MirType.F32:
+            return 8;
+        case MirType.F64:
+            return 9;
+    }
+}
+
+public inline finite law MirType MirTypeFromStorageCode(u32[0 max] code)
+{
+    switch (code)
+    {
+        case 1:
+            return MirType.I1;
+        case 2:
+            return MirType.I8;
+        case 3:
+            return MirType.I16;
+        case 4:
+            return MirType.I32;
+        case 6:
+            return MirType.Ptr;
+        case 7:
+            return MirType.EnumValue;
+        case 8:
+            return MirType.F32;
+        case 9:
+            return MirType.F64;
+        default:
+            return MirType.I64;
+    }
+}
+
+// Text constants live in a side table instead of widening `MirInstruction`. The
+// row stores a span into a dense byte payload table plus the semantic text facts
+// later LLVM lowering needs for zero-copy descriptors.
+public enum MirTextConstantStorageEncoding
+{
+    AsciiBytes,
+    Utf8Bytes,
+}
+
+public inline finite law u32[0 max] MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding encoding)
+{
+    switch (encoding)
+    {
+        case MirTextConstantStorageEncoding.AsciiBytes:
+            return 1;
+        case MirTextConstantStorageEncoding.Utf8Bytes:
+            return 2;
+    }
+}
+
+public inline finite law MirTextConstantStorageEncoding MirTextConstantStorageEncodingFromCode(u32[0 max] code)
+{
+    switch (code)
+    {
+        case 1:
+            return MirTextConstantStorageEncoding.AsciiBytes;
+        default:
+            return MirTextConstantStorageEncoding.Utf8Bytes;
+    }
+}
+
+public inline finite law bool MirTextConstantPayloadRangeIsValid(u32[0 max] payloadStart, u32[0 max] payloadByteLength, u32[0 max] payloadByteCount)
+{
+    if (payloadByteLength == 0)
+    {
+        return payloadStart == 0;
+    }
+
+    if (payloadStart == 0 || payloadStart > payloadByteCount)
+    {
+        return false;
+    }
+
+    return payloadByteLength <= payloadByteCount - payloadStart + 1;
+}
+
+public inline finite law bool MirTextConstantLengthFactsAreValid(MirTextConstantStorageEncoding encoding, u32[0 max] payloadByteLength, u32[0 max] codePointLength)
+{
+    if (codePointLength > payloadByteLength)
+    {
+        return false;
+    }
+
+    switch (encoding)
+    {
+        case MirTextConstantStorageEncoding.AsciiBytes:
+            return payloadByteLength == codePointLength;
+        case MirTextConstantStorageEncoding.Utf8Bytes:
+            return true;
+    }
+}
+
+public struct MirTextConstant
+{
+    u32[0 max] PayloadStart;
+    u32[0 max] PayloadBytes;
+    u32[0 max] CodePoints;
+    MirTextConstantStorageEncoding Encoding;
+
+    MirTextConstant()
+    {
+        self.PayloadStart = 0;
+        self.PayloadBytes = 0;
+        self.CodePoints = 0;
+        self.Encoding = MirTextConstantStorageEncoding.AsciiBytes;
+    }
+
+    public inline finite law u32[0 max] PayloadStartIndex(borrow MirTextConstant self)
+    {
+        return self.PayloadStart;
+    }
+
+    public inline finite law u32[0 max] PayloadByteLength(borrow MirTextConstant self)
+    {
+        return self.PayloadBytes;
+    }
+
+    public inline finite law u32[0 max] PayloadCodePointLength(borrow MirTextConstant self)
+    {
+        return self.CodePoints;
+    }
+
+    public inline finite law MirTextConstantStorageEncoding StorageEncoding(borrow MirTextConstant self)
+    {
+        return self.Encoding;
+    }
+}
+
+// Floating-point constants live in a side table instead of widening
+// `MirInstruction`. The row stores the exact literal byte span and result type;
+// later lowering can canonicalize those bytes for LLVM without losing spelling.
+public inline finite law bool MirFloatConstantTypeIsSupported(MirType type)
+{
+    return type == MirType.F32 || type == MirType.F64;
+}
+
+public inline finite law u32[0 max] MirFloatConstantBitWidth(MirType type)
+{
+    switch (type)
+    {
+        case MirType.F32:
+            return 32;
+        case MirType.F64:
+            return 64;
+        default:
+            return 0;
+    }
+}
+
+public inline finite law bool MirFloatConstantLiteralRangeIsValid(u32[0 max] payloadStart, u32[0 max] payloadByteLength, u32[0 max] payloadByteCount)
+{
+    if (payloadByteLength == 0)
+    {
+        return false;
+    }
+
+    if (payloadStart == 0 || payloadStart > payloadByteCount)
+    {
+        return false;
+    }
+
+    return payloadByteLength <= payloadByteCount - payloadStart + 1;
+}
+
+public struct MirFloatConstant
+{
+    u32[0 max] PayloadStart;
+    u32[0 max] PayloadBytes;
+    MirType Type;
+
+    MirFloatConstant()
+    {
+        self.PayloadStart = 0;
+        self.PayloadBytes = 0;
+        self.Type = MirType.F64;
+    }
+
+    public inline finite law u32[0 max] PayloadStartIndex(borrow MirFloatConstant self)
+    {
+        return self.PayloadStart;
+    }
+
+    public inline finite law u32[0 max] PayloadByteLength(borrow MirFloatConstant self)
+    {
+        return self.PayloadBytes;
+    }
+
+    public inline finite law MirType ValueType(borrow MirFloatConstant self)
+    {
+        return self.Type;
+    }
+
+    public inline finite law u32[0 max] BitWidth(borrow MirFloatConstant self)
+    {
+        return MirFloatConstantBitWidth(self.Type);
+    }
+}
+
+// One MIR instruction: an opcode, up to four operand slots (0 = absent), an integer
+// immediate (used by `ConstInt`/`Param`/`Call`/`*Global`/`Phi`), and the type of its
+// result value (defaults to `I64`).
+public struct MirInstruction
+{
+    MirOp Op;
+    u32[0 max] AIndex;
+    u32[0 max] BIndex;
+    // Extra operand slots for calls with three or four arguments and indexed address
+    // layout facts (0 = unused). A call's arguments ride in operands A/B/C/D.
+    u32[0 max] CIndex;
+    u32[0 max] DIndex;
+    i64[min max] Imm;
+    MirType ResType;
+
+    MirInstruction()
+    {
+        self.Op = MirOp.ConstInt;
+        self.AIndex = 0;
+        self.BIndex = 0;
+        self.CIndex = 0;
+        self.DIndex = 0;
+        self.Imm = 0;
+        self.ResType = MirType.I64;
+    }
+
+    public inline finite law MirOp Opcode(borrow MirInstruction self)
+    {
+        return self.Op;
+    }
+
+    public inline finite law MirType ResultType(borrow MirInstruction self)
+    {
+        return self.ResType;
+    }
+
+    public inline finite law u32[0 max] OperandAIndex(borrow MirInstruction self)
+    {
+        return self.AIndex;
+    }
+
+    public inline finite law u32[0 max] OperandBIndex(borrow MirInstruction self)
+    {
+        return self.BIndex;
+    }
+
+    public inline finite law u32[0 max] OperandCIndex(borrow MirInstruction self)
+    {
+        return self.CIndex;
+    }
+
+    public inline finite law u32[0 max] OperandDIndex(borrow MirInstruction self)
+    {
+        return self.DIndex;
+    }
+
+    public inline finite law i64[min max] Immediate(borrow MirInstruction self)
+    {
+        return self.Imm;
+    }
+}
+
+public inline finite law i64[min max] MirStructParamFieldShapeImmediate(u32[0 max] fieldCount, u32[0 max] shapeCode)
+{
+    return (i64[min max])shapeCode * 16 + (i64[min max])fieldCount;
+}
+
+public inline finite law u32[0 max] MirStructParamFieldFieldCount(MirInstruction instr)
+{
+    return (u32[0 max])(instr.Immediate() % 16);
+}
+
+public inline finite law u32[0 max] MirStructParamFieldShapeCode(MirInstruction instr)
+{
+    return (u32[0 max])(instr.Immediate() / 16);
+}
+
+public inline finite law u32[0 max] MirStructValueLoadFieldCount(MirInstruction instr)
+{
+    return MirStructParamFieldFieldCount(instr);
+}
+
+public inline finite law u32[0 max] MirStructValueLoadShapeCode(MirInstruction instr)
+{
+    return MirStructParamFieldShapeCode(instr);
+}
+
+public inline finite law u32[0 max] MirTextConstantValueRowIndex(MirInstruction instr)
+{
+    return instr.OperandAIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValuePayloadStart(MirInstruction instr)
+{
+    return instr.OperandBIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValuePayloadByteLength(MirInstruction instr)
+{
+    return instr.OperandCIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValueCodePointLength(MirInstruction instr)
+{
+    return instr.OperandDIndex();
+}
+
+public inline finite law MirTextConstantStorageEncoding MirTextConstantValueStorageEncoding(MirInstruction instr)
+{
+    return MirTextConstantStorageEncodingFromCode((u32[0 max])instr.Immediate());
+}
+
+public inline finite law u32[0 max] MirFloatConstantValueRowIndex(MirInstruction instr)
+{
+    return instr.OperandAIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValuePayloadStart(MirInstruction instr)
+{
+    return instr.OperandBIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValuePayloadByteLength(MirInstruction instr)
+{
+    return instr.OperandCIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValueBitWidth(MirInstruction instr)
+{
+    return instr.OperandDIndex();
+}
+
+public inline finite law MirType MirFloatConstantValueType(MirInstruction instr)
+{
+    return MirTypeFromStorageCode((u32[0 max])instr.Immediate());
+}
+
+public inline finite law bool MirOpIsDirectCall(MirOp op)
+{
+    return op == MirOp.Call || op == MirOp.CallWide;
+}
+
+public inline finite law bool MirOpIsTailCall(MirOp op)
+{
+    return op == MirOp.TailCall || op == MirOp.TailCallWide;
+}
+
+public inline finite law bool MirOpIsAnyCall(MirOp op)
+{
+    return MirOpIsDirectCall(op) || MirOpIsTailCall(op);
+}
+
+// === Basic blocks + terminators ===
+// A MIR control-flow block is named by a `MirBlockId` (its 1-based index in an
+// `IrTable<MirBlock>` the caller owns). This first slice records each block's
+// terminator; associating instructions to a block is a later slice. Like the
+// instruction layer, blocks are flat records built/read through free functions.
+
+// How a block transfers control at its end.
+public enum MirTermKind
+{
+    // No terminator yet (a freshly created or out-of-range block).
+    Unterminated,
+    // `return Slot0` — returns the value named by slot 0.
+    Return,
+    // `return void` — returns without a value.
+    ReturnVoid,
+    // `branch Slot0` — unconditionally jumps to the block named by slot 0.
+    Branch,
+    // `if Slot0 then Slot1 else Slot2` — conditional branch on a value to two blocks.
+    CondBranch,
+    // `tailcall Slot0` — transfers to the call-shaped TailCall instruction named by slot 0.
+    TailCall,
+}
+
+// A MIR basic block: its terminator kind and up to three operand slots whose meaning
+// depends on the kind (a value id or a block id, 0 when unused).
+public struct MirBlock
+{
+    MirTermKind Term;
+    u32[0 max] Slot0;
+    u32[0 max] Slot1;
+    u32[0 max] Slot2;
+    u32[0 max] Flags;
+
+    MirBlock()
+    {
+        self.Term = MirTermKind.Unterminated;
+        self.Slot0 = 0;
+        self.Slot1 = 0;
+        self.Slot2 = 0;
+        self.Flags = 0;
+    }
+
+    public inline finite law MirTermKind Terminator(borrow MirBlock self)
+    {
+        return self.Term;
+    }
+
+    public inline finite law u32[0 max] Slot0Index(borrow MirBlock self)
+    {
+        return self.Slot0;
+    }
+
+    public inline finite law u32[0 max] Slot1Index(borrow MirBlock self)
+    {
+        return self.Slot1;
+    }
+
+    public inline finite law u32[0 max] Slot2Index(borrow MirBlock self)
+    {
+        return self.Slot2;
+    }
+
+    public inline finite law u32[0 max] FlagBits(borrow MirBlock self)
+    {
+        return self.Flags;
+    }
+}
+
+internal inline finite law u32[0 max] MirBlockFlagIndependentLoopBackedge()
+{
+    return 1;
+}
+
+internal finite law bool MirBlockFlagsAreValid(MirTermKind term, u32[0 max] flags)
+{
+    if (flags == 0)
+    {
+        return true;
+    }
+
+    return term == MirTermKind.Branch && flags == MirBlockFlagIndependentLoopBackedge();
+}
+
+// === Function model ===
+// A MIR function is the unit a backend pass lowers. It owns a CONTIGUOUS range of
+// blocks in an `IrTable<MirBlock>` and a contiguous range of instructions in an
+// `IrTable<MirInstruction>` (both built in order during lowering), and names its
+// entry block. Like the rest of the MIR it is a flat record (only raw indices, no
+// nested generic field) built/read through free functions over `IrTable<MirFunction>`.
+
+// A MIR function: its entry block plus the half-open block range it owns and the
+// half-open instruction range it owns, each as (first 1-based index, count).
+public struct MirFunction
+{
+    u32[0 max] Entry;
+    u32[0 max] FirstBlock;
+    u32[0 max] BlockCount;
+    u32[0 max] FirstInstr;
+    u32[0 max] InstrCount;
+
+    MirFunction()
+    {
+        self.Entry = 0;
+        self.FirstBlock = 0;
+        self.BlockCount = 0;
+        self.FirstInstr = 0;
+        self.InstrCount = 0;
+    }
+
+    public inline finite law u32[0 max] EntryIndex(borrow MirFunction self)
+    {
+        return self.Entry;
+    }
+
+    public inline finite law u32[0 max] FirstBlockIndex(borrow MirFunction self)
+    {
+        return self.FirstBlock;
+    }
+
+    public inline finite law u32[0 max] OwnedBlockCount(borrow MirFunction self)
+    {
+        return self.BlockCount;
+    }
+
+    public inline finite law u32[0 max] FirstInstrIndex(borrow MirFunction self)
+    {
+        return self.FirstInstr;
+    }
+
+    public inline finite law u32[0 max] OwnedInstrCount(borrow MirFunction self)
+    {
+        return self.InstrCount;
+    }
+}
+
+// === Module-level globals ===
+// A module global variable with a scalar initializer, named `@gN` (N = its 1-based
+// id in an `IrTable<MirGlobal>`). Flat record + free functions, like the rest of MIR.
+
+public struct MirGlobal
+{
+    MirType TypeValue;
+    i64[min max] Init;
+
+    MirGlobal()
+    {
+        self.TypeValue = MirType.I64;
+        self.Init = 0;
+    }
+
+    public inline finite law MirType StoredType(borrow MirGlobal self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law i64[min max] InitialValue(borrow MirGlobal self)
+    {
+        return self.Init;
+    }
+}

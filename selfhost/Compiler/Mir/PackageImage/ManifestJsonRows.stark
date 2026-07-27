@@ -1,0 +1,2471 @@
+import Compiler.Mir.PackageImage.ModelKinds
+module Compiler.Mir.PackageImage.ManifestJsonRows
+
+// Internal decoded MANF JSON row carriers. These store serialized indices and
+// scalar flags only; materialization remains in the focused loader modules.
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeAliasRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] TargetTypeKindStringIndex;
+    u32[0 max] TargetTypeNameStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeAliasRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.TargetTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TargetTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] StructLayoutStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] FieldFirstRow;
+    u32[0 max] FieldLastRow;
+    u32[0 max] FieldCount;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+    u32[0 max] AssociatedTypeFirstRow;
+    u32[0 max] AssociatedTypeLastRow;
+    u32[0 max] AssociatedTypeCount;
+    u32[0 max] VariantFirstRow;
+    u32[0 max] VariantLastRow;
+    u32[0 max] VariantCount;
+    u32[0 max] ImplementedTraitFirstRow;
+    u32[0 max] ImplementedTraitLastRow;
+    u32[0 max] ImplementedTraitCount;
+    u32[0 max] ImplementedTraitTypeFirstRow;
+    u32[0 max] ImplementedTraitTypeLastRow;
+    u32[0 max] ImplementedTraitTypeCount;
+    u32[0 max] ThreadSafetyLawAttributeFirstRow;
+    u32[0 max] ThreadSafetyLawAttributeLastRow;
+    u32[0 max] ThreadSafetyLawAttributeCount;
+    u32[0 max] MethodCount;
+    u32[0 max] ConstructorCount;
+    u32[0 max] PackBytes;
+    u32[0 max] AlignBytes;
+    bool HasBackendOptimizationMode;
+    bool HasStructLayout;
+    bool HasPackBytes;
+    bool HasAlignBytes;
+    bool IsDynTrait;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.StructLayoutStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.FieldFirstRow = 0;
+        self.FieldLastRow = 0;
+        self.FieldCount = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+        self.AssociatedTypeFirstRow = 0;
+        self.AssociatedTypeLastRow = 0;
+        self.AssociatedTypeCount = 0;
+        self.VariantFirstRow = 0;
+        self.VariantLastRow = 0;
+        self.VariantCount = 0;
+        self.ImplementedTraitFirstRow = 0;
+        self.ImplementedTraitLastRow = 0;
+        self.ImplementedTraitCount = 0;
+        self.ImplementedTraitTypeFirstRow = 0;
+        self.ImplementedTraitTypeLastRow = 0;
+        self.ImplementedTraitTypeCount = 0;
+        self.ThreadSafetyLawAttributeFirstRow = 0;
+        self.ThreadSafetyLawAttributeLastRow = 0;
+        self.ThreadSafetyLawAttributeCount = 0;
+        self.MethodCount = 0;
+        self.ConstructorCount = 0;
+        self.PackBytes = 0;
+        self.AlignBytes = 0;
+        self.HasBackendOptimizationMode = false;
+        self.HasStructLayout = false;
+        self.HasPackBytes = false;
+        self.HasAlignBytes = false;
+        self.IsDynTrait = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeFieldRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeFieldRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TargetTypeKindStringIndex;
+    u32[0 max] TargetTypeNameStringIndex;
+    u32[0 max] NextRow;
+    bool HasTargetType;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TargetTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TargetTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasTargetType = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] RoleStringIndex;
+    u32[0 max] AbsorbsErrorTypeKindStringIndex;
+    u32[0 max] AbsorbsErrorTypeNameStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] PayloadFirstRow;
+    u32[0 max] PayloadLastRow;
+    u32[0 max] PayloadCount;
+    bool UsesNamedFields;
+    bool HasRole;
+    bool HasAbsorbsErrorType;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.RoleStringIndex = PackageImageMissingStringIndex();
+        self.AbsorbsErrorTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.AbsorbsErrorTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.PayloadFirstRow = 0;
+        self.PayloadLastRow = 0;
+        self.PayloadCount = 0;
+        self.UsesNamedFields = false;
+        self.HasRole = false;
+        self.HasAbsorbsErrorType = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow
+{
+    u32[0 max] TraitStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow()
+    {
+        self.TraitStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow
+{
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow()
+    {
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow
+{
+    u32[0 max] KindStringIndex;
+    u32[0 max] LawNameStringIndex;
+    u32[0 max] ConditionLawNameStringIndex;
+    u32[0 max] ConditionTypeKindStringIndex;
+    u32[0 max] ConditionTypeNameStringIndex;
+    u32[0 max] NextRow;
+    bool HasCondition;
+
+    LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow()
+    {
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.LawNameStringIndex = PackageImageMissingStringIndex();
+        self.ConditionLawNameStringIndex = PackageImageMissingStringIndex();
+        self.ConditionTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.ConditionTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasCondition = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceFunctionRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] SymbolNameStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] ReturnTypeKindStringIndex;
+    u32[0 max] ReturnTypeNameStringIndex;
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] PublishedOverloadKeyStringIndex;
+    u32[0 max] InlinePreferenceStringIndex;
+    u32[0 max] FfiAbiStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] LinkNameStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] ParameterFirstRow;
+    u32[0 max] ParameterLastRow;
+    u32[0 max] ParameterCount;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+    u32[0 max] PointeeDeadOnReturnParameterNameFirstRow;
+    u32[0 max] PointeeDeadOnReturnParameterNameLastRow;
+    u32[0 max] PointeeDeadOnReturnParameterNameCount;
+    bool HasQualifiedResolvedName;
+    bool HasPublishedOverloadKey;
+    bool HasInlinePreference;
+    bool HasFfiAbi;
+    bool HasBackendOptimizationMode;
+    bool HasLinkName;
+    bool IsFfi;
+    bool IsStrictFp;
+    bool UsesFastCallingConvention;
+    bool HasGenericTemplateBody;
+    bool IsHot;
+    bool IsCold;
+    bool HasExplicitInlinePreference;
+    bool IsUnsafe;
+    bool IsVarargs;
+    bool IsTailCallable;
+    bool HasBody;
+
+    LogicalPackageManifestJsonTypedInterfaceFunctionRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.SymbolNameStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.ReturnTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.ReturnTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.PublishedOverloadKeyStringIndex = PackageImageMissingStringIndex();
+        self.InlinePreferenceStringIndex = PackageImageMissingStringIndex();
+        self.FfiAbiStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.LinkNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.ParameterFirstRow = 0;
+        self.ParameterLastRow = 0;
+        self.ParameterCount = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+        self.PointeeDeadOnReturnParameterNameFirstRow = 0;
+        self.PointeeDeadOnReturnParameterNameLastRow = 0;
+        self.PointeeDeadOnReturnParameterNameCount = 0;
+        self.HasQualifiedResolvedName = false;
+        self.HasPublishedOverloadKey = false;
+        self.HasInlinePreference = false;
+        self.HasFfiAbi = false;
+        self.HasBackendOptimizationMode = false;
+        self.HasLinkName = false;
+        self.IsFfi = false;
+        self.IsStrictFp = false;
+        self.UsesFastCallingConvention = false;
+        self.HasGenericTemplateBody = false;
+        self.IsHot = false;
+        self.IsCold = false;
+        self.HasExplicitInlinePreference = false;
+        self.IsUnsafe = false;
+        self.IsVarargs = false;
+        self.IsTailCallable = false;
+        self.HasBody = true;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] RawPointerElementCountExpressionStringIndex;
+    u32[0 max] NextRow;
+    bool HasRawPointerElementCountExpression;
+    bool IsDisjoint;
+    bool IsConst;
+
+    LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.RawPointerElementCountExpressionStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasRawPointerElementCountExpression = false;
+        self.IsDisjoint = false;
+        self.IsConst = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypedInterfaceGlobalRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] TypeNameStringIndex;
+    u32[0 max] InitializerKindStringIndex;
+    u32[0 max] InitializerTypeKindStringIndex;
+    u32[0 max] InitializerTypeNameStringIndex;
+    u32[0 max] InitializerIntegerValueStringIndex;
+    u32[0 max] InitializerFloatLiteralTextStringIndex;
+    u32[0 max] InitializerTextLiteralTextStringIndex;
+    u32[0 max] NextRow;
+    bool IsMutable;
+    bool HasConstantInitializer;
+    bool HasInitializerIntegerValue;
+    bool HasInitializerFloatLiteralText;
+    bool HasInitializerBoolValue;
+    bool InitializerBoolValue;
+    bool HasInitializerTextLiteralText;
+
+    LogicalPackageManifestJsonTypedInterfaceGlobalRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.TypeNameStringIndex = PackageImageMissingStringIndex();
+        self.InitializerKindStringIndex = PackageImageMissingStringIndex();
+        self.InitializerTypeKindStringIndex = PackageImageMissingStringIndex();
+        self.InitializerTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.InitializerIntegerValueStringIndex = PackageImageMissingStringIndex();
+        self.InitializerFloatLiteralTextStringIndex = PackageImageMissingStringIndex();
+        self.InitializerTextLiteralTextStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsMutable = false;
+        self.HasConstantInitializer = false;
+        self.HasInitializerIntegerValue = false;
+        self.HasInitializerFloatLiteralText = false;
+        self.HasInitializerBoolValue = false;
+        self.InitializerBoolValue = false;
+        self.HasInitializerTextLiteralText = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateFunctionRow
+{
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] OverloadKeyStringIndex;
+    u32[0 max] BodyTextStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] FirstTopLevelStatementRow;
+    u32[0 max] LastTopLevelStatementRow;
+    u32[0 max] TypedBodyStatementCount;
+    u32[0 max] FirstDeferredFunctionInstantiationRow;
+    u32[0 max] LastDeferredFunctionInstantiationRow;
+    u32[0 max] DeferredFunctionInstantiationCount;
+    u32[0 max] FirstDeferredTypeInstantiationRow;
+    u32[0 max] LastDeferredTypeInstantiationRow;
+    u32[0 max] DeferredTypeInstantiationCount;
+    u32[0 max] FirstObjectCreationRow;
+    u32[0 max] LastObjectCreationRow;
+    u32[0 max] ObjectCreationCount;
+    u32[0 max] FirstEnumConstructorRow;
+    u32[0 max] LastEnumConstructorRow;
+    u32[0 max] EnumConstructorCount;
+    u32[0 max] FirstEnumCallRow;
+    u32[0 max] LastEnumCallRow;
+    u32[0 max] EnumCallCount;
+    u32[0 max] FirstEnumValueRow;
+    u32[0 max] LastEnumValueRow;
+    u32[0 max] EnumValueCount;
+    u32[0 max] FirstEnumPatternRow;
+    u32[0 max] LastEnumPatternRow;
+    u32[0 max] EnumPatternCount;
+    u32[0 max] FirstDirectCallSignatureRow;
+    u32[0 max] LastDirectCallSignatureRow;
+    u32[0 max] DirectCallCount;
+    u32[0 max] FirstMemberCallSignatureRow;
+    u32[0 max] LastMemberCallSignatureRow;
+    u32[0 max] MemberCallCount;
+    u32[0 max] FirstFunctionAddressSignatureRow;
+    u32[0 max] LastFunctionAddressSignatureRow;
+    u32[0 max] FunctionAddressCount;
+    u32[0 max] FirstBoundOperationRow;
+    u32[0 max] LastBoundOperationRow;
+    u32[0 max] BoundOperationCount;
+    u32[0 max] NextRow;
+    u32[0 max] TopLevelStatementCount;
+    u32[0 max] EstimatedBodyCost;
+    bool HasBodyText;
+    bool HasBackendOptimizationMode;
+    bool HasTopLevelStatementCount;
+    bool HasEstimatedBodyCost;
+    bool HasSemantics;
+    bool HasTypedBody;
+
+    LogicalPackageManifestJsonGenericTemplateFunctionRow()
+    {
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.OverloadKeyStringIndex = PackageImageMissingStringIndex();
+        self.BodyTextStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.FirstTopLevelStatementRow = 0;
+        self.LastTopLevelStatementRow = 0;
+        self.TypedBodyStatementCount = 0;
+        self.FirstDeferredFunctionInstantiationRow = 0;
+        self.LastDeferredFunctionInstantiationRow = 0;
+        self.DeferredFunctionInstantiationCount = 0;
+        self.FirstDeferredTypeInstantiationRow = 0;
+        self.LastDeferredTypeInstantiationRow = 0;
+        self.DeferredTypeInstantiationCount = 0;
+        self.FirstObjectCreationRow = 0;
+        self.LastObjectCreationRow = 0;
+        self.ObjectCreationCount = 0;
+        self.FirstEnumConstructorRow = 0;
+        self.LastEnumConstructorRow = 0;
+        self.EnumConstructorCount = 0;
+        self.FirstEnumCallRow = 0;
+        self.LastEnumCallRow = 0;
+        self.EnumCallCount = 0;
+        self.FirstEnumValueRow = 0;
+        self.LastEnumValueRow = 0;
+        self.EnumValueCount = 0;
+        self.FirstEnumPatternRow = 0;
+        self.LastEnumPatternRow = 0;
+        self.EnumPatternCount = 0;
+        self.FirstDirectCallSignatureRow = 0;
+        self.LastDirectCallSignatureRow = 0;
+        self.DirectCallCount = 0;
+        self.FirstMemberCallSignatureRow = 0;
+        self.LastMemberCallSignatureRow = 0;
+        self.MemberCallCount = 0;
+        self.FirstFunctionAddressSignatureRow = 0;
+        self.LastFunctionAddressSignatureRow = 0;
+        self.FunctionAddressCount = 0;
+        self.FirstBoundOperationRow = 0;
+        self.LastBoundOperationRow = 0;
+        self.BoundOperationCount = 0;
+        self.NextRow = 0;
+        self.TopLevelStatementCount = 0;
+        self.EstimatedBodyCost = 0;
+        self.HasBodyText = false;
+        self.HasBackendOptimizationMode = false;
+        self.HasTopLevelStatementCount = false;
+        self.HasEstimatedBodyCost = false;
+        self.HasSemantics = false;
+        self.HasTypedBody = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] CalleeTemplateNameStringIndex;
+    u32[0 max] TypeArgumentCount;
+    u32[0 max] ComptimeValueArgumentCount;
+    u32[0 max] FirstTypeArgumentRow;
+    u32[0 max] LastTypeArgumentRow;
+    u32[0 max] FirstComptimeValueArgumentRow;
+    u32[0 max] LastComptimeValueArgumentRow;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.CalleeTemplateNameStringIndex = PackageImageMissingStringIndex();
+        self.TypeArgumentCount = 0;
+        self.ComptimeValueArgumentCount = 0;
+        self.FirstTypeArgumentRow = 0;
+        self.LastTypeArgumentRow = 0;
+        self.FirstComptimeValueArgumentRow = 0;
+        self.LastComptimeValueArgumentRow = 0;
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow
+{
+    u32[0 max] InstantiationRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow()
+    {
+        self.InstantiationRow = 0;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow
+{
+    u32[0 max] InstantiationRow;
+    u32[0 max] ParameterNameStringIndex;
+    u32[0 max] IntegerValueStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] SymbolicSourceNameStringIndex;
+    u32[0 max] NextRow;
+    bool IsSymbolic;
+    bool HasSymbolicSourceName;
+
+    LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow()
+    {
+        self.InstantiationRow = 0;
+        self.ParameterNameStringIndex = PackageImageMissingStringIndex();
+        self.IntegerValueStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.SymbolicSourceNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsSymbolic = false;
+        self.HasSymbolicSourceName = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow
+{
+    u32[0 max] FunctionTemplateRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateCallSignatureRow
+{
+    LogicalPackageTemplateCallParentKind ParentKind;
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] ParentOrdinal;
+    u32[0 max] BoundOperationRow;
+    u32[0 max] PublishedOrdinal;
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] QualifiedSourceNameStringIndex;
+    u32[0 max] QualifiedTemplateNameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor ReturnType;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TargetType;
+    u32[0 max] FirstParameterRow;
+    u32[0 max] LastParameterRow;
+    u32[0 max] ParameterCount;
+    u32[0 max] FirstTypeArgumentRow;
+    u32[0 max] LastTypeArgumentRow;
+    u32[0 max] TypeArgumentCount;
+    u32[0 max] FirstComptimeValueArgumentRow;
+    u32[0 max] LastComptimeValueArgumentRow;
+    u32[0 max] ComptimeValueArgumentCount;
+    u32[0 max] NextRow;
+    bool HasPublishedOrdinal;
+    bool HasQualifiedSourceName;
+    bool HasQualifiedTemplateName;
+    bool HasTargetType;
+
+    LogicalPackageManifestJsonGenericTemplateCallSignatureRow()
+    {
+        self.ParentKind = LogicalPackageTemplateCallParentKind.DirectCall;
+        self.FunctionTemplateRow = 0;
+        self.ParentOrdinal = 0;
+        self.BoundOperationRow = 0;
+        self.PublishedOrdinal = 0;
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedSourceNameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedTemplateNameStringIndex = PackageImageMissingStringIndex();
+        self.ReturnType = new();
+        self.TargetType = new();
+        self.FirstParameterRow = 0;
+        self.LastParameterRow = 0;
+        self.ParameterCount = 0;
+        self.FirstTypeArgumentRow = 0;
+        self.LastTypeArgumentRow = 0;
+        self.TypeArgumentCount = 0;
+        self.FirstComptimeValueArgumentRow = 0;
+        self.LastComptimeValueArgumentRow = 0;
+        self.ComptimeValueArgumentCount = 0;
+        self.NextRow = 0;
+        self.HasPublishedOrdinal = false;
+        self.HasQualifiedSourceName = false;
+        self.HasQualifiedTemplateName = false;
+        self.HasTargetType = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateObjectCreationRow
+{
+    u32[0 max] FunctionTemplateRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor CreatedType;
+    u32[0 max] ConstructorTypeNameStringIndex;
+    u32[0 max] ConstructorParameterCount;
+    u32[0 max] StorageSelector;
+    u32[0 max] ExpressionTextStringIndex;
+    u32[0 max] FirstInitializerMemberRow;
+    u32[0 max] LastInitializerMemberRow;
+    u32[0 max] InitializerMemberCount;
+    u32[0 max] NextRow;
+    bool HasConstructor;
+    bool ConstructorIsPrimaryShape;
+    bool HasStorageSelector;
+    bool HasExpressionText;
+
+    LogicalPackageManifestJsonGenericTemplateObjectCreationRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.CreatedType = new();
+        self.ConstructorTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.ConstructorParameterCount = 0;
+        self.StorageSelector = 0;
+        self.ExpressionTextStringIndex = PackageImageMissingStringIndex();
+        self.FirstInitializerMemberRow = 0;
+        self.LastInitializerMemberRow = 0;
+        self.InitializerMemberCount = 0;
+        self.NextRow = 0;
+        self.HasConstructor = false;
+        self.ConstructorIsPrimaryShape = false;
+        self.HasStorageSelector = false;
+        self.HasExpressionText = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow
+{
+    u32[0 max] ObjectCreationRow;
+    u32[0 max] FieldNameStringIndex;
+    u32[0 max] FieldIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor FieldType;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow()
+    {
+        self.ObjectCreationRow = 0;
+        self.FieldNameStringIndex = PackageImageMissingStringIndex();
+        self.FieldIndex = 0;
+        self.FieldType = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateEnumRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] PublishedOrdinal;
+    LogicalPackageManifestJsonTypeReferenceDescriptor EnumType;
+    u32[0 max] VariantNameStringIndex;
+    u32[0 max] FirstMemberRow;
+    u32[0 max] LastMemberRow;
+    u32[0 max] MemberCount;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateEnumRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.PublishedOrdinal = 0;
+        self.EnumType = new();
+        self.VariantNameStringIndex = PackageImageMissingStringIndex();
+        self.FirstMemberRow = 0;
+        self.LastMemberRow = 0;
+        self.MemberCount = 0;
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateEnumMemberRow
+{
+    u32[0 max] EnumRow;
+    u32[0 max] FieldNameStringIndex;
+    u32[0 max] FieldIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor FieldType;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateEnumMemberRow()
+    {
+        self.EnumRow = 0;
+        self.FieldNameStringIndex = PackageImageMissingStringIndex();
+        self.FieldIndex = 0;
+        self.FieldType = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateCallParameterRow
+{
+    u32[0 max] CallSignatureRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] RawPointerElementCountExpressionStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+    bool IsDisjoint;
+    bool IsConst;
+    bool HasRawPointerElementCountExpression;
+
+    LogicalPackageManifestJsonGenericTemplateCallParameterRow()
+    {
+        self.CallSignatureRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.RawPointerElementCountExpressionStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.NextRow = 0;
+        self.IsDisjoint = false;
+        self.IsConst = false;
+        self.HasRawPointerElementCountExpression = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow
+{
+    u32[0 max] CallSignatureRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow()
+    {
+        self.CallSignatureRow = 0;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow
+{
+    u32[0 max] CallSignatureRow;
+    u32[0 max] ParameterNameStringIndex;
+    u32[0 max] IntegerValueStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] SymbolicSourceNameStringIndex;
+    u32[0 max] NextRow;
+    bool IsSymbolic;
+    bool HasSymbolicSourceName;
+
+    LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow()
+    {
+        self.CallSignatureRow = 0;
+        self.ParameterNameStringIndex = PackageImageMissingStringIndex();
+        self.IntegerValueStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.SymbolicSourceNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsSymbolic = false;
+        self.HasSymbolicSourceName = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] OperationOrdinal;
+    u32[0 max] KindStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor ResultType;
+    u32[0 max] Line;
+    u32[0 max] Column;
+    u32[0 max] PublishedOrdinal;
+    u32[0 max] EnclosingFunctionNameStringIndex;
+    u32[0 max] CallSignatureRow;
+    u32[0 max] FirstCallArgumentRow;
+    u32[0 max] LastCallArgumentRow;
+    u32[0 max] CallArgumentCount;
+    u32[0 max] FirstTypePayloadRow;
+    u32[0 max] LastTypePayloadRow;
+    u32[0 max] TypePayloadCount;
+    u32[0 max] FirstTextPayloadRow;
+    u32[0 max] LastTextPayloadRow;
+    u32[0 max] TextPayloadCount;
+    u32[0 max] FirstU32PayloadRow;
+    u32[0 max] LastU32PayloadRow;
+    u32[0 max] U32PayloadCount;
+    u32[0 max] FirstBoolPayloadRow;
+    u32[0 max] LastBoolPayloadRow;
+    u32[0 max] BoolPayloadCount;
+    u32[0 max] NextRow;
+    bool HasPublishedOrdinal;
+    bool HasEnclosingFunctionName;
+    bool HasCallSignature;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.OperationOrdinal = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.ResultType = new();
+        self.Line = 0;
+        self.Column = 0;
+        self.PublishedOrdinal = 0;
+        self.EnclosingFunctionNameStringIndex = PackageImageMissingStringIndex();
+        self.CallSignatureRow = 0;
+        self.FirstCallArgumentRow = 0;
+        self.LastCallArgumentRow = 0;
+        self.CallArgumentCount = 0;
+        self.FirstTypePayloadRow = 0;
+        self.LastTypePayloadRow = 0;
+        self.TypePayloadCount = 0;
+        self.FirstTextPayloadRow = 0;
+        self.LastTextPayloadRow = 0;
+        self.TextPayloadCount = 0;
+        self.FirstU32PayloadRow = 0;
+        self.LastU32PayloadRow = 0;
+        self.U32PayloadCount = 0;
+        self.FirstBoolPayloadRow = 0;
+        self.LastBoolPayloadRow = 0;
+        self.BoolPayloadCount = 0;
+        self.NextRow = 0;
+        self.HasPublishedOrdinal = false;
+        self.HasEnclosingFunctionName = false;
+        self.HasCallSignature = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow
+{
+    u32[0 max] BoundOperationRow;
+    u32[0 max] ParameterIndex;
+    u32[0 max] SourceArgumentIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor ParameterType;
+    LogicalPackageManifestJsonTypeReferenceDescriptor ArgumentType;
+    u32[0 max] NextRow;
+    bool IsReceiver;
+    bool RequiresAddressable;
+    bool RequiresMutable;
+    bool RequiresConstProvenance;
+    bool ArgumentIsAddressable;
+    bool ArgumentIsMutable;
+    bool ArgumentHasConstProvenance;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow()
+    {
+        self.BoundOperationRow = 0;
+        self.ParameterIndex = 0;
+        self.SourceArgumentIndex = 0;
+        self.ParameterType = new();
+        self.ArgumentType = new();
+        self.NextRow = 0;
+        self.IsReceiver = false;
+        self.RequiresAddressable = false;
+        self.RequiresMutable = false;
+        self.RequiresConstProvenance = false;
+        self.ArgumentIsAddressable = false;
+        self.ArgumentIsMutable = false;
+        self.ArgumentHasConstProvenance = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow
+{
+    u32[0 max] BoundOperationRow;
+    LogicalPackageTemplateBoundOperationTypePayloadKind PayloadKind;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow()
+    {
+        self.BoundOperationRow = 0;
+        self.PayloadKind = LogicalPackageTemplateBoundOperationTypePayloadKind.Receiver;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow
+{
+    u32[0 max] BoundOperationRow;
+    LogicalPackageGenericTemplateFactTextKind TextKind;
+    u32[0 max] MemberNameStringIndex;
+    u32[0 max] ValueStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow()
+    {
+        self.BoundOperationRow = 0;
+        self.TextKind = LogicalPackageGenericTemplateFactTextKind.BoundOperationKind;
+        self.MemberNameStringIndex = PackageImageMissingStringIndex();
+        self.ValueStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow
+{
+    u32[0 max] BoundOperationRow;
+    LogicalPackageTemplateBoundOperationU32PayloadKind PayloadKind;
+    u32[0 max] Value;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow()
+    {
+        self.BoundOperationRow = 0;
+        self.PayloadKind = LogicalPackageTemplateBoundOperationU32PayloadKind.IndexCount;
+        self.Value = 0;
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow
+{
+    u32[0 max] BoundOperationRow;
+    LogicalPackageTemplateBoundOperationBoolPayloadKind PayloadKind;
+    u32[0 max] NextRow;
+    bool Value;
+
+    LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow()
+    {
+        self.BoundOperationRow = 0;
+        self.PayloadKind = LogicalPackageTemplateBoundOperationBoolPayloadKind.ReceiverIsAddressable;
+        self.NextRow = 0;
+        self.Value = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateExpressionRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] KindStringIndex;
+    u32[0 max] NameStringIndex;
+    u32[0 max] AssignmentOperatorStringIndex;
+    u32[0 max] LiteralTextStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] Ordinal;
+    u32[0 max] ArgumentCount;
+    u32[0 max] MemberNameCount;
+    u32[0 max] OperatorNameCount;
+    u32[0 max] TypeArgumentCount;
+    u32[0 max] ComptimeValueArgumentCount;
+    u32[0 max] FirstArgumentExpressionRow;
+    u32[0 max] LastArgumentExpressionRow;
+    u32[0 max] NextSiblingExpressionRow;
+    u32[0 max] FirstMemberNameRow;
+    u32[0 max] LastMemberNameRow;
+    u32[0 max] FirstOperatorNameRow;
+    u32[0 max] LastOperatorNameRow;
+    u32[0 max] FirstTypeArgumentRow;
+    u32[0 max] LastTypeArgumentRow;
+    u32[0 max] FirstComptimeValueArgumentRow;
+    u32[0 max] LastComptimeValueArgumentRow;
+    bool HasName;
+    bool HasAssignmentOperator;
+    bool HasLiteralText;
+    bool HasOrdinal;
+    bool HasType;
+    bool HasTargetExpression;
+
+    LogicalPackageManifestJsonGenericTemplateExpressionRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.AssignmentOperatorStringIndex = PackageImageMissingStringIndex();
+        self.LiteralTextStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.Ordinal = 0;
+        self.ArgumentCount = 0;
+        self.MemberNameCount = 0;
+        self.OperatorNameCount = 0;
+        self.TypeArgumentCount = 0;
+        self.ComptimeValueArgumentCount = 0;
+        self.FirstArgumentExpressionRow = 0;
+        self.LastArgumentExpressionRow = 0;
+        self.NextSiblingExpressionRow = 0;
+        self.FirstMemberNameRow = 0;
+        self.LastMemberNameRow = 0;
+        self.FirstOperatorNameRow = 0;
+        self.LastOperatorNameRow = 0;
+        self.FirstTypeArgumentRow = 0;
+        self.LastTypeArgumentRow = 0;
+        self.FirstComptimeValueArgumentRow = 0;
+        self.LastComptimeValueArgumentRow = 0;
+        self.HasName = false;
+        self.HasAssignmentOperator = false;
+        self.HasLiteralText = false;
+        self.HasOrdinal = false;
+        self.HasType = false;
+        self.HasTargetExpression = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateExpressionNameListRow
+{
+    u32[0 max] ExpressionRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateExpressionNameListRow()
+    {
+        self.ExpressionRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow
+{
+    u32[0 max] ExpressionRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow()
+    {
+        self.ExpressionRow = 0;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow
+{
+    u32[0 max] ExpressionRow;
+    u32[0 max] ParameterNameStringIndex;
+    u32[0 max] IntegerValueStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] SymbolicSourceNameStringIndex;
+    u32[0 max] NextRow;
+    bool IsSymbolic;
+    bool HasSymbolicSourceName;
+
+    LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow()
+    {
+        self.ExpressionRow = 0;
+        self.ParameterNameStringIndex = PackageImageMissingStringIndex();
+        self.IntegerValueStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.SymbolicSourceNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsSymbolic = false;
+        self.HasSymbolicSourceName = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateStatementRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] KindStringIndex;
+    u32[0 max] ExpressionRow;
+    u32[0 max] TargetExpressionRow;
+    u32[0 max] TraversalSourceExpressionRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] AssignmentOperatorStringIndex;
+    u32[0 max] StorageClassStringIndex;
+    u32[0 max] LoopBehaviorStringIndex;
+    u32[0 max] ConstProvenanceStringIndex;
+    u32[0 max] TraversalIndexNameStringIndex;
+    u32[0 max] TraversalIndexStorageClassStringIndex;
+    u32[0 max] TraversalElementNameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TraversalIndexTypeReference;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TraversalElementTypeReference;
+    u32[0 max] StorageCapacity;
+    u32[0 max] SwitchCaseCount;
+    u32[0 max] InitializerStatementCount;
+    u32[0 max] IteratorStatementCount;
+    u32[0 max] BodyStatementCount;
+    u32[0 max] ThenStatementCount;
+    u32[0 max] ElseStatementCount;
+    u32[0 max] LoopContractCount;
+    u32[0 max] FirstSwitchCaseRow;
+    u32[0 max] LastSwitchCaseRow;
+    u32[0 max] FirstInitializerStatementRow;
+    u32[0 max] LastInitializerStatementRow;
+    u32[0 max] FirstIteratorStatementRow;
+    u32[0 max] LastIteratorStatementRow;
+    u32[0 max] FirstBodyStatementRow;
+    u32[0 max] LastBodyStatementRow;
+    u32[0 max] FirstThenStatementRow;
+    u32[0 max] LastThenStatementRow;
+    u32[0 max] FirstElseStatementRow;
+    u32[0 max] LastElseStatementRow;
+    u32[0 max] ConditionPatternRow;
+    u32[0 max] NextTopLevelRow;
+    bool HasExpression;
+    bool HasTargetExpression;
+    bool HasTraversalSourceExpression;
+    bool HasName;
+    bool HasAssignmentOperator;
+    bool HasStorageClass;
+    bool HasLoopBehavior;
+    bool HasConstProvenance;
+    bool HasTraversalIndexName;
+    bool HasTraversalIndexStorageClass;
+    bool HasTraversalElementName;
+    bool IsMutable;
+    bool IsConstant;
+    bool HasType;
+    bool HasStorageCapacity;
+    bool HasTraversalIndexType;
+    bool HasTraversalElementType;
+    bool HasConditionPattern;
+
+    LogicalPackageManifestJsonGenericTemplateStatementRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.ExpressionRow = 0;
+        self.TargetExpressionRow = 0;
+        self.TraversalSourceExpressionRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.AssignmentOperatorStringIndex = PackageImageMissingStringIndex();
+        self.StorageClassStringIndex = PackageImageMissingStringIndex();
+        self.LoopBehaviorStringIndex = PackageImageMissingStringIndex();
+        self.ConstProvenanceStringIndex = PackageImageMissingStringIndex();
+        self.TraversalIndexNameStringIndex = PackageImageMissingStringIndex();
+        self.TraversalIndexStorageClassStringIndex = PackageImageMissingStringIndex();
+        self.TraversalElementNameStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.TraversalIndexTypeReference = new();
+        self.TraversalElementTypeReference = new();
+        self.StorageCapacity = 0;
+        self.SwitchCaseCount = 0;
+        self.InitializerStatementCount = 0;
+        self.IteratorStatementCount = 0;
+        self.BodyStatementCount = 0;
+        self.ThenStatementCount = 0;
+        self.ElseStatementCount = 0;
+        self.LoopContractCount = 0;
+        self.FirstSwitchCaseRow = 0;
+        self.LastSwitchCaseRow = 0;
+        self.FirstInitializerStatementRow = 0;
+        self.LastInitializerStatementRow = 0;
+        self.FirstIteratorStatementRow = 0;
+        self.LastIteratorStatementRow = 0;
+        self.FirstBodyStatementRow = 0;
+        self.LastBodyStatementRow = 0;
+        self.FirstThenStatementRow = 0;
+        self.LastThenStatementRow = 0;
+        self.FirstElseStatementRow = 0;
+        self.LastElseStatementRow = 0;
+        self.ConditionPatternRow = 0;
+        self.NextTopLevelRow = 0;
+        self.HasExpression = false;
+        self.HasTargetExpression = false;
+        self.HasTraversalSourceExpression = false;
+        self.HasName = false;
+        self.HasAssignmentOperator = false;
+        self.HasStorageClass = false;
+        self.HasLoopBehavior = false;
+        self.HasConstProvenance = false;
+        self.HasTraversalIndexName = false;
+        self.HasTraversalIndexStorageClass = false;
+        self.HasTraversalElementName = false;
+        self.IsMutable = false;
+        self.IsConstant = false;
+        self.HasType = false;
+        self.HasStorageCapacity = false;
+        self.HasTraversalIndexType = false;
+        self.HasTraversalElementType = false;
+        self.HasConditionPattern = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplateSwitchCaseRow
+{
+    u32[0 max] StatementRow;
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] KindStringIndex;
+    u32[0 max] NameStringIndex;
+    u32[0 max] ExpressionRow;
+    u32[0 max] GuardExpressionRow;
+    u32[0 max] EndExpressionRow;
+    u32[0 max] Ordinal;
+    u32[0 max] MemberPatternCount;
+    u32[0 max] StatementCount;
+    u32[0 max] FirstMemberPatternRow;
+    u32[0 max] LastMemberPatternRow;
+    u32[0 max] FirstStatementRow;
+    u32[0 max] LastStatementRow;
+    u32[0 max] NextRow;
+    bool HasName;
+    bool HasOrdinal;
+    bool HasExpression;
+    bool HasGuardExpression;
+    bool HasEndExpression;
+
+    LogicalPackageManifestJsonGenericTemplateSwitchCaseRow()
+    {
+        self.StatementRow = 0;
+        self.FunctionTemplateRow = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.ExpressionRow = 0;
+        self.GuardExpressionRow = 0;
+        self.EndExpressionRow = 0;
+        self.Ordinal = 0;
+        self.MemberPatternCount = 0;
+        self.StatementCount = 0;
+        self.FirstMemberPatternRow = 0;
+        self.LastMemberPatternRow = 0;
+        self.FirstStatementRow = 0;
+        self.LastStatementRow = 0;
+        self.NextRow = 0;
+        self.HasName = false;
+        self.HasOrdinal = false;
+        self.HasExpression = false;
+        self.HasGuardExpression = false;
+        self.HasEndExpression = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonGenericTemplatePatternRow
+{
+    u32[0 max] FunctionTemplateRow;
+    u32[0 max] KindStringIndex;
+    u32[0 max] NameStringIndex;
+    u32[0 max] ExpressionRow;
+    u32[0 max] EndExpressionRow;
+    u32[0 max] Ordinal;
+    u32[0 max] MemberPatternCount;
+    u32[0 max] FirstMemberPatternRow;
+    u32[0 max] LastMemberPatternRow;
+    u32[0 max] NextRow;
+    bool HasName;
+    bool HasOrdinal;
+    bool HasExpression;
+    bool HasEndExpression;
+
+    LogicalPackageManifestJsonGenericTemplatePatternRow()
+    {
+        self.FunctionTemplateRow = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.ExpressionRow = 0;
+        self.EndExpressionRow = 0;
+        self.Ordinal = 0;
+        self.MemberPatternCount = 0;
+        self.FirstMemberPatternRow = 0;
+        self.LastMemberPatternRow = 0;
+        self.NextRow = 0;
+        self.HasName = false;
+        self.HasOrdinal = false;
+        self.HasExpression = false;
+        self.HasEndExpression = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactAbiFunctionRow
+{
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] SymbolNameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor SourceReturnType;
+    LogicalPackageManifestJsonTypeReferenceDescriptor LlvmReturnType;
+    u32[0 max] SourceNameStringIndex;
+    u32[0 max] FfiAbiStringIndex;
+    u32[0 max] LinkNameStringIndex;
+    u32[0 max] FirstParameterRow;
+    u32[0 max] LastParameterRow;
+    u32[0 max] ParameterCount;
+    u32[0 max] NextRow;
+    bool IsFfi;
+    bool UsesFastCallingConvention;
+    bool IsVarargs;
+    bool UsesTailCallingConvention;
+    bool HasSourceName;
+    bool HasFfiAbi;
+    bool HasLinkName;
+
+    LogicalPackageManifestJsonCompilerFactAbiFunctionRow()
+    {
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.SymbolNameStringIndex = PackageImageMissingStringIndex();
+        self.SourceReturnType = new();
+        self.LlvmReturnType = new();
+        self.SourceNameStringIndex = PackageImageMissingStringIndex();
+        self.FfiAbiStringIndex = PackageImageMissingStringIndex();
+        self.LinkNameStringIndex = PackageImageMissingStringIndex();
+        self.FirstParameterRow = 0;
+        self.LastParameterRow = 0;
+        self.ParameterCount = 0;
+        self.NextRow = 0;
+        self.IsFfi = false;
+        self.UsesFastCallingConvention = false;
+        self.IsVarargs = false;
+        self.UsesTailCallingConvention = false;
+        self.HasSourceName = false;
+        self.HasFfiAbi = false;
+        self.HasLinkName = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactAbiParameterRow
+{
+    u32[0 max] AbiFunctionRow;
+    u32[0 max] SourceNameStringIndex;
+    u32[0 max] LlvmNameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor SourceType;
+    LogicalPackageManifestJsonTypeReferenceDescriptor LlvmType;
+    u32[0 max] KindStringIndex;
+    u32[0 max] RawPointerElementCountExpressionStringIndex;
+    u32[0 max] FirstLlvmParameterTypeRow;
+    u32[0 max] LastLlvmParameterTypeRow;
+    u32[0 max] LlvmParameterTypeCount;
+    u32[0 max] NextRow;
+    bool HasRawPointerElementCountExpression;
+
+    LogicalPackageManifestJsonCompilerFactAbiParameterRow()
+    {
+        self.AbiFunctionRow = 0;
+        self.SourceNameStringIndex = PackageImageMissingStringIndex();
+        self.LlvmNameStringIndex = PackageImageMissingStringIndex();
+        self.SourceType = new();
+        self.LlvmType = new();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.RawPointerElementCountExpressionStringIndex = PackageImageMissingStringIndex();
+        self.FirstLlvmParameterTypeRow = 0;
+        self.LastLlvmParameterTypeRow = 0;
+        self.LlvmParameterTypeCount = 0;
+        self.NextRow = 0;
+        self.HasRawPointerElementCountExpression = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow
+{
+    u32[0 max] AbiParameterRow;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow()
+    {
+        self.AbiParameterRow = 0;
+        self.TypeReference = new();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactConcreteLayoutRow
+{
+    u32[0 max] QualifiedTypeNameStringIndex;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignmentBytes;
+    u32[0 max] FirstFieldRow;
+    u32[0 max] LastFieldRow;
+    u32[0 max] FieldCount;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactConcreteLayoutRow()
+    {
+        self.QualifiedTypeNameStringIndex = PackageImageMissingStringIndex();
+        self.SizeBytes = 0;
+        self.AlignmentBytes = 0;
+        self.FirstFieldRow = 0;
+        self.LastFieldRow = 0;
+        self.FieldCount = 0;
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactConcreteFieldRow
+{
+    u32[0 max] ConcreteLayoutRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] OffsetBytes;
+    u32[0 max] SizeBytes;
+    u32[0 max] NaturalAlignmentBytes;
+    u32[0 max] EffectiveAlignmentBytes;
+    u32[0 max] NextRow;
+    bool IsMisaligned;
+
+    LogicalPackageManifestJsonCompilerFactConcreteFieldRow()
+    {
+        self.ConcreteLayoutRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.OffsetBytes = 0;
+        self.SizeBytes = 0;
+        self.NaturalAlignmentBytes = 0;
+        self.EffectiveAlignmentBytes = 0;
+        self.NextRow = 0;
+        self.IsMisaligned = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonNativeDependencyRow
+{
+    LogicalPackageNativeDependencyKind Kind;
+    u32[0 max] TextStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonNativeDependencyRow()
+    {
+        self.Kind = LogicalPackageNativeDependencyKind.Source;
+        self.TextStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactLinkageRow
+{
+    u32[0 max] ObjectFileNameStringIndex;
+    u32[0 max] FirstDefinedSymbolRow;
+    u32[0 max] LastDefinedSymbolRow;
+    u32[0 max] DefinedSymbolCount;
+    u32[0 max] FirstReferencedSymbolRow;
+    u32[0 max] LastReferencedSymbolRow;
+    u32[0 max] ReferencedSymbolCount;
+
+    LogicalPackageManifestJsonCompilerFactLinkageRow()
+    {
+        self.ObjectFileNameStringIndex = PackageImageMissingStringIndex();
+        self.FirstDefinedSymbolRow = 0;
+        self.LastDefinedSymbolRow = 0;
+        self.DefinedSymbolCount = 0;
+        self.FirstReferencedSymbolRow = 0;
+        self.LastReferencedSymbolRow = 0;
+        self.ReferencedSymbolCount = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactLinkageSymbolRow
+{
+    u32[0 max] LinkageRow;
+    u32[0 max] SymbolStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactLinkageSymbolRow()
+    {
+        self.LinkageRow = 0;
+        self.SymbolStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+// Internal compiler-fact manifest rows and type-reference descriptors. They
+// model serialized facts only; parsing and JSON materialization stay outside Models.
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionEffectRow
+{
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] InlinePreferenceStringIndex;
+    u32[0 max] FfiAbiStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] NextRow;
+    bool ReadsArgumentMemory;
+    bool IsPure;
+    bool NoSync;
+    bool NoFree;
+    bool NoUnwind;
+    bool WillReturn;
+    bool MustProgress;
+    bool UsesFastCallingConvention;
+    bool IsFfi;
+    bool IsHot;
+    bool IsCold;
+    bool IsStrictFp;
+    bool IsVarargs;
+    bool IsTailCallable;
+    bool NoRecurse;
+    bool HasFfiAbi;
+    bool HasBackendOptimizationMode;
+
+    LogicalPackageManifestJsonCompilerFactFunctionEffectRow()
+    {
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.InlinePreferenceStringIndex = PackageImageMissingStringIndex();
+        self.FfiAbiStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.ReadsArgumentMemory = false;
+        self.IsPure = false;
+        self.NoSync = false;
+        self.NoFree = false;
+        self.NoUnwind = false;
+        self.WillReturn = false;
+        self.MustProgress = false;
+        self.UsesFastCallingConvention = false;
+        self.IsFfi = false;
+        self.IsHot = false;
+        self.IsCold = false;
+        self.IsStrictFp = false;
+        self.IsVarargs = false;
+        self.IsTailCallable = false;
+        self.NoRecurse = false;
+        self.HasFfiAbi = false;
+        self.HasBackendOptimizationMode = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonFunctionMemoryEffectFacts
+{
+    bool ReadsArgumentMemory;
+    bool WritesArgumentMemory;
+    bool CapturesArgumentMemory;
+    bool ReadsOtherMemory;
+    bool WritesOtherMemory;
+    bool InitializesArgumentMemory;
+    bool HasPointeeDeadOnReturnArgument;
+
+    LogicalPackageManifestJsonFunctionMemoryEffectFacts()
+    {
+        self.ReadsArgumentMemory = false;
+        self.WritesArgumentMemory = false;
+        self.CapturesArgumentMemory = false;
+        self.ReadsOtherMemory = false;
+        self.WritesOtherMemory = false;
+        self.InitializesArgumentMemory = false;
+        self.HasPointeeDeadOnReturnArgument = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticRow
+{
+    u32[0 max] QualifiedResolvedNameStringIndex;
+    u32[0 max] DeclaredKindStringIndex;
+    u32[0 max] EffectiveKindStringIndex;
+    u32[0 max] FirstCalledFunctionRow;
+    u32[0 max] LastCalledFunctionRow;
+    u32[0 max] CalledFunctionCount;
+    u32[0 max] FirstParameterRow;
+    u32[0 max] LastParameterRow;
+    u32[0 max] ParameterCount;
+    u32[0 max] FirstCallRow;
+    u32[0 max] LastCallRow;
+    u32[0 max] CallCount;
+    u32[0 max] FirstOwnershipImplicitDropRow;
+    u32[0 max] LastOwnershipImplicitDropRow;
+    u32[0 max] OwnershipImplicitDropCount;
+    u32[0 max] FirstOwnershipMoveRow;
+    u32[0 max] LastOwnershipMoveRow;
+    u32[0 max] OwnershipMoveCount;
+    u32[0 max] FirstOwnershipEventRow;
+    u32[0 max] LastOwnershipEventRow;
+    u32[0 max] OwnershipEventCount;
+    u32[0 max] FirstOwnershipRootRow;
+    u32[0 max] LastOwnershipRootRow;
+    u32[0 max] OwnershipRootCount;
+    u32[0 max] NextRow;
+    LogicalPackageManifestJsonFunctionMemoryEffectFacts MemoryEffects;
+    bool HasMemoryEffects;
+    bool HasExplicitHasOpaqueCall;
+    bool HasOpaqueCall;
+    bool HasOwnership;
+    bool OwnershipValid;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow()
+    {
+        self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
+        self.DeclaredKindStringIndex = PackageImageMissingStringIndex();
+        self.EffectiveKindStringIndex = PackageImageMissingStringIndex();
+        self.FirstCalledFunctionRow = 0;
+        self.LastCalledFunctionRow = 0;
+        self.CalledFunctionCount = 0;
+        self.FirstParameterRow = 0;
+        self.LastParameterRow = 0;
+        self.ParameterCount = 0;
+        self.FirstCallRow = 0;
+        self.LastCallRow = 0;
+        self.CallCount = 0;
+        self.FirstOwnershipImplicitDropRow = 0;
+        self.LastOwnershipImplicitDropRow = 0;
+        self.OwnershipImplicitDropCount = 0;
+        self.FirstOwnershipMoveRow = 0;
+        self.LastOwnershipMoveRow = 0;
+        self.OwnershipMoveCount = 0;
+        self.FirstOwnershipEventRow = 0;
+        self.LastOwnershipEventRow = 0;
+        self.OwnershipEventCount = 0;
+        self.FirstOwnershipRootRow = 0;
+        self.LastOwnershipRootRow = 0;
+        self.OwnershipRootCount = 0;
+        self.NextRow = 0;
+        self.MemoryEffects = new();
+        self.HasMemoryEffects = false;
+        self.HasExplicitHasOpaqueCall = false;
+        self.HasOpaqueCall = true;
+        self.HasOwnership = false;
+        self.OwnershipValid = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] CaptureKindStringIndex;
+    u32[0 max] DereferenceableBytes;
+    u32[0 max] AlignmentBytes;
+    u32[0 max] FirstInitializationRangeRow;
+    u32[0 max] LastInitializationRangeRow;
+    u32[0 max] InitializationRangeCount;
+    u32[0 max] NextRow;
+    bool IsMemoryBacked;
+    bool GuaranteedNonNull;
+    bool GuaranteedReadOnly;
+    bool GuaranteedWriteOnly;
+    bool GuaranteedNoAlias;
+    bool HasDereferenceableBytes;
+    bool HasAlignmentBytes;
+    bool Reads;
+    bool Writes;
+    bool PointeeDeadOnReturn;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.CaptureKindStringIndex = PackageImageMissingStringIndex();
+        self.DereferenceableBytes = 0;
+        self.AlignmentBytes = 0;
+        self.FirstInitializationRangeRow = 0;
+        self.LastInitializationRangeRow = 0;
+        self.InitializationRangeCount = 0;
+        self.NextRow = 0;
+        self.IsMemoryBacked = false;
+        self.GuaranteedNonNull = false;
+        self.GuaranteedReadOnly = false;
+        self.GuaranteedWriteOnly = false;
+        self.GuaranteedNoAlias = false;
+        self.HasDereferenceableBytes = false;
+        self.HasAlignmentBytes = false;
+        self.Reads = false;
+        self.Writes = false;
+        self.PointeeDeadOnReturn = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow
+{
+    u32[0 max] ParameterRow;
+    i64[min max] StartByte;
+    i64[min max] EndByte;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow()
+    {
+        self.ParameterRow = 0;
+        self.StartByte = 0;
+        self.EndByte = 0;
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] CalleeNameStringIndex;
+    u32[0 max] FirstArgumentRow;
+    u32[0 max] LastArgumentRow;
+    u32[0 max] ArgumentCount;
+    u32[0 max] NextRow;
+    LogicalPackageManifestJsonFunctionMemoryEffectFacts MemoryEffects;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.CalleeNameStringIndex = PackageImageMissingStringIndex();
+        self.FirstArgumentRow = 0;
+        self.LastArgumentRow = 0;
+        self.ArgumentCount = 0;
+        self.NextRow = 0;
+        self.MemoryEffects = new();
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow
+{
+    u32[0 max] CallRow;
+    u32[0 max] ArgumentIndex;
+    u32[0 max] CallerParameterNameStringIndex;
+    u32[0 max] CalleeParameterNameStringIndex;
+    u32[0 max] CaptureKindStringIndex;
+    u32[0 max] NextRow;
+    bool HasCallerParameterName;
+    bool HasCalleeParameterName;
+    bool Reads;
+    bool Writes;
+
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow()
+    {
+        self.CallRow = 0;
+        self.ArgumentIndex = 0;
+        self.CallerParameterNameStringIndex = PackageImageMissingStringIndex();
+        self.CalleeParameterNameStringIndex = PackageImageMissingStringIndex();
+        self.CaptureKindStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasCallerParameterName = false;
+        self.HasCalleeParameterName = false;
+        self.Reads = false;
+        self.Writes = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonTypeReferenceDescriptor
+{
+    u32[0 max] KindStringIndex;
+    u32[0 max] NameStringIndex;
+    u32[0 max] RangeMinStringIndex;
+    u32[0 max] RangeMaxStringIndex;
+    u32[0 max] BitWidth;
+    bool HasName;
+    bool HasBitWidth;
+    bool HasRangeMin;
+    bool HasRangeMax;
+    bool HasIsUnsigned;
+    bool IsUnsigned;
+
+    LogicalPackageManifestJsonTypeReferenceDescriptor()
+    {
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.RangeMinStringIndex = PackageImageMissingStringIndex();
+        self.RangeMaxStringIndex = PackageImageMissingStringIndex();
+        self.BitWidth = 0;
+        self.HasName = false;
+        self.HasBitWidth = false;
+        self.HasRangeMin = false;
+        self.HasRangeMax = false;
+        self.HasIsUnsigned = false;
+        self.IsUnsigned = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow
+{
+    u32[0 max] EventRow;
+    u32[0 max] ProjectionStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow()
+    {
+        self.EventRow = 0;
+        self.ProjectionStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] KindStringIndex;
+    u32[0 max] RootNameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor PlaceType;
+    u32[0 max] FirstProjectionRow;
+    u32[0 max] LastProjectionRow;
+    u32[0 max] ProjectionCount;
+    u32[0 max] LocationFilePathStringIndex;
+    i64[min max] LocationLine;
+    i64[min max] LocationColumn;
+    u32[0 max] NextRow;
+    bool HasIndexProjection;
+    bool HasLocation;
+    bool HasLocationFilePath;
+
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.RootNameStringIndex = PackageImageMissingStringIndex();
+        self.PlaceType = new();
+        self.FirstProjectionRow = 0;
+        self.LastProjectionRow = 0;
+        self.ProjectionCount = 0;
+        self.LocationFilePathStringIndex = PackageImageMissingStringIndex();
+        self.LocationLine = 0;
+        self.LocationColumn = 0;
+        self.NextRow = 0;
+        self.HasIndexProjection = false;
+        self.HasLocation = false;
+        self.HasLocationFilePath = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow
+{
+    u32[0 max] FunctionSemanticRow;
+    u32[0 max] NameStringIndex;
+    LogicalPackageManifestJsonTypeReferenceDescriptor TypeReference;
+    u32[0 max] RootKindStringIndex;
+    u32[0 max] FinalAvailabilityStringIndex;
+    u32[0 max] NextRow;
+    bool IsMutable;
+    bool IsConstant;
+    bool IsAddressTaken;
+    bool HasRawPointerEscape;
+    bool HasMove;
+    bool HasPartialMove;
+    bool HasImplicitDrop;
+    bool HasAssignmentDrop;
+    bool HasReinitialization;
+    bool RequiresDrop;
+
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow()
+    {
+        self.FunctionSemanticRow = 0;
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeReference = new();
+        self.RootKindStringIndex = PackageImageMissingStringIndex();
+        self.FinalAvailabilityStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsMutable = false;
+        self.IsConstant = false;
+        self.IsAddressTaken = false;
+        self.HasRawPointerEscape = false;
+        self.HasMove = false;
+        self.HasPartialMove = false;
+        self.HasImplicitDrop = false;
+        self.HasAssignmentDrop = false;
+        self.HasReinitialization = false;
+        self.RequiresDrop = false;
+    }
+}
+
+// Internal source-surface manifest rows. They retain string-table indices and
+// relationship ordinals only; JSON materialization stays outside Models.
+
+internal struct LogicalPackageManifestJsonSourceSurfaceImportRow
+{
+    u32[0 max] ModuleNameStringIndex;
+    u32[0 max] NextRow;
+    bool IsExported;
+
+    LogicalPackageManifestJsonSourceSurfaceImportRow()
+    {
+        self.ModuleNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsExported = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceReExportRow
+{
+    u32[0 max] ModuleNameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceReExportRow()
+    {
+        self.ModuleNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeAliasRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] TargetTypeStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeAliasRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.TargetTypeStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] StructLayoutStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] FieldFirstRow;
+    u32[0 max] FieldLastRow;
+    u32[0 max] FieldCount;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+    u32[0 max] PrimaryConstructorParameterFirstRow;
+    u32[0 max] PrimaryConstructorParameterLastRow;
+    u32[0 max] PrimaryConstructorParameterCount;
+    u32[0 max] VariantFirstRow;
+    u32[0 max] VariantLastRow;
+    u32[0 max] VariantCount;
+    u32[0 max] MethodCount;
+    u32[0 max] ConstructorCount;
+    u32[0 max] AssociatedTypeCount;
+    u32[0 max] ImplementedTraitFirstRow;
+    u32[0 max] ImplementedTraitLastRow;
+    u32[0 max] ImplementedTraitCount;
+    u32[0 max] ThreadSafetyLawAttributeCount;
+    u32[0 max] PackBytes;
+    u32[0 max] AlignBytes;
+    bool HasBackendOptimizationMode;
+    bool HasStructLayout;
+    bool HasPackBytes;
+    bool HasAlignBytes;
+    bool HasDestructor;
+    bool IsDynTrait;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.StructLayoutStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.FieldFirstRow = 0;
+        self.FieldLastRow = 0;
+        self.FieldCount = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+        self.PrimaryConstructorParameterFirstRow = 0;
+        self.PrimaryConstructorParameterLastRow = 0;
+        self.PrimaryConstructorParameterCount = 0;
+        self.VariantFirstRow = 0;
+        self.VariantLastRow = 0;
+        self.VariantCount = 0;
+        self.MethodCount = 0;
+        self.ConstructorCount = 0;
+        self.AssociatedTypeCount = 0;
+        self.ImplementedTraitFirstRow = 0;
+        self.ImplementedTraitLastRow = 0;
+        self.ImplementedTraitCount = 0;
+        self.ThreadSafetyLawAttributeCount = 0;
+        self.PackBytes = 0;
+        self.AlignBytes = 0;
+        self.HasBackendOptimizationMode = false;
+        self.HasStructLayout = false;
+        self.HasPackBytes = false;
+        self.HasAlignBytes = false;
+        self.HasDestructor = false;
+        self.IsDynTrait = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeFieldRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] ThreadSafetyLawAttributeCount;
+    u32[0 max] ExplicitOffsetBytes;
+    bool HasVisibility;
+    bool HasExplicitOffsetBytes;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeFieldRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.ThreadSafetyLawAttributeCount = 0;
+        self.ExplicitOffsetBytes = 0;
+        self.HasVisibility = false;
+        self.HasExplicitOffsetBytes = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] RawPointerElementCountExpressionStringIndex;
+    u32[0 max] NextRow;
+    bool HasRawPointerElementCountExpression;
+    bool IsDisjoint;
+    bool IsConst;
+
+    LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.RawPointerElementCountExpressionStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasRawPointerElementCountExpression = false;
+        self.IsDisjoint = false;
+        self.IsConst = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] RoleStringIndex;
+    u32[0 max] AbsorbsErrorTypeStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] PayloadFirstRow;
+    u32[0 max] PayloadLastRow;
+    u32[0 max] PayloadCount;
+    bool UsesNamedFields;
+    bool HasRole;
+    bool HasAbsorbsErrorType;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.RoleStringIndex = PackageImageMissingStringIndex();
+        self.AbsorbsErrorTypeStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.PayloadFirstRow = 0;
+        self.PayloadLastRow = 0;
+        self.PayloadCount = 0;
+        self.UsesNamedFields = false;
+        self.HasRole = false;
+        self.HasAbsorbsErrorType = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] NextRow;
+    bool HasName;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasName = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow
+{
+    u32[0 max] TraitStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow()
+    {
+        self.TraitStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceGlobalRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] NextRow;
+    bool IsMutable;
+    bool HasConstantInitializer;
+
+    LogicalPackageManifestJsonSourceSurfaceGlobalRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.IsMutable = false;
+        self.HasConstantInitializer = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceFunctionRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] QualifiedNameStringIndex;
+    u32[0 max] VisibilityStringIndex;
+    u32[0 max] SymbolNameStringIndex;
+    u32[0 max] KindStringIndex;
+    u32[0 max] ReturnTypeStringIndex;
+    u32[0 max] InlinePreferenceStringIndex;
+    u32[0 max] FfiAbiStringIndex;
+    u32[0 max] BackendOptimizationModeStringIndex;
+    u32[0 max] LinkNameStringIndex;
+    u32[0 max] NextRow;
+    u32[0 max] ParameterFirstRow;
+    u32[0 max] ParameterLastRow;
+    u32[0 max] ParameterCount;
+    u32[0 max] GenericParameterFirstRow;
+    u32[0 max] GenericParameterLastRow;
+    u32[0 max] GenericParameterCount;
+    u32[0 max] ComptimeGenericParameterFirstRow;
+    u32[0 max] ComptimeGenericParameterLastRow;
+    u32[0 max] ComptimeGenericParameterCount;
+    u32[0 max] TypeParameterConstraintCount;
+    u32[0 max] ThreadSafetyLawPredicateCount;
+    u32[0 max] ValueContractCount;
+    u32[0 max] DisjointParameterGroupCount;
+    u32[0 max] OverlapParameterGroupCount;
+    u32[0 max] SameParameterGroupCount;
+    u32[0 max] PointeeDeadOnReturnParameterNameFirstRow;
+    u32[0 max] PointeeDeadOnReturnParameterNameLastRow;
+    u32[0 max] PointeeDeadOnReturnParameterNameCount;
+    bool HasInlinePreference;
+    bool HasFfiAbi;
+    bool HasBackendOptimizationMode;
+    bool HasLinkName;
+    bool HasAsm;
+    bool IsFfi;
+    bool IsStrictFp;
+    bool UsesFastCallingConvention;
+    bool IsHot;
+    bool IsCold;
+    bool HasExplicitInlinePreference;
+    bool IsUnsafe;
+    bool IsVarargs;
+    bool IsTailCallable;
+
+    LogicalPackageManifestJsonSourceSurfaceFunctionRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
+        self.VisibilityStringIndex = PackageImageMissingStringIndex();
+        self.SymbolNameStringIndex = PackageImageMissingStringIndex();
+        self.KindStringIndex = PackageImageMissingStringIndex();
+        self.ReturnTypeStringIndex = PackageImageMissingStringIndex();
+        self.InlinePreferenceStringIndex = PackageImageMissingStringIndex();
+        self.FfiAbiStringIndex = PackageImageMissingStringIndex();
+        self.BackendOptimizationModeStringIndex = PackageImageMissingStringIndex();
+        self.LinkNameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.ParameterFirstRow = 0;
+        self.ParameterLastRow = 0;
+        self.ParameterCount = 0;
+        self.GenericParameterFirstRow = 0;
+        self.GenericParameterLastRow = 0;
+        self.GenericParameterCount = 0;
+        self.ComptimeGenericParameterFirstRow = 0;
+        self.ComptimeGenericParameterLastRow = 0;
+        self.ComptimeGenericParameterCount = 0;
+        self.TypeParameterConstraintCount = 0;
+        self.ThreadSafetyLawPredicateCount = 0;
+        self.ValueContractCount = 0;
+        self.DisjointParameterGroupCount = 0;
+        self.OverlapParameterGroupCount = 0;
+        self.SameParameterGroupCount = 0;
+        self.PointeeDeadOnReturnParameterNameFirstRow = 0;
+        self.PointeeDeadOnReturnParameterNameLastRow = 0;
+        self.PointeeDeadOnReturnParameterNameCount = 0;
+        self.HasInlinePreference = false;
+        self.HasFfiAbi = false;
+        self.HasBackendOptimizationMode = false;
+        self.HasLinkName = false;
+        self.HasAsm = false;
+        self.IsFfi = false;
+        self.IsStrictFp = false;
+        self.UsesFastCallingConvention = false;
+        self.IsHot = false;
+        self.IsCold = false;
+        self.HasExplicitInlinePreference = false;
+        self.IsUnsafe = false;
+        self.IsVarargs = false;
+        self.IsTailCallable = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeStringIndex;
+    u32[0 max] RawPointerElementCountExpressionStringIndex;
+    u32[0 max] NextRow;
+    bool HasRawPointerElementCountExpression;
+    bool IsDisjoint;
+    bool IsConst;
+
+    LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeStringIndex = PackageImageMissingStringIndex();
+        self.RawPointerElementCountExpressionStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+        self.HasRawPointerElementCountExpression = false;
+        self.IsDisjoint = false;
+        self.IsConst = false;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] TypeKindStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.TypeKindStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}
+
+internal struct LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow
+{
+    u32[0 max] NameStringIndex;
+    u32[0 max] NextRow;
+
+    LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow()
+    {
+        self.NameStringIndex = PackageImageMissingStringIndex();
+        self.NextRow = 0;
+    }
+}

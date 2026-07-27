@@ -91,12 +91,61 @@ discard, and a default arm:
 
 {{< stark-sample "samples/switch-guards.stark" >}}
 
-Switch coverage is checked. Once earlier arms already cover every possible
-shape, a later arm is rejected instead of being accepted as dead code:
+Switch coverage is checked in both directions. A `switch` must be exhaustive:
+every variant of the enum (or every value of the scrutinee's type) must have an
+arm, or the switch must carry a `default`. A value with no matching arm is a
+compile error, never a silent runtime gap — so adding a variant to an enum
+surfaces every switch that needs updating:
+
+{{< stark-sample "rejected/non-exhaustive-switch.stark" >}}
+
+And once earlier arms already cover every possible shape, a later arm is
+rejected instead of being accepted as dead code:
 
 {{< stark-sample "rejected/unreachable-switch-default.stark" >}}
 
-## Step 4: Move Payloads Deliberately
+## Step 4: Test One Case With `is` In `if` And `while`
+
+A `switch` handles every variant. When only one variant changes what the code
+does next, write the test inline: `if` and `while` conditions accept
+`expr is pattern`, using the same patterns as `switch case`, and bind the
+pattern's captures into the branch that runs on a match.
+
+{{< stark-sample "samples/is-pattern-condition.stark" >}}
+
+```stark
+if (shape is Shape.Circle(var radius))
+{
+    return radius * radius * 3;
+}
+else
+{
+    return 0;
+}
+```
+
+`radius` exists only inside the matching branch. The `else` branch and the code
+after the `if` never see it, because on those paths the pattern did not match
+and there was nothing to bind.
+
+The same form drives drain loops. Each iteration re-evaluates the scrutinee,
+re-binds the captures on a match, and exits the loop on the first non-match:
+
+```stark
+while willexit (NextJob() is System.Option<i32[min max]>.Some(var job))
+{
+    total = total + job;
+}
+```
+
+With `is pattern` the condition is the value being matched, not a `bool`; only
+plain conditions are required to be boolean. Capturing a move-only payload
+moves it out of the matched value exactly as in `switch`, and the capture is
+dropped at the end of the branch or loop body. The whole form lowers to the
+same decision machinery as a single-case `switch`, so it costs nothing extra
+over writing that switch by hand.
+
+## Step 5: Move Payloads Deliberately
 
 Matching follows Stark ownership rules. Capturing a move-only payload with
 `var` can move that payload out of the matched value. Matching scalar payloads,
@@ -138,7 +187,7 @@ The practical rule is simple: after a match extracts owned data, continue to
 treat the original value as subject to ordinary move and reinitialization
 rules.
 
-## Step 5: Keep Ordinary Enums Inside Stark Boundaries
+## Step 6: Keep Ordinary Enums Inside Stark Boundaries
 
 Stark enums are ordinary Stark values, not automatic C ABI contracts. Do not
 export enum-shaped data across `ffi` or `export` boundaries unless the boundary

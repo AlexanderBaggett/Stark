@@ -1,0 +1,1039 @@
+import CompilerMirTestSupport
+import System.Testing
+import CompilerCliTests
+import CompilerPipelineEnumLayoutTests
+import CompilerPipelineFullIntegrationTests
+import CompilerPipelineLowerAbiTests
+import CompilerPipelineLowerHirTests
+import CompilerPipelineLowerMirTests
+import GenericUseSiteInstantiationRegressionTests
+import LoweringContractFactKeyRegressionTests
+import MidLevelIrDynamicFixedArrayIndexingTests
+import MidLevelIrLoweringTests_ArenaFrame
+import MidLevelIrLoweringTests_CompileTimeEvaluator
+import MidLevelIrLoweringTests_Core
+import MidLevelIrLoweringTests_LoweringInvariant
+import MidLevelIrLoweringTests_PlaceLowerer
+import MidLevelIrLoweringTests_RuntimeDropLowerer
+import MidLevelIrLoweringTests_SwitchPatternLowerer
+import RawSingleLineLiteralRegressionTests
+[Collection("compiler", "mir")]
+module CompilerMirTests
+
+// Ported slice of tests/compiler.Tests/MidLevelIrLowering and
+// tests/compiler.Tests/MidLevelIrDynamicFixedArrayIndexingTests, running
+// against the current C# host compiler through the host test protocol. Each
+// fact compiles a small program stopping after the "lower-mir" pass and asserts
+// over the rendered `mir` artifact text. Requires STARK_HOST_COMPILER to point
+// at the host compiler executable. The runner collects [Fact]s from this root
+// file only; the bodies live in CompilerMirTestSupport.
+//
+// Object-model-only C# tests (those that build MidLevelIr/Ssa objects directly
+// or assert over the typed object graph rather than source->text) are NOT
+// ported; see the agent report for the skip list.
+
+// --- control flow ----------------------------------------------------------
+
+[Fact]
+[Collection("mid-level-ir-arena-frame")]
+fn bool ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturn()
+{
+    return ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturnImpl();
+}
+
+[Fact]
+fn bool IfStatementsLowerToBranchingBlocks()
+{
+    {
+        return IfStatementsLowerToBranchingBlocksBody();
+    }
+}
+
+[Fact]
+fn bool WhileLoopsLowerToBackedgeControlFlow()
+{
+    {
+        return WhileLoopsLowerToBackedgeControlFlowBody();
+    }
+}
+
+[Fact]
+fn bool ForLoopsProduceConditionIteratorAndExitBlocks()
+{
+    {
+        return ForLoopsProduceConditionIteratorAndExitBlocksBody();
+    }
+}
+
+[Fact]
+fn bool LabeledBreakAndContinueLowerThroughNestedLoops()
+{
+    {
+        return LabeledBreakAndContinueLowerThroughNestedLoopsBody();
+    }
+}
+
+[Fact]
+fn bool ConditionalExpressionLowersToJoinableBlocks()
+{
+    {
+        return ConditionalExpressionLowersToJoinableBlocksBody();
+    }
+}
+
+[Fact]
+fn bool VoidConditionalCallStatementsLowerToJoinableBlocks()
+{
+    {
+        return VoidConditionalCallStatementsLowerToJoinableBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ShortCircuitOrLowersToMultipleBlocks()
+{
+    {
+        return ShortCircuitOrLowersToMultipleBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsLowerToShortCircuitBlocks()
+{
+    {
+        return ComparisonChainsLowerToShortCircuitBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsReuseSharedOperand()
+{
+    {
+        return ComparisonChainsReuseSharedOperandBody();
+    }
+}
+
+// --- enums -----------------------------------------------------------------
+
+[Fact]
+fn bool EnumConstructorsLowerToDirectTagFieldInserts()
+{
+    {
+        return EnumConstructorsLowerToDirectTagFieldInsertsBody();
+    }
+}
+
+[Fact]
+fn bool PayloadEnumConstructorCallsLowerDirectly()
+{
+    {
+        return PayloadEnumConstructorCallsLowerDirectlyBody();
+    }
+}
+
+// --- locals, calls, aggregates ---------------------------------------------
+
+[Fact]
+fn bool LocalDeclarationsAndAssignmentsLowerToMirStatements()
+{
+    {
+        return LocalDeclarationsAndAssignmentsLowerToMirStatementsBody();
+    }
+}
+
+[Fact]
+fn bool VoidFunctionPointerCallsLowerAsStatementOnly()
+{
+    {
+        return VoidFunctionPointerCallsLowerAsStatementOnlyBody();
+    }
+}
+
+[Fact]
+fn bool ObjectCreationAndFieldAccessLowerToAggregateOperations()
+{
+    {
+        return ObjectCreationAndFieldAccessLowerToAggregateOperationsBody();
+    }
+}
+
+[Fact]
+fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrder()
+{
+    {
+        return PrimaryRecordConstructorArgumentsLowerInEvaluationOrderBody();
+    }
+}
+
+[Fact]
+fn bool MemberCallsEvaluateReceiverBeforeArguments()
+{
+    {
+        return MemberCallsEvaluateReceiverBeforeArgumentsBody();
+    }
+}
+
+[Fact]
+fn bool RegisterObjectCreationKeepsValueStyleLocal()
+{
+    {
+        return RegisterObjectCreationKeepsValueStyleLocalBody();
+    }
+}
+
+[Fact]
+fn bool HeapObjectCreationMarksLocalAsAddressable()
+{
+    {
+        return HeapObjectCreationMarksLocalAsAddressableBody();
+    }
+}
+
+[Fact]
+fn bool DynamicIndexingOnFixedArrayTemporaryLowers()
+{
+    {
+        return DynamicIndexingOnFixedArrayTemporaryLowersBody();
+    }
+}
+
+// --- operators & constants -------------------------------------------------
+
+[Fact]
+fn bool SizeofAndAlignofLower()
+{
+    {
+        return SizeofAndAlignofLowerBody();
+    }
+}
+
+[Fact]
+fn bool BitwiseXorExpressionLowersToMirBinaryOperation()
+{
+    {
+        return BitwiseXorExpressionLowersToMirBinaryOperationBody();
+    }
+}
+
+[Fact]
+fn bool BitwiseAndShiftChainsRespectPrecedence()
+{
+    {
+        return BitwiseAndShiftChainsRespectPrecedenceBody();
+    }
+}
+
+[Fact]
+fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperators()
+{
+    {
+        return WrappingAndSaturatingArithmeticLowerToDistinctOperatorsBody();
+    }
+}
+
+[Fact]
+fn bool ExponentExpressionLowersToMirBinaryOperation()
+{
+    {
+        return ExponentExpressionLowersToMirBinaryOperationBody();
+    }
+}
+
+[Fact]
+fn bool CharacterLiteralsLowerToMirStringConstants()
+{
+    {
+        return CharacterLiteralsLowerToMirStringConstantsBody();
+    }
+}
+
+// --- lowering invariant ----------------------------------------------------
+
+[Fact]
+fn bool AcceptedBoundOperationsLowerWithoutFallback()
+{
+    {
+        return AcceptedBoundOperationsLowerWithoutFallbackBody();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
+// ---------------------------------------------------------------------------
+[Fact]
+[Collection("compiler-cli")]
+fn bool EmitMirModePrintsMirModule()
+{
+    return EmitMirModePrintsMirModuleImpl();
+}
+
+[Fact]
+[Collection("compiler-cli")]
+fn bool EmitMirModeSupportsOutputPath()
+{
+    return EmitMirModeSupportsOutputPathImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-enum-layout")]
+fn bool EnumLayoutsUseSmallestSoundTagWidths()
+{
+    return EnumLayoutsUseSmallestSoundTagWidthsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-enum-layout")]
+fn bool EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegers()
+{
+    return EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegersImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlow()
+{
+    return PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlowImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifacts()
+{
+    return PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions()
+{
+    return ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa()
+{
+    return ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsaImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ImportedSourceModulesFlowIntoHirMirAndSsaArtifacts()
+{
+    return ImportedSourceModulesFlowIntoHirMirAndSsaArtifactsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsa()
+{
+    return ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsaImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool OverloadedMethodsResolveThroughSemanticValidationAndMirLowering()
+{
+    return OverloadedMethodsResolveThroughSemanticValidationAndMirLoweringImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-abi")]
+fn bool MonomorphizedGenericFunctionsReceiveExplicitAbiLowering()
+{
+    return MonomorphizedGenericFunctionsReceiveExplicitAbiLoweringImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-hir")]
+fn bool NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIr()
+{
+    return NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIrImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-hir")]
+fn bool LowerHirMaterializesSourceBackedMonomorphizedGenericFunctions()
+{
+    return LowerHirMaterializesSourceBackedMonomorphizedGenericFunctionsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-mir")]
+fn bool ExplicitConstructorBodiesLowerIntoObjectCreation()
+{
+    return ExplicitConstructorBodiesLowerIntoObjectCreationImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-mir")]
+fn bool LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodies()
+{
+    return LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodiesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-lower-mir")]
+fn bool LowerMirRewritesGenericCallsToMaterializedSpecializationSymbols()
+{
+    return LowerMirRewritesGenericCallsToMaterializedSpecializationSymbolsImpl();
+}
+
+[Fact]
+[Collection("generic-use-site-instantiation")]
+fn bool NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSites()
+{
+    return NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSitesImpl();
+}
+
+[Fact]
+[Collection("lowering-contract-fact-key")]
+fn bool MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinates()
+{
+    return MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl();
+}
+
+[Fact]
+[Collection("lowering-contract-fact-key")]
+fn bool ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation()
+{
+    return ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-dynamic-fixed-array-indexing")]
+fn bool DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallback()
+{
+    return DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallbackImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
+fn bool PureConstantArithmeticReturnsFoldedMirConstant()
+{
+    return PureConstantArithmeticReturnsFoldedMirConstantImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
+fn bool ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelection()
+{
+    return ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
+fn bool ConstantLawCallsFoldToMirConstants()
+{
+    return ConstantLawCallsFoldToMirConstantsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
+fn bool BackendOpaqueLawCallsDoNotFoldToMirConstants()
+{
+    return BackendOpaqueLawCallsDoNotFoldToMirConstantsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
+fn bool FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
+{
+    return FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnostics()
+{
+    return PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnosticsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
+{
+    return ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperandsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen()
+{
+    return ShortCircuitOrLowersToMultipleBlocksAndDirectCodegenImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool VoidFunctionPointerCallsLowerAsStatementOnlyOperations()
+{
+    return VoidFunctionPointerCallsLowerAsStatementOnlyOperationsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool SizeofAndAlignofLowerToConcreteIntegerConstants()
+{
+    return SizeofAndAlignofLowerToConcreteIntegerConstantsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool HugeCompileTimeIntegerConversionMaterializesConcreteMirConstant()
+{
+    return HugeCompileTimeIntegerConversionMaterializesConcreteMirConstantImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool ConstantNarrowingConversionMaterializesWrappedMirConstant()
+{
+    return ConstantNarrowingConversionMaterializesWrappedMirConstantImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool BitwiseXorAssignmentLowersToMirBinaryOperation()
+{
+    return BitwiseXorAssignmentLowersToMirBinaryOperationImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool BitwiseAndShiftChainsRespectPrecedenceAndAssociativity()
+{
+    return BitwiseAndShiftChainsRespectPrecedenceAndAssociativityImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool WrappingAndSaturatingArithmeticLowerToDistinctMirOperators()
+{
+    return WrappingAndSaturatingArithmeticLowerToDistinctMirOperatorsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool IntegerExponentExpressionLowersToMirBinaryOperation()
+{
+    return IntegerExponentExpressionLowersToMirBinaryOperationImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool FloatingPointArithmeticChainsLowerToFloatMirBinaryOperations()
+{
+    return FloatingPointArithmeticChainsLowerToFloatMirBinaryOperationsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant()
+{
+    return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstantImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool ConstructorInitializerCombinationAppliesInitializerAfterConstructorFields()
+{
+    return ConstructorInitializerCombinationAppliesInitializerAfterConstructorFieldsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrder()
+{
+    return NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrderImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool MemberCallsEvaluateReceiverBeforeExplicitArguments()
+{
+    return MemberCallsEvaluateReceiverBeforeExplicitArgumentsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool TargetTypedObjectCreationLowersWithDestinationType()
+{
+    return TargetTypedObjectCreationLowersWithDestinationTypeImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool RegisterObjectCreationKeepsValueStyleLocalLowering()
+{
+    return RegisterObjectCreationKeepsValueStyleLocalLoweringImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
+fn bool HeapObjectCreationMarksLocalAsAddressableStorage()
+{
+    return HeapObjectCreationMarksLocalAsAddressableStorageImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-lowering-invariant")]
+fn bool AcceptedBoundOperationsDoNotProduceNullMirArtifacts()
+{
+    return AcceptedBoundOperationsDoNotProduceNullMirArtifactsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FieldAssignmentLowersToAggregateUpdate()
+{
+    return FieldAssignmentLowersToAggregateUpdateImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FieldCompoundAssignmentLowersToAggregateReadModifyWrite()
+{
+    return FieldCompoundAssignmentLowersToAggregateReadModifyWriteImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperations()
+{
+    return FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperationsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTails()
+{
+    return PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTailsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FixedArrayElementAssignmentLowersToAggregateIndexUpdate()
+{
+    return FixedArrayElementAssignmentLowersToAggregateIndexUpdateImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+{
+    return LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+{
+    return LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool LocalFixedArrayCanLowerToSliceAndDynamicSliceRead()
+{
+    return LocalFixedArrayCanLowerToSliceAndDynamicSliceReadImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool InitSliceElementAssignmentCarriesInitializationWriteKindInMir()
+{
+    return InitSliceElementAssignmentCarriesInitializationWriteKindInMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool OutParameterAssignmentCarriesInitializationWriteKindInMir()
+{
+    return OutParameterAssignmentCarriesInitializationWriteKindInMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool TextSlicesLowerToViewProducingMir()
+{
+    return TextSlicesLowerToViewProducingMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool EmptyTextSlicesLowerToIdentityTextOperands()
+{
+    return EmptyTextSlicesLowerToIdentityTextOperandsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool SingleElementTextIndexingLowersToUnitLengthTextViews()
+{
+    return SingleElementTextIndexingLowersToUnitLengthTextViewsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccess()
+{
+    return DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccess()
+{
+    return FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccess()
+{
+    return NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool SliceMutationUsesAddressBasedMemoryAccess()
+{
+    return SliceMutationUsesAddressBasedMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool MixedCallMemberAndIndexPostfixChainsLowerToMir()
+{
+    return MixedCallMemberAndIndexPostfixChainsLowerToMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool ExplicitPointerOperatorsAndConversionsLowerToMir()
+{
+    return ExplicitPointerOperatorsAndConversionsLowerToMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FieldAndGlobalAddressExpressionsLowerToMirAddresses()
+{
+    return FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddresses()
+{
+    return IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool ImmutableGlobalAddressesLowerToReadonlyMirAddresses()
+{
+    return ImmutableGlobalAddressesLowerToReadonlyMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool ConstGlobalAddressesLowerToFrozenMirAddresses()
+{
+    return ConstGlobalAddressesLowerToFrozenMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool ConstParameterAddressesLowerToFrozenMirAddresses()
+{
+    return ConstParameterAddressesLowerToFrozenMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool ConstProvenanceLocalsAreMarkedInMir()
+{
+    return ConstProvenanceLocalsAreMarkedInMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
+fn bool FrozenSliceAddressesLowerToReadonlyMirAddresses()
+{
+    return FrozenSliceAddressesLowerToReadonlyMirAddressesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool DestructorBlocksLowerBeforeStorageDeadAtScopeExit()
+{
+    return DestructorBlocksLowerBeforeStorageDeadAtScopeExitImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporary()
+{
+    return WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporaryImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop()
+{
+    return EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDropImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite()
+{
+    return ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorage()
+{
+    return DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool EnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+{
+    return EnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+{
+    return LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanup()
+{
+    return LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanupImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool LargeEnumPayloadReassignmentDropsOldAndReplacementOnce()
+{
+    return LargeEnumPayloadReassignmentDropsOldAndReplacementOnceImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropState()
+{
+    return PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropState()
+{
+    return ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool FixedArrayElementsCascadeRuntimeDrops()
+{
+    return FixedArrayElementsCascadeRuntimeDropsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool HeapBackedFixedArrayElementsDropBeforeStorageDead()
+{
+    return HeapBackedFixedArrayElementsDropBeforeStorageDeadImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool ImportedTypeDestructorsResolveHelpersInTheirDefiningModule()
+{
+    return ImportedTypeDestructorsResolveHelpersInTheirDefiningModuleImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
+fn bool EnumPayloadDropsLowerThroughActiveTagDispatch()
+{
+    return EnumPayloadDropsLowerThroughActiveTagDispatchImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool LiteralSwitchLowersToMirSwitchTerminator()
+{
+    return LiteralSwitchLowersToMirSwitchTerminatorImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool SwitchSectionsCanAssignAndBreakToSharedExit()
+{
+    return SwitchSectionsCanAssignAndBreakToSharedExitImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool GuardedSwitchLowersToBranchBasedCfg()
+{
+    return GuardedSwitchLowersToBranchBasedCfgImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool GuardedDiscardSwitchLowersToBranchBasedCfg()
+{
+    return GuardedDiscardSwitchLowersToBranchBasedCfgImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool MultiLabelSectionWithGuardedDiscardLowersInOrder()
+{
+    return MultiLabelSectionWithGuardedDiscardLowersInOrderImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool MultiLabelSectionsNormalizeIntoSectionDecisionTrees()
+{
+    return MultiLabelSectionsNormalizeIntoSectionDecisionTreesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool CaptureSwitchPatternLowersToMatchLocalAndBody()
+{
+    return CaptureSwitchPatternLowersToMatchLocalAndBodyImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool AggregateSwitchPatternBindsScalarFieldsAfterPatternSelection()
+{
+    return AggregateSwitchPatternBindsScalarFieldsAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelection()
+{
+    return AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool ListSwitchPatternBindsFixedArrayElementsAfterPatternSelection()
+{
+    return ListSwitchPatternBindsFixedArrayElementsAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+{
+    return AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+{
+    return NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelection()
+{
+    return EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelection()
+{
+    return NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelectionImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractions()
+{
+    return EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractionsImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool EnumSwitchExpressionCallIsLoweredOnceInMir()
+{
+    return EnumSwitchExpressionCallIsLoweredOnceInMirImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool TextLiteralSwitchLowersToBranchBasedComparisonTree()
+{
+    return TextLiteralSwitchLowersToBranchBasedComparisonTreeImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool LargeTextLiteralSwitchLowersThroughLengthPartitioning()
+{
+    return LargeTextLiteralSwitchLowersThroughLengthPartitioningImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool UnicodeTextLiteralSwitchLowersSuccessfully()
+{
+    return UnicodeTextLiteralSwitchLowersSuccessfullyImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool FloatLiteralSwitchLowersToBranchBasedCfg()
+{
+    return FloatLiteralSwitchLowersToBranchBasedCfgImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool RawPointerNullSwitchLowersToBranchBasedCfg()
+{
+    return RawPointerNullSwitchLowersToBranchBasedCfgImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool AggregateSwitchPatternsCanMatchAndCaptureTextLeaves()
+{
+    return AggregateSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
+}
+
+[Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
+fn bool EnumSwitchPatternsCanMatchAndCaptureTextLeaves()
+{
+    return EnumSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
+}
+
+[Fact]
+[Collection("raw-single-line-literal")]
+fn bool RawSingleLineLiteralsLowerAsComparisonOperands()
+{
+    return RawSingleLineLiteralsLowerAsComparisonOperandsImpl();
+}

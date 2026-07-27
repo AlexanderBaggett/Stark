@@ -1,0 +1,1869 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.FfiAbiHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.AssociatedTypes
+import Compiler.Binding.TypedModuleSymbols
+import Compiler.Binding.TypedDeclarations
+import System.Memory
+module Compiler.Binding.TypedMembers
+
+public enum TypedMemberSymbolKind
+{
+    Field,
+    Method,
+    EnumVariant,
+    AssociatedAlias,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagStatic()
+{
+    return 32768;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagFieldOffset()
+{
+    return 65536;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagOkRole()
+{
+    return 131072;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagErrRole()
+{
+    return 262144;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagErrorFunnel()
+{
+    return 524288;
+}
+
+public struct TypedMemberSymbolTable
+{
+    internal dynamic u32[0 max] OwnerDeclarationSymbolIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic DeclarationKind OwnerDeclarationKinds;
+    internal dynamic TypedMemberSymbolKind Kinds;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic TypedModuleSymbolVisibility Visibilities;
+    internal dynamic TypedDeclarationFunctionKind FunctionKinds;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] ParamCounts;
+    internal dynamic u32[0 max] PayloadCounts;
+    internal dynamic u32[0 max] LinkNameValueTokens;
+    internal dynamic u32[0 max] AbiNameTokens;
+    internal dynamic u32[0 max] AsmArchitectureTokens;
+    internal dynamic u32[0 max] AsmInputCounts;
+    internal dynamic u32[0 max] AsmOutputCounts;
+    internal dynamic u32[0 max] AsmClobberCounts;
+    internal dynamic u32[0 max] Flags;
+
+    TypedMemberSymbolTable()
+    {
+        self.OwnerDeclarationSymbolIndices = new();
+        self.OwnerNameTokens = new();
+        self.OwnerDeclarationKinds = new();
+        self.Kinds = new();
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.Visibilities = new();
+        self.FunctionKinds = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.ParamCounts = new();
+        self.PayloadCounts = new();
+        self.LinkNameValueTokens = new();
+        self.AbiNameTokens = new();
+        self.AsmArchitectureTokens = new();
+        self.AsmInputCounts = new();
+        self.AsmOutputCounts = new();
+        self.AsmClobberCounts = new();
+        self.Flags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedMemberSymbolTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] OwnerDeclarationSymbolIndexPlusOneAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationSymbolIndices.Length)
+        {
+            value = self.OwnerDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law DeclarationKind OwnerDeclarationKindAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DeclarationKind kind = DeclarationKind.Unknown;
+        if (index < self.OwnerDeclarationKinds.Length)
+        {
+            kind = self.OwnerDeclarationKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedMemberSymbolKind KindAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberSymbolKind kind = TypedMemberSymbolKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] KeywordTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedModuleSymbolVisibility VisibilityAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedModuleSymbolVisibility visibility = TypedModuleSymbolVisibility.ModulePrivate;
+        if (index < self.Visibilities.Length)
+        {
+            visibility = self.Visibilities[index];
+        }
+
+        return visibility;
+    }
+
+    public law TypedDeclarationFunctionKind FunctionKindAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedDeclarationFunctionKind kind = TypedDeclarationFunctionKind.Fn;
+        if (index < self.FunctionKinds.Length)
+        {
+            kind = self.FunctionKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamCountAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ParamCounts.Length)
+        {
+            count = self.ParamCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] PayloadCountAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.PayloadCounts.Length)
+        {
+            count = self.PayloadCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] LinkNameValueTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.LinkNameValueTokens.Length)
+        {
+            token = self.LinkNameValueTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AbiNameTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AbiNameTokens.Length)
+        {
+            token = self.AbiNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmArchitectureTokenAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmArchitectureTokens.Length)
+        {
+            token = self.AsmArchitectureTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmInputCountAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmInputCounts.Length)
+        {
+            count = self.AsmInputCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] AsmOutputCountAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmOutputCounts.Length)
+        {
+            count = self.AsmOutputCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] AsmClobberCountAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmClobberCounts.Length)
+        {
+            count = self.AsmClobberCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] FlagsAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.Flags.Length)
+        {
+            flags = self.Flags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool IsExternalAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagExternal());
+    }
+
+    public law bool IsUnsafeAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagUnsafe());
+    }
+
+    public law bool IsFfiAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagFfi());
+    }
+
+    public law bool IsAsmAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagAsm());
+    }
+
+    public law bool IsVarargsAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagVarargs());
+    }
+
+    public law bool IsTailCallableAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagTailCallable());
+    }
+
+    public law bool IsInlineAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagInline());
+    }
+
+    public law bool IsNoInlineAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagNoInline());
+    }
+
+    public law bool IsInlineHintAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagInlineHint());
+    }
+
+    public law bool IsHotAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagHot());
+    }
+
+    public law bool IsColdAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagCold());
+    }
+
+    public law bool IsStrictFpAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagStrictFp());
+    }
+
+    public law bool HasLinkNameAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagLinkName());
+    }
+
+    public law bool IsCAbiAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagCAbi());
+    }
+
+    public law bool IsStaticAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedMemberFlagStatic());
+    }
+
+    public law bool HasFieldOffsetAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedMemberFlagFieldOffset());
+    }
+
+    public law bool IsOkRoleAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedMemberFlagOkRole());
+    }
+
+    public law bool IsErrRoleAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedMemberFlagErrRole());
+    }
+
+    public law bool IsErrorFunnelAt(borrow TypedMemberSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedMemberFlagErrorFunnel());
+    }
+
+    public law u32[0 max] FieldCount(borrow TypedMemberSymbolTable self)
+    {
+        return self.CountOfKind(TypedMemberSymbolKind.Field);
+    }
+
+    public law u32[0 max] MethodCount(borrow TypedMemberSymbolTable self)
+    {
+        return self.CountOfKind(TypedMemberSymbolKind.Method);
+    }
+
+    public law u32[0 max] EnumVariantCount(borrow TypedMemberSymbolTable self)
+    {
+        return self.CountOfKind(TypedMemberSymbolKind.EnumVariant);
+    }
+
+    public law u32[0 max] AssociatedAliasCount(borrow TypedMemberSymbolTable self)
+    {
+        return self.CountOfKind(TypedMemberSymbolKind.AssociatedAlias);
+    }
+
+    internal law u32[0 max] CountOfKind(borrow TypedMemberSymbolTable self, TypedMemberSymbolKind kind)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == kind)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedMemberSymbolTable self,
+        u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+        u32[0 max] ownerNameToken,
+        DeclarationKind ownerDeclarationKind,
+        TypedMemberSymbolKind kind,
+        u32[0 max] nameToken,
+        u32[0 max] keywordToken,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        TypedModuleSymbolVisibility visibility,
+        TypedDeclarationFunctionKind functionKind,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] paramCount,
+        u32[0 max] payloadCount,
+        u32[0 max] linkNameValueToken,
+        u32[0 max] abiNameToken,
+        u32[0 max] asmArchitectureToken,
+        u32[0 max] asmInputCount,
+        u32[0 max] asmOutputCount,
+        u32[0 max] asmClobberCount,
+        u32[0 max] flags)
+    {
+        if (!self.OwnerDeclarationSymbolIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.OwnerDeclarationKinds.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.Visibilities.TryReserve(1)
+            || !self.FunctionKinds.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.ParamCounts.TryReserve(1)
+            || !self.PayloadCounts.TryReserve(1)
+            || !self.LinkNameValueTokens.TryReserve(1)
+            || !self.AbiNameTokens.TryReserve(1)
+            || !self.AsmArchitectureTokens.TryReserve(1)
+            || !self.AsmInputCounts.TryReserve(1)
+            || !self.AsmOutputCounts.TryReserve(1)
+            || !self.AsmClobberCounts.TryReserve(1)
+            || !self.Flags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerDeclarationSymbolIndices[self.OwnerDeclarationSymbolIndices.Length] = ownerDeclarationSymbolIndexPlusOne;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.OwnerDeclarationKinds[self.OwnerDeclarationKinds.Length] = ownerDeclarationKind;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = keywordToken;
+        init self.StartTokens[self.StartTokens.Length] = startToken;
+        init self.EndTokens[self.EndTokens.Length] = endToken;
+        init self.Visibilities[self.Visibilities.Length] = visibility;
+        init self.FunctionKinds[self.FunctionKinds.Length] = functionKind;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.ParamCounts[self.ParamCounts.Length] = paramCount;
+        init self.PayloadCounts[self.PayloadCounts.Length] = payloadCount;
+        init self.LinkNameValueTokens[self.LinkNameValueTokens.Length] = linkNameValueToken;
+        init self.AbiNameTokens[self.AbiNameTokens.Length] = abiNameToken;
+        init self.AsmArchitectureTokens[self.AsmArchitectureTokens.Length] = asmArchitectureToken;
+        init self.AsmInputCounts[self.AsmInputCounts.Length] = asmInputCount;
+        init self.AsmOutputCounts[self.AsmOutputCounts.Length] = asmOutputCount;
+        init self.AsmClobberCounts[self.AsmClobberCounts.Length] = asmClobberCount;
+        init self.Flags[self.Flags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law bool IsTypeMemberOwner(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct
+        || kind == DeclarationKind.Record
+        || kind == DeclarationKind.Enum
+        || kind == DeclarationKind.Trait
+        || kind == DeclarationKind.Doctrine;
+}
+
+internal finite law u32[0 max] MatchingMemberCloseToken(borrow TokenStream stream, u32[0 max] openToken)
+{
+    stack TokenKind openKind = stream.KindAt((u64[0 2 ** 63 - 1])openToken);
+    stack mut TokenKind closeKind = TokenKind.RParen;
+    if (openKind == TokenKind.LBrack)
+    {
+        closeKind = TokenKind.RBrack;
+    }
+    else if (openKind == TokenKind.LBrace)
+    {
+        closeKind = TokenKind.RBrace;
+    }
+    else if (openKind == TokenKind.Lt)
+    {
+        closeKind = TokenKind.Gt;
+    }
+    else if (openKind != TokenKind.LParen)
+    {
+        return openToken;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = openToken;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return openToken;
+        }
+
+        if (kind == openKind)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == closeKind)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return scan;
+                }
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return openToken;
+}
+
+internal finite law u32[0 max] MemberModifierEndToken(borrow TokenStream stream, u32[0 max] token)
+{
+    if (stream.ContextualKindAt((u64[0 2 ** 63 - 1])token) == ContextualKeywordKind.Tail)
+    {
+        return (u32[0 max])(token + 1);
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    switch (kind)
+    {
+        case TokenKind.Internal:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Public:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Export:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Finite:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Law:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Noinline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inlinehint:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Hot:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Cold:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Varargs:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Unsafe:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Strictfp:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Static:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Ffi:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(MatchingMemberCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        case TokenKind.Asm:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(MatchingMemberCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        default:
+            return token;
+    }
+}
+
+internal finite law u32[0 max] MemberKindCursor(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] cursor = start;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, cursor);
+        if (attrEnd <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = (u32[0 max])(attrEnd + 1);
+    }
+
+    while willexit (true)
+    {
+        stack u32[0 max] next = MemberModifierEndToken(stream, cursor);
+        if (next <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = next;
+    }
+
+    return cursor;
+}
+
+internal finite law bool MemberPreludeHasToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, TokenKind tokenKind)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == tokenKind && depth == 0)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool MemberPreludeHasTail(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && stream.ContextualKindAt((u64[0 2 ** 63 - 1])scan) == ContextualKeywordKind.Tail)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law TypedModuleSymbolVisibility MemberVisibility(
+    TypedModuleSymbolVisibility ownerVisibility,
+    borrow TokenStream stream,
+    u32[0 max] memberStart,
+    u32[0 max] memberKeyword)
+{
+    if (MemberPreludeHasToken(stream, memberStart, memberKeyword, TokenKind.Export))
+    {
+        return TypedModuleSymbolVisibility.Export;
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, memberKeyword, TokenKind.Public))
+    {
+        return TypedModuleSymbolVisibility.Public;
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, memberKeyword, TokenKind.Internal))
+    {
+        return TypedModuleSymbolVisibility.Internal;
+    }
+
+    if (ownerVisibility == TypedModuleSymbolVisibility.Export)
+    {
+        return TypedModuleSymbolVisibility.Public;
+    }
+
+    return ownerVisibility;
+}
+
+internal finite law bool AttributeListContainsName(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd, ascii name)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, name))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool LeadingMemberAttributesContain(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    ascii name)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return false;
+        }
+
+        if (AttributeListContainsName(source, stream, scan, attrEnd, name))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] LinkNameValueTokenForMember(ascii source, borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberKeyword)
+{
+    stack mut u32[0 max] scan = memberStart;
+    while willexit (scan < memberKeyword && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return 0;
+        }
+
+        if (IsLinkNameAttribute(source, stream, scan))
+        {
+            return LinkNameValueToken(stream, scan, attrEnd);
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] FfiAbiNameTokenForMember(borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberKeyword)
+{
+    stack mut u32[0 max] scan = memberStart;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < memberKeyword)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Ffi && depth == 0)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+                && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier)
+            {
+                return (u32[0 max])(scan + 2);
+            }
+
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law bool MemberFfiHasExplicitAbi(borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberKeyword)
+{
+    stack mut u32[0 max] scan = memberStart;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < memberKeyword)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Ffi && depth == 0)
+        {
+            return stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool IsCAbiMemberFunction(ascii source, borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberKeyword)
+{
+    if (!MemberPreludeHasToken(stream, memberStart, memberKeyword, TokenKind.Ffi)
+        || MemberPreludeHasToken(stream, memberStart, memberKeyword, TokenKind.Asm))
+    {
+        return false;
+    }
+
+    stack u32[0 max] abiName = FfiAbiNameTokenForMember(stream, memberStart, memberKeyword);
+    if (abiName == 0)
+    {
+        return !MemberFfiHasExplicitAbi(stream, memberStart, memberKeyword);
+    }
+
+    return FfiAbiNameIsCFamily(source, stream, abiName);
+}
+
+internal finite law TypedDeclarationFunctionKind MemberFunctionKind(borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] fnKeyword, borrow FunctionSignature signature)
+{
+    stack TokenKind keywordKind = stream.KindAt((u64[0 2 ** 63 - 1])fnKeyword);
+    stack bool finiteKind = signature.FiniteKind()
+        || keywordKind == TokenKind.Finite
+        || MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Finite);
+    stack bool lawKind = signature.LawKind()
+        || keywordKind == TokenKind.Law
+        || MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Law);
+    if (finiteKind && lawKind)
+    {
+        return TypedDeclarationFunctionKind.FiniteLaw;
+    }
+
+    if (finiteKind)
+    {
+        return TypedDeclarationFunctionKind.Finite;
+    }
+
+    if (lawKind)
+    {
+        return TypedDeclarationFunctionKind.Law;
+    }
+
+    return TypedDeclarationFunctionKind.Fn;
+}
+
+internal finite law u32[0 max] MemberMethodFlags(ascii source, borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] fnKeyword, u32[0 max] memberEnd, borrow FunctionSignature signature)
+{
+    stack mut u32[0 max] flags = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi)
+    {
+        flags = flags | TypedDeclFlagExternal();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Unsafe))
+    {
+        flags = flags | TypedDeclFlagUnsafe();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Ffi))
+    {
+        flags = flags | TypedDeclFlagFfi();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Asm))
+    {
+        flags = flags | TypedDeclFlagAsm();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Varargs))
+    {
+        flags = flags | TypedDeclFlagVarargs();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Inline))
+    {
+        flags = flags | TypedDeclFlagInline();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Noinline))
+    {
+        flags = flags | TypedDeclFlagNoInline();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Inlinehint))
+    {
+        flags = flags | TypedDeclFlagInlineHint();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Hot))
+    {
+        flags = flags | TypedDeclFlagHot();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Cold))
+    {
+        flags = flags | TypedDeclFlagCold();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Strictfp))
+    {
+        flags = flags | TypedDeclFlagStrictFp();
+    }
+
+    if (LinkNameValueTokenForMember(source, stream, memberStart, fnKeyword) != 0)
+    {
+        flags = flags | TypedDeclFlagLinkName();
+    }
+
+    if (IsCAbiMemberFunction(source, stream, memberStart, fnKeyword))
+    {
+        flags = flags | TypedDeclFlagCAbi();
+    }
+
+    if (MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Static))
+    {
+        flags = flags | TypedMemberFlagStatic();
+    }
+
+    if (signature.TailCallable() || MemberPreludeHasTail(stream, memberStart, fnKeyword))
+    {
+        flags = flags | TypedDeclFlagTailCallable();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus AppendMethodMemberSymbol(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    DeclarationKind ownerKind,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] memberStart,
+    u32[0 max] memberEnd,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut u32[0 max] asmArchitectureToken = 0;
+    stack mut u32[0 max] asmInputCount = 0;
+    stack mut u32[0 max] asmOutputCount = 0;
+    stack mut u32[0 max] asmClobberCount = 0;
+    if (signature.HasAsm())
+    {
+        asmArchitectureToken = signature.AsmArchitectureToken();
+        asmInputCount = signature.AsmInputCount();
+        asmOutputCount = signature.AsmOutputCount();
+        asmClobberCount = signature.AsmClobberCount();
+    }
+
+    return members.Append(
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerNameToken,
+        ownerKind,
+        TypedMemberSymbolKind.Method,
+        signature.Name(),
+        fnKeyword,
+        memberStart,
+        memberEnd,
+        MemberVisibility(ownerVisibility, stream, memberStart, fnKeyword),
+        MemberFunctionKind(stream, memberStart, fnKeyword, signature),
+        signature.ReturnType(),
+        signature.ReturnTypeTokenAt(),
+        signature.ReturnTypeStartTokenAt(),
+        signature.ReturnTypeEndTokenAt(),
+        (u32[0 max])signature.ParamCount(),
+        0,
+        LinkNameValueTokenForMember(source, stream, memberStart, fnKeyword),
+        FfiAbiNameTokenForMember(stream, memberStart, fnKeyword),
+        asmArchitectureToken,
+        asmInputCount,
+        asmOutputCount,
+        asmClobberCount,
+        MemberMethodFlags(source, stream, memberStart, fnKeyword, memberEnd, signature));
+}
+
+internal finite law u32[0 max] FieldMemberFlags(ascii source, borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberEnd)
+{
+    stack mut u32[0 max] flags = 0;
+    if (LeadingMemberAttributesContain(source, stream, memberStart, (u32[0 max])(memberEnd + 1), "FieldOffset"))
+    {
+        flags = flags | TypedMemberFlagFieldOffset();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus AppendFieldMemberSymbol(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    DeclarationKind ownerKind,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] memberStart,
+    u32[0 max] memberEnd,
+    u32[0 max] nameToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken)
+{
+    return members.Append(
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerNameToken,
+        ownerKind,
+        TypedMemberSymbolKind.Field,
+        nameToken,
+        typePrimaryToken,
+        memberStart,
+        memberEnd,
+        MemberVisibility(ownerVisibility, stream, memberStart, typeStartToken),
+        TypedDeclarationFunctionKind.Fn,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        FieldMemberFlags(source, stream, memberStart, memberEnd));
+}
+
+internal fn System.Memory.MemoryStatus AppendFieldDeclaratorsForMember(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    DeclarationKind ownerKind,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] memberStart,
+    u32[0 max] memberCursor,
+    u32[0 max] memberEnd)
+{
+    stack mut u32[0 max] sharedTypeHead = 0;
+    stack mut u32[0 max] sharedTypePrimary = 0;
+    stack mut u32[0 max] sharedTypeStart = 0;
+    stack mut u32[0 max] sharedTypeEnd = 0;
+    stack mut bool haveType = false;
+    stack mut u32[0 max] segStart = memberCursor;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = memberCursor;
+    while willexit (scan <= memberEnd)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.Semi))
+        {
+            stack u32[0 max] nameToken = LastTypeHeadIdentifierInSpan(stream, segStart, scan);
+            if (nameToken != 0)
+            {
+                if (!haveType)
+                {
+                    sharedTypeHead = LastTypeHeadIdentifierInSpan(stream, segStart, nameToken);
+                    sharedTypePrimary = FirstTypeTokenInSpan(stream, segStart, nameToken);
+                    sharedTypeStart = segStart;
+                    sharedTypeEnd = nameToken;
+                    haveType = true;
+                }
+
+                switch (AppendFieldMemberSymbol(
+                    members,
+                    source,
+                    stream,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerNameToken,
+                    ownerKind,
+                    ownerVisibility,
+                    memberStart,
+                    memberEnd,
+                    nameToken,
+                    sharedTypeHead,
+                    sharedTypePrimary,
+                    sharedTypeStart,
+                    sharedTypeEnd))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendAssociatedAliasMemberSymbol(
+    mut borrow TypedMemberSymbolTable members,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    DeclarationKind ownerKind,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] memberStart,
+    u32[0 max] memberEnd,
+    u32[0 max] aliasKeyword)
+{
+    stack AssociatedAliasMemberInfo aliasInfo = ReadAssociatedAliasMemberInfo(stream, aliasKeyword, memberEnd);
+
+    return members.Append(
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerNameToken,
+        ownerKind,
+        TypedMemberSymbolKind.AssociatedAlias,
+        aliasInfo.NameToken,
+        aliasKeyword,
+        memberStart,
+        memberEnd,
+        MemberVisibility(ownerVisibility, stream, memberStart, aliasKeyword),
+        TypedDeclarationFunctionKind.Fn,
+        aliasInfo.TypeHeadToken,
+        aliasInfo.TypePrimaryToken,
+        aliasInfo.TypeStartToken,
+        aliasInfo.TypeEndToken,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0);
+}
+
+internal finite law u32[0 max] RecordHeaderOpenToken(borrow TokenStream stream, u32[0 max] ownerNameToken, u32[0 max] ownerEndToken)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(ownerNameToken + 1);
+    stack mut u32[0 max] angleDepth = 0;
+    while willexit (scan <= ownerEndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile || kind == TokenKind.LBrace || kind == TokenKind.Semi)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen && angleDepth == 0)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendRecordHeaderFields(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] ownerEndToken)
+{
+    stack u32[0 max] openToken = RecordHeaderOpenToken(stream, ownerNameToken, ownerEndToken);
+    if (openToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] closeToken = MatchingMemberCloseToken(stream, openToken);
+    if (closeToken <= openToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] segStart = (u32[0 max])(openToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segStart;
+    while willexit (scan <= closeToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RParen))
+        {
+            stack u32[0 max] cursor = MemberKindCursor(stream, segStart);
+            stack u32[0 max] nameToken = LastTypeHeadIdentifierInSpan(stream, cursor, scan);
+            if (nameToken != 0)
+            {
+                stack u32[0 max] typePrimaryToken = FirstTypeTokenInSpan(stream, cursor, nameToken);
+                switch (AppendFieldMemberSymbol(
+                    members,
+                    source,
+                    stream,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerNameToken,
+                    DeclarationKind.Record,
+                    ownerVisibility,
+                    segStart,
+                    scan,
+                    nameToken,
+                    LastTypeHeadIdentifierInSpan(stream, cursor, nameToken),
+                    typePrimaryToken,
+                    cursor,
+                    nameToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal finite law u32[0 max] CountCommaSeparatedTypeSegments(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan <= endExclusive)
+    {
+        if (scan == endExclusive)
+        {
+            if (segStart < scan)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+
+            return count;
+        }
+
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.Comma && depth == 0)
+        {
+            if (segStart < scan)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal finite law u32[0 max] CountNamedPayloadFields(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.Colon && depth == 0)
+        {
+            count = (u32[0 max])(count + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal finite law bool EnumVariantHasFromPayload(borrow TokenStream stream, u32[0 max] nameToken, u32[0 max] variantEndExclusive)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(nameToken + 1);
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < variantEndExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.From && depth == 0)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] EnumVariantPayloadCount(borrow TokenStream stream, u32[0 max] nameToken, u32[0 max] variantEndExclusive)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(nameToken + 1);
+    while willexit (scan < variantEndExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.From)
+        {
+            return 1;
+        }
+
+        if (kind == TokenKind.LParen)
+        {
+            stack u32[0 max] close = MatchingMemberCloseToken(stream, scan);
+            if (close > scan && close <= variantEndExclusive)
+            {
+                return CountCommaSeparatedTypeSegments(stream, (u32[0 max])(scan + 1), close);
+            }
+
+            return 0;
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            stack u32[0 max] close = MatchingMemberCloseToken(stream, scan);
+            if (close > scan && close <= variantEndExclusive)
+            {
+                return CountNamedPayloadFields(stream, (u32[0 max])(scan + 1), close);
+            }
+
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] EnumVariantFlags(ascii source, borrow TokenStream stream, u32[0 max] variantStart, u32[0 max] nameToken, u32[0 max] variantEndExclusive)
+{
+    stack mut u32[0 max] flags = 0;
+    if (LeadingMemberAttributesContain(source, stream, variantStart, nameToken, "Ok"))
+    {
+        flags = flags | TypedMemberFlagOkRole();
+    }
+
+    if (LeadingMemberAttributesContain(source, stream, variantStart, nameToken, "Err"))
+    {
+        flags = flags | TypedMemberFlagErrRole();
+    }
+
+    if (EnumVariantHasFromPayload(stream, nameToken, variantEndExclusive))
+    {
+        flags = flags | TypedMemberFlagErrorFunnel();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus AppendEnumVariantMembers(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    TypedModuleSymbolVisibility ownerVisibility)
+{
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, ownerNameToken);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] variantStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        while willexit (stream.KindAt((u64[0 2 ** 63 - 1])variantStart) == TokenKind.Comma)
+        {
+            variantStart = (u32[0 max])(variantStart + 1);
+        }
+
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])variantStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] scan = variantStart;
+        stack mut u32[0 max] depth = 0;
+        stack mut u32[0 max] nameToken = 0;
+        stack mut u32[0 max] delimiter = 0;
+        stack mut bool reachedBodyEnd = false;
+        while willexit (guard > 0)
+        {
+            guard = (u64[0 2 ** 63 - 1])(guard - 1);
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.EndOfFile)
+            {
+                delimiter = scan;
+                reachedBodyEnd = true;
+                break;
+            }
+
+            if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RBrace))
+            {
+                delimiter = scan;
+                reachedBodyEnd = kind == TokenKind.RBrace;
+                break;
+            }
+
+            if (kind == TokenKind.Identifier && depth == 0 && nameToken == 0)
+            {
+                nameToken = scan;
+            }
+
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+
+            scan = (u32[0 max])(scan + 1);
+        }
+
+        if (delimiter == 0)
+        {
+            delimiter = scan;
+        }
+
+        if (nameToken != 0)
+        {
+            stack mut u32[0 max] endToken = nameToken;
+            if (delimiter > variantStart)
+            {
+                endToken = (u32[0 max])(delimiter - 1);
+            }
+
+            switch (members.Append(
+                ownerDeclarationSymbolIndexPlusOne,
+                ownerNameToken,
+                DeclarationKind.Enum,
+                TypedMemberSymbolKind.EnumVariant,
+                nameToken,
+                nameToken,
+                variantStart,
+                endToken,
+                ownerVisibility,
+                TypedDeclarationFunctionKind.Fn,
+                0,
+                0,
+                0,
+                0,
+                0,
+                EnumVariantPayloadCount(stream, nameToken, delimiter),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                EnumVariantFlags(source, stream, variantStart, nameToken, delimiter)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (reachedBodyEnd)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        variantStart = (u32[0 max])(delimiter + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypeBodyMembers(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    DeclarationKind ownerKind,
+    TypedModuleSymbolVisibility ownerVisibility,
+    bool includeFields)
+{
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, ownerNameToken);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] memberStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])memberStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] memberEnd = ReceiverMemberEndToken(stream, memberStart);
+        if (memberEnd < memberStart)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] fnKeyword = ReceiverMemberFunctionToken(stream, memberStart, memberEnd);
+        if (fnKeyword != 0)
+        {
+            switch (AppendMethodMemberSymbol(
+                members,
+                source,
+                stream,
+                ownerDeclarationSymbolIndexPlusOne,
+                ownerNameToken,
+                ownerKind,
+                ownerVisibility,
+                memberStart,
+                memberEnd,
+                fnKeyword))
+            {
+                case System.Memory.MemoryStatus.Err(var methodError):
+                    return System.Memory.MemoryStatus.Err(methodError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            stack u32[0 max] cursor = MemberKindCursor(stream, memberStart);
+            stack TokenKind cursorKind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+            if (cursorKind == TokenKind.Alias)
+            {
+                switch (AppendAssociatedAliasMemberSymbol(
+                    members,
+                    stream,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerNameToken,
+                    ownerKind,
+                    ownerVisibility,
+                    memberStart,
+                    memberEnd,
+                    cursor))
+                {
+                    case System.Memory.MemoryStatus.Err(var aliasError):
+                        return System.Memory.MemoryStatus.Err(aliasError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (includeFields && stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi)
+            {
+                switch (AppendFieldDeclaratorsForMember(
+                    members,
+                    source,
+                    stream,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerNameToken,
+                    ownerKind,
+                    ownerVisibility,
+                    memberStart,
+                    cursor,
+                    memberEnd))
+                {
+                    case System.Memory.MemoryStatus.Err(var fieldError):
+                        return System.Memory.MemoryStatus.Err(fieldError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        memberStart = (u32[0 max])(memberEnd + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendMembersForDeclaration(
+    mut borrow TypedMemberSymbolTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    u64[0 2 ** 63 - 1] ownerIndex)
+{
+    stack DeclarationKind ownerKind = declarations.DeclarationKindAt(ownerIndex);
+    stack u32[0 max] ownerPlusOne = (u32[0 max])(ownerIndex + 1);
+    stack u32[0 max] ownerNameToken = declarations.NameTokenAt(ownerIndex);
+    stack TypedModuleSymbolVisibility ownerVisibility = declarations.VisibilityAt(ownerIndex);
+    if (ownerKind == DeclarationKind.Record)
+    {
+        switch (AppendRecordHeaderFields(
+            members,
+            source,
+            stream,
+            ownerPlusOne,
+            ownerNameToken,
+            ownerVisibility,
+            declarations.EndTokenAt(ownerIndex)))
+        {
+            case System.Memory.MemoryStatus.Err(var recordHeaderError):
+                return System.Memory.MemoryStatus.Err(recordHeaderError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (ownerKind == DeclarationKind.Enum)
+    {
+        return AppendEnumVariantMembers(members, source, stream, ownerPlusOne, ownerNameToken, ownerVisibility);
+    }
+
+    if (ownerKind == DeclarationKind.Struct || ownerKind == DeclarationKind.Record)
+    {
+        return AppendTypeBodyMembers(members, source, stream, ownerPlusOne, ownerNameToken, ownerKind, ownerVisibility, true);
+    }
+
+    if (ownerKind == DeclarationKind.Trait || ownerKind == DeclarationKind.Doctrine)
+    {
+        return AppendTypeBodyMembers(members, source, stream, ownerPlusOne, ownerNameToken, ownerKind, ownerVisibility, false);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<TypedMemberSymbolTable> BuildTypedMemberAndMethodSymbols(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations)
+{
+    stack mut TypedMemberSymbolTable members = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (IsTypeMemberOwner(declarations.DeclarationKindAt(index)))
+        {
+            switch (AppendMembersForDeclaration(members, source, stream, declarations, index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<TypedMemberSymbolTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<TypedMemberSymbolTable>.Ok(members);
+}

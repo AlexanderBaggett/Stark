@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-port-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "StdlibPortTests.stark"
+output = "stdlib-port-tests"

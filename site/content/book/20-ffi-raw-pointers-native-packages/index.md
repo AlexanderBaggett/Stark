@@ -45,6 +45,26 @@ Stark source. The declaration should use types that make sense at the foreign
 boundary. It is marked `unsafe` because callers and wrapper authors must
 document the native function's lifetime, aliasing, unwinding, and ABI behavior.
 
+When the Stark declaration name should differ from the foreign linker symbol,
+use `[LinkName("symbol")]` instead of a C rename shim:
+
+```stark
+[LinkName("vendor_current_value")]
+unsafe ffi(c) fn i32[min max] CurrentValue();
+```
+
+`LinkName` changes only the external symbol. It does not change calling
+convention, parameter lowering, ownership, or safety.
+
+For C structs passed or returned by value, use `[StructLayout(C)]` on the Stark
+struct and `ffi(c)` on the declaration. The compiler lowers the boundary through
+the target C ABI carrier shape, so a small aggregate like raylib `Vector2` or
+`Rectangle` does not need a C shim merely to adapt by-value calling convention.
+Parameter and result carriers are separate target facts. On AArch64 AAPCS64, a
+four-byte integer-like struct such as Raylib `Color` is passed through `i64` but
+returned through `i32`; reusing one carrier for both directions corrupts the C
+call boundary.
+
 Ordinary Stark enums are not automatic native ABI types. Design the boundary
 with explicit scalar tags, payload pointers, or a purpose-built interop
 representation instead:
@@ -255,6 +275,11 @@ Native-backed packages should own their native build settings. A downstream
 program should not repeat linker flags for every executable that uses the
 package.
 
+This section describes authoring a custom/source package. Official `Vendor.*`
+packages in a release SDK are already target-built and indexed by `sdk.json`;
+applications import them directly and do not use `pkg-config`, native path
+fallbacks, or dependency entries.
+
 A package manifest can declare native sources and discovery names:
 
 ```toml
@@ -268,7 +293,6 @@ root = "Raylib.stark"
 output = "RaylibStark"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 ```
 
@@ -296,7 +320,6 @@ The consuming project should only name the package:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 ## Step 6: Review The C ABI Surface For Smallness
@@ -304,6 +327,7 @@ stdlib = { path = "../../stdlib" }
 Keep C-facing APIs small and deliberate:
 
 - prefer simple scalar and pointer types at the boundary
+- use `[StructLayout(C)]` plus `ffi(c)` for direct by-value C aggregates
 - keep ownership transfer explicit
 - do not let foreign exceptions or unwinding cross Stark frames
 - convert raw/foreign results into Stark result/status values quickly

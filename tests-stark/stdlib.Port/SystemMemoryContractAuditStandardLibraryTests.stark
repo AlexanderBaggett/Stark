@@ -1,0 +1,73 @@
+import StdlibPortSupport
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Testing
+import System.Text
+module SystemMemoryContractAuditStandardLibraryTests
+
+// Ported from SystemMemoryContractAuditStandardLibraryTests.StdLibOverlapSensitiveApisDeclareExplicitMemoryContracts.
+internal fn bool StdLibOverlapSensitiveApisDeclareExplicitMemoryContractsImpl()
+{
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Memory.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var memoryError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var memorySourceOwner):
+            stack ascii memorySource = memorySourceOwner.View();
+            if (!System.Testing.Contains(memorySource, "public fn MemoryStatus AppendBytes(")
+                || !System.Testing.Contains(memorySource, "where overlap(storage, source)")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus AppendCodePoints(")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus CopyBytes(")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus CopyCodePoints(")
+                || !System.Testing.Contains(memorySource, "where overlap(source, destination)"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Text.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var textError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var textSourceOwner):
+            stack ascii textSource = textSourceOwner.View();
+            if (!System.Testing.Contains(textSource, "fn System.Memory.MemoryStatus AppendAscii(")
+                || !System.Testing.Contains(textSource, "fn System.Memory.MemoryStatus AppendUnicode(")
+                || !System.Testing.Contains(textSource, "where overlap(self, source)")
+                || !System.Testing.Contains(textSource, "where overlap(left, right);"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/IO/Path.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var pathSourceOwner):
+            stack ascii pathSource = pathSourceOwner.View();
+            if (!System.Testing.Contains(pathSource, "fn System.Memory.MemoryStatus TryJoin(")
+                || !System.Testing.Contains(pathSource, "fn System.Memory.MemoryStatus TryJoinConst(")
+                || !System.Testing.Contains(pathSource, "where overlap(destination, left)")
+                || !System.Testing.Contains(pathSource, "where overlap(left, right)"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Buffer.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var bufferError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var bufferSourceOwner):
+            stack ascii bufferSource = bufferSourceOwner.View();
+            if (!System.Testing.Contains(bufferSource, "where overlap(storage, source)")
+                || !System.Testing.Contains(bufferSource, "where overlap(self, source)"))
+            {
+                return false;
+            }
+    }
+
+    return true;
+}

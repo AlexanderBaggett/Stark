@@ -1,4 +1,5 @@
 import System
+import System.Console
 module BuildYourOwnGit
 
 finite law bool IsOk(System.IO.IOStatus status) {
@@ -44,9 +45,6 @@ export unsafe fn i32[min max] main() {
         return 1;
     }
 
-    if (System.Console.WriteLine("Initialized starkgit-demo/.starkgit") != System.IO.IOStatus.Ok) {
-        return 2;
-    }
-
+    WriteLine("Initialized starkgit-demo/.starkgit");
     return 0;
 }

@@ -1,0 +1,2152 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+module Compiler.Mir.Facts
+
+internal finite law i64[min max] I64MinValue()
+{
+    return (i64[min max])(-(2 ** 63));
+}
+
+internal finite law i64[min max] I64MaxValue()
+{
+    return 9223372036854775807;
+}
+
+internal fn i64[min max] Pow2I64(u32[0 max] exponent)
+{
+    stack mut i64[min max] value = 1;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < exponent)
+    {
+        value = value * 2;
+        i = i + 1;
+    }
+
+    return value;
+}
+
+// MIR range facts are currently i64-backed, so endpoint arithmetic is checked
+// before facts become LLVM range attributes or metadata.
+internal fn bool TryParseDigitSpanI64(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length, out i64[min max] value)
+{
+    value = 0;
+    if (length == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] j = 0;
+    while willexit (j < length)
+    {
+        stack i8[min max] digitByte = source[start + j];
+        if (digitByte < 48 || digitByte > 57)
+        {
+            return false;
+        }
+
+        stack i64[min max] digit = (i64[min max])digitByte - 48;
+        if (value > (I64MaxValue() - digit) / 10)
+        {
+            return false;
+        }
+
+        value = value * 10 + digit;
+        j = j + 1;
+    }
+
+    return true;
+}
+
+internal finite bool TryCheckedAddI64(i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    if (right > 0 && left > I64MaxValue() - right)
+    {
+        return false;
+    }
+
+    if (right < 0 && left < I64MinValue() - right)
+    {
+        return false;
+    }
+
+    value = left + right;
+    return true;
+}
+
+internal finite bool TryCheckedSubI64(i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    if (right > 0 && left < I64MinValue() + right)
+    {
+        return false;
+    }
+
+    if (right < 0 && left > I64MaxValue() + right)
+    {
+        return false;
+    }
+
+    value = left - right;
+    return true;
+}
+
+internal finite bool TryCheckedMulI64(i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    if (left == 0 || right == 0)
+    {
+        value = 0;
+        return true;
+    }
+
+    if (left == 1)
+    {
+        value = right;
+        return true;
+    }
+
+    if (right == 1)
+    {
+        value = left;
+        return true;
+    }
+
+    if (left == -1)
+    {
+        if (right == I64MinValue())
+        {
+            return false;
+        }
+
+        value = 0 - right;
+        return true;
+    }
+
+    if (right == -1)
+    {
+        if (left == I64MinValue())
+        {
+            return false;
+        }
+
+        value = 0 - left;
+        return true;
+    }
+
+    if (left > 0)
+    {
+        if (right > 0)
+        {
+            if (left > I64MaxValue() / right)
+            {
+                return false;
+            }
+        }
+        else if (right < I64MinValue() / left)
+        {
+            return false;
+        }
+    }
+    else if (right > 0)
+    {
+        if (left < I64MinValue() / right)
+        {
+            return false;
+        }
+    }
+    else if (left < I64MaxValue() / right)
+    {
+        return false;
+    }
+
+    value = left * right;
+    return true;
+}
+
+internal finite bool TryCheckedDivI64(i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    if (right == 0)
+    {
+        return false;
+    }
+
+    if (left == I64MinValue() && right == -1)
+    {
+        return false;
+    }
+
+    value = left / right;
+    return true;
+}
+
+internal finite bool TryCheckedModI64(i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    if (right == 0)
+    {
+        return false;
+    }
+
+    if (left == I64MinValue() && right == -1)
+    {
+        return false;
+    }
+
+    value = left % right;
+    return true;
+}
+
+internal finite law i64[min max] MinI64(i64[min max] left, i64[min max] right)
+{
+    if (left < right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+internal finite law i64[min max] MaxI64(i64[min max] left, i64[min max] right)
+{
+    if (left > right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+internal finite law bool IntegerRangeIsNonWrapping(ValueFacts facts)
+{
+    if (!facts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] upperExclusive = facts.IntegerRangeUpperExclusive();
+    return upperExclusive != I64MinValue()
+        && facts.IntegerRangeLower() < upperExclusive;
+}
+
+internal fn bool TrySetSingleValueIntegerRange(mut borrow ValueFacts facts, i64[min max] value)
+{
+    stack mut i64[min max] upperExclusive = 0;
+    if (!TryCheckedAddI64(value, 1, upperExclusive))
+    {
+        if (value != I64MaxValue())
+        {
+            return false;
+        }
+
+        upperExclusive = I64MinValue();
+    }
+
+    facts.SetIntegerRange(value, upperExclusive);
+    return true;
+}
+
+internal finite bool TryReadSingleValueIntegerRange(ValueFacts facts, out i64[min max] value)
+{
+    value = 0;
+    if (!facts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = facts.IntegerRangeLower();
+    stack i64[min max] upperExclusive = facts.IntegerRangeUpperExclusive();
+    if (upperExclusive == I64MinValue())
+    {
+        if (lower != I64MaxValue())
+        {
+            return false;
+        }
+
+        value = lower;
+        return true;
+    }
+
+    if (lower == I64MaxValue())
+    {
+        return false;
+    }
+
+    if (upperExclusive != lower + 1)
+    {
+        return false;
+    }
+
+    value = lower;
+    return true;
+}
+
+internal finite law bool IntegerValueFitsMirType(MirType type, i64[min max] value)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return value == 0 || value == 1;
+        case MirType.I8:
+            return value >= -128 && value <= 127;
+        case MirType.I16:
+            return value >= -32768 && value <= 32767;
+        case MirType.I32:
+            return value >= (i64[min max])(-(2 ** 31)) && value <= 2147483647;
+        case MirType.I64:
+            return true;
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
+        case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
+            return false;
+    }
+}
+
+internal fn bool TrySetSingleValueIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type, i64[min max] value)
+{
+    if (!IntegerValueFitsMirType(type, value))
+    {
+        return false;
+    }
+
+    return TrySetSingleValueIntegerRange(facts, value);
+}
+
+internal finite bool TryCheckedShiftAmount(MirType type, i64[min max] value, out u32[0 max] amount)
+{
+    amount = 0;
+    if (value < 0)
+    {
+        return false;
+    }
+
+    switch (type)
+    {
+        case MirType.I1:
+            if (value >= 1)
+            {
+                return false;
+            }
+        case MirType.I8:
+            if (value >= 8)
+            {
+                return false;
+            }
+        case MirType.I16:
+            if (value >= 16)
+            {
+                return false;
+            }
+        case MirType.I32:
+            if (value >= 32)
+            {
+                return false;
+            }
+        case MirType.I64:
+            if (value >= 64)
+            {
+                return false;
+            }
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
+        case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
+            return false;
+    }
+
+    amount = (u32[0 max])value;
+    return true;
+}
+
+internal finite bool TryPow2I64Checked(u32[0 max] exponent, out i64[min max] value)
+{
+    value = 1;
+    stack mut i64[min max] current = 1;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < exponent)
+    {
+        stack mut i64[min max] next = 0;
+        if (!TryCheckedMulI64(current, 2, next))
+        {
+            return false;
+        }
+
+        current = next;
+        index = index + 1;
+    }
+
+    value = current;
+    return true;
+}
+
+internal fn bool TryCheckedShlI64(MirType type, i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    stack mut u32[0 max] amount = 0;
+    if (!TryCheckedShiftAmount(type, right, amount))
+    {
+        return false;
+    }
+
+    if (amount == 0)
+    {
+        value = left;
+        return true;
+    }
+
+    stack mut i64[min max] factor = 0;
+    if (!TryPow2I64Checked(amount, factor))
+    {
+        if (left == 0)
+        {
+            value = 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    return TryCheckedMulI64(left, factor, value);
+}
+
+internal fn bool TryCheckedAShrI64(MirType type, i64[min max] left, i64[min max] right, out i64[min max] value)
+{
+    value = 0;
+    stack mut u32[0 max] amount = 0;
+    if (!TryCheckedShiftAmount(type, right, amount))
+    {
+        return false;
+    }
+
+    if (amount == 0)
+    {
+        value = left;
+        return true;
+    }
+
+    if (type == MirType.I64 && amount == 63)
+    {
+        if (left < 0)
+        {
+            value = -1;
+        }
+        else
+        {
+            value = 0;
+        }
+
+        return true;
+    }
+
+    stack mut i64[min max] factor = 0;
+    if (!TryPow2I64Checked(amount, factor))
+    {
+        return false;
+    }
+
+    if (left >= 0)
+    {
+        value = left / factor;
+        return true;
+    }
+
+    stack mut i64[min max] adjusted = 0;
+    stack mut i64[min max] quotient = 0;
+    return TryCheckedAddI64(left, 1, adjusted)
+        && TryCheckedSubI64(adjusted / factor, 1, quotient)
+        && TryCheckedAddI64(quotient, 0, value);
+}
+
+internal finite bool TryIntegerRangeUpperInclusive(ValueFacts facts, out i64[min max] value)
+{
+    value = 0;
+    if (!IntegerRangeIsNonWrapping(facts))
+    {
+        return false;
+    }
+
+    return TryCheckedSubI64(facts.IntegerRangeUpperExclusive(), 1, value);
+}
+
+internal fn bool TrySetInclusiveIntegerRange(mut borrow ValueFacts facts, i64[min max] lower, i64[min max] upperInclusive)
+{
+    if (lower > upperInclusive)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] upperExclusive = 0;
+    if (!TryCheckedAddI64(upperInclusive, 1, upperExclusive))
+    {
+        if (upperInclusive != I64MaxValue())
+        {
+            return false;
+        }
+
+        upperExclusive = I64MinValue();
+    }
+
+    if (lower == I64MinValue() && upperExclusive == I64MinValue())
+    {
+        return false;
+    }
+
+    facts.SetIntegerRange(lower, upperExclusive);
+    return true;
+}
+
+internal fn bool TryBuildAddRangeFacts(ValueFacts leftFacts, ValueFacts rightFacts, mut borrow ValueFacts resultFacts)
+{
+    if (!IntegerRangeIsNonWrapping(leftFacts) || !IntegerRangeIsNonWrapping(rightFacts))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] leftUpperInclusive = 0;
+    stack mut i64[min max] rightUpperInclusive = 0;
+    stack mut i64[min max] upperInclusive = 0;
+    return TryCheckedAddI64(leftFacts.IntegerRangeLower(), rightFacts.IntegerRangeLower(), lower)
+        && TryIntegerRangeUpperInclusive(leftFacts, leftUpperInclusive)
+        && TryIntegerRangeUpperInclusive(rightFacts, rightUpperInclusive)
+        && TryCheckedAddI64(leftUpperInclusive, rightUpperInclusive, upperInclusive)
+        && TrySetInclusiveIntegerRange(resultFacts, lower, upperInclusive);
+}
+
+internal fn bool TryBuildSubRangeFacts(ValueFacts leftFacts, ValueFacts rightFacts, mut borrow ValueFacts resultFacts)
+{
+    if (!IntegerRangeIsNonWrapping(leftFacts) || !IntegerRangeIsNonWrapping(rightFacts))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] leftUpperInclusive = 0;
+    stack mut i64[min max] rightUpperInclusive = 0;
+    stack mut i64[min max] upperInclusive = 0;
+    return TryIntegerRangeUpperInclusive(leftFacts, leftUpperInclusive)
+        && TryIntegerRangeUpperInclusive(rightFacts, rightUpperInclusive)
+        && TryCheckedSubI64(leftFacts.IntegerRangeLower(), rightUpperInclusive, lower)
+        && TryCheckedSubI64(leftUpperInclusive, rightFacts.IntegerRangeLower(), upperInclusive)
+        && TrySetInclusiveIntegerRange(resultFacts, lower, upperInclusive);
+}
+
+internal fn bool TryBuildMulRangeFacts(ValueFacts leftFacts, ValueFacts rightFacts, mut borrow ValueFacts resultFacts)
+{
+    if (!IntegerRangeIsNonWrapping(leftFacts) || !IntegerRangeIsNonWrapping(rightFacts))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] leftUpperInclusive = 0;
+    stack mut i64[min max] rightUpperInclusive = 0;
+    stack mut i64[min max] productA = 0;
+    stack mut i64[min max] productB = 0;
+    stack mut i64[min max] productC = 0;
+    stack mut i64[min max] productD = 0;
+    if (!TryIntegerRangeUpperInclusive(leftFacts, leftUpperInclusive)
+        || !TryIntegerRangeUpperInclusive(rightFacts, rightUpperInclusive)
+        || !TryCheckedMulI64(leftFacts.IntegerRangeLower(), rightFacts.IntegerRangeLower(), productA)
+        || !TryCheckedMulI64(leftFacts.IntegerRangeLower(), rightUpperInclusive, productB)
+        || !TryCheckedMulI64(leftUpperInclusive, rightFacts.IntegerRangeLower(), productC)
+        || !TryCheckedMulI64(leftUpperInclusive, rightUpperInclusive, productD))
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = MinI64(MinI64(productA, productB), MinI64(productC, productD));
+    stack i64[min max] upperInclusive = MaxI64(MaxI64(productA, productB), MaxI64(productC, productD));
+    return TrySetInclusiveIntegerRange(resultFacts, lower, upperInclusive);
+}
+
+internal finite bool TryMirTypeSignedBounds(MirType type, out i64[min max] lower, out i64[min max] upper)
+{
+    lower = 0;
+    upper = 0;
+    switch (type)
+    {
+        case MirType.I8:
+            lower = -128;
+            upper = 127;
+            return true;
+        case MirType.I16:
+            lower = -32768;
+            upper = 32767;
+            return true;
+        case MirType.I32:
+            lower = (i64[min max])(-(2 ** 31));
+            upper = 2147483647;
+            return true;
+        case MirType.I64:
+            lower = I64MinValue();
+            upper = I64MaxValue();
+            return true;
+        case MirType.I1:
+            return false;
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
+        case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
+            return false;
+    }
+}
+
+internal finite law i64[min max] ClampI64(i64[min max] value, i64[min max] lower, i64[min max] upper)
+{
+    if (value < lower)
+    {
+        return lower;
+    }
+
+    if (value > upper)
+    {
+        return upper;
+    }
+
+    return value;
+}
+
+internal fn bool TrySetFullIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type)
+{
+    if (type == MirType.I1)
+    {
+        facts.SetIntegerRange(0, 2);
+        return true;
+    }
+
+    if (type == MirType.I8)
+    {
+        facts.SetIntegerRange(-128, 128);
+        return true;
+    }
+
+    if (type == MirType.I16)
+    {
+        facts.SetIntegerRange(-32768, 32768);
+        return true;
+    }
+
+    if (type == MirType.I32)
+    {
+        facts.SetIntegerRange((i64[min max])(-(2 ** 31)), (i64[min max])(2 ** 31));
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TrySetUnsignedIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type)
+{
+    if (type == MirType.I1)
+    {
+        facts.SetIntegerRange(0, 2);
+        return true;
+    }
+
+    if (type == MirType.I8)
+    {
+        facts.SetIntegerRange(0, 256);
+        return true;
+    }
+
+    if (type == MirType.I16)
+    {
+        facts.SetIntegerRange(0, 65536);
+        return true;
+    }
+
+    if (type == MirType.I32)
+    {
+        facts.SetIntegerRange(0, (i64[min max])(2 ** 32));
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TrySetIntegerResultFactsForMirType(mut borrow ValueFacts facts, MirType type)
+{
+    return TrySetFullIntegerRangeForMirType(facts, type);
+}
+
+internal finite law bool ValueFactsHasAny(ValueFacts facts)
+{
+    return facts.HasAlignment()
+        || facts.HasCallingAbi()
+        || facts.HasNoAlias()
+        || facts.Volatile()
+        || facts.HasIntegerRange()
+        || facts.HasNullability()
+        || facts.HasTextConstant();
+}
+
+internal fn bool TryBuildEnumTagReadFacts(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    mut borrow ValueFacts facts)
+{
+    stack mut u32[0 max] current = instr.OperandAIndex();
+    stack mut u64[0 2 ** 63 - 1] remaining = instrs.Count();
+    while willexit (current != 0 && remaining > 0)
+    {
+        if (!instrs.Contains(current))
+        {
+            return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        stack MirInstruction currentInstr = instrs.Get(current);
+        switch (currentInstr.Opcode())
+        {
+            case MirOp.EnumVariantTag:
+                if (currentInstr.OperandAIndex() != instr.OperandBIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                if (TrySetSingleValueIntegerRangeForMirType(facts, instr.ResultType(), (i64[min max])currentInstr.OperandBIndex()))
+                {
+                    return true;
+                }
+
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+            case MirOp.EnumPayloadInsert:
+                if (currentInstr.OperandCIndex() != instr.OperandBIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                current = currentInstr.OperandAIndex();
+            default:
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        remaining = remaining - 1;
+    }
+
+    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+}
+
+internal fn bool TryBuildEnumPayloadExtractFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts facts)
+{
+    stack mut u32[0 max] current = instr.OperandAIndex();
+    stack mut u64[0 2 ** 63 - 1] remaining = instrs.Count();
+    while willexit (current != 0 && remaining > 0)
+    {
+        if (!instrs.Contains(current))
+        {
+            return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        stack MirInstruction currentInstr = instrs.Get(current);
+        switch (currentInstr.Opcode())
+        {
+            case MirOp.EnumPayloadInsert:
+                if (currentInstr.OperandCIndex() != instr.OperandBIndex()
+                    || currentInstr.OperandDIndex() != instr.OperandCIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                if (currentInstr.Immediate() == (i64[min max])instr.OperandDIndex())
+                {
+                    stack ValueFacts payloadFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(currentInstr.OperandBIndex()));
+                    if (ValueFactsHasAny(payloadFacts))
+                    {
+                        facts.InheritFrom(payloadFacts);
+                        return true;
+                    }
+
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                current = currentInstr.OperandAIndex();
+            default:
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        remaining = remaining - 1;
+    }
+
+    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+}
+
+internal finite bool TryWrapI32(i64[min max] value, out i64[min max] wrapped)
+{
+    wrapped = 0;
+    stack i64[min max] modulus = 4294967296;
+    stack mut i64[min max] normalized = value % modulus;
+    if (normalized < 0)
+    {
+        normalized = normalized + modulus;
+    }
+
+    if (normalized > 2147483647)
+    {
+        normalized = normalized - modulus;
+    }
+
+    wrapped = normalized;
+    return true;
+}
+
+internal finite bool TryWrapI16(i64[min max] value, out i64[min max] wrapped)
+{
+    wrapped = 0;
+    stack i64[min max] modulus = 65536;
+    stack mut i64[min max] normalized = value % modulus;
+    if (normalized < 0)
+    {
+        normalized = normalized + modulus;
+    }
+
+    if (normalized > 32767)
+    {
+        normalized = normalized - modulus;
+    }
+
+    wrapped = normalized;
+    return true;
+}
+
+internal finite bool TryWrapI8(i64[min max] value, out i64[min max] wrapped)
+{
+    wrapped = 0;
+    stack i64[min max] modulus = 256;
+    stack mut i64[min max] normalized = value % modulus;
+    if (normalized < 0)
+    {
+        normalized = normalized + modulus;
+    }
+
+    if (normalized > 127)
+    {
+        normalized = normalized - modulus;
+    }
+
+    wrapped = normalized;
+    return true;
+}
+
+internal finite bool TryBuildExactWrappingIntegerResult(
+    MirOp op,
+    MirType type,
+    i64[min max] left,
+    i64[min max] right,
+    out i64[min max] result)
+{
+    result = 0;
+    stack mut i64[min max] raw = 0;
+    switch (op)
+    {
+        case MirOp.WrappingAdd:
+            if (!TryCheckedAddI64(left, right, raw))
+            {
+                return false;
+            }
+        case MirOp.WrappingSub:
+            if (!TryCheckedSubI64(left, right, raw))
+            {
+                return false;
+            }
+        case MirOp.WrappingMul:
+            if (!TryCheckedMulI64(left, right, raw))
+            {
+                return false;
+            }
+        default:
+            return false;
+    }
+
+    if (type == MirType.I8)
+    {
+        return TryWrapI8(raw, result);
+    }
+
+    if (type == MirType.I16)
+    {
+        return TryWrapI16(raw, result);
+    }
+
+    if (type == MirType.I32)
+    {
+        return TryWrapI32(raw, result);
+    }
+
+    if (type == MirType.I64)
+    {
+        result = raw;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryBuildWrappingIntegerFacts(
+    MirInstruction instr,
+    ValueFacts leftFacts,
+    ValueFacts rightFacts,
+    mut borrow ValueFacts resultFacts)
+{
+    stack mut i64[min max] left = 0;
+    stack mut i64[min max] right = 0;
+    if (!TryReadSingleValueIntegerRange(leftFacts, left)
+        || !TryReadSingleValueIntegerRange(rightFacts, right))
+    {
+        if (TrySetFullIntegerRangeForMirType(resultFacts, instr.ResultType()))
+        {
+            return true;
+        }
+
+        return instr.ResultType() == MirType.I64;
+    }
+
+    stack mut i64[min max] result = 0;
+    if (TryBuildExactWrappingIntegerResult(instr.Opcode(), instr.ResultType(), left, right, result))
+    {
+        return TrySetSingleValueIntegerRangeForMirType(resultFacts, instr.ResultType(), result);
+    }
+
+    if (TrySetFullIntegerRangeForMirType(resultFacts, instr.ResultType()))
+    {
+        return true;
+    }
+
+    return instr.ResultType() == MirType.I64;
+}
+
+internal finite bool TryBuildExactSaturatingIntegerResult(
+    MirOp op,
+    MirType type,
+    i64[min max] left,
+    i64[min max] right,
+    out i64[min max] result)
+{
+    result = 0;
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] upper = 0;
+    if (!TryMirTypeSignedBounds(type, lower, upper))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] raw = 0;
+    switch (op)
+    {
+        case MirOp.SaturatingAdd:
+            if (TryCheckedAddI64(left, right, raw))
+            {
+                result = ClampI64(raw, lower, upper);
+                return true;
+            }
+
+            if (right > 0)
+            {
+                result = upper;
+            }
+            else
+            {
+                result = lower;
+            }
+
+            return true;
+        case MirOp.SaturatingSub:
+            if (TryCheckedSubI64(left, right, raw))
+            {
+                result = ClampI64(raw, lower, upper);
+                return true;
+            }
+
+            if (right > 0)
+            {
+                result = lower;
+            }
+            else
+            {
+                result = upper;
+            }
+
+            return true;
+        case MirOp.SaturatingMul:
+            if (TryCheckedMulI64(left, right, raw))
+            {
+                result = ClampI64(raw, lower, upper);
+                return true;
+            }
+
+            if ((left < 0 && right > 0) || (left > 0 && right < 0))
+            {
+                result = lower;
+            }
+            else
+            {
+                result = upper;
+            }
+
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TryClampIntegerRangeFactsToMirType(
+    ValueFacts sourceFacts,
+    MirType type,
+    mut borrow ValueFacts resultFacts)
+{
+    if (!IntegerRangeIsNonWrapping(sourceFacts))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] lowerBound = 0;
+    stack mut i64[min max] upperBound = 0;
+    stack mut i64[min max] upperInclusive = 0;
+    if (!TryMirTypeSignedBounds(type, lowerBound, upperBound)
+        || !TryIntegerRangeUpperInclusive(sourceFacts, upperInclusive))
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = ClampI64(sourceFacts.IntegerRangeLower(), lowerBound, upperBound);
+    stack i64[min max] upper = ClampI64(upperInclusive, lowerBound, upperBound);
+    return TrySetInclusiveIntegerRange(resultFacts, MinI64(lower, upper), MaxI64(lower, upper));
+}
+
+internal fn bool TryBuildSaturatingIntegerFacts(
+    MirInstruction instr,
+    ValueFacts leftFacts,
+    ValueFacts rightFacts,
+    mut borrow ValueFacts resultFacts)
+{
+    stack mut i64[min max] left = 0;
+    stack mut i64[min max] right = 0;
+    if (TryReadSingleValueIntegerRange(leftFacts, left)
+        && TryReadSingleValueIntegerRange(rightFacts, right))
+    {
+        stack mut i64[min max] result = 0;
+        if (TryBuildExactSaturatingIntegerResult(instr.Opcode(), instr.ResultType(), left, right, result))
+        {
+            return TrySetSingleValueIntegerRangeForMirType(resultFacts, instr.ResultType(), result);
+        }
+    }
+
+    stack mut ValueFacts rangeFacts = new();
+    switch (instr.Opcode())
+    {
+        case MirOp.SaturatingAdd:
+            if (TryBuildAddRangeFacts(leftFacts, rightFacts, rangeFacts))
+            {
+                return TryClampIntegerRangeFactsToMirType(rangeFacts, instr.ResultType(), resultFacts);
+            }
+        case MirOp.SaturatingSub:
+            if (TryBuildSubRangeFacts(leftFacts, rightFacts, rangeFacts))
+            {
+                return TryClampIntegerRangeFactsToMirType(rangeFacts, instr.ResultType(), resultFacts);
+            }
+        case MirOp.SaturatingMul:
+            if (TryBuildMulRangeFacts(leftFacts, rightFacts, rangeFacts))
+            {
+                return TryClampIntegerRangeFactsToMirType(rangeFacts, instr.ResultType(), resultFacts);
+            }
+        default:
+            return false;
+    }
+
+    if (TrySetFullIntegerRangeForMirType(resultFacts, instr.ResultType()))
+    {
+        return true;
+    }
+
+    return instr.ResultType() == MirType.I64;
+}
+
+internal fn bool TryBuildExactExtendedIntegerFacts(
+    MirInstruction instr,
+    ValueFacts leftFacts,
+    ValueFacts rightFacts,
+    mut borrow ValueFacts resultFacts)
+{
+    stack mut i64[min max] left = 0;
+    stack mut i64[min max] right = 0;
+    stack mut i64[min max] result = 0;
+    if (!TryReadSingleValueIntegerRange(leftFacts, left)
+        || !TryReadSingleValueIntegerRange(rightFacts, right))
+    {
+        return false;
+    }
+
+    switch (instr.Opcode())
+    {
+        case MirOp.SDiv:
+            if (!TryCheckedDivI64(left, right, result))
+            {
+                return false;
+            }
+        case MirOp.UDiv:
+            if (left < 0 || right < 0 || !TryCheckedDivI64(left, right, result))
+            {
+                return false;
+            }
+        case MirOp.SRem:
+            if (!TryCheckedModI64(left, right, result))
+            {
+                return false;
+            }
+        case MirOp.And:
+            result = left & right;
+        case MirOp.Or:
+            result = left | right;
+        case MirOp.Xor:
+            result = left ^ right;
+        case MirOp.Shl:
+            if (!TryCheckedShlI64(instr.ResultType(), left, right, result))
+            {
+                return false;
+            }
+        case MirOp.AShr:
+            if (!TryCheckedAShrI64(instr.ResultType(), left, right, result))
+            {
+                return false;
+            }
+        default:
+            return false;
+    }
+
+    return TrySetSingleValueIntegerRangeForMirType(resultFacts, instr.ResultType(), result);
+}
+
+internal fn bool TryBuildPhiRangeFacts(ValueFacts leftFacts, ValueFacts rightFacts, mut borrow ValueFacts resultFacts)
+{
+    if (!IntegerRangeIsNonWrapping(leftFacts) || !IntegerRangeIsNonWrapping(rightFacts))
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = MinI64(leftFacts.IntegerRangeLower(), rightFacts.IntegerRangeLower());
+    stack i64[min max] upperExclusive = MaxI64(leftFacts.IntegerRangeUpperExclusive(), rightFacts.IntegerRangeUpperExclusive());
+    if (lower >= upperExclusive)
+    {
+        return false;
+    }
+
+    resultFacts.SetIntegerRange(lower, upperExclusive);
+    return true;
+}
+
+internal fn bool TryBuildPtrOffsetFacts(
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts resultFacts)
+{
+    if (instr.ResultType() != MirType.Ptr || instr.OperandAIndex() == 0)
+    {
+        return false;
+    }
+
+    stack ValueFacts baseFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (baseFacts.KnownNonNull())
+    {
+        resultFacts.MarkKnownNonNull();
+    }
+
+    if (baseFacts.HasNoAlias())
+    {
+        resultFacts.MarkNoAlias();
+    }
+
+    if (instr.OperandBIndex() != 0)
+    {
+        resultFacts.SetAlignment(instr.OperandBIndex());
+    }
+    else if (instr.Immediate() == 0 && baseFacts.HasAlignment())
+    {
+        resultFacts.SetAlignment(baseFacts.AlignmentBytes());
+    }
+
+    return resultFacts.HasNullability()
+        || resultFacts.HasNoAlias()
+        || resultFacts.HasAlignment();
+}
+
+internal fn bool TryBuildPtrIndexOffsetFacts(
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts resultFacts,
+    bool preserveNonNull)
+{
+    if (instr.ResultType() != MirType.Ptr || instr.OperandAIndex() == 0 || instr.OperandBIndex() == 0)
+    {
+        return false;
+    }
+
+    stack ValueFacts baseFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (preserveNonNull && baseFacts.KnownNonNull())
+    {
+        resultFacts.MarkKnownNonNull();
+    }
+
+    if (baseFacts.HasNoAlias())
+    {
+        resultFacts.MarkNoAlias();
+    }
+
+    if (instr.OperandDIndex() != 0)
+    {
+        resultFacts.SetAlignment(instr.OperandDIndex());
+    }
+
+    return resultFacts.HasNullability()
+        || resultFacts.HasNoAlias()
+        || resultFacts.HasAlignment();
+}
+
+internal fn bool TryReadDeclaredRangeConstantOperands(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    out i64[min max] declaredLower,
+    out i64[min max] declaredUpperExclusive)
+{
+    declaredLower = 0;
+    declaredUpperExclusive = 0;
+    if (instr.OperandCIndex() == 0
+        || instr.OperandDIndex() == 0
+        || !instrs.Contains(instr.OperandCIndex())
+        || !instrs.Contains(instr.OperandDIndex()))
+    {
+        return false;
+    }
+
+    stack MirInstruction lowerConst = instrs.Get(instr.OperandCIndex());
+    stack MirInstruction upperConst = instrs.Get(instr.OperandDIndex());
+    if (lowerConst.Opcode() != MirOp.ConstInt || upperConst.Opcode() != MirOp.ConstInt)
+    {
+        return false;
+    }
+
+    declaredLower = lowerConst.Immediate();
+    declaredUpperExclusive = upperConst.Immediate();
+    return true;
+}
+
+internal fn MirType MirFactsValueType(borrow IrTable<MirInstruction> instrs, u32[0 max] valueIndex)
+{
+    if (!instrs.Contains(valueIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    return instr.ResultType();
+}
+
+internal fn bool TryBuildZeroExtendedIntegerFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts built)
+{
+    stack ValueFacts operandFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (operandFacts.HasIntegerRange() && operandFacts.IntegerRangeLower() >= 0)
+    {
+        built.SetIntegerRange(operandFacts.IntegerRangeLower(), operandFacts.IntegerRangeUpperExclusive());
+        return true;
+    }
+
+    return TrySetUnsignedIntegerRangeForMirType(built, MirFactsValueType(instrs, instr.OperandAIndex()));
+}
+
+internal fn bool TryBuildGeneratedValueFactsForInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    out ValueFacts facts)
+{
+    facts = new();
+    stack mut ValueFacts built = new();
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            if (instr.ResultType() == MirType.Ptr)
+            {
+                if (instr.Immediate() == 0)
+                {
+                    built.MarkKnownNull();
+                    facts = built;
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (!TrySetSingleValueIntegerRangeForMirType(built, instr.ResultType(), instr.Immediate()))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.TextConstantValue:
+            built.SetTextConstant(
+                MirTextConstantValueRowIndex(instr),
+                MirTextConstantValuePayloadStart(instr),
+                MirTextConstantValuePayloadByteLength(instr),
+                MirTextConstantValueCodePointLength(instr),
+                MirTextConstantStorageEncodingCode(MirTextConstantValueStorageEncoding(instr)));
+            facts = built;
+            return true;
+        case MirOp.ArenaAlloc:
+            built.SetAlignment(instr.OperandAIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.StackAlloc:
+            built.SetAlignment(instr.OperandAIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.FixedArrayParamSlot:
+            built.SetAlignment(instr.OperandCIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.FixedArrayParamElement:
+            stack u32[0 max] paramFactIndex = instr.OperandAIndex() + 1;
+            if (!paramFacts.Contains(paramFactIndex))
+            {
+                return false;
+            }
+
+            stack ValueFacts elementFacts = ValueFactsAtIndex(paramFacts, paramFactIndex);
+            if (!elementFacts.HasIntegerRange())
+            {
+                return false;
+            }
+
+            built.SetIntegerRange(elementFacts.IntegerRangeLower(), elementFacts.IntegerRangeUpperExclusive());
+            facts = built;
+            return true;
+        case MirOp.StructParamField:
+            if (!TrySetFullIntegerRangeForMirType(built, instr.ResultType()))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.HeapAlloc:
+            built.SetAlignment(instr.OperandAIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.PtrOffset:
+            if (!TryBuildPtrOffsetFacts(valueFacts, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.PtrIndexOffset:
+            if (!TryBuildPtrIndexOffsetFacts(valueFacts, instr, built, true))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.PtrIndexOffsetUnbounded:
+            if (!TryBuildPtrIndexOffsetFacts(valueFacts, instr, built, false))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.ArenaDynamicStorageInit:
+            built.SetAlignment(8);
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserve:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.EnumTagRead:
+            if (!TryBuildEnumTagReadFacts(instrs, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.EnumPayloadExtract:
+            if (!TryBuildEnumPayloadExtractFacts(instrs, valueFacts, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Add:
+            if (!TryBuildAddRangeFacts(
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Sub:
+            if (!TryBuildSubRangeFacts(
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Mul:
+            if (!TryBuildMulRangeFacts(
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.WrappingAdd:
+            if (!TryBuildWrappingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.WrappingSub:
+            if (!TryBuildWrappingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.WrappingMul:
+            if (!TryBuildWrappingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.SaturatingAdd:
+            if (!TryBuildSaturatingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.SaturatingSub:
+            if (!TryBuildSaturatingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.SaturatingMul:
+            if (!TryBuildSaturatingIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.SDiv:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.UDiv:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.SRem:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.And:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Or:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Xor:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Shl:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.AShr:
+            if (!TryBuildExactExtendedIntegerFacts(
+                instr,
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.CmpEq:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.CmpNe:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.CmpLt:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.CmpLe:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.CmpGt:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.CmpGe:
+            built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.ZExt:
+            if (!TryBuildZeroExtendedIntegerFacts(instrs, valueFacts, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.Phi:
+            if (!TryBuildPhiRangeFacts(
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex())),
+                ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandBIndex())),
+                built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool BuildMirValueRangeFactForInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return false;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    stack MirValueId value = MirValueIdOf(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.Param:
+            return ImportParameterValueFactsForMirValue(valueFacts, value, paramFacts, (u32[0 max])instr.Immediate());
+        case MirOp.LoadGlobal:
+            return ImportGlobalValueFactsForMirValue(valueFacts, value, globalFacts, (u32[0 max])instr.Immediate());
+        case MirOp.Call:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.CallWide:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.TailCall:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.TailCallWide:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.LoadPtr:
+            // A pointer load may carry a declared integer range: operands C
+            // and D reference constants holding the declared lower bound and
+            // exclusive upper bound (see
+            // `MirLoadPtrAlignedTypedWithDeclaredRange`). Importing them here
+            // is what lets declared field ranges reach return-range validation
+            // and LLVM range metadata.
+            stack mut i64[min max] loadDeclaredLower = 0;
+            stack mut i64[min max] loadDeclaredUpperExclusive = 0;
+            if (TryReadDeclaredRangeConstantOperands(instrs, instr, loadDeclaredLower, loadDeclaredUpperExclusive))
+            {
+                stack mut ValueFacts loadDeclaredFacts = new();
+                loadDeclaredFacts.SetIntegerRange(loadDeclaredLower, loadDeclaredUpperExclusive);
+                return RecordGeneratedValueFactsForMirValue(valueFacts, value, loadDeclaredFacts);
+            }
+        case MirOp.StructParamField:
+            // A direct struct parameter extract may carry the source field's
+            // declared integer range in operands C/D, preserving the field fact
+            // without materializing the parameter aggregate on the stack.
+            stack mut i64[min max] fieldDeclaredLower = 0;
+            stack mut i64[min max] fieldDeclaredUpperExclusive = 0;
+            if (TryReadDeclaredRangeConstantOperands(instrs, instr, fieldDeclaredLower, fieldDeclaredUpperExclusive))
+            {
+                stack mut ValueFacts fieldDeclaredFacts = new();
+                fieldDeclaredFacts.SetIntegerRange(fieldDeclaredLower, fieldDeclaredUpperExclusive);
+                return RecordGeneratedValueFactsForMirValue(valueFacts, value, fieldDeclaredFacts);
+            }
+        default:
+    }
+
+    stack mut ValueFacts facts = new();
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, paramFacts, valueFacts, instr, facts))
+    {
+        return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
+    }
+
+    return RecordEmptyValueFactsForMirValue(valueFacts, value);
+}
+
+public fn bool RecomputeMirGeneratedValueFactsForMirValue(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return false;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    stack mut ValueFacts facts = new();
+    stack mut IrTable<ValueFacts> noParamFacts = new();
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, noParamFacts, valueFacts, instr, facts))
+    {
+        return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
+    }
+
+    return RecordEmptyValueFactsForMirValue(valueFacts, value);
+}
+
+public fn bool BuildMirValueRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = instrs.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= count)
+    {
+        if (!BuildMirValueRangeFactForInstruction(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, index))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal finite law MirOp ReverseComparisonOp(MirOp op)
+{
+    switch (op)
+    {
+        case MirOp.CmpLt: return MirOp.CmpGt;
+        case MirOp.CmpLe: return MirOp.CmpGe;
+        case MirOp.CmpGt: return MirOp.CmpLt;
+        case MirOp.CmpGe: return MirOp.CmpLe;
+        default: return op;
+    }
+}
+
+internal finite law MirOp NegateComparisonOp(MirOp op)
+{
+    switch (op)
+    {
+        case MirOp.CmpEq: return MirOp.CmpNe;
+        case MirOp.CmpNe: return MirOp.CmpEq;
+        case MirOp.CmpLt: return MirOp.CmpGe;
+        case MirOp.CmpLe: return MirOp.CmpGt;
+        case MirOp.CmpGt: return MirOp.CmpLe;
+        case MirOp.CmpGe: return MirOp.CmpLt;
+        default: return op;
+    }
+}
+
+internal finite law bool MirOpIsComparison(MirOp op)
+{
+    return op == MirOp.CmpEq
+        || op == MirOp.CmpNe
+        || op == MirOp.CmpLt
+        || op == MirOp.CmpLe
+        || op == MirOp.CmpGt
+        || op == MirOp.CmpGe;
+}
+
+internal fn bool TryBuildComparisonRangeConstraint(MirOp op, i64[min max] constant, bool branchIsTrue, out ValueFacts facts)
+{
+    facts = new();
+    stack mut MirOp provenOp = op;
+    stack mut ValueFacts built = new();
+    if (!branchIsTrue)
+    {
+        provenOp = NegateComparisonOp(op);
+    }
+
+    switch (provenOp)
+    {
+        case MirOp.CmpEq:
+            if (!TrySetSingleValueIntegerRange(built, constant))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.CmpLt:
+            if (constant == I64MinValue())
+            {
+                return false;
+            }
+
+            stack mut i64[min max] lessUpper = 0;
+            if (!TryCheckedSubI64(constant, 1, lessUpper))
+            {
+                return false;
+            }
+
+            if (!TrySetInclusiveIntegerRange(built, I64MinValue(), lessUpper))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.CmpLe:
+            if (constant == I64MaxValue())
+            {
+                return false;
+            }
+
+            if (!TrySetInclusiveIntegerRange(built, I64MinValue(), constant))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.CmpGt:
+            if (constant == I64MaxValue())
+            {
+                return false;
+            }
+
+            stack mut i64[min max] greaterLower = 0;
+            if (!TryCheckedAddI64(constant, 1, greaterLower))
+            {
+                return false;
+            }
+
+            built.SetIntegerRange(greaterLower, I64MinValue());
+            facts = built;
+            return true;
+        case MirOp.CmpGe:
+            if (constant == I64MinValue())
+            {
+                return false;
+            }
+
+            built.SetIntegerRange(constant, I64MinValue());
+            facts = built;
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TryReadComparisonParamConstantConstraint(
+    borrow IrTable<MirInstruction> instrs,
+    MirValueId condition,
+    bool branchIsTrue,
+    out u32[0 max] paramIndex,
+    out ValueFacts constraintFacts)
+{
+    paramIndex = 0;
+    constraintFacts = new();
+    if (!instrs.Contains(condition.Index()))
+    {
+        return false;
+    }
+
+    stack MirInstruction conditionInstr = instrs.Get(condition.Index());
+    stack MirOp op = conditionInstr.Opcode();
+    if (!MirOpIsComparison(op))
+    {
+        return false;
+    }
+
+    stack u32[0 max] leftIndex = conditionInstr.OperandAIndex();
+    stack u32[0 max] rightIndex = conditionInstr.OperandBIndex();
+    if (instrs.Contains(leftIndex) && instrs.Contains(rightIndex))
+    {
+        stack MirInstruction leftInstr = instrs.Get(leftIndex);
+        stack MirInstruction rightInstr = instrs.Get(rightIndex);
+        if (leftInstr.Opcode() == MirOp.Param && rightInstr.Opcode() == MirOp.ConstInt)
+        {
+            paramIndex = (u32[0 max])leftInstr.Immediate();
+            return TryBuildComparisonRangeConstraint(op, rightInstr.Immediate(), branchIsTrue, constraintFacts);
+        }
+
+        if (leftInstr.Opcode() == MirOp.ConstInt && rightInstr.Opcode() == MirOp.Param)
+        {
+            paramIndex = (u32[0 max])rightInstr.Immediate();
+            return TryBuildComparisonRangeConstraint(ReverseComparisonOp(op), leftInstr.Immediate(), branchIsTrue, constraintFacts);
+        }
+    }
+
+    return false;
+}
+
+internal finite law bool IntegerRangeFactsSubsetOf(ValueFacts actual, ValueFacts expected)
+{
+    if (!expected.HasIntegerRange())
+    {
+        return true;
+    }
+
+    if (!actual.HasIntegerRange())
+    {
+        return false;
+    }
+
+    if (expected.IntegerRangeUpperExclusive() == I64MinValue())
+    {
+        return actual.IntegerRangeLower() >= expected.IntegerRangeLower();
+    }
+
+    if (actual.IntegerRangeUpperExclusive() == I64MinValue())
+    {
+        return false;
+    }
+
+    return actual.IntegerRangeLower() >= expected.IntegerRangeLower()
+        && actual.IntegerRangeUpperExclusive() <= expected.IntegerRangeUpperExclusive();
+}
+
+internal fn bool TryIntersectIntegerRangeFacts(ValueFacts left, ValueFacts right, out ValueFacts intersection)
+{
+    intersection = new();
+    if (!left.HasIntegerRange())
+    {
+        if (!right.HasIntegerRange())
+        {
+            return false;
+        }
+
+        intersection = right;
+        return true;
+    }
+
+    if (!right.HasIntegerRange())
+    {
+        intersection = left;
+        return true;
+    }
+
+    stack i64[min max] lower = MaxI64(left.IntegerRangeLower(), right.IntegerRangeLower());
+    stack i64[min max] leftUpper = left.IntegerRangeUpperExclusive();
+    stack i64[min max] rightUpper = right.IntegerRangeUpperExclusive();
+    stack mut i64[min max] upper = 0;
+    if (leftUpper == I64MinValue())
+    {
+        upper = rightUpper;
+    }
+    else if (rightUpper == I64MinValue())
+    {
+        upper = leftUpper;
+    }
+    else
+    {
+        upper = MinI64(leftUpper, rightUpper);
+    }
+
+    if (upper == I64MinValue())
+    {
+        if (lower == I64MinValue())
+        {
+            return false;
+        }
+
+        intersection.SetIntegerRange(lower, upper);
+        return true;
+    }
+
+    if (lower >= upper)
+    {
+        return false;
+    }
+
+    intersection.SetIntegerRange(lower, upper);
+    return true;
+}
+
+internal fn bool BuildBranchParamRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    MirValueId condition,
+    bool branchIsTrue,
+    mut borrow IrTable<ValueFacts> branchParamFacts)
+{
+    stack mut u32[0 max] refinedParamIndex = 0;
+    stack mut ValueFacts constraintFacts = new();
+    stack bool hasConstraint = TryReadComparisonParamConstantConstraint(instrs, condition, branchIsTrue, refinedParamIndex, constraintFacts);
+    stack u64[0 2 ** 63 - 1] count = paramFacts.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= count)
+    {
+        stack mut ValueFacts row = paramFacts.Get(index);
+        if (hasConstraint && index == refinedParamIndex + 1)
+        {
+            stack mut ValueFacts refined = new();
+            if (!TryIntersectIntegerRangeFacts(row, constraintFacts, refined))
+            {
+                return false;
+            }
+
+            row = refined;
+        }
+
+        if (branchParamFacts.Add(row) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildBranchValueRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirValueId condition,
+    bool branchIsTrue,
+    mut borrow IrTable<ValueFacts> branchValueFacts)
+{
+    stack mut IrTable<ValueFacts> branchParamFacts = new();
+    if (!BuildBranchParamRangeFacts(instrs, paramFacts, condition, branchIsTrue, branchParamFacts))
+    {
+        return false;
+    }
+
+    return BuildMirValueRangeFacts(instrs, branchParamFacts, branchValueFacts, globalFacts, functionReturnFacts);
+}
+
+internal finite law bool ReturnRangeFactIsUnbounded(ValueFacts returnFacts)
+{
+    return !returnFacts.HasIntegerRange();
+}
+
+internal fn bool ValidateReturnedValueRangeFact(ValueFacts returnFacts, borrow IrTable<ValueFacts> valueFacts, MirValueId value)
+{
+    if (ReturnRangeFactIsUnbounded(returnFacts))
+    {
+        return true;
+    }
+
+    return IntegerRangeFactsSubsetOf(ValueFactsForMirValue(valueFacts, value), returnFacts);
+}
+
+internal fn bool ValidateBlockReturnRangeFacts(ValueFacts returnFacts, borrow IrTable<MirBlock> blocks, borrow IrTable<ValueFacts> valueFacts)
+{
+    if (ReturnRangeFactIsUnbounded(returnFacts))
+    {
+        return true;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = blocks.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= count)
+    {
+        stack MirBlock block = blocks.Get(index);
+        if (block.Terminator() == MirTermKind.Return || block.Terminator() == MirTermKind.TailCall)
+        {
+            if (!ValidateReturnedValueRangeFact(returnFacts, valueFacts, MirValueIdOf(block.Slot0Index())))
+            {
+                return false;
+            }
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ValidateBranchReturnRangeFacts(
+    ValueFacts returnFacts,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirValueId condition,
+    MirValueId thenValue,
+    MirValueId elseValue)
+{
+    if (ReturnRangeFactIsUnbounded(returnFacts))
+    {
+        return true;
+    }
+
+    stack mut IrTable<ValueFacts> thenFacts = new();
+    if (!BuildBranchValueRangeFacts(instrs, paramFacts, globalFacts, functionReturnFacts, condition, true, thenFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateReturnedValueRangeFact(returnFacts, thenFacts, thenValue))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> elseFacts = new();
+    if (!BuildBranchValueRangeFacts(instrs, paramFacts, globalFacts, functionReturnFacts, condition, false, elseFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateReturnedValueRangeFact(returnFacts, elseFacts, elseValue))
+    {
+        return false;
+    }
+
+    return true;
+}

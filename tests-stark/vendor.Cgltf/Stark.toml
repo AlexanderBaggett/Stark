@@ -1,0 +1,14 @@
+[project]
+name = "vendor-cgltf-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "CgltfTests.stark"
+output = "vendor-cgltf-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/CgltfImplementation.c"]

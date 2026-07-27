@@ -1,0 +1,121 @@
+import Compiler.Lexing
+import Compiler.Parsing
+export import Compiler.Typing.TypedEnumPayloadAttributes
+export import Compiler.Typing.TypedEnumPayloadModel
+export import Compiler.Typing.TypedEnumPayloadRows
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedEnumPayloads
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumPayloadsForDeclaration(
+    mut borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex)
+{
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, owner);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] ownerGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, owner.NameToken);
+    stack mut u32[0 max] variantOrdinal = 0;
+    stack mut u32[0 max] variantStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        while willexit (stream.KindAt((u64[0 2 ** 63 - 1])variantStart) == TokenKind.Comma)
+        {
+            variantStart = (u32[0 max])(variantStart + 1);
+        }
+
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])variantStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] scan = variantStart;
+        stack mut u32[0 max] depth = 0;
+        stack mut u32[0 max] variantNameToken = 0;
+        stack mut u32[0 max] delimiter = 0;
+        stack mut bool reachedBodyEnd = false;
+        while willexit (guard > 0)
+        {
+            guard = (u64[0 2 ** 63 - 1])(guard - 1);
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.EndOfFile)
+            {
+                delimiter = scan;
+                reachedBodyEnd = true;
+                break;
+            }
+
+            if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RBrace))
+            {
+                delimiter = scan;
+                reachedBodyEnd = kind == TokenKind.RBrace;
+                break;
+            }
+
+            if (depth == 0 && variantNameToken == 0 && kind == TokenKind.Identifier)
+            {
+                variantNameToken = scan;
+            }
+
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+
+            scan = (u32[0 max])(scan + 1);
+        }
+
+        if (delimiter == 0)
+        {
+            delimiter = scan;
+        }
+
+        if (variantNameToken != 0)
+        {
+            switch (AppendTypedEnumVariantPayloads(
+                table,
+                source,
+                stream,
+                owner,
+                ownerDeclarationIndex,
+                ownerGenericOpenToken,
+                variantOrdinal,
+                variantStart,
+                variantNameToken,
+                delimiter))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            variantOrdinal = (u32[0 max])(variantOrdinal + 1);
+        }
+
+        if (reachedBodyEnd)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        variantStart = (u32[0 max])(delimiter + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

@@ -1,0 +1,43 @@
+import CompilerMirTestSupport
+import System.Testing
+module GenericUseSiteInstantiationRegressionTests
+
+// Ported from GenericUseSiteInstantiationRegressionTests.NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSites.
+internal fn bool NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSitesImpl()
+{
+    // PORT-NOTE: the C# test stops after the "monomorphization-plan" pass and
+    // asserts over MonomorphizationPlanModel.Types SymbolName entries. The plan
+    // artifact has no text renderer, so this MIR port forces the nested generic
+    // field layouts through a source use site and asserts the concrete field temps.
+    stack mut MirCompile c = CompileMir(
+        "nested-generic-type-layouts-from-source-use-sites",
+        raw"""
+        module Demo
+
+        record Wrapper<T>(T Value)
+        {
+        }
+        record Envelope<T>(Wrapper<T> Wrapped)
+        {
+        }
+        record Crate<T>(Envelope<T> Envelope)
+        {
+        }
+
+        fn i32[min max] Run(Crate<i32[min max]> crate)
+        {
+            return crate.Envelope.Wrapped.Value;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContainsAll3(
+        c,
+        "fn i32 Run(Crate<i32> crate)",
+        "Envelope<i32>",
+        "Wrapper<i32>")
+        && MirContainsAll3(c, "crate.Envelope", ".Wrapped", ".Value");
+}

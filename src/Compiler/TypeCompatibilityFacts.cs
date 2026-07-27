@@ -113,6 +113,14 @@ internal static class TypeCompatibilityFacts
                 && CanAssign(source.ElementType, target.ElementType);
         }
 
+        if (target.Kind == StarkTypeKind.AssociatedType && source.Kind == StarkTypeKind.AssociatedType)
+        {
+            return string.Equals(target.AssociatedTypeName, source.AssociatedTypeName, StringComparison.Ordinal)
+                && target.AssociatedTypeOwner is not null
+                && source.AssociatedTypeOwner is not null
+                && CanAssign(target.AssociatedTypeOwner, source.AssociatedTypeOwner);
+        }
+
         return target.Kind == StarkTypeKind.Named
             && source.Kind == StarkTypeKind.Named
             && string.Equals(target.NamedType, source.NamedType, StringComparison.Ordinal);
@@ -132,14 +140,17 @@ internal static class TypeCompatibilityFacts
         }
 
         if (!FunctionKindSatisfies(sourceKind, targetKind)
-            || !Equals(targetReturn, sourceReturn))
+            || source.FunctionPointerAbi != target.FunctionPointerAbi
+            || source.FunctionPointerIsUnsafe != target.FunctionPointerIsUnsafe
+            || source.FunctionPointerIsTailCallable != target.FunctionPointerIsTailCallable
+            || !AreCallableSignaturePositionTypesEquivalent(targetReturn, sourceReturn))
         {
             return false;
         }
 
         for (var index = 0; index < targetParameters.Count; index++)
         {
-            if (!Equals(sourceParameters[index], targetParameters[index]))
+            if (!AreCallableSignaturePositionTypesEquivalent(sourceParameters[index], targetParameters[index]))
             {
                 return false;
             }
@@ -153,7 +164,10 @@ internal static class TypeCompatibilityFacts
             }
         }
 
-        return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters);
+        return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters)
+            && PointeeDeadOnReturnSourceObligationsArePreserved(
+                source.FunctionPointerPointeeDeadOnReturnParameterNames,
+                target.FunctionPointerPointeeDeadOnReturnParameterNames);
     }
 
     public static bool AreClosureTypesAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -171,15 +185,16 @@ internal static class TypeCompatibilityFacts
 
         if (target.ClosureStorageKind != source.ClosureStorageKind
             || target.ClosureCallCapability != source.ClosureCallCapability
+            || target.ClosureIsTailCallable != source.ClosureIsTailCallable
             || !FunctionKindSatisfies(sourceKind, targetKind)
-            || !Equals(targetReturn, sourceReturn))
+            || !AreCallableSignaturePositionTypesEquivalent(targetReturn, sourceReturn))
         {
             return false;
         }
 
         for (var index = 0; index < targetParameters.Count; index++)
         {
-            if (!Equals(sourceParameters[index], targetParameters[index]))
+            if (!AreCallableSignaturePositionTypesEquivalent(sourceParameters[index], targetParameters[index]))
             {
                 return false;
             }
@@ -193,7 +208,32 @@ internal static class TypeCompatibilityFacts
             }
         }
 
-        return AreClosureMemoryContractsAssignable(target, source, targetParameters);
+        return AreClosureMemoryContractsAssignable(target, source, targetParameters)
+            && PointeeDeadOnReturnSourceObligationsArePreserved(
+                source.ClosurePointeeDeadOnReturnParameterNames,
+                target.ClosurePointeeDeadOnReturnParameterNames);
+    }
+
+    private static bool AreCallableSignaturePositionTypesEquivalent(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        if (Equals(left, right))
+        {
+            return true;
+        }
+
+        if (left.Kind != right.Kind)
+        {
+            return false;
+        }
+
+        return left.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => AreFunctionPointerTypesAssignable(left, right)
+                && AreFunctionPointerTypesAssignable(right, left),
+            StarkTypeKind.Closure => AreClosureTypesAssignable(left, right)
+                && AreClosureTypesAssignable(right, left),
+            _ => CanAssign(left, right) && CanAssign(right, left)
+        };
     }
 
     public static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
@@ -217,7 +257,11 @@ internal static class TypeCompatibilityFacts
                 .Select(parameter => MapRawPointerElementCountExpression(
                     parameter.RawPointerElementCountExpression,
                     parameterNameMap))
-                .ToArray());
+                .ToArray(),
+            function.FfiAbi,
+            function.IsUnsafe,
+            function.IsTailCallable,
+            MapParameterNames(function.PointeeDeadOnReturnParameters, parameterNameMap));
     }
 
     public static StarkTypeSymbol ClosureTypeForSignature(
@@ -246,7 +290,9 @@ internal static class TypeCompatibilityFacts
                 .Select(parameter => MapRawPointerElementCountExpression(
                     parameter.RawPointerElementCountExpression,
                     parameterNameMap))
-                .ToArray());
+                .ToArray(),
+            function.IsTailCallable,
+            MapParameterNames(function.PointeeDeadOnReturnParameters, parameterNameMap));
     }
 
     private static string? GetFunctionPointerParameterRawPointerElementCountExpression(
@@ -270,6 +316,29 @@ internal static class TypeCompatibilityFacts
         return parameterNameMap.TryGetValue(expression, out var syntheticName)
             ? syntheticName
             : expression;
+    }
+
+    private static IReadOnlyList<string> MapParameterNames(
+        IReadOnlyList<string> parameterNames,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return parameterNames
+            .Select(name => parameterNameMap.TryGetValue(name, out var syntheticName) ? syntheticName : name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool PointeeDeadOnReturnSourceObligationsArePreserved(
+        IReadOnlyList<string>? sourceParameters,
+        IReadOnlyList<string>? targetParameters)
+    {
+        if (sourceParameters is not { Count: > 0 })
+        {
+            return true;
+        }
+
+        var targetSet = new HashSet<string>(targetParameters ?? [], StringComparer.Ordinal);
+        return sourceParameters.All(targetSet.Contains);
     }
 
     public static bool FunctionKindSatisfies(StarkFunctionKind source, StarkFunctionKind target)
@@ -377,8 +446,9 @@ internal static class TypeCompatibilityFacts
         {
             FunctionPointerParameterMemoryRelation.Same => source is FunctionPointerParameterMemoryRelation.Same
                 or FunctionPointerParameterMemoryRelation.Overlap,
-            FunctionPointerParameterMemoryRelation.Overlap or FunctionPointerParameterMemoryRelation.None => source == FunctionPointerParameterMemoryRelation.Overlap,
-            FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.Disjoint
+            FunctionPointerParameterMemoryRelation.Overlap => source == FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.None or FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.None
+                or FunctionPointerParameterMemoryRelation.Disjoint
                 or FunctionPointerParameterMemoryRelation.Overlap,
             _ => false
         };

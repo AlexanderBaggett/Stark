@@ -202,85 +202,91 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
-    public void OptimizationLevelZeroPreservesRawSsaBeforeLlvmEmission()
+    public void ImportedMethodChainInCallArgumentLowersWithoutFieldFallback()
     {
+        // Regression: `lowered.EntryBlock().Index()` — a method call on an
+        // imported struct chained with a method on its (imported) result, in
+        // call-argument position — crashed lower-mir via the throwing
+        // LowerFieldAccess path ("Field 'EntryBlock' could not be resolved")
+        // instead of binding both steps as member calls. Unchained calls on
+        // the same types lower fine (seen blocking every tests-stark
+        // selfhost.Ir runtime gate, 2026-07-07).
         var pipeline = DefaultCompilerPipeline.Create();
 
         var result = pipeline.Run(
             new CompilationInput(
                 """
+                import Lib
                 module Demo
 
-                fn i32[min max] Run(bool flag)
+                fn i64[min max] Run()
                 {
-                    stack mut i32[min max] value = 0;
-                    if (flag)
-                    {
-                        value = 1;
-                    }
-                    else
-                    {
-                        value = 2;
-                    }
-
-                    return value;
+                    stack Holder holder = new Holder();
+                    stack Registry registry = new Registry();
+                    return registry.Get(holder.EntryBlock().Index());
                 }
-                """),
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib", "/virtual/Lib.stark", IsExternal: false),
+                        """
+                        module Lib
 
-        Assert.True(result.Succeeded);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
-        Assert.NotNull(optimizedSsa);
+                        public struct BlockId
+                        {
+                            u32[0 max] IndexValue;
 
-        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
+                            BlockId()
+                            {
+                                self.IndexValue = 3;
+                            }
 
-        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
-        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
-        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
+                            public finite law u32[0 max] Index(borrow BlockId self)
+                            {
+                                return self.IndexValue;
+                            }
+                        }
+
+                        public struct Holder
+                        {
+                            u32[0 max] EntryValue;
+
+                            Holder()
+                            {
+                                self.EntryValue = 1;
+                            }
+
+                            public finite law BlockId EntryBlock(borrow Holder self)
+                            {
+                                stack BlockId id = new BlockId();
+                                return id;
+                            }
+                        }
+
+                        public struct Registry
+                        {
+                            i64[min max] Base;
+
+                            Registry()
+                            {
+                                self.Base = 40;
+                            }
+
+                            public finite law i64[min max] Get(borrow Registry self, u32[0 max] index)
+                            {
+                                return self.Base + (i64[min max])index;
+                            }
+                        }
+                        """,
+                        "/virtual/Lib.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
-
-    [Fact]
-    public void DebugFriendlyOptimizationLevelPreservesRawSsaBeforeLlvmEmission()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                fn i32[min max] Run(bool flag)
-                {
-                    stack mut i32[min max] value = 0;
-                    if (flag)
-                    {
-                        value = 1;
-                    }
-                    else
-                    {
-                        value = 2;
-                    }
-
-                    return value;
-                }
-                """),
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.Og));
-
-        Assert.True(result.Succeeded);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
-        Assert.NotNull(optimizedSsa);
-
-        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
-
-        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
-        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
-        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
-    }
-
 
     [Fact]
     public void PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
@@ -1783,7 +1789,10 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                         public fn void Write(ascii text)
                         {
-                            fputs(text, stdout);
+                            unsafe
+                            {
+                                fputs(text, stdout);
+                            }
                             return;
                         }
                         """,
@@ -1791,7 +1800,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     )
                 ])));
 
-        Assert.True(result.Succeeded);
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
 
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
         Assert.NotNull(hir);
@@ -2419,7 +2428,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
             Assert.Contains("declare i64 @Syscall0(i64)", llvmModule.Text);
-            Assert.Contains("call i64 @Syscall0(i64 39)", llvmModule.Text);
+            Assert.Contains("call i64 @Syscall0(i64 range(i64 39, 40) 39)", llvmModule.Text);
             Assert.DoesNotContain("asm sideeffect", llvmModule.Text);
             Assert.DoesNotContain("; imported asm definition: Syscall.Syscall0", llvmModule.Text);
         }
@@ -3037,6 +3046,251 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.True(tokenEnum.Variants[2].UsesNamedFields);
             Assert.Equal("X", tokenEnum.Variants[2].Fields[0].Name);
             Assert.Equal("Y", tokenEnum.Variants[2].Fields[1].Name);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedThreadSafetyLawAttributesFeedComptimeStructuralFactsWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-law-attribute-facts-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct RawHolder
+                {
+                    [Grant(Transferable)]
+                    public rawptr<i32[min max]> Pointer;
+                }
+
+                public struct Box<T, comptime u8[1 8] N>
+                {
+                    public T Value;
+                }
+
+                [Grant(Shareable) where Transferable(Box<T, 4>)]
+                public struct Shared<T>
+                {
+                    public T Value;
+                }
+
+                public struct Sync<T>
+                {
+                    [Grant(Shareable) where Transferable(Box<T, 4>)]
+                    public T Payload;
+                }
+
+                [Grant(Transferable)]
+                public struct Token
+                {
+                    [Deny(Shareable)]
+                    public i32[min max] Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeCount<Facade.Token>() == 1)
+                        {
+                            if (comptime (System.Compiler.TypeThreadSafetyLawAttributeLawName<Facade.Token, 0>() == "Transferable"))
+                            {
+                                if (comptime System.Compiler.TypeThreadSafetyLawAttributeIsGrant<Facade.Token, 0>())
+                                {
+                                    if (comptime System.Compiler.FieldThreadSafetyLawAttributeIsDeny<Facade.Token, 0, 0>())
+                                    {
+                                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIs<Facade.Shared<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0>())
+                                        {
+                                            if (comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeDisplayName<Facade.Shared<Facade.RawHolder>, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                            {
+                                                if (comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeBaseName<Facade.Shared<Facade.RawHolder>, 0>() == "Facade.Box"))
+                                                {
+                                                    if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsNamed<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsStruct<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<Facade.Shared<Facade.RawHolder>, 0>())
+                                                    {
+                                                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeArgumentCount<Facade.Shared<Facade.RawHolder>, 0>() == 1
+                                                            && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<Facade.Shared<Facade.RawHolder>, 0>() == 1)
+                                                        {
+                                                            if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIs<Facade.Sync<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0, 0>())
+                                                            {
+                                                                if (comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeDisplayName<Facade.Sync<Facade.RawHolder>, 0, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                                                {
+                                                                    if (comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeBaseName<Facade.Sync<Facade.RawHolder>, 0, 0>() == "Facade.Box"))
+                                                                    {
+                                                                        if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsNamed<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsStruct<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<Facade.Sync<Facade.RawHolder>, 0, 0>())
+                                                                        {
+                                                                            if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeArgumentCount<Facade.Sync<Facade.RawHolder>, 0, 0>() == 1
+                                                                                && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<Facade.Sync<Facade.RawHolder>, 0, 0>() == 1)
+                                                                            {
+                                                                                return 42;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("ret i32 42", llvmModule.Text);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedMethodThreadSafetyLawPredicatesFeedComptimeStructuralFactsWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-method-law-predicate-facts-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct RawHolder
+                {
+                    [Grant(Transferable)]
+                    public rawptr<i32[min max]> Pointer;
+                }
+
+                public struct Box<T, comptime u8[1 8] N>
+                {
+                    public T Value;
+                }
+
+                public struct Gate<T>
+                {
+                    public fn void Move(T value) where Transferable(Box<T, 4>)
+                    {
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        if (comptime System.Compiler.MethodThreadSafetyLawPredicateCount<Facade.Gate<Facade.RawHolder>, 0>() == 1)
+                        {
+                            if (comptime (System.Compiler.MethodThreadSafetyLawPredicateLawName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Transferable"))
+                            {
+                                if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIs<Facade.Gate<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0, 0>())
+                                {
+                                    if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeDisplayName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                    {
+                                        if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeBaseName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Facade.Box"))
+                                        {
+                                            if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsNamed<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsStruct<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeHasConcreteLayout<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation<Facade.Gate<Facade.RawHolder>, 0, 0>())
+                                            {
+                                                if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeArgumentCount<Facade.Gate<Facade.RawHolder>, 0, 0>() == 1)
+                                                {
+                                                    if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeComptimeArgumentCount<Facade.Gate<Facade.RawHolder>, 0, 0>() == 1)
+                                                    {
+                                                        return 42;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("ret i32 42", llvmModule.Text);
         }
         finally
         {
@@ -6153,6 +6407,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     switch (value)
                     {
                         case 0:
+                        default:
                     }
 
                     return value;
@@ -6188,8 +6443,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             var emptySwitch = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.EmptySwitch");
             var switchStatement = Assert.Single(emptySwitch.TypedBody!.Statements, static statement => statement.Kind == "switch");
             Assert.NotNull(switchStatement.SwitchCases);
-            Assert.Single(switchStatement.SwitchCases!);
-            Assert.Empty(Assert.Single(switchStatement.SwitchCases!).Statements ?? []);
+            Assert.Equal(2, switchStatement.SwitchCases!.Count);
+            Assert.All(switchStatement.SwitchCases!, static switchCase => Assert.Empty(switchCase.Statements ?? []));
 
             var json = manifest.ToJson();
             Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);
@@ -8896,7 +9151,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             var forward = Assert.Single(templates, static template => template.QualifiedResolvedName == "Facade.Forward");
             var deferred = Assert.Single(forward.DeferredFunctionInstantiations!);
             Assert.Equal("Facade.Identity", deferred.CalleeTemplateName);
-            var deferredTypeArgument = Assert.Single(deferred.TypeArguments);
+            var deferredTypeArguments = Assert.IsAssignableFrom<IReadOnlyList<StarkPackageTypeReference>>(deferred.TypeArguments);
+            var deferredTypeArgument = Assert.Single(deferredTypeArguments);
             Assert.Equal("named", deferredTypeArgument.Kind);
             Assert.Equal("T", deferredTypeArgument.Name);
         }

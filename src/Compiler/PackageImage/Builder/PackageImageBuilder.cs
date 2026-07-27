@@ -7,7 +7,8 @@ internal static partial class PackageImageBuilder
     public static StarkPackageManifest Create(
         CompilationResult result,
         string libraryOutputPath,
-        StarkPackageNativeDependencyManifest? nativeDependencies = null)
+        StarkPackageNativeDependencyManifest? nativeDependencies = null,
+        string? buildProfile = null)
     {
         var loadedModules = result.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
         var moduleGraph = result.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
@@ -19,20 +20,22 @@ internal static partial class PackageImageBuilder
         result.Artifacts.TryGet(CompilerArtifactKeys.OwnershipValidation, out OwnershipValidationModel? ownershipModel);
 
         var modules = new List<StarkPackageModuleManifest>();
-        var packagedModuleNames = loadedModules.Modules.Values
-            .Where(HasPackageImageSurface)
-            .Select(static module => module.SyntaxModel.ModuleName)
-            .ToHashSet(StringComparer.Ordinal);
+        var loadedModuleDocuments = loadedModules.Modules.Values.ToArray();
+        var packagedModuleNames = BuildPackagedModuleNames(loadedModules);
 
-        foreach (var module in loadedModules.Modules.Values.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
+        foreach (var module in loadedModuleDocuments.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
         {
+            if (!packagedModuleNames.Contains(module.SyntaxModel.ModuleName))
+            {
+                continue;
+            }
+
             var reExports = module.SyntaxModel.Imports
                 .Where(static import => import.IsReExport)
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
                 .Select(static import => new StarkPackageReExportManifest(import.ModuleName))
                 .ToArray();
             var imports = module.SyntaxModel.Imports
-                .Where(import => import.IsReExport || packagedModuleNames.Contains(import.ModuleName))
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
                 .ThenByDescending(static import => import.IsReExport)
                 .Select(static import => new StarkPackageImportManifest(import.ModuleName, import.IsReExport))
@@ -161,13 +164,19 @@ internal static partial class PackageImageBuilder
                                 qualifiedName,
                                 visibility,
                                 RenderManifestTypeText(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                             typedTypeAliases.Add(new StarkPackageTypedTypeAliasManifest(
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
                                 BuildTypeReference(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                         }
 
                         break;
@@ -218,15 +227,6 @@ internal static partial class PackageImageBuilder
             AddModuleConcreteLayoutFacts(module, typeModel, enumLayoutModel, concreteLayouts);
             AddModuleEnumLayoutFacts(module, enumLayoutModel, enumLayouts);
 
-            if (reExports.Length == 0
-                && functions.Count == 0
-                && types.Count == 0
-                && globals.Count == 0
-                && typeAliases.Count == 0)
-            {
-                continue;
-            }
-
             modules.Add(new StarkPackageModuleManifest(
                 module.SyntaxModel.ModuleName,
                 [],
@@ -267,11 +267,28 @@ internal static partial class PackageImageBuilder
                         : new StarkPackageGenericTemplateSection(genericTemplates))));
         }
 
-        return new StarkPackageManifest(
+        var dependencies = BuildPackageDependencies(loadedModules, packagedModuleNames);
+        var manifest = new StarkPackageManifest(
             loadedModules.RootModuleName,
             Path.GetFileName(libraryOutputPath),
             modules,
-            NormalizeNativeDependencies(nativeDependencies));
+            NormalizeNativeDependencies(nativeDependencies),
+            TargetCompatibilityValidator.CreatePackageTargetManifest(
+                loadedModules.Modules.TryGetValue(loadedModules.RootModuleName, out var rootModule)
+                    ? rootModule.TargetInfo
+                    : null),
+            CreatePackageBuildProfileManifest(buildProfile));
+        return PackageImageIdentity.Apply(manifest, dependencies);
+    }
+
+    private static StarkPackageBuildProfileManifest? CreatePackageBuildProfileManifest(string? buildProfile)
+    {
+        if (string.IsNullOrWhiteSpace(buildProfile))
+        {
+            return null;
+        }
+
+        return new StarkPackageBuildProfileManifest(buildProfile.Trim().ToLowerInvariant());
     }
 
     private static StarkPackageTypedConstantInitializerManifest? BuildConstantInitializerManifest(
@@ -290,6 +307,7 @@ internal static partial class PackageImageBuilder
             FloatLiteralText: initializer.FloatLiteralText,
             BoolValue: initializer.BoolValue,
             TextLiteralText: initializer.TextLiteralText,
+            VariantName: initializer.VariantName,
             Elements: initializer.Elements?.Select(element => BuildConstantInitializerManifest(element, moduleName)!).ToArray());
     }
 
@@ -473,7 +491,7 @@ internal static partial class PackageImageBuilder
         var includeDirectories = NormalizeNativeDependencyList(dependencies.IncludeDirectories);
         var libraryDirectories = NormalizeNativeDependencyList(dependencies.LibraryDirectories);
         var libraries = NormalizeNativeDependencyList(dependencies.Libraries);
-        var linkArguments = NormalizeNativeDependencyList(dependencies.LinkArguments);
+        var linkArguments = NormalizeNativeLinkArgumentList(dependencies.LinkArguments);
         var pkgConfigPackages = NormalizeNativeDependencyList(dependencies.PkgConfigPackages);
 
         if (sources is null
@@ -511,9 +529,193 @@ internal static partial class PackageImageBuilder
         return normalized.Length == 0 ? null : normalized;
     }
 
+    private static IReadOnlyList<string>? NormalizeNativeLinkArgumentList(IReadOnlyList<string>? values)
+    {
+        if (values is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var normalized = values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
+            .ToArray();
+
+        return normalized.Length == 0 ? null : normalized;
+    }
+
     private static string LookupName(string moduleName, bool isRoot, string declarationName)
     {
         return isRoot ? declarationName : $"{moduleName}.{declarationName}";
+    }
+
+    internal static HashSet<string> BuildPackagedModuleNames(LoadedModuleSet loadedModules)
+    {
+        ArgumentNullException.ThrowIfNull(loadedModules);
+        return BuildPackagedModuleNames(
+            loadedModules.Modules.Values.ToArray(),
+            loadedModules.RootModuleName);
+    }
+
+    private static IReadOnlyList<StarkPackageDependencyIdentityManifest> BuildPackageDependencies(
+        LoadedModuleSet loadedModules,
+        IReadOnlySet<string> packagedModuleNames)
+    {
+        var dependencies = new Dictionary<string, StarkPackageDependencyIdentityManifest>(StringComparer.Ordinal);
+        foreach (var moduleName in packagedModuleNames.Order(StringComparer.Ordinal))
+        {
+            if (!loadedModules.Modules.TryGetValue(moduleName, out var module))
+            {
+                continue;
+            }
+
+            foreach (var import in module.SyntaxModel.Imports.OrderBy(static import => import.ModuleName, StringComparer.Ordinal))
+            {
+                if (packagedModuleNames.Contains(import.ModuleName)
+                    || !loadedModules.Modules.TryGetValue(import.ModuleName, out var importedModule)
+                    || importedModule.PackageImageFacts?.Identity is not { } identity)
+                {
+                    continue;
+                }
+
+                var dependency = new StarkPackageDependencyIdentityManifest(
+                    identity.PackageId,
+                    identity.ApiHash,
+                    identity.ContentHash);
+                if (dependencies.TryGetValue(dependency.PackageId, out var existing)
+                    && !Equals(existing, dependency))
+                {
+                    throw new InvalidOperationException(
+                        $"Imported package '{dependency.PackageId}' has conflicting API/content identities while emitting package '{loadedModules.RootModuleName}'.");
+                }
+
+                dependencies[dependency.PackageId] = dependency;
+            }
+        }
+
+        return dependencies.Values
+            .OrderBy(static dependency => dependency.PackageId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static HashSet<string> BuildPackagedModuleNames(
+        IReadOnlyList<LoadedModuleDocument> modules,
+        string rootModuleName)
+    {
+        var modulesByName = modules.ToDictionary(
+            static module => module.SyntaxModel.ModuleName,
+            StringComparer.Ordinal);
+        modulesByName.TryGetValue(rootModuleName, out var rootModule);
+        // A direct package build owns the root input tree, not every source module
+        // loaded through -I. Official System/Vendor packages additionally use their
+        // root module as the namespace boundary because those trees intentionally
+        // colocate multiple independently distributed packages.
+        var packageSourceRoot = TryGetPackageSourceRoot(rootModule);
+        var packagedModuleNames = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<LoadedModuleDocument>();
+
+        foreach (var module in modules)
+        {
+            if (!IsPackageImageOwnedModule(module, rootModuleName, packageSourceRoot)
+                || !HasPackageImageSurface(module)
+                || !packagedModuleNames.Add(module.SyntaxModel.ModuleName))
+            {
+                continue;
+            }
+
+            pending.Enqueue(module);
+        }
+
+        while (pending.Count != 0)
+        {
+            var module = pending.Dequeue();
+            foreach (var import in module.SyntaxModel.Imports)
+            {
+                if (!modulesByName.TryGetValue(import.ModuleName, out var importedModule)
+                    || !IsPackageImageOwnedModule(importedModule, rootModuleName, packageSourceRoot)
+                    || !packagedModuleNames.Add(importedModule.SyntaxModel.ModuleName))
+                {
+                    continue;
+                }
+
+                pending.Enqueue(importedModule);
+            }
+        }
+
+        return packagedModuleNames;
+    }
+
+    private static bool IsPackageImageOwnedModule(
+        LoadedModuleDocument module,
+        string rootModuleName,
+        string? packageSourceRoot)
+    {
+        if (module.Reference.IsExternal
+            || module.Reference.ManifestPath is not null
+            || module.Reference.LibraryPath is not null
+            || module.PackageImageFacts is not null)
+        {
+            return false;
+        }
+
+        if (module.Reference.IsRoot
+            || string.Equals(module.SyntaxModel.ModuleName, rootModuleName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // Official package roots own their namespace wherever a selected source
+        // lives. In particular, System.Runtime.Platform is supplied by a
+        // target-specific template under stdlib/templates rather than the root
+        // file's stdlib/src directory. The namespace boundary still excludes
+        // transitive System modules from Vendor packages and sibling Vendor
+        // packages from one another.
+        if (HasReservedPackageNamespace(rootModuleName))
+        {
+            return IsModuleInNamespace(module.SyntaxModel.ModuleName, rootModuleName);
+        }
+
+        if (packageSourceRoot is not null
+            && (string.IsNullOrWhiteSpace(module.Reference.FilePath)
+                || !IsPathInsideDirectory(module.Reference.FilePath, packageSourceRoot)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string? TryGetPackageSourceRoot(LoadedModuleDocument? rootModule)
+    {
+        if (string.IsNullOrWhiteSpace(rootModule?.Reference.FilePath))
+        {
+            return null;
+        }
+
+        var fullPath = Path.GetFullPath(rootModule.Reference.FilePath);
+        return Path.GetDirectoryName(fullPath);
+    }
+
+    private static bool IsPathInsideDirectory(string path, string directory)
+    {
+        var relativePath = Path.GetRelativePath(directory, Path.GetFullPath(path));
+        return !Path.IsPathRooted(relativePath)
+            && !string.Equals(relativePath, "..", StringComparison.Ordinal)
+            && !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+            && !relativePath.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+    }
+
+    private static bool HasReservedPackageNamespace(string rootModuleName)
+    {
+        return string.Equals(rootModuleName, "System", StringComparison.Ordinal)
+            || rootModuleName.StartsWith("System.", StringComparison.Ordinal)
+            || rootModuleName.StartsWith("Vendor.", StringComparison.Ordinal);
+    }
+
+    private static bool IsModuleInNamespace(string moduleName, string rootModuleName)
+    {
+        return string.Equals(moduleName, rootModuleName, StringComparison.Ordinal)
+            || moduleName.StartsWith($"{rootModuleName}.", StringComparison.Ordinal);
     }
 
     private static bool HasPackageImageSurface(LoadedModuleDocument module)

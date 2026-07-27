@@ -1,0 +1,409 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMemberLookup
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedMemberReceiverFacts
+
+internal fn void TypedMemberFactsFromIdentifier(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    u32[0 max] identifierIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (identifierIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+    facts.NameToken = identifiers.NameTokenAt(index);
+    facts.TypeKind = identifiers.TypeKindAt(index);
+    facts.TypeHeadToken = identifiers.TypeHeadTokenAt(index);
+    facts.TypePrimaryToken = identifiers.TypePrimaryTokenAt(index);
+    facts.TypeStartToken = identifiers.TypeStartTokenAt(index);
+    facts.TypeEndToken = identifiers.TypeEndTokenAt(index);
+    facts.RangeStartToken = identifiers.RangeStartTokenAt(index);
+    facts.RangeEndToken = identifiers.RangeEndTokenAt(index);
+    facts.ElementCountStartToken = identifiers.ElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = identifiers.ElementCountEndTokenAt(index);
+    facts.BitWidth = identifiers.BitWidthAt(index);
+    facts.TypeArgumentCount = identifiers.TypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = identifiers.ComptimeArgumentCountAt(index);
+    facts.TypeFlags = identifiers.TypeFlagsAt(index);
+
+    if (identifiers.TargetKindAt(index) == TypedIdentifierTargetKind.TypeDeclaration)
+    {
+        facts.ReceiverKind = TypedMemberReceiverKind.StaticType;
+        facts.DeclarationIndex = identifiers.TargetDeclarationIndexAt(index);
+        facts.NameToken = identifiers.TargetNameTokenAt(index);
+    }
+    else if (identifiers.TargetKindAt(index) != TypedIdentifierTargetKind.Unknown || facts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        facts.ReceiverKind = TypedMemberReceiverKind.Value;
+        facts.DeclarationIndex = TypedMemberDeclarationIndexForTypeHead(source, stream, declarations, facts.TypeHeadToken);
+    }
+}
+
+internal fn void TypedMemberFactsFromCall(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedCallExpressionTable calls,
+    u32[0 max] callIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (callIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(callIndexPlusOne - 1);
+    facts.NameToken = calls.TargetNameTokenAt(index);
+    facts.TypeKind = calls.ReturnTypeKindAt(index);
+    facts.TypeHeadToken = calls.ReturnTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = calls.ReturnTypePrimaryTokenAt(index);
+    facts.TypeStartToken = calls.ReturnTypeStartTokenAt(index);
+    facts.TypeEndToken = calls.ReturnTypeEndTokenAt(index);
+    facts.RangeStartToken = calls.ReturnRangeStartTokenAt(index);
+    facts.RangeEndToken = calls.ReturnRangeEndTokenAt(index);
+    facts.ElementCountStartToken = calls.ReturnElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = calls.ReturnElementCountEndTokenAt(index);
+    facts.BitWidth = calls.ReturnBitWidthAt(index);
+    facts.TypeArgumentCount = calls.ReturnTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = calls.ReturnComptimeArgumentCountAt(index);
+    facts.TypeFlags = calls.ReturnTypeFlagsAt(index);
+    if (facts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        facts.ReceiverKind = TypedMemberReceiverKind.Value;
+        facts.DeclarationIndex = TypedMemberDeclarationIndexForTypeHead(source, stream, declarations, facts.TypeHeadToken);
+    }
+}
+
+internal fn void TypedMemberFactsFromMember(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedMemberExpressionTable table,
+    u32[0 max] memberIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (memberIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(memberIndexPlusOne - 1);
+    facts.NameToken = table.MemberNameTokenAt(index);
+    facts.TypeKind = table.TypeKindAt(index);
+    facts.TypeHeadToken = table.TypeHeadTokenAt(index);
+    facts.TypePrimaryToken = table.TypePrimaryTokenAt(index);
+    facts.TypeStartToken = table.TypeStartTokenAt(index);
+    facts.TypeEndToken = table.TypeEndTokenAt(index);
+    facts.RangeStartToken = table.RangeStartTokenAt(index);
+    facts.RangeEndToken = table.RangeEndTokenAt(index);
+    facts.ElementCountStartToken = table.ElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = table.ElementCountEndTokenAt(index);
+    facts.BitWidth = table.BitWidthAt(index);
+    facts.TypeArgumentCount = table.TypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = table.ComptimeArgumentCountAt(index);
+    facts.TypeFlags = table.TypeFlagsAt(index);
+    if (facts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        facts.ReceiverKind = TypedMemberReceiverKind.Value;
+        facts.DeclarationIndex = TypedMemberDeclarationIndexForTypeHead(source, stream, declarations, facts.TypeHeadToken);
+    }
+}
+
+internal fn void TypedMemberFactsFromNewTypeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    u32[0 max] typeNameToken,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (typeNameToken == 0)
+    {
+        return;
+    }
+
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.DeclarationIndex = TypedMemberDeclarationIndexForTypeHead(source, stream, declarations, typeNameToken);
+    facts.NameToken = typeNameToken;
+    facts.TypeKind = TypedSignatureTypeKind.Named;
+    facts.TypeHeadToken = typeNameToken;
+    facts.TypePrimaryToken = typeNameToken;
+    facts.TypeStartToken = typeNameToken;
+    facts.TypeEndToken = (u32[0 max])(typeNameToken + 1);
+}
+
+internal fn void TypedMemberFactsFromTypeSpan(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] fallbackPrimaryToken,
+    u32[0 max] functionGenericOpenToken,
+    u32[0 max] ownerGenericOpenToken,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (typeStartToken == 0 || typeEndToken <= typeStartToken)
+    {
+        return;
+    }
+
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    stack u32[0 max] typePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, fallbackPrimaryToken);
+    stack mut u32[0 max] typeHeadToken = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken) == TokenKind.Identifier)
+    {
+        typeHeadToken = typePrimaryToken;
+    }
+
+    stack TypedSignatureTypeKind typeKind = TypedSignatureKindForType(source, stream, typePrimaryToken, typeHeadToken, functionGenericOpenToken, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, typePrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, typePrimaryToken);
+    }
+
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+    }
+
+    stack u32[0 max] typeFlags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        typePrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        functionGenericOpenToken,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        false,
+        0,
+        false);
+
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.DeclarationIndex = TypedMemberDeclarationIndexForTypeHead(source, stream, declarations, typeHeadToken);
+    facts.NameToken = typeHeadToken;
+    facts.TypeKind = typeKind;
+    facts.TypeHeadToken = typeHeadToken;
+    facts.TypePrimaryToken = typePrimaryToken;
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+    facts.RangeStartToken = rangeStartToken;
+    facts.RangeEndToken = rangeEndToken;
+    facts.ElementCountStartToken = elementCountStartToken;
+    facts.ElementCountEndToken = elementCountEndToken;
+    facts.BitWidth = bitWidth;
+    facts.TypeArgumentCount = typeArgumentCount;
+    facts.ComptimeArgumentCount = comptimeArgumentCount;
+    facts.TypeFlags = typeFlags;
+}
+
+internal fn u32[0 max] TypedMemberFieldIndexForOwnerAndName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerNameToken,
+    u32[0 max] memberNameToken)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && fields.OwnerNameTokenAt(index) != 0
+            && TypedSignatureTokenTextEqualsToken(source, stream, fields.OwnerNameTokenAt(index), ownerNameToken)
+            && TypedSignatureTokenTextEqualsToken(source, stream, fields.NameTokenAt(index), memberNameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedMemberFactsFromField(borrow TypedFieldDeclarationTable fields, u32[0 max] fieldIndexPlusOne, mut borrow TypedMemberTypeFacts facts)
+{
+    if (fieldIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(fieldIndexPlusOne - 1);
+    facts.NameToken = fields.NameTokenAt(index);
+    facts.TypeKind = fields.TypeKindAt(index);
+    facts.TypeHeadToken = fields.TypeHeadTokenAt(index);
+    facts.TypePrimaryToken = fields.TypePrimaryTokenAt(index);
+    facts.TypeStartToken = fields.TypeStartTokenAt(index);
+    facts.TypeEndToken = fields.TypeEndTokenAt(index);
+    facts.RangeStartToken = fields.RangeStartTokenAt(index);
+    facts.RangeEndToken = fields.RangeEndTokenAt(index);
+    facts.ElementCountStartToken = fields.ElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = fields.ElementCountEndTokenAt(index);
+    facts.BitWidth = fields.BitWidthAt(index);
+    facts.TypeArgumentCount = fields.TypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = fields.ComptimeArgumentCountAt(index);
+    facts.TypeFlags = fields.TypeFlagsAt(index);
+}
+
+internal fn void TypedMemberReceiverFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable table,
+    borrow ExprTree tree,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] receiverNode,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    stack ExprKind receiverKind = tree.NodeKindAt(receiverNode);
+    if (receiverKind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            table,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromMember(source, stream, declarations, table, memberIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.Call)
+    {
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.New)
+    {
+        stack u32[0 max] typeNode = tree.LeftAt(receiverNode);
+        if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, tree.TokenAt(typeNode), facts);
+        }
+    }
+}
+
+internal fn void TypedMemberReceiverFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable table,
+    borrow StatementList body,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] receiverNode,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    stack ExprKind receiverKind = body.ExprKindAt(receiverNode);
+    if (receiverKind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            table,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromMember(source, stream, declarations, table, memberIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.Call)
+    {
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            receiverNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, facts);
+    }
+    else if (receiverKind == Compiler.Parsing.ExprKind.New)
+    {
+        stack u32[0 max] typeNode = body.ExprLeftAt(receiverNode);
+        if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, body.ExprTokenAt(typeNode), facts);
+        }
+    }
+}

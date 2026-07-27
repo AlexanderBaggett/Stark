@@ -1,0 +1,123 @@
+import CompilerMirTestSupport
+import System.Testing
+module LoweringContractFactKeyRegressionTests
+
+// Ported slice of tests/compiler.Tests/LoweringContractFactKeyRegressionTests.cs.
+// The C# originals compile a root module that imports a separate "Dep" module
+// supplied through InMemoryModuleResolver, then assert result.Succeeded (and for
+// the generic case that no STK9999 leaks). The MIR test helpers compile a single
+// source plus a staged dependency module through CompileMirWithModule and returns
+// Succeeds(...). See the per-function PORT-NOTE for what was reduced.
+
+// Ported from LoweringContractFactKeyRegressionTests.MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinates.
+// PORT-NOTE: the C# original stops at "validate-lowering-contract"; the MIR
+// helper stops at lower-mir, which still proves the imported call facts survived
+// lowering without colliding.
+internal fn bool MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl()
+{
+    stack mut MirCompile c = CompileMirWithModule(
+        "fact-key-member-vs-imported-ctor",
+        raw"""
+import Dep
+module Demo
+
+fn i64[min max] ReadHolder(borrow Dep.Holder holder)
+{
+    if (holder.CountValue() < 0)
+    {
+        return 0;
+        stack i64[min max] n = holder.CountValue();
+        return n;
+    }
+
+    return holder.CountValue();
+}
+
+export fn i32[min max] main()
+{
+    stack Dep.Holder holder = new Dep.Holder();
+    if (ReadHolder(holder) < 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""",
+        "Dep.stark",
+        raw"""
+module Dep
+
+public struct Holder
+{
+    i64[min max] Value;
+
+    Holder()
+    {
+        self.Value = SeedValue                  ();
+    }
+
+    public finite law i64[min max] CountValue(borrow Holder self)
+    {
+        return self.Value;
+    }
+}
+
+public finite law i64[min max] SeedValue()
+{
+    return 7;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from LoweringContractFactKeyRegressionTests.ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation.
+// PORT-NOTE: the C# also asserted no STK9999 diagnostic leaked; that is folded
+// into the Succeeds signal because a clean MIR compile cannot carry STK9999.
+internal fn bool ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl()
+{
+    stack mut MirCompile c = CompileMirWithModule(
+        "fact-key-imported-generic-member-call",
+        raw"""
+import Dep
+module Demo
+
+export fn i32[min max] main()
+{
+    stack Dep.Bag<i32[min max]> bag = Dep.NewBag<i32[min max]>();
+    stack Dep.Bag<i32[min max]> pushed = bag.Push(7);
+    return pushed.Size();
+}
+""",
+        "Dep.stark",
+        raw"""
+module Dep
+
+public struct Bag<T>
+{
+    i32[min max] Count;
+
+    public finite Bag<T> Push(borrow Bag<T> self, T item)
+    {
+        return new Bag<T>()
+        {
+            Count = self.Count + 1
+        };
+    }
+
+    public finite law i32[min max] Size(borrow Bag<T> self)
+    {
+        return self.Count;
+    }
+}
+
+public finite Bag<T> NewBag<T>()
+{
+    return new Bag<T>()
+    {
+        Count = 0
+    };
+}
+""");
+    return Succeeds(c);
+}

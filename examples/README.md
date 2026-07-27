@@ -8,7 +8,7 @@ The examples directory includes `Stark.toml` project manifests and a root
 `Stark.solution.toml` for the current project driver.
 
 From this directory, the default solution build covers the examples that do not
-need a local native graphics library or a standard-library package rebuild:
+need a local native graphics library:
 
 ```bash
 dotnet run --project ../src -- build
@@ -26,10 +26,13 @@ dotnet run --project ../src -- build http-get
 ```
 
 The `standard-library` manifest builds through the project driver and is the
-recommended smoke test for examples that use the packaged standard library.
+recommended quick check for examples that use `System.*` modules.
 
-`raylib` and `breakout` require Raylib to be available through `pkg-config` or
-through a local native path configured in `Stark.user.toml` or
+`breakout` imports the official `Vendor.Raylib` package from the active SDK and
+needs no Raylib installation, `pkg-config`, dependency entry, or local native
+path. The separate `raylib` project is a binding-author/source-package example;
+building that project itself requires Raylib through `pkg-config` or a local
+native path configured in `Stark.user.toml` or
 `~/.config/stark/config.toml`.
 
 ## `hello.stark`
@@ -128,8 +131,7 @@ Build it through the examples solution:
 
 ```bash
 cd examples
-dotnet run --project ../src -- build standard-library
-./.stark/build/dev/standard-library/standard-library
+dotnet run --project ../src -- run standard-library
 ```
 
 For a quick source-imported check from the repository root:
@@ -150,8 +152,7 @@ This example requires OpenSSL development headers and libraries discoverable via
 Build and run it from the examples solution:
 
 ```bash
-dotnet run --project ../src -- build http-get
-./.stark/build/dev/http-get/http-get
+dotnet run --project ../src -- run http-get
 ```
 
 ## `build-your-own-git/`
@@ -244,19 +245,44 @@ dotnet run --project src -- examples/breakout/BreakoutCore.stark --emit-exe -o e
 
 First playable Raylib Breakout shell. It keeps the scope intentionally small: a keyboard/mouse controlled paddle, a bouncing ball, fixed colored bricks, brick destruction, and score text.
 
-Build Raylib as described in `examples/raylib/README.md`, then let the helper
-script build the Stark Raylib package image and compile Breakout from it:
+With an installed SDK, the ordinary project commands consume its bundled
+`Vendor.Raylib` package directly:
+
+```bash
+stark build breakout
+stark run breakout
+```
+
+The repository helper below is for contributors rebuilding the Vendor package
+from source before compiling Breakout. That workflow requires Raylib through
+`pkg-config`, a bundled contributor payload, or `RAYLIB_SRC_DIR`:
 
 ```bash
 bash examples/breakout/run-raylib.sh
 ./examples/breakout/breakout-raylib
 ```
 
-## `raylib/`
+## `../vendor/`
 
-Raylib 5.5 binding surface for future graphical examples. The bindings are split into `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`, `Raylib.Text`, `Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`, with `RaylibNative.c` providing C ABI shims for by-value Raylib structs.
+Raylib 6.0 binding surface for future graphical examples. The bindings are split into `Vendor.Raylib.Core`, `Vendor.Raylib.Shapes`, `Vendor.Raylib.Textures`, `Vendor.Raylib.Text`, `Vendor.Raylib.Models`, `Vendor.Raylib.Audio`, and `Vendor.Raylib.Types`. Direct Raylib calls bind with `[LinkName("...")]`; C-layout aggregates such as `Vector2`, `Rectangle`, and `Color` pass through Stark's C ABI carrier lowering without a Raylib-specific C shim. `examples/raylib/VendorRaylibSafeApis.stark` shows the preferred safe wrappers for owned text/data, resource owners, typed enum carriers, callbacks, `raymath`, and `rlgl`.
 
-See `examples/raylib/README.md` for the local Raylib build and headless smoke-test commands.
+See `vendor/build-raylib-package.sh` for the contributor package build command.
+It emits the native-backed package under `vendor/dist/<target-triple>/`. Direct
+`-I vendor/dist` commands below exercise low-level source/package development;
+normal SDK applications resolve the official package through `sdk.json`.
+
+```bash
+./stark examples/raylib/VendorRaylibSafeApis.stark --check --no-stark-path -I vendor/dist -I stdlib/src
+```
+
+## `sqlite/`
+
+Headless SQLite examples for the bundled `Vendor.SQLite` binding. The default
+`sqlite` project runs a small task-report program that exercises an in-memory
+database, prepared statements, integer/text binding, row stepping, aggregate
+queries, text reads, and explicit close/finalize behavior. Build `vendor/dist`
+with `vendor/build-sqlite-package.sh`, then run it through the examples
+solution with `sqlite` or compile it directly with `-I vendor/dist`.
 
 ## `arithmetic/Arithmetic.stark`
 
@@ -318,7 +344,7 @@ That command produces the archive and a sidecar `libFacade.starkpkg.json` manife
 ## `standard-library-tests/`
 
 Small `kind = "test"` project that uses `System.Testing` facts and the project
-driver's `test` command.
+driver's generated `[Fact]` runner.
 
 Run it from the examples solution:
 

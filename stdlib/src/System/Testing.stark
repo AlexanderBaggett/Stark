@@ -1,5 +1,15 @@
 import System.Console
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.IO.Path
+import System.Math
+import System.Memory
 import System.Process
+import System.Runtime.Platform
+import System.Text
+import System.Collections
+import System.Core
 module System.Testing
 
 public enum TestStatus
@@ -8,12 +18,588 @@ public enum TestStatus
     Failed,
 }
 
-public fn bool True(bool condition)
+public struct SnapshotDifference
+{
+    u64[0 2 ** 63 - 1] ExpectedLength;
+    u64[0 2 ** 63 - 1] ActualLength;
+    u64[0 2 ** 63 - 1] FirstDifference;
+    u64[1 2 ** 63 - 1] Line;
+    u64[1 2 ** 63 - 1] Column;
+}
+
+public enum SnapshotResult
+{
+    Matched,
+    Updated,
+    Missing,
+    Different(SnapshotDifference),
+    Err(System.IO.IOError),
+}
+
+public enum DiagnosticSeverity
+{
+    Info,
+    Warning,
+    Error,
+}
+
+public struct DiagnosticLocation
+{
+    bool HasValue;
+    ascii FilePath;
+    u64[0 2 ** 63 - 1] Line;
+    u64[0 2 ** 63 - 1] Column;
+    bool HasEndValue;
+    u64[0 2 ** 63 - 1] EndLine;
+    u64[0 2 ** 63 - 1] EndColumn;
+}
+
+public struct Diagnostic
+{
+    ascii Code;
+    DiagnosticSeverity Severity;
+    ascii Message;
+    ascii Stage;
+    DiagnosticLocation Location;
+}
+
+public struct TempDirectory
+{
+    internal System.Text.OwnedAscii Path;
+    internal bool Active;
+
+    TempDirectory()
+    {
+        self.Path = new();
+        self.Active = false;
+    }
+
+    finite ascii View(mut borrow TempDirectory self)
+    {
+        return self.Path.View();
+    }
+
+    finite law bool IsActive(borrow TempDirectory self)
+    {
+        return self.Active;
+    }
+
+    fn System.IO.IOResult<System.Text.OwnedAscii> PathFor(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        if (!self.Active || !IsSafeFixtureRelativePath(relativePath))
+        {
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(System.IO.IOError.InvalidPath);
+        }
+
+        stack mut System.Text.OwnedAscii destination = new();
+        stack System.Memory.MemoryStatus joinStatus =
+            System.IO.Path.TryJoin(destination, self.Path.View(), relativePath);
+        switch (joinStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(error));
+            case System.Memory.MemoryStatus.Ok:
+                return System.IO.IOResult<System.Text.OwnedAscii>.Ok(destination);
+        }
+    }
+
+    fn System.IO.IOStatus CreateDirectory(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.FileSystem.CreateDirectory(path.View());
+    }
+
+    fn System.IO.IOStatus DeleteDirectory(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.FileSystem.DeleteDirectory(path.View());
+    }
+
+    fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, ascii text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllText(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, unicode text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllText(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, ascii text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllTextAtomic(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, unicode text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllTextAtomic(path.View(), text);
+    }
+
+    fn System.IO.IOResult<System.Text.OwnedAscii> ReadText(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.ReadAllText(path.View());
+    }
+
+    fn System.IO.IOStatus DeleteFile(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.Delete(path.View());
+    }
+
+    fn System.IO.IOStatus Cleanup(mut borrow TempDirectory self)
+    {
+        if (!self.Active)
+        {
+            return System.IO.IOStatus.Ok;
+        }
+
+        stack System.IO.IOStatus status = System.FileSystem.DeleteTreeIfExists(self.Path.View());
+        switch (status)
+        {
+            case System.IO.IOStatus.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+                self.Active = false;
+                self.Path.Clear();
+                return System.IO.IOStatus.Ok;
+        }
+    }
+
+    mut drop
+    {
+        self.Cleanup();
+    }
+}
+
+inline finite law System.IO.IOError IOErrorFromMemoryError(System.Memory.MemoryError error)
+{
+    switch (error)
+    {
+        case System.Memory.MemoryError.OutOfMemory:
+            return System.IO.IOError.Unknown(-12);
+        case System.Memory.MemoryError.UnsupportedAlignment:
+            return System.IO.IOError.Unknown(-22);
+        case System.Memory.MemoryError.TooLarge:
+            return System.IO.IOError.Unknown(-27);
+        case System.Memory.MemoryError.InvalidLayout:
+            return System.IO.IOError.Unknown(-22);
+    }
+}
+
+finite law bool IsSafeFixtureRelativePath(ascii path)
+{
+    if (System.Text.AsciiLength(path) <= 0)
+    {
+        return false;
+    }
+
+    if (System.IO.Path.IsRooted(path))
+    {
+        return false;
+    }
+
+    if (System.Text.Contains(path, System.IO.Path.ParentDirectory()))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+public fn System.IO.IOResult<TempDirectory> CreateTempDirectory(ascii prefix)
+{
+    stack mut TempDirectory fixture = new();
+    switch (System.FileSystem.CreateTempDirectory(prefix))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return System.IO.IOResult<TempDirectory>.Err(error);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var path):
+            fixture.Path = path;
+            fixture.Active = true;
+            return System.IO.IOResult<TempDirectory>.Ok(fixture);
+    }
+}
+
+internal finite law bool IsSnapshotLineBreakUnit(i8[min max] value)
+{
+    return value == (i8[min max])10 || value == (i8[min max])13;
+}
+
+internal finite law bool IsActualUnit(ascii actual, u64[0 2 ** 63 - 1] index, ascii unit)
+    where overlap(actual, unit)
+{
+    return actual[(i64[min max])index, 1] == unit;
+}
+
+internal finite law bool IsActualLineBreak(ascii actual, u64[0 2 ** 63 - 1] index)
+{
+    return IsActualUnit(actual, index, "\n") || IsActualUnit(actual, index, "\r");
+}
+
+internal finite law u64[0 2 ** 63 - 1] AdvanceExpectedLineBreak(
+    borrow i8[min max][] expectedBytes,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (index + (u64[0 2 ** 63 - 1])1 < length
+        && expectedBytes[index] == (i8[min max])13
+        && expectedBytes[index + (u64[0 2 ** 63 - 1])1] == (i8[min max])10)
+    {
+        return index + (u64[0 2 ** 63 - 1])2;
+    }
+
+    return index + (u64[0 2 ** 63 - 1])1;
+}
+
+internal finite law u64[0 2 ** 63 - 1] AdvanceActualLineBreak(
+    ascii actual,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (index + (u64[0 2 ** 63 - 1])1 < length
+        && IsActualUnit(actual, index, "\r")
+        && IsActualUnit(actual, index + (u64[0 2 ** 63 - 1])1, "\n"))
+    {
+        return index + (u64[0 2 ** 63 - 1])2;
+    }
+
+    return index + (u64[0 2 ** 63 - 1])1;
+}
+
+internal finite law SnapshotResult SnapshotDifferent(
+    u64[0 2 ** 63 - 1] expectedLength,
+    u64[0 2 ** 63 - 1] actualLength,
+    u64[0 2 ** 63 - 1] firstDifference,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column)
+{
+    stack SnapshotDifference difference = new SnapshotDifference()
+    {
+        ExpectedLength = expectedLength,
+        ActualLength = actualLength,
+        FirstDifference = firstDifference,
+        Line = line,
+        Column = column
+    };
+    return SnapshotResult.Different(difference);
+}
+
+public finite law SnapshotResult CompareSnapshotText(borrow System.Text.OwnedAscii expected, ascii actual)
+    where overlap(expected, actual)
+{
+    if (System.Text.OwnedAsciiEqualsAscii(expected, actual))
+    {
+        return SnapshotResult.Matched;
+    }
+
+    stack i64[min max] signedActualLength = System.Text.AsciiLength(actual);
+    if (signedActualLength < 0)
+    {
+        return SnapshotResult.Err(System.IO.IOError.InvalidPath);
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedLength = expected.Length();
+    stack u64[0 2 ** 63 - 1] actualLength = (u64[0 2 ** 63 - 1])signedActualLength;
+    stack i8[min max][] expectedBytes = expected.AsSlice();
+    stack mut u64[0 2 ** 63 - 1] expectedIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] actualIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] logicalIndex = 0;
+    stack mut u64[1 2 ** 63 - 1] line = 1;
+    stack mut u64[1 2 ** 63 - 1] column = 1;
+
+    while willexit (expectedIndex < expectedLength && actualIndex < actualLength)
+    {
+        stack bool expectedBreak = IsSnapshotLineBreakUnit(expectedBytes[expectedIndex]);
+        stack bool actualBreak = IsActualLineBreak(actual, actualIndex);
+        if (expectedBreak || actualBreak)
+        {
+            if (!expectedBreak || !actualBreak)
+            {
+                return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+            }
+
+            expectedIndex = AdvanceExpectedLineBreak(expectedBytes, expectedIndex, expectedLength);
+            actualIndex = AdvanceActualLineBreak(actual, actualIndex, actualLength);
+            logicalIndex += 1;
+            line += 1;
+            column = 1;
+            continue;
+        }
+
+        if (!System.Text.OwnedAsciiRangeEqualsAscii(
+            expected,
+            expectedIndex,
+            1,
+            actual[(i64[min max])actualIndex, 1]))
+        {
+            return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+        }
+
+        expectedIndex += 1;
+        actualIndex += 1;
+        logicalIndex += 1;
+        column += 1;
+    }
+
+    if (expectedIndex == expectedLength && actualIndex == actualLength)
+    {
+        return SnapshotResult.Matched;
+    }
+
+    return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+}
+
+internal fn SnapshotResult WriteSnapshot(ascii path, ascii actual)
+{
+    switch (System.IO.File.WriteAllTextAtomic(path, actual))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return SnapshotResult.Err(error);
+        case System.IO.IOStatus.Ok:
+            return SnapshotResult.Updated;
+    }
+}
+
+public fn SnapshotResult VerifySnapshot(ascii path, ascii actual)
+{
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            switch (error)
+            {
+                case System.IO.IOError.NotFound:
+                    return SnapshotResult.Missing;
+                case System.IO.IOError.PermissionDenied:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.AlreadyExists:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.InvalidPath:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.BrokenPipe:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.DiskFull:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.NotADirectory:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.IsADirectory:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.DirectoryNotEmpty:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.TooManyLinks:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.Unknown(var code):
+                    return SnapshotResult.Err(error);
+            }
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var expected):
+            return CompareSnapshotText(expected, actual);
+    }
+}
+
+public fn SnapshotResult UpdateSnapshot(ascii path, ascii actual)
+{
+    return WriteSnapshot(path, actual);
+}
+
+public fn SnapshotResult VerifyOrUpdateSnapshot(ascii path, ascii actual, bool update)
+{
+    stack SnapshotResult result = VerifySnapshot(path, actual);
+    switch (result)
+    {
+        case SnapshotResult.Matched:
+            return SnapshotResult.Matched;
+        case SnapshotResult.Updated:
+            return SnapshotResult.Updated;
+        case SnapshotResult.Missing:
+            if (update)
+            {
+                return WriteSnapshot(path, actual);
+            }
+
+            return SnapshotResult.Missing;
+        case SnapshotResult.Different(var difference):
+            if (update)
+            {
+                return WriteSnapshot(path, actual);
+            }
+
+            return SnapshotResult.Different(difference);
+        case SnapshotResult.Err(var error):
+            return SnapshotResult.Err(error);
+    }
+}
+
+public finite law bool SnapshotSucceeded(SnapshotResult result)
+{
+    switch (result)
+    {
+        case SnapshotResult.Matched:
+            return true;
+        case SnapshotResult.Updated:
+            return true;
+        case SnapshotResult.Missing:
+            return false;
+        case SnapshotResult.Different(var difference):
+            return false;
+        case SnapshotResult.Err(var error):
+            return false;
+    }
+}
+
+public fn System.Memory.MemoryStatus AppendSnapshotDifference(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow SnapshotDifference difference)
+{
+    switch (writer.AppendAscii("snapshot differs at line "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.Line))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(", column "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.Column))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" (expected bytes "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.ExpectedLength))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(", actual bytes "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.ActualLength))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return writer.AppendAscii(")");
+}
+
+public finite law bool True(bool condition)
 {
     return condition;
 }
 
-public fn bool False(bool condition)
+public finite law bool False(bool condition)
 {
     return !condition;
 }
@@ -25,42 +611,1674 @@ public fn bool Fail(ascii message)
     return false;
 }
 
-public fn bool Equal(bool expected, bool actual)
+public finite law bool Equal(bool expected, bool actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(i32[min max] expected, i32[min max] actual)
+public finite law bool NotEqual(bool expected, bool actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(i32[min max] expected, i32[min max] actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(i64[min max] expected, i64[min max] actual)
+public finite law bool NotEqual(i32[min max] expected, i32[min max] actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(i64[min max] expected, i64[min max] actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(u32[0 max] expected, u32[0 max] actual)
+public finite law bool NotEqual(i64[min max] expected, i64[min max] actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(u32[0 max] expected, u32[0 max] actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(u64[0 max] expected, u64[0 max] actual)
+public finite law bool NotEqual(u32[0 max] expected, u32[0 max] actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(u64[0 max] expected, u64[0 max] actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(ascii expected, ascii actual)
+public finite law bool NotEqual(u64[0 max] expected, u64[0 max] actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(ascii expected, ascii actual)
 {
     return expected == actual;
 }
 
-public fn bool Equal(unicode expected, unicode actual)
+public finite law bool NotEqual(ascii expected, ascii actual)
+{
+    return expected != actual;
+}
+
+public finite law bool Equal(unicode expected, unicode actual)
 {
     return expected == actual;
 }
 
-public fn TestStatus Status(bool assertion)
+public finite law bool NotEqual(unicode expected, unicode actual)
+{
+    return expected != actual;
+}
+
+// EXACT bit-equality for f64. f64 `==` is a valid runtime scalar comparison, so
+// this mirrors the other Equal overloads: it accepts only values that are
+// bit-for-bit identical (NaN never compares equal, +0.0 == -0.0 per IEEE-754).
+public finite law bool Equal(f64 expected, f64 actual)
+{
+    return expected == actual;
+}
+
+// Tolerant f64 comparison within `ulps` units in the last place (approximation).
+//
+// Stark has no f64 bit-reinterpret / ToBits, so a true ULP comparison (counting
+// representable steps between the two values) is not directly expressible. This
+// is a documented relative-epsilon approximation: a value one ULP apart differs
+// by roughly `epsilon * max(|expected|, |actual|)`, where `epsilon` is the f64
+// machine epsilon (2 ** -52 ~= 2.220446049250313e-16). We therefore accept when
+//   |expected - actual| <= ulps * epsilon * max(|expected|, |actual|, epsilon)
+// The trailing `epsilon` floor keeps the tolerance non-zero near zero so values
+// straddling zero (or both denormal/tiny) still compare within `ulps`. Exact
+// equality short-circuits first. There is no System.Math.Abs(f64), so magnitudes
+// use the stdlib `v < 0.0 ? 0.0 - v : v` idiom.
+public finite law bool ApproxEqual(f64 expected, f64 actual, u32[0 max] ulps)
+{
+    if (expected == actual)
+    {
+        return true;
+    }
+
+    stack f64 epsilon = 2.220446049250313e-16;
+    stack f64 difference = expected - actual;
+    stack f64 absoluteDifference = difference < 0.0 ? 0.0 - difference : difference;
+    stack f64 expectedMagnitude = expected < 0.0 ? 0.0 - expected : expected;
+    stack f64 actualMagnitude = actual < 0.0 ? 0.0 - actual : actual;
+    stack f64 scale = System.Math.Max(
+        System.Math.Max(expectedMagnitude, actualMagnitude),
+        epsilon);
+    stack f64 tolerance = (f64)ulps * epsilon * scale;
+    return absoluteDifference <= tolerance;
+}
+
+public finite law bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public finite law bool InRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public finite law bool InRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public finite law bool InRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public finite law bool NotInRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public finite law bool NotInRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public finite law bool NotInRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public finite law bool NotInRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public finite law bool Empty(ascii value)
+{
+    return System.Text.AsciiLength(value) == 0;
+}
+
+public finite law bool Empty(unicode value)
+{
+    return System.Text.UnicodeLength(value) == 0;
+}
+
+public finite law bool Empty<T>(borrow T[] values)
+{
+    return values.Length == 0;
+}
+
+public finite law bool Empty<T>(borrow System.Collections.List<T> values)
+{
+    return values.IsEmpty();
+}
+
+public finite law bool NotEmpty(ascii value)
+{
+    return System.Text.AsciiLength(value) != 0;
+}
+
+public finite law bool NotEmpty(unicode value)
+{
+    return System.Text.UnicodeLength(value) != 0;
+}
+
+public finite law bool NotEmpty<T>(borrow T[] values)
+{
+    return values.Length != 0;
+}
+
+public finite law bool NotEmpty<T>(borrow System.Collections.List<T> values)
+{
+    return !values.IsEmpty();
+}
+
+public finite law bool Single<T>(borrow T[] values)
+{
+    return values.Length == 1;
+}
+
+public finite law bool Single<T>(borrow System.Collections.List<T> values)
+{
+    return values.Count() == 1;
+}
+
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow T[] values)
+{
+    return values.Length == expected;
+}
+
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Collections.List<T> values)
+{
+    return values.Count() == expected;
+}
+
+// A single generic over any DictionaryKey-supported element type collapses the
+// former per-primitive overloads (i32/i64/u32/u64/ascii). Equality routes
+// through the System.Collections.DictionaryKey doctrine, whose compiler-known
+// machinery synthesizes element equality for bool, the Stark integer types,
+// ascii, and unicode (the same path Dictionary/HashSet key comparisons use).
+// `expected` is taken by value under `where Copyable(T)` so callers can still
+// pass a literal (e.g. ContainsElement(xs, 20)); a borrowed `expected` would
+// reject literals with STK3002 and force an `overlap` obligation on callers.
+public finite law bool ContainsElement<T>(borrow T[] values, T expected)
+    where Copyable(T)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (System.Collections.DictionaryKey.Equals(values[index], expected))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+// The element-shape mirrors of ContainsElement: same by-value `expected` under
+// `where Copyable(T)` (so callers can still pass a literal) and the same
+// DictionaryKey equality routing. DoesNotContainElement is the simple negation;
+// SingleEquals fuses the Single shape check with a head-element equality.
+public finite law bool DoesNotContainElement<T>(borrow T[] values, T expected)
+    where Copyable(T)
+{
+    return !ContainsElement(values, expected);
+}
+
+public finite law bool SingleEquals<T>(borrow T[] values, T expected)
+    where Copyable(T)
+{
+    return values.Length == 1
+        && System.Collections.DictionaryKey.Equals(values[0], expected);
+}
+
+// List<T> mirror, matching the Single<T>/Count<T> List overloads above. The
+// head element is read through the finite-law AsSlice() view (List.Get is plain
+// `law`, too weak for a finite law); routing the equality through the array
+// SingleEquals keeps one source of truth.
+public finite law bool SingleEquals<T>(borrow System.Collections.List<T> values, T expected)
+    where Copyable(T)
+{
+    return SingleEquals(values.AsSlice(), expected);
+}
+
+// A single generic collapses the former per-primitive SequenceEqual overloads
+// (i32/i64/u32/u64). Element equality routes through the
+// System.Collections.DictionaryKey doctrine's compiler-known machinery.
+public finite law bool SequenceEqual<T>(borrow T[] expected, borrow T[] actual)
+    where overlap(expected, actual)
+{
+    if (expected.Length != actual.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < expected.Length)
+    {
+        if (!System.Collections.DictionaryKey.Equals(expected[index], actual[index]))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+public finite law bool Contains(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.Contains(value, expected);
+}
+
+public finite law bool Contains(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.Contains(value, expected);
+}
+
+public finite law bool DoesNotContain(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return !System.Text.Contains(value, expected);
+}
+
+public finite law bool DoesNotContain(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return !System.Text.Contains(value, expected);
+}
+
+// Failure-reporting variants of Contains / DoesNotContain. They return the same
+// bool as the `law` versions, but on a MISMATCH they also write a focused report
+// to stderr — the searched-for fragment and a leading window of the actual text —
+// so a failing emitter/SSA/LLVM golden assertion self-explains instead of
+// returning a bare `false` that forces re-running the compiler by hand to see
+// why. They are `fn` (not `law`) because they perform IO; the report goes to
+// stderr so the runner's `ok`/`FAILED` stdout protocol stays clean. Use these in
+// ported text-golden tests where diagnosing a mismatch is otherwise expensive.
+public fn bool ContainsReport(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    if (System.Text.Contains(value, expected))
+    {
+        return true;
+    }
+
+    ReportTextMismatch("expected to contain", expected, value);
+    return false;
+}
+
+public fn bool DoesNotContainReport(ascii value, ascii unexpected)
+    where overlap(value, unexpected)
+{
+    if (!System.Text.Contains(value, unexpected))
+    {
+        return true;
+    }
+
+    ReportTextMismatch("expected NOT to contain", unexpected, value);
+    return false;
+}
+
+// Writes a two-part text-assertion failure report to stderr: the relation and
+// searched-for fragment, then a leading window (up to 600 units) of the actual
+// text. Kept internal; ContainsReport / DoesNotContainReport are the surface.
+internal fn void ReportTextMismatch(ascii relation, ascii fragment, ascii actual)
+    where overlap(relation, fragment), overlap(relation, actual), overlap(fragment, actual)
+{
+    stack System.IO.IOStatus s0 = System.Console.WriteErrorLine("  [assert] text mismatch:");
+    stack System.IO.IOStatus s1 = System.Console.WriteError("    relation: ");
+    stack System.IO.IOStatus s2 = System.Console.WriteErrorLine(relation);
+    stack System.IO.IOStatus s3 = System.Console.WriteError("    fragment: ");
+    stack System.IO.IOStatus s4 = System.Console.WriteErrorLine(fragment);
+    stack System.IO.IOStatus s5 = System.Console.WriteErrorLine("    actual (leading window):");
+    stack u64[0 2 ** 63 - 1] total = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(actual);
+    stack mut u64[0 2 ** 63 - 1] windowLen = total;
+    if (windowLen > 600)
+    {
+        windowLen = 600;
+    }
+
+    stack ascii window = actual[(i64[min max])0, (i64[min max])windowLen];
+    stack System.IO.IOStatus s6 = System.Console.WriteErrorLine(window);
+    return;
+}
+
+public finite law bool StartsWith(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.StartsWith(value, expected);
+}
+
+public finite law bool StartsWith(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.StartsWith(value, expected);
+}
+
+public finite law bool EndsWith(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.EndsWith(value, expected);
+}
+
+public finite law bool EndsWith(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.EndsWith(value, expected);
+}
+
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)
+    where overlap(value, needle)
+{
+    return System.Text.CountOccurrences(value, needle);
+}
+
+// Returns the LLVM `define ...` header line whose symbol spells `@name(`, or
+// empty text when no defined function matches. Ported feature tests use this
+// (with LlvmDefinitionBody) instead of scraping module text by hand.
+public finite ascii LlvmDefinitionHeader(ascii llvm, ascii symbolName)
+    where overlap(llvm, symbolName)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    stack mut u64[0 2 ** 63 - 1] lineEnd = 0;
+    if (!TryFindLlvmDefinitionLine(llvm, symbolName, lineStart, lineEnd))
+    {
+        return "";
+    }
+
+    return llvm[(i64[min max])lineStart, (i64[min max])(lineEnd - lineStart)];
+}
+
+// Returns the LLVM function definition with the given symbol from its
+// `define ...` header line through the closing `}` line, or empty text when no
+// defined function matches.
+public finite ascii LlvmDefinitionBody(ascii llvm, ascii symbolName)
+    where overlap(llvm, symbolName)
+{
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    stack mut u64[0 2 ** 63 - 1] headerEnd = 0;
+    if (!TryFindLlvmDefinitionLine(llvm, symbolName, start, headerEnd))
+    {
+        return "";
+    }
+
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+
+    // Scan forward line by line for the closing `}` at column zero.
+    stack mut u64[0 2 ** 63 - 1] lineStart = headerEnd;
+    while willexit (lineStart < totalLength)
+    {
+        lineStart += 1;
+        if (lineStart >= totalLength)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(llvm, lineStart);
+        if (lineEnd > lineStart && IsActualUnit(llvm, lineStart, "}"))
+        {
+            return llvm[(i64[min max])start, (i64[min max])(lineEnd - start)];
+        }
+
+        lineStart = lineEnd;
+    }
+
+    return "";
+}
+
+// Returns the SSA-text body of the single function `functionName`, from its
+// column-zero `fn <name>(` header line through the line before the next
+// column-zero `fn ` header (or end of text), or empty when none matches. The
+// rendered `ssa` / `optimized-ssa` text lays out each function as a column-zero
+// `fn <name>(...) -> ...` header followed by indented body lines, so scoping a
+// "no surviving call/load" assertion to one function this way matches how the
+// C# SSA oracle navigates a single SsaFunction instead of also matching a
+// callee's own surviving definition header. This is the SSA analogue of
+// LlvmDefinitionBody.
+public finite ascii SsaFunctionBody(ascii ssaText, ascii functionName)
+    where overlap(ssaText, functionName)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(ssaText);
+    stack mut u64[0 2 ** 63 - 1] currentLineStart = 0;
+    while willexit (currentLineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(ssaText, currentLineStart);
+        stack ascii line = ssaText[(i64[min max])currentLineStart, (i64[min max])(lineEnd - currentLineStart)];
+        if (SsaLineDefinesFunction(line, functionName))
+        {
+            stack mut u64[0 2 ** 63 - 1] scanLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+            while willexit (scanLineStart < totalLength)
+            {
+                stack u64[0 2 ** 63 - 1] scanLineEnd = LineEndFrom(ssaText, scanLineStart);
+                stack ascii scanLine = ssaText[(i64[min max])scanLineStart, (i64[min max])(scanLineEnd - scanLineStart)];
+                if (System.Text.StartsWith(scanLine, "fn "))
+                {
+                    return ssaText[(i64[min max])currentLineStart, (i64[min max])(scanLineStart - currentLineStart)];
+                }
+
+                scanLineStart = (u64[0 2 ** 63 - 1])(scanLineEnd + 1);
+            }
+
+            return ssaText[(i64[min max])currentLineStart, (i64[min max])(totalLength - currentLineStart)];
+        }
+
+        currentLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return "";
+}
+
+// True when `line` begins a column-zero SSA function header `fn <name>(`.
+internal finite law bool SsaLineDefinesFunction(ascii line, ascii functionName)
+    where overlap(line, functionName)
+{
+    stack u64[0 2 ** 63 - 1] lineLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(line);
+    stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(functionName);
+    if (lineLength < nameLength + 4)
+    {
+        return false;
+    }
+
+    if (!System.Text.StartsWith(line, "fn "))
+    {
+        return false;
+    }
+
+    if (!IsActualUnit(line, (u64[0 2 ** 63 - 1])(nameLength + 3), "("))
+    {
+        return false;
+    }
+
+    return System.Text.Equals(
+        line[(i64[min max])3, (i64[min max])nameLength],
+        functionName);
+}
+
+// True when any single line of `value` contains both fragments. Ported
+// feature tests use this where the C# originals match a one-line regex.
+public finite law bool AnyLineContainsBoth(ascii value, ascii first, ascii second)
+    where overlap(value, first), overlap(value, second), overlap(first, second)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    while willexit (lineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(value, lineStart);
+        if (lineEnd > lineStart)
+        {
+            stack ascii line = value[(i64[min max])lineStart, (i64[min max])(lineEnd - lineStart)];
+            if (System.Text.Contains(line, first) && System.Text.Contains(line, second))
+            {
+                return true;
+            }
+        }
+
+        lineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return false;
+}
+
+// Index of the line break ending the line that starts at `from`, or the text
+// length when the final line is unterminated.
+internal finite law u64[0 2 ** 63 - 1] LineEndFrom(ascii value, u64[0 2 ** 63 - 1] searchStart)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] index = searchStart;
+    while willexit (index < totalLength)
+    {
+        if (IsActualUnit(value, index, "\n"))
+        {
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return totalLength;
+}
+
+internal finite bool TryFindLlvmDefinitionLine(
+    ascii llvm,
+    ascii symbolName,
+    out u64[0 2 ** 63 - 1] lineStart,
+    out u64[0 2 ** 63 - 1] lineEndExclusive)
+    where overlap(llvm, symbolName)
+{
+    lineStart = 0;
+    lineEndExclusive = 0;
+    if (System.Text.AsciiLength(llvm) <= 0 || System.Text.AsciiLength(symbolName) <= 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+    stack mut u64[0 2 ** 63 - 1] currentLineStart = 0;
+    while willexit (currentLineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(llvm, currentLineStart);
+        if (lineEnd > currentLineStart)
+        {
+            stack ascii line = llvm[(i64[min max])currentLineStart, (i64[min max])(lineEnd - currentLineStart)];
+            if (System.Text.StartsWith(line, "define ") && LineDefinesSymbol(line, symbolName))
+            {
+                lineStart = currentLineStart;
+                lineEndExclusive = lineEnd;
+                return true;
+            }
+        }
+
+        currentLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return false;
+}
+
+// The line must mention `@<symbolName>(` exactly.
+internal finite law bool LineDefinesSymbol(ascii line, ascii symbolName)
+    where overlap(line, symbolName)
+{
+    stack u64[0 2 ** 63 - 1] lineLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(line);
+    stack u64[0 2 ** 63 - 1] symbolLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(symbolName);
+    if (lineLength < symbolLength + 2)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] lastStart = (u64[0 2 ** 63 - 1])(lineLength - symbolLength - 2);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index <= lastStart; index += 1)
+    {
+        if (IsActualUnit(line, index, "@")
+            && IsActualUnit(line, (u64[0 2 ** 63 - 1])(index + symbolLength + 1), "(")
+            && System.Text.Equals(
+                line[(i64[min max])(index + 1), (i64[min max])symbolLength],
+                symbolName))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode value, unicode needle)
+    where overlap(value, needle)
+{
+    return System.Text.CountOccurrences(value, needle);
+}
+
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle)
+    where overlap(value, needle)
+{
+    return CountOccurrences(value, needle) == expected;
+}
+
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, unicode value, unicode needle)
+    where overlap(value, needle)
+{
+    return CountOccurrences(value, needle) == expected;
+}
+
+public inline finite law bool DiagnosticCode(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Code == expected;
+}
+
+inline finite law u8[0 2] DiagnosticSeverityRank(DiagnosticSeverity severity)
+{
+    switch (severity)
+    {
+        case DiagnosticSeverity.Info:
+            return 0;
+        case DiagnosticSeverity.Warning:
+            return 1;
+        case DiagnosticSeverity.Error:
+            return 2;
+    }
+
+    return 2;
+}
+
+public inline finite law bool DiagnosticSeverityIs(DiagnosticSeverity expected, borrow Diagnostic diagnostic)
+{
+    return DiagnosticSeverityRank(diagnostic.Severity) == DiagnosticSeverityRank(expected);
+}
+
+public inline finite law bool DiagnosticStage(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Stage == expected;
+}
+
+public inline finite law bool DiagnosticMessageEqual(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Message == expected;
+}
+
+public inline finite law bool DiagnosticMessageContains(borrow Diagnostic diagnostic, ascii expected)
+    where overlap(diagnostic, expected)
+{
+    return System.Text.Contains(diagnostic.Message, expected);
+}
+
+public inline finite law bool DiagnosticHasLocation(borrow Diagnostic diagnostic)
+{
+    return diagnostic.Location.HasValue;
+}
+
+public inline finite law bool DiagnosticHasEndLocation(borrow Diagnostic diagnostic)
+{
+    return diagnostic.Location.HasValue && diagnostic.Location.HasEndValue;
+}
+
+public inline finite law bool DiagnosticFilePath(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Location.HasValue && diagnostic.Location.FilePath == expected;
+}
+
+public inline finite law bool DiagnosticAt(
+    borrow Diagnostic diagnostic,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+{
+    return diagnostic.Location.HasValue
+        && diagnostic.Location.Line == line
+        && diagnostic.Location.Column == column;
+}
+
+public inline finite law bool DiagnosticEndsAt(
+    borrow Diagnostic diagnostic,
+    u64[0 2 ** 63 - 1] endLine,
+    u64[0 2 ** 63 - 1] endColumn)
+{
+    return diagnostic.Location.HasValue
+        && diagnostic.Location.HasEndValue
+        && diagnostic.Location.EndLine == endLine
+        && diagnostic.Location.EndColumn == endColumn;
+}
+
+public inline finite law bool DiagnosticMatches(
+    borrow Diagnostic diagnostic,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains)
+    where overlap(diagnostic, code),
+          overlap(diagnostic, stage),
+          overlap(diagnostic, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    return DiagnosticCode(code, diagnostic)
+        && DiagnosticSeverityIs(severity, diagnostic)
+        && DiagnosticStage(stage, diagnostic)
+        && DiagnosticMessageContains(diagnostic, messageContains);
+}
+
+public inline finite law bool DiagnosticMatchesAt(
+    borrow Diagnostic diagnostic,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+    where overlap(diagnostic, code),
+          overlap(diagnostic, stage),
+          overlap(diagnostic, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    return DiagnosticMatches(diagnostic, code, severity, stage, messageContains)
+        && DiagnosticAt(diagnostic, line, column);
+}
+
+public finite law bool DiagnosticsCount(
+    u64[0 2 ** 63 - 1] expected,
+    borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length == expected;
+}
+
+public finite law bool DiagnosticsEmpty(borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length == 0;
+}
+
+public finite law bool DiagnosticsNotEmpty(borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length != 0;
+}
+
+public finite law bool DiagnosticsContainCode(borrow Diagnostic[] diagnostics, ascii code)
+    where overlap(diagnostics, code)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticCode(code, diagnostics[index]))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContainMessage(borrow Diagnostic[] diagnostics, ascii messageContains)
+    where overlap(diagnostics, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMessageContains(diagnostics[index], messageContains))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContain(
+    borrow Diagnostic[] diagnostics,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains)
+    where overlap(diagnostics, code),
+          overlap(diagnostics, stage),
+          overlap(diagnostics, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMatches(diagnostics[index], code, severity, stage, messageContains))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContainAt(
+    borrow Diagnostic[] diagnostics,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+    where overlap(diagnostics, code),
+          overlap(diagnostics, stage),
+          overlap(diagnostics, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMatchesAt(diagnostics[index], code, severity, stage, messageContains, line, column))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsSeverityCount(
+    DiagnosticSeverity severity,
+    borrow Diagnostic[] diagnostics)
+{
+    stack mut u64[0 2 ** 63 - 1] count = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticSeverityIs(severity, diagnostics[index]))
+        {
+            count += 1;
+        }
+
+        index += 1;
+    }
+
+    return count;
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsErrorCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Error, diagnostics);
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsWarningCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Warning, diagnostics);
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsInfoCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Info, diagnostics);
+}
+
+public finite law bool DiagnosticsHaveNoErrors(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsErrorCount(diagnostics) == 0;
+}
+
+public finite law bool DiagnosticsHaveErrors(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsErrorCount(diagnostics) != 0;
+}
+
+// Lowercase severity label for rendering, mirroring DiagnosticSeverityRank's
+// switch shape. Returns a static ascii literal, so it stays finite law.
+internal finite ascii DiagnosticSeverityLabel(DiagnosticSeverity severity)
+{
+    switch (severity)
+    {
+        case DiagnosticSeverity.Info:
+            return "info";
+        case DiagnosticSeverity.Warning:
+            return "warning";
+        case DiagnosticSeverity.Error:
+            return "error";
+    }
+
+    return "error";
+}
+
+// Render one diagnostic as `<severity> <code>: <message>`, appending
+// ` at <FilePath>:<Line>:<Column>` when the location is present and
+// `-<EndLine>:<EndColumn>` when it carries an end. Threads MemoryStatus through
+// every append exactly like AppendSnapshotDifference, early-returning on Err.
+public fn System.Memory.MemoryStatus AppendDiagnostic(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow Diagnostic d)
+{
+    switch (writer.AppendAscii(DiagnosticSeverityLabel(d.Severity)))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Code))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(": "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Message))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (!d.Location.HasValue)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (writer.AppendAscii(" at "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Location.FilePath))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.Line))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.Column))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (!d.Location.HasEndValue)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (writer.AppendAscii("-"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.EndLine))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return writer.AppendU64(d.Location.EndColumn);
+}
+
+// Render every diagnostic in order, one per line. Threads MemoryStatus through
+// each AppendDiagnostic and the newline separator, early-returning on Err.
+public fn System.Memory.MemoryStatus AppendDiagnostics(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow Diagnostic[] diagnostics)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        switch (AppendDiagnostic(writer, diagnostics[index]))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendAscii("\n"))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Render a two-line expected/actual block for a diagnostic that failed to match.
+// The expected line echoes the matcher inputs (the same shape as
+// DiagnosticMatches); the actual line reuses AppendDiagnostic. Threads
+// MemoryStatus exactly like AppendSnapshotDifference.
+public fn System.Memory.MemoryStatus AppendDiagnosticMismatch(
+    mut borrow System.Text.OwnedAscii writer,
+    ascii expectedCode,
+    DiagnosticSeverity expectedSeverity,
+    ascii expectedStage,
+    ascii expectedMessageContains,
+    borrow Diagnostic actual)
+    where overlap(writer, expectedCode),
+          overlap(writer, expectedStage),
+          overlap(writer, expectedMessageContains),
+          overlap(writer, actual),
+          overlap(expectedCode, expectedStage),
+          overlap(expectedCode, expectedMessageContains),
+          overlap(expectedStage, expectedMessageContains)
+{
+    switch (writer.AppendAscii("expected: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(DiagnosticSeverityLabel(expectedSeverity)))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedCode))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" ["))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedStage))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii("]: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedMessageContains))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii("\nactual: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return AppendDiagnostic(writer, actual);
+}
+
+public finite law bool TypeIs<TActual, TExpected>()
+{
+    return comptime System.Compiler.TypeUnqualifiedTypeIs<TActual, TExpected>();
+}
+
+public finite law bool TypeIsBool<T>()
+{
+    return comptime System.Compiler.IsBool<T>();
+}
+
+public finite law bool TypeIsInteger<T>()
+{
+    return comptime System.Compiler.IsInteger<T>();
+}
+
+public finite law bool TypeIsFloat<T>()
+{
+    return comptime System.Compiler.IsFloat<T>();
+}
+
+public finite law bool TypeIsRawPointer<T>()
+{
+    return comptime System.Compiler.IsRawPointer<T>();
+}
+
+public finite law bool TypeIsFixedArray<T>()
+{
+    return comptime System.Compiler.IsFixedArray<T>();
+}
+
+public finite law bool TypeIsSlice<T>()
+{
+    return comptime System.Compiler.IsSlice<T>();
+}
+
+public finite law bool TypeIsDynamic<T>()
+{
+    return comptime System.Compiler.IsDynamic<T>();
+}
+
+public finite law bool TypeIsFunctionPointer<T>()
+{
+    return comptime System.Compiler.IsFunctionPointer<T>();
+}
+
+public finite law bool TypeIsClosure<T>()
+{
+    return comptime System.Compiler.IsClosure<T>();
+}
+
+public finite law bool TypeIsNamed<T>()
+{
+    return comptime System.Compiler.IsNamed<T>();
+}
+
+public finite law bool TypeIsStruct<T>()
+{
+    return comptime System.Compiler.IsStruct<T>();
+}
+
+public finite law bool TypeIsRecord<T>()
+{
+    return comptime System.Compiler.IsRecord<T>();
+}
+
+public finite law bool TypeIsEnum<T>()
+{
+    return comptime System.Compiler.IsEnum<T>();
+}
+
+public finite law bool TypeIsTrait<T>()
+{
+    return comptime System.Compiler.IsTrait<T>();
+}
+
+public finite law bool TypeIsDoctrine<T>()
+{
+    return comptime System.Compiler.IsDoctrine<T>();
+}
+
+public finite law bool TypeIsDynTrait<T>()
+{
+    return comptime System.Compiler.IsDynTrait<T>();
+}
+
+public finite law bool TypeHasConcreteLayout<T>()
+{
+    return comptime System.Compiler.HasConcreteLayout<T>();
+}
+
+public finite law bool TypeIsZeroSized<T>()
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return comptime System.Compiler.TypeIsZeroSized<T>();
+}
+
+public finite law bool TypeSizeIs<T>(u64[0 max] expected)
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return (comptime System.Compiler.TypeSize<T>()) == expected;
+}
+
+public finite law bool TypeAlignIs<T>(u64[0 max] expected)
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return (comptime System.Compiler.TypeAlign<T>()) == expected;
+}
+
+public finite law bool TypeDisplayName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeDisplayName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeBaseName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeBaseName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeModuleName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeModuleName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeIsGenericInstantiation<T>()
+{
+    return comptime System.Compiler.TypeIsGenericInstantiation<T>();
+}
+
+public finite law bool TypeArgumentCount<T>(u64[0 max] expected)
+{
+    return (comptime System.Compiler.TypeArgumentCount<T>()) == expected;
+}
+
+public finite law bool TypeComptimeArgumentCount<T>(u64[0 max] expected)
+{
+    return (comptime System.Compiler.TypeComptimeArgumentCount<T>()) == expected;
+}
+
+public finite law bool OptionSome<T>(borrow System.Core.Option<T> value)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(_):
+            return true;
+        case System.Core.Option<T>.None:
+            return false;
+    }
+}
+
+public finite law bool OptionNone<T>(borrow System.Core.Option<T> value)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(_):
+            return false;
+        case System.Core.Option<T>.None:
+            return true;
+    }
+}
+
+public finite law bool ResultOk<T, E>(borrow System.Core.Result<T, E> value)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return true;
+        case System.Core.Result<T, E>.Err(_):
+            return false;
+    }
+}
+
+public finite law bool ResultErr<T, E>(borrow System.Core.Result<T, E> value)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return false;
+        case System.Core.Result<T, E>.Err(_):
+            return true;
+    }
+}
+
+// Value-carrying companions to the OptionSome/None and ResultOk/Err shape
+// predicates above. They check both the variant AND the payload, routing payload
+// equality through the System.Collections.DictionaryKey doctrine exactly like
+// ContainsElement. `expected` is taken by value under `where Copyable(...)` so a
+// literal still binds (e.g. OptionSomeEquals(opt, 5)).
+public finite law bool OptionSomeEquals<T>(borrow System.Core.Option<T> value, T expected)
+    where Copyable(T)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(var v):
+            return System.Collections.DictionaryKey.Equals(v, expected);
+        case System.Core.Option<T>.None:
+            return false;
+    }
+}
+
+public finite law bool ResultOkEquals<T, E>(borrow System.Core.Result<T, E> value, T expected)
+    where Copyable(T)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(var v):
+            return System.Collections.DictionaryKey.Equals(v, expected);
+        case System.Core.Result<T, E>.Err(_):
+            return false;
+    }
+}
+
+public finite law bool ResultErrEquals<T, E>(borrow System.Core.Result<T, E> value, E expected)
+    where Copyable(E)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return false;
+        case System.Core.Result<T, E>.Err(var e):
+            return System.Collections.DictionaryKey.Equals(e, expected);
+    }
+}
+
+public finite law bool ProcessExitCode(i32[min max] expected, borrow System.Process.ProcessOutput output)
+{
+    return output.ExitCode == expected;
+}
+
+public finite law bool ProcessTimedOut(borrow System.Process.ProcessOutput output)
+{
+    return output.WasTimedOut();
+}
+
+public finite law bool ProcessCompleted(borrow System.Process.ProcessOutput output)
+{
+    return !output.WasTimedOut();
+}
+
+public finite law bool ProcessStdoutEqual(ascii expected, borrow System.Process.ProcessOutput output)
+    where overlap(expected, output)
+{
+    return System.Text.AsciiBytesEqual(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrEqual(ascii expected, borrow System.Process.ProcessOutput output)
+    where overlap(expected, output)
+{
+    return System.Text.AsciiBytesEqual(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutContains(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesContains(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrContains(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesContains(output.StderrSlice(), expected);
+}
+
+public finite law u64[0 2 ** 63 - 1] ProcessStdoutCountOccurrences(
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return System.Text.AsciiBytesCountOccurrences(output.StdoutSlice(), needle);
+}
+
+public finite law u64[0 2 ** 63 - 1] ProcessStderrCountOccurrences(
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return System.Text.AsciiBytesCountOccurrences(output.StderrSlice(), needle);
+}
+
+public finite law bool ProcessStdoutOccurrences(
+    u64[0 2 ** 63 - 1] expected,
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return ProcessStdoutCountOccurrences(output, needle) == expected;
+}
+
+public finite law bool ProcessStderrOccurrences(
+    u64[0 2 ** 63 - 1] expected,
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return ProcessStderrCountOccurrences(output, needle) == expected;
+}
+
+public finite law bool ProcessStdoutStartsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesStartsWith(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrStartsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesStartsWith(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutEndsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesEndsWith(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrEndsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesEndsWith(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutEmpty(borrow System.Process.ProcessOutput output)
+{
+    return output.StdoutLength() == 0;
+}
+
+public finite law bool ProcessStderrEmpty(borrow System.Process.ProcessOutput output)
+{
+    return output.StderrLength() == 0;
+}
+
+public finite law bool ProcessOutputEqual(
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr,
+    borrow System.Process.ProcessOutput output)
+    where overlap(expectedStdout, expectedStderr),
+          overlap(expectedStdout, output),
+          overlap(expectedStderr, output)
+{
+    return ProcessExitCode(expectedExitCode, output)
+        && ProcessStdoutEqual(expectedStdout, output)
+        && ProcessStderrEqual(expectedStderr, output);
+}
+
+public unsafe fn bool RunProcessMatches(
+    mut borrow System.Process.ProcessCommand command,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(command, expectedStdout),
+          overlap(command, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.RunCapture(command))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessOutputEqual(expectedExitCode, expectedStdout, expectedStderr, output);
+    }
+}
+
+public unsafe fn bool RunProcessMatchesWithInput(
+    mut borrow System.Process.ProcessCommand command,
+    ascii input,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(command, input),
+          overlap(command, expectedStdout),
+          overlap(command, expectedStderr),
+          overlap(input, expectedStdout),
+          overlap(input, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.RunCaptureWithInput(command, input))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessOutputEqual(expectedExitCode, expectedStdout, expectedStderr, output);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOut(
+    mut borrow System.Process.ProcessCommand command,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    switch (System.Process.RunCaptureWithTimeout(command, timeoutMilliseconds))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessTimedOut(output);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOutWithInput(
+    mut borrow System.Process.ProcessCommand command,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+    where overlap(command, input)
+{
+    switch (System.Process.RunCaptureWithInputTimeout(command, input, timeoutMilliseconds))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessTimedOut(output);
+    }
+}
+
+public unsafe fn bool RunProcessMatches(
+    ascii executable,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(executable, expectedStdout),
+          overlap(executable, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessMatches(mutableCommand, expectedExitCode, expectedStdout, expectedStderr);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOut(
+    ascii executable,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessTimesOut(mutableCommand, timeoutMilliseconds);
+    }
+}
+
+public unsafe fn bool RunProcessMatchesWithInput(
+    ascii executable,
+    ascii input,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(executable, input),
+          overlap(executable, expectedStdout),
+          overlap(executable, expectedStderr),
+          overlap(input, expectedStdout),
+          overlap(input, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessMatchesWithInput(
+                mutableCommand,
+                input,
+                expectedExitCode,
+                expectedStdout,
+                expectedStderr);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOutWithInput(
+    ascii executable,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+    where overlap(executable, input)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessTimesOutWithInput(mutableCommand, input, timeoutMilliseconds);
+    }
+}
+
+public finite law TestStatus Status(bool assertion)
 {
     if (assertion)
     {
@@ -68,6 +2286,59 @@ public fn TestStatus Status(bool assertion)
     }
 
     return TestStatus.Failed;
+}
+
+// Collection-filter reporting for generated test runners. The runner emits
+// the matching logic; these keep the printing (and the Testing module's
+// raw-pointer-free policy) in one place.
+// Process-argument access for generated runners, wrapped so the generated
+// root needs no extra imports and no unsafe blocks.
+public fn u64[0 2 ** 63 - 1] CollectionArgumentCount()
+{
+    unsafe
+    {
+        switch (System.Process.Arguments())
+        {
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Err(var error):
+                return 0;
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Ok(var value):
+                stack System.Process.ProcessArguments arguments = value;
+                return arguments.Count();
+        }
+    }
+}
+
+public fn bool CollectionArgumentEquals(u64[0 2 ** 63 - 1] index, ascii expected)
+{
+    unsafe
+    {
+        switch (System.Process.Arguments())
+        {
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Err(var error):
+                return false;
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Ok(var value):
+                stack System.Process.ProcessArguments arguments = value;
+                return arguments.ArgumentEquals(index, expected);
+        }
+    }
+}
+
+public fn void ReportUnknownCollection()
+{
+    System.Console.WriteLine("Unknown test collection argument. Known collections:");
+    return;
+}
+
+public fn void ReportKnownCollection(ascii name)
+{
+    System.Console.WriteLine(name);
+    return;
+}
+
+public fn void ReportNoFactsSelected()
+{
+    System.Console.WriteLine("No facts matched the requested collections.");
+    return;
 }
 
 public fn u8[0 1] RunFact(ascii name, bool assertion)
@@ -98,7 +2369,73 @@ public fn u8[0 1] RunFact(unicode name, bool assertion)
     return 1;
 }
 
-public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
+// Prints the `run <name>` start marker when per-fact progress is enabled
+// (`stark test --test-progress` passes `--progress` to the generated
+// runner), so a hung or timed-out run's last line names the fact that was
+// in flight. No-ops when progress is off, keeping default output identical
+// to plain RunFact runs.
+public fn void BeginFact(bool progress, ascii name)
+{
+    if (!progress)
+    {
+        return;
+    }
+
+    System.Console.Write("run ");
+    System.Console.WriteLine(name);
+    return;
+}
+
+// RunFact plus a positional counter: with progress enabled the result line
+// carries `(ordinal/total)` over the project's generated entries, so partial
+// output shows how far a run got before a timeout; with progress off the
+// line matches RunFact exactly.
+public fn u8[0 1] RunFactCounted(bool progress, u32[0 2 ** 31 - 1] ordinal, u32[0 2 ** 31 - 1] total, ascii name, bool assertion)
+{
+    if (!progress)
+    {
+        return RunFact(name, assertion);
+    }
+
+    stack mut OwnedAscii counter = new();
+    stack System.Memory.MemoryStatus openStatus = counter.AppendConstAscii(" (");
+    stack System.Memory.MemoryStatus ordinalStatus = counter.AppendI64((i64[min max])ordinal);
+    stack System.Memory.MemoryStatus slashStatus = counter.AppendConstAscii("/");
+    stack System.Memory.MemoryStatus totalStatus = counter.AppendI64((i64[min max])total);
+    stack System.Memory.MemoryStatus closeStatus = counter.AppendConstAscii(")");
+    if (assertion)
+    {
+        System.Console.Write("ok ");
+        System.Console.Write(name);
+        System.Console.WriteLine(counter.View());
+        return 0;
+    }
+
+    System.Console.WriteError("FAILED ");
+    System.Console.WriteError(name);
+    System.Console.WriteErrorLine(counter.View());
+    return 1;
+}
+
+public fn u8[0 1] SkipFact(ascii name, ascii reason)
+{
+    System.Console.Write("skipped ");
+    System.Console.Write(name);
+    System.Console.Write(": ");
+    System.Console.WriteLine(reason);
+    return 0;
+}
+
+public fn u8[0 1] SkipFact(unicode name, unicode reason)
+{
+    System.Console.Write((unicode)"skipped ");
+    System.Console.Write(name);
+    System.Console.Write((unicode)": ");
+    System.Console.WriteLine(reason);
+    return 0;
+}
+
+public finite law i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
 {
     if (failureCount == 0)
     {
@@ -111,4 +2448,120 @@ public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
 public fn void Exit(u32[0 2 ** 31 - 1] failureCount)
 {
     System.Process.Exit(ExitCode(failureCount));
+}
+
+// Benchmark/regression gate: the threshold compare at the heart of a regression
+// harness. `measured` passes when it is no slower than `tolerancePercent`% over
+// `baseline` (measured <= baseline + baseline*tolerancePercent/100). Faster
+// runs (measured < baseline) always pass. Arithmetic is widened to u128 so the
+// `baseline * tolerancePercent` product cannot overflow for full-range u64
+// inputs.
+public finite law bool WithinRegression(
+    u64[0 max] baseline,
+    u64[0 max] measured,
+    u64[0 max] tolerancePercent)
+{
+    if (measured <= baseline)
+    {
+        return true;
+    }
+
+    stack u128[0 max] allowance =
+        (u128[0 max])baseline
+        + (u128[0 max])baseline * (u128[0 max])tolerancePercent / (u128[0 max])100;
+    return (u128[0 max])measured <= allowance;
+}
+
+// ---------------------------------------------------------------------------
+// TEST-10 benchmark timing
+// ---------------------------------------------------------------------------
+// A SAFE monotonic clock accessor for benchmark harnesses. The only monotonic
+// primitive is the per-OS `internal unsafe fn i64[min max] MonotonicMilliseconds()`
+// dispatched through System.Runtime.Platform; that surface is intentionally kept
+// `internal unsafe` (it returns a raw error-coded i64, negative on clock failure)
+// rather than promoted to a public platform clock. This wrapper is the minimal
+// safe exposure: it lives in System.Testing where the benchmark harness lives,
+// wraps the existing call in an `unsafe { }` block (no new raw pointers), and
+// folds the error case into a clean monotonic u64 by clamping a negative reading
+// (clock failure) to 0. Reads never decrease, so ElapsedSince stays well-defined.
+public fn u64[0 max] MonotonicMilliseconds()
+{
+    unsafe
+    {
+        stack i64[min max] raw = System.Runtime.Platform.MonotonicMilliseconds();
+        if (raw < 0)
+        {
+            return (u64[0 max])0;
+        }
+
+        return (u64[0 max])raw;
+    }
+}
+
+// Elapsed milliseconds since a prior MonotonicMilliseconds() reading. A monotonic
+// clock never runs backwards, but if `start` somehow exceeds `now` (e.g. a clamped
+// failure reading) the result is defined as 0 rather than wrapping.
+public finite law u64[0 max] ElapsedSince(u64[0 max] start, u64[0 max] now)
+{
+    if (now <= start)
+    {
+        return (u64[0 max])0;
+    }
+
+    return now - start;
+}
+
+// A minimal stopwatch over the monotonic clock. Start() captures a reading and
+// Elapsed() reports milliseconds since that capture; both route through the safe
+// MonotonicMilliseconds()/ElapsedSince helpers above.
+public struct Stopwatch
+{
+    internal u64[0 max] StartedAt;
+
+    Stopwatch()
+    {
+        self.StartedAt = (u64[0 max])0;
+    }
+
+    fn void Start(mut borrow Stopwatch self)
+    {
+        self.StartedAt = MonotonicMilliseconds();
+    }
+
+    fn u64[0 max] Elapsed(borrow Stopwatch self)
+    {
+        return ElapsedSince(self.StartedAt, MonotonicMilliseconds());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TEST-02 AllDistinct
+// ---------------------------------------------------------------------------
+// True iff no two elements are equal. O(n^2) pairwise comparison routed through
+// the System.Collections.DictionaryKey doctrine, matching ContainsElement. Empty
+// and singleton slices are trivially distinct. `T` is compared by value, so the
+// inner element is rebound to a `needle` local before being borrowed for
+// DictionaryKey.Equals (see ContainsElement for the STK5002 address-of workaround).
+public finite law bool AllDistinct<T>(borrow T[] values)
+    where Copyable(T)
+{
+    stack mut u64[0 2 ** 63 - 1] outer = 0;
+    while willexit (outer < values.Length)
+    {
+        stack T needle = values[outer];
+        stack mut u64[0 2 ** 63 - 1] inner = outer + 1;
+        while willexit (inner < values.Length)
+        {
+            if (System.Collections.DictionaryKey.Equals(values[inner], needle))
+            {
+                return false;
+            }
+
+            inner += 1;
+        }
+
+        outer += 1;
+    }
+
+    return true;
 }

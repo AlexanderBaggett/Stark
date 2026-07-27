@@ -1,0 +1,53 @@
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallSignatureSlots
+
+internal fn void TypedCallSignatureSlotFacts(
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] slotIndexPlusOne,
+    out TypedSignatureTypeKind typeKind,
+    out u32[0 max] typeHeadToken,
+    out u32[0 max] typePrimaryToken,
+    out u32[0 max] typeStartToken,
+    out u32[0 max] typeEndToken,
+    out u32[0 max] rangeStartToken,
+    out u32[0 max] rangeEndToken,
+    out u32[0 max] elementCountStartToken,
+    out u32[0 max] elementCountEndToken,
+    out u32[0 max] bitWidth,
+    out u32[0 max] typeArgumentCount,
+    out u32[0 max] comptimeArgumentCount,
+    out u32[0 max] typeFlags)
+{
+    typeKind = TypedSignatureTypeKind.Unknown;
+    typeHeadToken = 0;
+    typePrimaryToken = 0;
+    typeStartToken = 0;
+    typeEndToken = 0;
+    rangeStartToken = 0;
+    rangeEndToken = 0;
+    elementCountStartToken = 0;
+    elementCountEndToken = 0;
+    bitWidth = 0;
+    typeArgumentCount = 0;
+    comptimeArgumentCount = 0;
+    typeFlags = 0;
+    if (slotIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(slotIndexPlusOne - 1);
+    typeKind = signatures.TypeKindAt(slot);
+    typeHeadToken = signatures.TypeHeadTokenAt(slot);
+    typePrimaryToken = signatures.TypePrimaryTokenAt(slot);
+    typeStartToken = signatures.TypeStartTokenAt(slot);
+    typeEndToken = signatures.TypeEndTokenAt(slot);
+    rangeStartToken = signatures.RangeStartTokenAt(slot);
+    rangeEndToken = signatures.RangeEndTokenAt(slot);
+    elementCountStartToken = signatures.ElementCountStartTokenAt(slot);
+    elementCountEndToken = signatures.ElementCountEndTokenAt(slot);
+    bitWidth = signatures.BitWidthAt(slot);
+    typeArgumentCount = signatures.TypeArgumentCountAt(slot);
+    comptimeArgumentCount = signatures.ComptimeArgumentCountAt(slot);
+    typeFlags = signatures.TypeFlagsAt(slot);
+}

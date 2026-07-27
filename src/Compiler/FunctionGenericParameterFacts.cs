@@ -66,6 +66,12 @@ internal static class FunctionGenericParameterFacts
                 && string.Equals(traitDeclaration.Identifier().GetText(), containingTypeName, StringComparison.Ordinal))
             {
                 AddTypeParameterNames(traitDeclaration.typeParameterList(), orderedNames, seenNames);
+                // `Self` is an implicit type parameter of every trait method, bound to the
+                // implementing type during conformance checking and dynamic dispatch. It
+                // resolves like an ordinary generic parameter inside the trait declaration,
+                // so receivers stay consistent with concrete methods: `borrow Self self`
+                // mirrors `borrow Counter self`.
+                AddGenericParameterNames(new[] { "Self" }, orderedNames, seenNames);
                 return;
             }
 
@@ -90,7 +96,8 @@ internal static class FunctionGenericParameterFacts
 
         AddGenericParameterNames(
             typeParameterList.typeParameter()
-                .Select(static parameter => parameter.GetText())
+                .Where(static parameter => parameter.COMPTIME() is null)
+                .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray(),
             orderedNames,
             seenNames);

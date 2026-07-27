@@ -78,6 +78,14 @@ public sealed partial class MidLevelIrLoweringTests
                 Assert.Null(statement.Address);
                 Assert.Null(statement.Call);
                 return;
+            case MidLevelIrStatementKind.ArenaFrameEnter:
+            case MidLevelIrStatementKind.ArenaFrameLeave:
+                Assert.Null(statement.TargetName);
+                Assert.Null(statement.TargetType);
+                Assert.Null(statement.Value);
+                Assert.Null(statement.Address);
+                Assert.Null(statement.Call);
+                return;
             case MidLevelIrStatementKind.Assign:
                 Assert.False(string.IsNullOrWhiteSpace(statement.TargetName));
                 Assert.NotNull(statement.TargetType);
@@ -274,6 +282,10 @@ public sealed partial class MidLevelIrLoweringTests
                 return;
             case MidLevelIrLoadIndirectRValue load:
                 AssertWellFormedOperand(function, load.Address);
+                return;
+            case MidLevelIrDynVTableSlotRValue slot:
+                AssertWellFormedOperand(function, slot.VtablePointer);
+                Assert.True(slot.SlotIndex >= 0);
                 return;
             default:
                 throw new Xunit.Sdk.XunitException($"Unhandled MIR rvalue '{value.GetType().Name}' in '{function.Name}'.");

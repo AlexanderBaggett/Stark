@@ -258,9 +258,10 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn Pair<T> Relay<T>(Box box, T value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn Pair<T> Relay<T>(Box box, T value) {", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return box.MakePair<T>(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("stack Facade.Pair<T> pair = new Facade.Pair<T>(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return box.MakePair(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return pair;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);
             Assert.Contains(
@@ -406,7 +407,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-typed-interface-modifiers-runtime-");
         var facadeSourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
         var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
         var demoSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -444,15 +445,14 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
 
             var typedOnlyManifest = BuildTypedOnlyFacadeManifest(
-                manifest!,
+                manifest,
                 static template => template,
                 omitCompilerFacts: true);
 
-            await File.WriteAllTextAsync(manifestPath, typedOnlyManifest.ToJson());
+            await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(typedOnlyManifest));
             File.Delete(facadeSourcePath);
 
             await File.WriteAllTextAsync(

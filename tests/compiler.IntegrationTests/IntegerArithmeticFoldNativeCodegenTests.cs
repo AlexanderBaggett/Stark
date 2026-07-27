@@ -26,7 +26,7 @@ public sealed class IntegerArithmeticFoldNativeCodegenTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                ["--emit-obj", "-O3", "-o", outputPath],
+                ["--emit-obj", "-o", outputPath],
                 new StringReader(
                     """
                     module Demo

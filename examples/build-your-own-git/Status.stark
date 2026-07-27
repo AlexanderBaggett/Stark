@@ -1,4 +1,5 @@
 import System
+import System.Console
 module BuildYourOwnGitStatus
 
 finite law bool BoolValue(System.IO.IOResult<bool> result) {
@@ -21,16 +22,10 @@ fn bool RepositoryMetadataExists() {
 
 export unsafe fn i32[min max] main() {
     if (!RepositoryMetadataExists()) {
-        if (System.Console.WriteLine("Repository metadata missing") != System.IO.IOStatus.Ok) {
-            return 2;
-        }
-
+        WriteLine("Repository metadata missing");
         return 1;
     }
 
-    if (System.Console.WriteLine("Repository status clean") != System.IO.IOStatus.Ok) {
-        return 3;
-    }
-
+    WriteLine("Repository status clean");
     return 0;
 }

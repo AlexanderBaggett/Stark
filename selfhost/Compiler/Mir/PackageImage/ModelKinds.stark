@@ -1,0 +1,474 @@
+module Compiler.Mir.PackageImage.ModelKinds
+
+// Package-image model enum surface shared by logical loaders, builders, and
+// the zero-copy fact carrier modules.
+
+internal inline finite law u32[0 max] PackageImageMissingStringIndex()
+{
+    return 4294967295;
+}
+
+public enum LogicalPackageTypedDeclarationKind
+{
+    TypeAlias,
+    Type,
+    Function,
+    Global,
+}
+
+public enum LogicalPackageTypedCallableKind
+{
+    Function,
+    Method,
+}
+
+public enum LogicalPackageTypedTypeReferenceSource
+{
+    TypeAliasTarget,
+    TypeAliasComptimeGenericParameterType,
+    FunctionReturn,
+    FunctionParameter,
+    MethodReturn,
+    MethodParameter,
+    CallableComptimeGenericParameterType,
+    CallableTypeParameterConstraintBoundTrait,
+    CallableThreadSafetyLawPredicateType,
+    GlobalType,
+    GlobalConstantInitializerType,
+    TypeField,
+    TypeAssociatedTypeTarget,
+    TypeImplementedTrait,
+    TypeThreadSafetyLawAttributeConditionType,
+    TypeEnumVariantPayloadType,
+    TypeEnumVariantAbsorbsErrorType,
+    FunctionOwnershipEventPlaceType,
+    FunctionOwnershipRootType,
+    AbiFunctionSourceReturn,
+    AbiFunctionLlvmReturn,
+    AbiParameterSourceType,
+    AbiParameterLlvmType,
+    AbiParameterLlvmCarrierType,
+    LayoutEnumTagFieldType,
+    LayoutEnumOrderedFieldType,
+    LayoutEnumVariantFieldType,
+    GenericTemplateStatementType,
+    GenericTemplateStatementTraversalIndexType,
+    GenericTemplateStatementTraversalElementType,
+    GenericTemplateExpressionType,
+    GenericTemplateExpressionTypeArgument,
+    GenericTemplateExpressionComptimeValueArgumentType,
+    GenericTemplateDeferredFunctionInstantiationTypeArgument,
+    GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentType,
+    GenericTemplateDeferredTypeInstantiationType,
+    GenericTemplateLocalDeclarationType,
+    GenericTemplateConversionTargetType,
+    GenericTemplateFieldAccessFieldType,
+    GenericTemplateTryPropagationOperandType,
+    GenericTemplateTryPropagationReturnType,
+    GenericTemplateTryPropagationSuccessPayloadType,
+    GenericTemplateTryPropagationOperandFailurePayloadType,
+    GenericTemplateTryPropagationEnclosingFailurePayloadType,
+    GenericTemplateObjectCreationCreatedType,
+    GenericTemplateObjectInitializerMemberFieldType,
+    GenericTemplateEnumConstructorEnumType,
+    GenericTemplateEnumConstructorMemberFieldType,
+    GenericTemplateEnumCallEnumType,
+    GenericTemplateEnumValueEnumType,
+    GenericTemplateEnumPatternEnumType,
+    GenericTemplateEnumPatternMemberFieldType,
+    GenericTemplateAggregatePatternType,
+    GenericTemplateAggregatePatternMemberFieldType,
+    GenericTemplateDirectCallReturnType,
+    GenericTemplateDirectCallParameterType,
+    GenericTemplateDirectCallTypeArgument,
+    GenericTemplateDirectCallComptimeValueArgumentType,
+    GenericTemplateMemberCallReturnType,
+    GenericTemplateMemberCallParameterType,
+    GenericTemplateMemberCallTypeArgument,
+    GenericTemplateMemberCallComptimeValueArgumentType,
+    GenericTemplateFunctionAddressTargetType,
+    GenericTemplateFunctionAddressReturnType,
+    GenericTemplateFunctionAddressParameterType,
+    GenericTemplateFunctionAddressTypeArgument,
+    GenericTemplateFunctionAddressComptimeValueArgumentType,
+    GenericTemplateBoundOperationResultType,
+    GenericTemplateBoundOperationReturnType,
+    GenericTemplateBoundOperationParameterType,
+    GenericTemplateBoundOperationTypeArgument,
+    GenericTemplateBoundOperationComptimeValueArgumentType,
+    GenericTemplateBoundOperationCallArgumentParameterType,
+    GenericTemplateBoundOperationCallArgumentArgumentType,
+    GenericTemplateBoundOperationReceiverType,
+    GenericTemplateBoundOperationFunctionPointerType,
+    GenericTemplateBoundOperationClosureType,
+    GenericTemplateBoundOperationSourceType,
+    GenericTemplateBoundOperationTargetType,
+    GenericTemplateBoundOperationCreatedType,
+    GenericTemplateBoundOperationConstructorParameterType,
+    GenericTemplateBoundOperationObjectInitializerMemberFieldType,
+    GenericTemplateBoundOperationEnumType,
+    GenericTemplateBoundOperationEnumMemberFieldType,
+    GenericTemplateBoundOperationLayoutQueryTargetType,
+    GenericTemplateBoundOperationSwitchType,
+}
+
+public enum LogicalPackageTypedCallableFactTextKind
+{
+    GenericParameterName,
+    ComptimeGenericParameterName,
+    TypeParameterConstraintParameterName,
+    ThreadSafetyLawPredicateLawName,
+    ValueContractLeft,
+    ValueContractOperator,
+    ValueContractRight,
+    FfiAbi,
+    LinkName,
+    AsmArchitecture,
+    AsmTemplate,
+    AsmInputRegisterName,
+    AsmInputValueName,
+    AsmOutputRegisterName,
+    AsmOutputValueName,
+    AsmClobberRegisterName,
+    ParameterGroupParameterName,
+    ParameterGroupRegionParameterName,
+    ParameterGroupRegionStartExpression,
+    ParameterGroupRegionCountExpression,
+}
+
+public enum LogicalPackageGenericTemplateFactTextKind
+{
+    QualifiedResolvedName,
+    QualifiedName,
+    OverloadKey,
+    BodyText,
+    BackendOptimizationMode,
+    StatementKind,
+    StatementName,
+    StatementAssignmentOperator,
+    StatementStorageClass,
+    StatementLoopBehavior,
+    StatementConstProvenance,
+    StatementTraversalIndexName,
+    StatementTraversalIndexStorageClass,
+    StatementTraversalElementName,
+    StatementLoopContractName,
+    ExpressionKind,
+    ExpressionName,
+    ExpressionAssignmentOperator,
+    ExpressionLiteralText,
+    ExpressionMemberName,
+    ExpressionOperatorName,
+    ExpressionComptimeValueArgumentParameterName,
+    ExpressionComptimeValueArgumentIntegerValue,
+    ExpressionComptimeValueArgumentSymbolicSourceName,
+    DeferredFunctionInstantiationCalleeTemplateName,
+    DeferredFunctionInstantiationComptimeValueArgumentParameterName,
+    DeferredFunctionInstantiationComptimeValueArgumentIntegerValue,
+    DeferredFunctionInstantiationComptimeValueArgumentSymbolicSourceName,
+    LocalDeclarationKind,
+    FieldAccessFieldName,
+    TryPropagationOperandOkVariantName,
+    TryPropagationOperandErrVariantName,
+    TryPropagationEnclosingErrVariantName,
+    TryPropagationConversionFunnelVariant,
+    ObjectCreationConstructorTypeName,
+    ObjectCreationExpressionText,
+    ObjectInitializerMemberFieldName,
+    EnumConstructorVariantName,
+    EnumConstructorMemberFieldName,
+    EnumCallVariantName,
+    EnumValueVariantName,
+    EnumPatternVariantName,
+    EnumPatternMemberFieldName,
+    AggregatePatternMemberFieldName,
+    CallQualifiedResolvedName,
+    CallQualifiedSourceName,
+    CallQualifiedTemplateName,
+    CallParameterName,
+    CallParameterRawPointerElementCountExpression,
+    CallComptimeValueArgumentParameterName,
+    CallComptimeValueArgumentIntegerValue,
+    CallComptimeValueArgumentSymbolicSourceName,
+    CallParameterGroupParameterName,
+    CallParameterGroupRegionParameterName,
+    CallParameterGroupRegionStartExpression,
+    CallParameterGroupRegionCountExpression,
+    CallPointeeDeadOnReturnParameterName,
+    BoundOperationKind,
+    BoundOperationEnclosingFunctionName,
+    BoundOperationAccessKind,
+    BoundOperationSourceKind,
+    BoundOperationOperationName,
+    BoundOperationExpressionText,
+    BoundOperationConstructorTypeName,
+    BoundOperationConstructorParameterName,
+    BoundOperationConstructorParameterRawPointerElementCountExpression,
+    BoundOperationObjectInitializerMemberFieldName,
+    BoundOperationEnumVariantName,
+    BoundOperationEnumMemberFieldName,
+    BoundOperationTextBuildKind,
+    BoundOperationLayoutQueryKind,
+    BoundOperationSwitchFamily,
+    SwitchCaseKind,
+    SwitchCaseName,
+    PatternKind,
+    PatternName,
+}
+
+public enum LogicalPackageTypedTemplateStatementParentKind
+{
+    TopLevel,
+    Body,
+    Then,
+    Else,
+    Initializer,
+    Iterator,
+    SwitchCase,
+}
+
+public enum LogicalPackageTypedTemplatePatternParentKind
+{
+    StatementCondition,
+    SwitchCaseMember,
+    PatternMember,
+}
+
+public enum LogicalPackageTypedTemplateExpressionParentKind
+{
+    Root,
+    Argument,
+    TargetExpression,
+}
+
+public enum LogicalPackageTemplateCallParentKind
+{
+    DirectCall,
+    MemberCall,
+    FunctionAddress,
+    BoundOperation,
+}
+
+public enum LogicalPackageTemplateBoundOperationTypePayloadKind
+{
+    Receiver,
+    FunctionPointer,
+    Closure,
+    Source,
+    Target,
+    Created,
+    ConstructorParameter,
+    ObjectInitializerMemberField,
+    Enum,
+    EnumMemberField,
+    LayoutQueryTarget,
+    Switch,
+}
+
+public enum LogicalPackageTemplateBoundOperationU32PayloadKind
+{
+    IndexCount,
+    ArgumentCount,
+    ConstructorParameterCount,
+    StorageSelector,
+    InitializerMemberCount,
+    EnumMemberCount,
+    SegmentCount,
+    HoleCount,
+    OperandCount,
+    SectionCount,
+    LabelCount,
+    ExplicitDefaultLabelCount,
+    LoweredDefaultLabelCount,
+    LiteralLabelCount,
+    MatchAllLabelCount,
+    CaptureLabelCount,
+    StructuredPatternLabelCount,
+    GuardedLabelCount,
+    ObjectInitializerMemberFieldIndex,
+    EnumMemberFieldIndex,
+}
+
+public enum LogicalPackageTemplateBoundOperationBoolPayloadKind
+{
+    ReceiverIsAddressable,
+    ReceiverIsMutable,
+    ConstructorIsPrimaryShape,
+    ConstructorParameterIsDisjoint,
+    ConstructorParameterIsConst,
+    UsesFixedStorage,
+}
+
+public enum LogicalPackageTypedTypeAliasFactTextKind
+{
+    GenericParameterName,
+    ComptimeGenericParameterName,
+}
+
+public enum LogicalPackageFunctionEffectFactTextKind
+{
+    QualifiedResolvedName,
+    Kind,
+    InlinePreference,
+    FfiAbi,
+    BackendOptimizationMode,
+}
+
+public enum LogicalPackageAbiFactTextKind
+{
+    QualifiedResolvedName,
+    SymbolName,
+    SourceName,
+    FfiAbi,
+    LinkName,
+    ParameterSourceName,
+    ParameterLlvmName,
+    ParameterRawPointerElementCountExpression,
+}
+
+public enum LogicalPackageAbiParameterKind
+{
+    Direct,
+    IndirectIn,
+    SRet,
+}
+
+public enum LogicalPackageLayoutFactTextKind
+{
+    QualifiedTypeName,
+    ConcreteFieldName,
+    EnumLayoutKind,
+    EnumTagFieldName,
+    EnumOrderedFieldName,
+    EnumVariantName,
+    EnumVariantSourceFieldName,
+    EnumVariantStorageFieldName,
+}
+
+public enum LogicalPackageNativeDependencyKind
+{
+    Source,
+    IncludeDirectory,
+    LibraryDirectory,
+    Library,
+    LinkArgument,
+    PkgConfigPackage,
+}
+
+public enum LogicalPackageNativeMetadataFactTextKind
+{
+    NativeSource,
+    NativeIncludeDirectory,
+    NativeLibraryDirectory,
+    NativeLibrary,
+    NativeLinkArgument,
+    NativePkgConfigPackage,
+    LinkageObjectFileName,
+    LinkageDefinedSymbol,
+    LinkageReferencedSymbol,
+}
+
+public enum LogicalPackageEnumLayoutKind
+{
+    DirectTag,
+}
+
+public enum LogicalPackageFunctionSemanticFactTextKind
+{
+    QualifiedResolvedName,
+    DeclaredKind,
+    EffectiveKind,
+    CalledFunctionName,
+    ParameterName,
+    ParameterType,
+    ParameterCaptureKind,
+    CallCalleeName,
+    CallArgumentCallerParameterName,
+    CallArgumentCalleeParameterName,
+    CallArgumentCaptureKind,
+}
+
+public enum LogicalPackageFunctionOwnershipFactTextKind
+{
+    QualifiedResolvedName,
+    ImplicitDropName,
+    MoveName,
+    EventKind,
+    EventRootName,
+    EventProjectionPath,
+    EventLocationFilePath,
+    RootName,
+    RootKind,
+    RootFinalAvailability,
+}
+
+public enum LogicalPackageTypedGlobalFactTextKind
+{
+    Kind,
+    ConstantInitializerKind,
+    ConstantInitializerIntegerValue,
+    ConstantInitializerFloatLiteralText,
+    ConstantInitializerTextLiteralText,
+    ConstantInitializerVariantName,
+}
+
+public enum LogicalPackageTypedTypeFactTextKind
+{
+    Kind,
+    BackendOptimizationMode,
+    StructLayout,
+    ImplementedTraitName,
+    AssociatedTypeName,
+    ThreadSafetyLawAttributeKind,
+    ThreadSafetyLawAttributeLawName,
+    ThreadSafetyLawAttributeConditionLawName,
+    EnumVariantName,
+    EnumVariantRole,
+    EnumVariantPayloadName,
+}
+
+public enum LogicalPackageTypeReferenceChildKind
+{
+    Root,
+    ElementType,
+    TypeArgument,
+    ComptimeValueArgumentType,
+    ReturnType,
+    ParameterType,
+    AssociatedOwnerType,
+}
+
+public enum LogicalPackageTypeReferenceTextKind
+{
+    Kind,
+    Name,
+    RangeMin,
+    RangeMax,
+    BorrowKind,
+    AccessKind,
+    InitializationKind,
+    FixedLengthParameterName,
+    FunctionKind,
+    FunctionAbi,
+    ClosureStorageKind,
+    ClosureCallCapability,
+    DynTraitStorageKind,
+    AssociatedTypeName,
+    SourceAliasName,
+    ParameterRawPointerElementCountExpression,
+    PointeeDeadOnReturnParameterName,
+    ComptimeValueArgumentParameterName,
+    ComptimeValueArgumentIntegerValue,
+    ComptimeValueArgumentSymbolicSourceName,
+    ParameterGroupParameterName,
+    ParameterGroupRegionParameterName,
+    ParameterGroupRegionStartExpression,
+    ParameterGroupRegionCountExpression,
+}
+
+public enum LogicalPackageTypeReferenceParameterGroupKind
+{
+    Disjoint,
+    Overlap,
+    Same,
+}

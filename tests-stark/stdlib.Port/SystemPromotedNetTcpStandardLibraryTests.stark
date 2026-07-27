@@ -1,0 +1,270 @@
+import StdlibPortSupport
+import System.IO
+import System.IO.File
+import System.Net
+import System.Net.Tcp
+import System.Runtime.Buffer
+import System.Testing
+module SystemPromotedNetTcpStandardLibraryTests
+
+// Ported from SystemPromotedNetTcpStandardLibraryTests.StdLibSourcePromotedNetTcpSurfaceCompiles.
+internal fn bool StdLibSourcePromotedNetTcpSurfaceCompilesImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-net-tcp-surface-compiles", raw"""
+import System.Net
+import System.Net.Tcp
+import System.Runtime.Buffer
+import System.Net
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool CountFailed(System.Net.NetResult<u64[0 2 ** 63 - 1]> result)
+{
+    switch (result)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+            return false;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+            return true;
+    }
+}
+
+fn bool ClientFailed(System.Net.NetResult<System.Net.Tcp.TcpClient> result)
+{
+    switch (result)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var value):
+            return false;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+            return true;
+    }
+}
+
+fn i32[min max] RunClosedSurface()
+{
+    stack mut System.Net.Tcp.TcpClient client = new();
+    stack mut i8[min max][4] rawBuffer =
+    {
+        1, 2, 3, 4
+    };
+    stack mut i8[min max][2] rawFirst =
+    {
+        1, 2
+    };
+    stack mut i8[min max][2] rawSecond =
+    {
+        3, 4
+    };
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+    stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
+
+    if (client.IsOpen())
+    {
+        return 1;
+    }
+
+    if (!CountFailed(client.Read(rawBuffer)))
+    {
+        return 2;
+    }
+
+    if (!CountFailed(client.Read(fixedBuffer)))
+    {
+        return 3;
+    }
+
+    if (!CountFailed(client.Read(dynamicBuffer, 4)))
+    {
+        return 4;
+    }
+
+    if (!CountFailed(client.Write(rawBuffer)))
+    {
+        return 5;
+    }
+
+    if (!CountFailed(client.ReadVectored(rawFirst, rawSecond)))
+    {
+        return 6;
+    }
+
+    if (!CountFailed(client.WriteVectored(rawFirst, rawSecond)))
+    {
+        return 7;
+    }
+
+    if (!CountFailed(client.Write(fixedBuffer)))
+    {
+        return 8;
+    }
+
+    if (StatusOk(client.WaitReadable(0)) || StatusOk(client.WaitWritable(0)))
+    {
+        return 9;
+    }
+
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 10;
+    }
+
+    if (!StatusOk(client.Close()))
+    {
+        return 11;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    if (listener.IsOpen())
+    {
+        return 12;
+    }
+
+    if (!ClientFailed(listener.Accept()))
+    {
+        return 13;
+    }
+
+    if (StatusOk(listener.WaitReadable(0)))
+    {
+        return 14;
+    }
+
+    if (!StatusOk(listener.Close()))
+    {
+        return 15;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    return Contains(llvm, "System_Net_Tcp")
+        && Contains(llvm, "System_Runtime_Buffer_FixedByteBuffer512_WriteFill")
+        && Contains(llvm, "System_Runtime_Platform_ReadSocket")
+        && Contains(llvm, "System_Runtime_Platform_WriteSocket")
+        && Contains(llvm, "System_Runtime_Platform_ReadSocketVector2")
+        && Contains(llvm, "System_Runtime_Platform_WriteSocketVector2")
+        && Contains(llvm, "System_Runtime_Platform_WaitReadable")
+        && Contains(llvm, "System_Runtime_Platform_WaitWritable")
+        && DoesNotContain(llvm, "System_Experimental_Net_Tcp");
+}
+
+// Ported from SystemPromotedNetTcpStandardLibraryTests.StdLibSourcePromotedNetTcpBufferReadsUseBulkPaths.
+internal fn bool StdLibSourcePromotedNetTcpBufferReadsUseBulkPathsImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-promoted-net-tcp-buffer-reads-bulk-paths",
+        "../../stdlib/src/System/Net/Tcp.stark",
+        LinuxX64TargetTriple);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    stack ascii fixed512Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_");
+    stack ascii fixed4096Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_");
+    stack ascii fixed8192Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_");
+    stack ascii dynamicRead = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_u64_02__63_1__");
+
+    if (!Contains(fixed512Read, "ptr noundef nonnull noalias captures(none) dereferenceable(528) align 8 %arg_destination"))
+    {
+        return false;
+    }
+
+    if (!Contains(fixed512Read, "LinuxSyscall3HandleBuffer")
+        && !Contains(fixed4096Read, "LinuxSyscall3HandleBuffer")
+        && !Contains(fixed8192Read, "LinuxSyscall3HandleBuffer"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "System_Runtime_Platform_ReadSocketVector2")
+        || !Contains(llvm, "System_Runtime_Platform_WriteSocketVector2"))
+    {
+        return false;
+    }
+
+    if (!Contains(fixed512Read, "FixedByteBuffer512_WriteSlice__mutborrowFixedByteBuffer512_")
+        || !Contains(fixed512Read, "FixedByteBuffer512_AdvanceWrite"))
+    {
+        return false;
+    }
+
+    if (!Contains(fixed4096Read, "FixedByteBuffer4096_WriteSlice__mutborrowFixedByteBuffer4096_")
+        || !Contains(fixed4096Read, "FixedByteBuffer4096_AdvanceWrite"))
+    {
+        return false;
+    }
+
+    if (!Contains(fixed8192Read, "FixedByteBuffer8192_WriteSlice__mutborrowFixedByteBuffer8192_")
+        || !Contains(fixed8192Read, "FixedByteBuffer8192_AdvanceWrite"))
+    {
+        return false;
+    }
+
+    if (Contains(fixed512Read, "FixedByteBuffer512_WriteByte")
+        || Contains(fixed4096Read, "FixedByteBuffer4096_WriteByte")
+        || Contains(fixed8192Read, "FixedByteBuffer8192_WriteByte"))
+    {
+        return false;
+    }
+
+    if (Contains(fixed512Read, "alloca [512 x i8]")
+        || Contains(fixed4096Read, "alloca [4096 x i8]")
+        || Contains(fixed8192Read, "alloca [8192 x i8]"))
+    {
+        return false;
+    }
+
+    if (!Contains(dynamicRead, "LinuxSyscall3HandleBuffer")
+        || !Contains(dynamicRead, "DynamicByteBuffer_WriteSlice"))
+    {
+        return false;
+    }
+
+    if (Contains(dynamicRead, "DynamicByteBuffer_WriteByte"))
+    {
+        return false;
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Platform.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var platformSourceOwner):
+            stack ascii platformSource = platformSourceOwner.View();
+            if (!Contains(platformSource, "rawmutptr<i8[min max]>[capacity] buffer")
+                || !Contains(platformSource, "rawptr<i8[min max]>[length] buffer"))
+            {
+                return false;
+            }
+    }
+
+    return true;
+}

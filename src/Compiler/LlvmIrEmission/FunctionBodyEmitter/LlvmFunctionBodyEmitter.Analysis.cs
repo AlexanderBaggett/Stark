@@ -191,14 +191,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 var hasIndirectAddress = indirectArgumentAddresses is not null
                     && index < indirectArgumentAddresses.Count
                     && indirectArgumentAddresses[index] is not null;
-                var hasPromotedLocal = indirectArgumentLocalNames is not null
-                    && index < indirectArgumentLocalNames.Count
-                    && !string.IsNullOrWhiteSpace(indirectArgumentLocalNames[index]);
-                if (hasIndirectAddress || hasPromotedLocal)
+                if (hasIndirectAddress)
                 {
                     continue;
                 }
 
+                // A promoted local is not necessarily the value used at the
+                // call site: direct pointer-backed borrows still render the SSA
+                // argument itself. Keep that value live conservatively; an
+                // indirect ABI call may emit one harmless unused local load.
                 VisitValue(arguments[index]);
             }
 
@@ -305,6 +306,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static bool IsNoOpConversion(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)
     {
+        if (IsPointerBackedBorrowRuntimePointerConversion(sourceType, targetType))
+        {
+            return true;
+        }
+
         var source = NormalizeAggregateType(sourceType);
         var target = NormalizeAggregateType(targetType);
         if (HaveSameNoOpValueShape(source, target))
@@ -317,9 +323,32 @@ internal sealed partial class LlvmFunctionBodyEmitter
             (StarkTypeKind.Integer, StarkTypeKind.Integer) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.Float, StarkTypeKind.Float) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.RawPointer, StarkTypeKind.RawPointer) => true,
+            (StarkTypeKind.RawPointer, StarkTypeKind.FunctionPointer) => true,
+            (StarkTypeKind.FunctionPointer, StarkTypeKind.RawPointer) => true,
             (StarkTypeKind.FunctionPointer, StarkTypeKind.FunctionPointer) => true,
             _ => false
         };
+    }
+
+    private static bool IsPointerBackedBorrowRuntimePointerConversion(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(sourceType)
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.ElementType is { } targetElementType)
+        {
+            return HaveSameNoOpValueShape(StarkTypeSymbols.BorrowReturnValueType(sourceType), targetElementType);
+        }
+
+        if (sourceType.Kind == StarkTypeKind.RawPointer
+            && sourceType.ElementType is { } sourceElementType
+            && StarkTypeSymbols.IsPointerBackedBorrowType(targetType))
+        {
+            return HaveSameNoOpValueShape(sourceElementType, StarkTypeSymbols.BorrowReturnValueType(targetType));
+        }
+
+        return false;
     }
 
     private static bool HaveSameNoOpValueShape(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)
@@ -1306,18 +1335,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private bool TryResolveSingleStoreLocalValue(string localName, out SsaValue value)
     {
         return _singleStoreLocalValues.TryGetValue(localName, out value!);
-    }
-
-    private HashSet<string> CollectConstProvenanceLocalNames()
-    {
-        return _ssaFunction.Blocks
-            .SelectMany(static block => block.Instructions)
-            .OfType<SsaAllocateLocalInstruction>()
-            .Where(static allocateLocal =>
-                allocateLocal.HasConstProvenance
-                || ConstProvenanceFacts.HasPermanentConstProvenance(allocateLocal.ConstProvenance))
-            .Select(static allocateLocal => allocateLocal.LocalName)
-            .ToHashSet(StringComparer.Ordinal);
     }
 
     private HashSet<string> CollectInvariantLocalNames()

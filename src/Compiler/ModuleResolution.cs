@@ -15,6 +15,26 @@ public interface IModuleDocumentResolver : IModuleResolver
     bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document);
 }
 
+internal interface IModuleResolutionDiagnosticProvider
+{
+    bool TryGetUnresolvedModuleDiagnostic(string moduleName, out string code, out string message);
+}
+
+/// <summary>
+/// Applies resolver-specific ownership policy to the source file that starts a
+/// compilation. Root files do not pass through <see cref="IModuleResolver"/>,
+/// so namespace reservations must be checked explicitly after their module
+/// declaration has been parsed.
+/// </summary>
+internal interface IRootModuleDiagnosticProvider
+{
+    bool TryGetRootModuleDiagnostic(
+        string moduleName,
+        string? sourcePath,
+        out string code,
+        out string message);
+}
+
 public sealed class EmptyModuleResolver : IModuleResolver
 {
     public static EmptyModuleResolver Instance { get; } = new();
@@ -70,46 +90,166 @@ public sealed class InMemoryModuleResolver : IModuleSourceResolver
     }
 }
 
+/// <summary>
+/// Where a module resolution actually came from: exactly one of
+/// <see cref="SourceFilePath"/> or <see cref="ManifestPath"/> is set. Source
+/// files are preferred before package images so stale build artifacts under
+/// broad search roots cannot shadow the source tree being checked.
+/// </summary>
+public sealed record ModuleResolutionNote(
+    string ModuleName,
+    string? SourceFilePath,
+    string? ManifestPath,
+    string? LibraryPath,
+    string? ShadowedSourcePath);
+
 public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
+    private readonly IReadOnlySet<string> _implicitSearchDirectories;
+    private readonly string? _targetTriple;
+    private readonly string? _normalizedTargetTriple;
+    private readonly object _manifestIndexLock = new();
+    private readonly object _resolutionNoteLock = new();
+    private readonly List<ModuleResolutionNote> _resolutionNotes = [];
+    private readonly HashSet<string> _notedModules = new(StringComparer.Ordinal);
     private Dictionary<string, ResolvedPackageModule>? _manifestModules;
+    private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesBySearchDirectory;
+    private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesByPath;
 
     public FileSystemModuleResolver(string baseDirectory)
         : this([baseDirectory])
     {
     }
 
-    public FileSystemModuleResolver(IEnumerable<string> searchDirectories)
+    public FileSystemModuleResolver(string baseDirectory, LlvmTargetInfo? targetInfo)
+        : this([baseDirectory], targetInfo)
     {
+    }
+
+    public FileSystemModuleResolver(IEnumerable<string> searchDirectories)
+        : this(searchDirectories, targetInfo: null)
+    {
+    }
+
+    public FileSystemModuleResolver(IEnumerable<string> searchDirectories, LlvmTargetInfo? targetInfo)
+        : this(searchDirectories, targetInfo, implicitSearchDirectories: null)
+    {
+    }
+
+    public FileSystemModuleResolver(
+        IEnumerable<string> searchDirectories,
+        LlvmTargetInfo? targetInfo,
+        IEnumerable<string>? implicitSearchDirectories)
+    {
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
         _searchDirectories = searchDirectories
             .Select(Path.GetFullPath)
-            .Distinct(StringComparer.Ordinal)
+            .Distinct(pathComparer)
             .DefaultIfEmpty(Environment.CurrentDirectory)
             .ToArray();
+        _implicitSearchDirectories = (implicitSearchDirectories ?? [])
+            .Select(Path.GetFullPath)
+            .ToHashSet(pathComparer);
+        _targetTriple = string.IsNullOrWhiteSpace(targetInfo?.Triple)
+            ? null
+            : targetInfo.Triple.Trim();
+        _normalizedTargetTriple = _targetTriple is null
+            ? null
+            : NormalizeTargetPathSegment(_targetTriple);
     }
 
     public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
     {
+        // Explicit roots are authoritative as a group: prefer their source
+        // surfaces, then their package images. Only then consult implicit
+        // roots such as the input directory and STARK_PATH. This preserves the
+        // source-over-stale-package rule without letting an ambient developer
+        // source tree defeat an explicitly selected distributable package.
+        if (TryResolveSourceModule(moduleName, implicitTier: false, out module)
+            || TryResolvePackageModule(moduleName, implicitTier: false, out module)
+            || TryResolveSourceModule(moduleName, implicitTier: true, out module))
+        {
+            return true;
+        }
+
+        return TryResolvePackageModule(moduleName, implicitTier: true, out module);
+    }
+
+    internal bool TryResolvePackageModule(string moduleName, out ResolvedModuleReference module)
+    {
+        return TryResolvePackageModule(moduleName, implicitTier: false, out module)
+            || TryResolvePackageModule(moduleName, implicitTier: true, out module);
+    }
+
+    private bool TryResolvePackageModule(
+        string moduleName,
+        bool implicitTier,
+        out ResolvedModuleReference module)
+    {
+        EnsureManifestIndex();
         foreach (var searchDirectory in _searchDirectories)
         {
-            var filePath = ResolvePath(searchDirectory, moduleName);
-            if (File.Exists(filePath))
+            if (_implicitSearchDirectories.Contains(searchDirectory) != implicitTier)
             {
-                module = new ResolvedModuleReference(moduleName, filePath, IsExternal: false);
+                continue;
+            }
+
+            if (!Directory.Exists(searchDirectory))
+            {
+                continue;
+            }
+
+            if (_manifestModulesBySearchDirectory!.TryGetValue(Path.GetFullPath(searchDirectory), out var directoryModules)
+                && directoryModules.TryGetValue(moduleName, out var manifestModule))
+            {
+                RecordResolutionNote(new ModuleResolutionNote(
+                    moduleName,
+                    SourceFilePath: null,
+                    ManifestPath: manifestModule.ManifestPath,
+                    LibraryPath: manifestModule.LibraryPath,
+                    ShadowedSourcePath: null));
+                module = new ResolvedModuleReference(
+                    moduleName,
+                    FilePath: manifestModule.ManifestPath,
+                    IsExternal: false,
+                    ManifestPath: manifestModule.ManifestPath,
+                    LibraryPath: manifestModule.LibraryPath);
                 return true;
             }
         }
 
-        var manifestModule = TryResolveManifestModule(moduleName);
-        if (manifestModule is not null)
+        module = default!;
+        return false;
+    }
+
+    private bool TryResolveSourceModule(
+        string moduleName,
+        bool implicitTier,
+        out ResolvedModuleReference module)
+    {
+        foreach (var searchDirectory in _searchDirectories)
         {
-            module = new ResolvedModuleReference(
+            if (_implicitSearchDirectories.Contains(searchDirectory) != implicitTier)
+            {
+                continue;
+            }
+
+            var filePath = ResolvePath(searchDirectory, moduleName);
+            if (!File.Exists(filePath))
+            {
+                continue;
+            }
+
+            RecordResolutionNote(new ModuleResolutionNote(
                 moduleName,
-                FilePath: manifestModule.ManifestPath,
-                IsExternal: false,
-                ManifestPath: manifestModule.ManifestPath,
-                LibraryPath: manifestModule.LibraryPath);
+                SourceFilePath: filePath,
+                ManifestPath: null,
+                LibraryPath: null,
+                ShadowedSourcePath: null));
+            module = new ResolvedModuleReference(moduleName, filePath, IsExternal: false);
             return true;
         }
 
@@ -117,11 +257,34 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         return false;
     }
 
+    /// <summary>
+    /// Snapshot of what each resolved module actually bound to (source file or
+    /// package manifest), in first-resolution order, one note per module.
+    /// </summary>
+    public IReadOnlyList<ModuleResolutionNote> SnapshotResolutionNotes()
+    {
+        lock (_resolutionNoteLock)
+        {
+            return _resolutionNotes.ToArray();
+        }
+    }
+
+    private void RecordResolutionNote(ModuleResolutionNote note)
+    {
+        lock (_resolutionNoteLock)
+        {
+            if (_notedModules.Add(note.ModuleName))
+            {
+                _resolutionNotes.Add(note);
+            }
+        }
+    }
+
     public bool TryLoadModuleSource(ResolvedModuleReference module, out string sourceText, out string? filePath)
     {
         if (module.ManifestPath is not null)
         {
-            if (TryResolveManifestModule(module.ModuleName) is { } manifestModule)
+            if (TryResolveManifestModule(module) is { } manifestModule)
             {
                 if (PackageImageLoader.TryBuildStructuredModuleDocument(manifestModule, out var structuredDocument))
                 {
@@ -136,6 +299,10 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
                     return true;
                 }
             }
+
+            sourceText = string.Empty;
+            filePath = module.ManifestPath;
+            return false;
         }
 
         filePath = module.FilePath ?? ResolvePath(_searchDirectories[0], module.ModuleName);
@@ -151,16 +318,15 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
     public bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document)
     {
-        _ = targetInfo;
-
         if (module.ManifestPath is not null
-            && TryResolveManifestModule(module.ModuleName) is { } manifestModule
+            && TryResolveManifestModule(module) is { } manifestModule
             && (PackageImageLoader.TryBuildStructuredModuleDocument(manifestModule, out var manifestDocument)
                 || PackageImageLoader.TryBuildModuleDocument(manifestModule, out manifestDocument)))
         {
             document = manifestDocument with
             {
-                Reference = module with { FilePath = manifestModule.ManifestPath }
+                Reference = module with { FilePath = manifestModule.ManifestPath },
+                TargetInfo = targetInfo
             };
             return true;
         }
@@ -181,45 +347,222 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         return _manifestModules!.TryGetValue(moduleName, out var module) ? module : null;
     }
 
+    private ResolvedPackageModule? TryResolveManifestModule(ResolvedModuleReference module)
+    {
+        EnsureManifestIndex();
+
+        if (!string.IsNullOrWhiteSpace(module.ManifestPath)
+            && _manifestModulesByPath!.TryGetValue(Path.GetFullPath(module.ManifestPath), out var manifestModules)
+            && manifestModules.TryGetValue(module.ModuleName, out var resolvedModule))
+        {
+            return resolvedModule;
+        }
+
+        return TryResolveManifestModule(module.ModuleName);
+    }
+
     private void EnsureManifestIndex()
     {
-        if (_manifestModules is not null)
+        if (Volatile.Read(ref _manifestModules) is not null)
         {
             return;
         }
 
-        _manifestModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
-
-        foreach (var searchDirectory in _searchDirectories)
+        // One resolver instance is shared by parallel dependency-module compiles, so the
+        // index builds once under the lock and publishes through the final volatile write.
+        lock (_manifestIndexLock)
         {
-            if (!Directory.Exists(searchDirectory))
+            if (_manifestModules is not null)
             {
-                continue;
+                return;
             }
 
-            foreach (var manifestPath in Directory.EnumerateFiles(searchDirectory, "*.starkpkg.json", SearchOption.AllDirectories))
+            var allModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+            var modulesBySearchDirectory = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
+            var modulesByPath = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
+
+            foreach (var searchDirectory in _searchDirectories)
             {
-                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
+                if (!Directory.Exists(searchDirectory))
                 {
                     continue;
                 }
 
-                var libraryPath = Path.Combine(Path.GetDirectoryName(manifestPath) ?? searchDirectory, manifest.LibraryFileName);
-
-                foreach (var module in manifest.Modules)
+                var resolvedSearchDirectory = Path.GetFullPath(searchDirectory);
+                var directoryModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+                foreach (var manifestPath in Directory
+                             .EnumerateFiles(resolvedSearchDirectory, "*.starkpkg", SearchOption.AllDirectories)
+                             .Where(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
+                             .Concat(Directory.EnumerateFiles(resolvedSearchDirectory, "*.starkpkg.json", SearchOption.AllDirectories))
+                             .Where(path => !IsNestedBuildArtifactManifest(resolvedSearchDirectory, path))
+                             .Select(path => (Path: path, Priority: GetManifestTargetPriority(resolvedSearchDirectory, path)))
+                             .Where(static entry => entry.Priority >= 0)
+                             .OrderBy(static entry => entry.Priority)
+                             .ThenBy(static entry => !PackageImageBinaryFormat.HasBinaryFileName(entry.Path))
+                             .ThenBy(static entry => entry.Path, StringComparer.Ordinal)
+                             .Select(static entry => entry.Path))
                 {
-                    _manifestModules[module.ModuleName] = new ResolvedPackageModule(
-                        manifestPath,
-                        libraryPath,
-                        manifest,
-                        module);
+                    if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
+                    {
+                        continue;
+                    }
+
+                    var resolvedManifestPath = Path.GetFullPath(manifestPath);
+                    var libraryPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(resolvedManifestPath) ?? resolvedSearchDirectory, manifest.LibraryFileName));
+                    var manifestModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+
+                    foreach (var module in manifest.Modules)
+                    {
+                        var resolvedModule = new ResolvedPackageModule(
+                            resolvedManifestPath,
+                            libraryPath,
+                            manifest,
+                            module);
+                        directoryModules.TryAdd(module.ModuleName, resolvedModule);
+                        manifestModules[module.ModuleName] = resolvedModule;
+                        allModules.TryAdd(module.ModuleName, resolvedModule);
+                    }
+
+                    modulesByPath[resolvedManifestPath] = manifestModules;
+                }
+
+                if (directoryModules.Count != 0)
+                {
+                    modulesBySearchDirectory[resolvedSearchDirectory] = directoryModules;
                 }
             }
+
+            _manifestModulesBySearchDirectory = modulesBySearchDirectory;
+            _manifestModulesByPath = modulesByPath;
+            Volatile.Write(ref _manifestModules, allModules);
         }
+    }
+
+    private int GetManifestTargetPriority(string searchDirectory, string manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(_targetTriple))
+        {
+            return 1;
+        }
+
+        var relativePath = Path.GetRelativePath(searchDirectory, manifestPath);
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length <= 1 || !LooksLikeTargetTripleDirectory(segments[0]))
+        {
+            return 1;
+        }
+
+        return IsActiveTargetDirectory(segments[0])
+            ? 0
+            : -1;
+    }
+
+    private bool IsActiveTargetDirectory(string segment)
+    {
+        return string.Equals(segment, _targetTriple, StringComparison.Ordinal)
+            || string.Equals(segment, _normalizedTargetTriple, StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeTargetTripleDirectory(string segment)
+    {
+        if (!segment.Contains('-', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var firstComponentLength = segment.IndexOf('-', StringComparison.Ordinal);
+        var architecture = firstComponentLength <= 0 ? segment : segment[..firstComponentLength];
+        return IsKnownTargetArchitecture(architecture)
+            || segment.Contains("linux", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("windows", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("win32", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("mingw", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("msvc", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("macos", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("freebsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("netbsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("openbsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("dragonfly", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("haiku", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("solaris", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("illumos", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("android", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("ios", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("wasi", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("wasm", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("emscripten", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnownTargetArchitecture(string architecture)
+    {
+        return architecture.StartsWith("x86", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i386", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i486", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i586", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i686", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("amd64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("arm", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("riscv", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("mips", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("powerpc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("ppc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("s390x", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("sparc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("wasm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeTargetPathSegment(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+        {
+            builder.Append(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.' or '+'
+                ? ch
+                : '_');
+        }
+
+        return builder.Length == 0 ? "_" : builder.ToString();
+    }
+
+    private static bool IsNestedBuildArtifactManifest(string searchDirectory, string manifestPath)
+    {
+        if (IsInsideStarkDirectory(searchDirectory))
+        {
+            return false;
+        }
+
+        var relativePath = Path.GetRelativePath(searchDirectory, manifestPath);
+        return relativePath
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(static segment => string.Equals(segment, ".stark", StringComparison.Ordinal));
+    }
+
+    private static bool IsInsideStarkDirectory(string path)
+    {
+        var directory = new DirectoryInfo(path);
+        while (directory is not null)
+        {
+            if (string.Equals(directory.Name, ".stark", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return false;
     }
 }
 
-public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
+public sealed class TargetAwareStdLibModuleResolver :
+    IModuleSourceResolver,
+    IModuleDocumentResolver,
+    IModuleResolutionDiagnosticProvider,
+    IRootModuleDiagnosticProvider
 {
     private const string PlatformModuleName = "System.Runtime.Platform";
     private const string LinuxDispatchTemplateRelativePath = "templates/System.Runtime.Platform.LinuxDispatch.stark";
@@ -285,6 +628,37 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
         return false;
     }
 
+    bool IModuleResolutionDiagnosticProvider.TryGetUnresolvedModuleDiagnostic(
+        string moduleName,
+        out string code,
+        out string message)
+    {
+        if (_inner is IModuleResolutionDiagnosticProvider provider)
+        {
+            return provider.TryGetUnresolvedModuleDiagnostic(moduleName, out code, out message);
+        }
+
+        code = string.Empty;
+        message = string.Empty;
+        return false;
+    }
+
+    bool IRootModuleDiagnosticProvider.TryGetRootModuleDiagnostic(
+        string moduleName,
+        string? sourcePath,
+        out string code,
+        out string message)
+    {
+        if (_inner is IRootModuleDiagnosticProvider provider)
+        {
+            return provider.TryGetRootModuleDiagnostic(moduleName, sourcePath, out code, out message);
+        }
+
+        code = string.Empty;
+        message = string.Empty;
+        return false;
+    }
+
     private bool ShouldOverridePlatformModule(string moduleName)
     {
         return !string.IsNullOrWhiteSpace(_dispatchTemplatePath)
@@ -342,9 +716,15 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
 
         while (directory is not null)
         {
-            if (string.Equals(directory.Name, "src", StringComparison.OrdinalIgnoreCase)
+            if (IsStdLibRoot(directory))
+            {
+                return directory.FullName;
+            }
+
+            if ((string.Equals(directory.Name, "src", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(directory.Name, "dist", StringComparison.OrdinalIgnoreCase))
                 && directory.Parent is not null
-                && string.Equals(directory.Parent.Name, "stdlib", StringComparison.OrdinalIgnoreCase))
+                && IsStdLibRoot(directory.Parent))
             {
                 return directory.Parent.FullName;
             }
@@ -353,5 +733,14 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
         }
 
         return null;
+    }
+
+    private static bool IsStdLibRoot(DirectoryInfo directory)
+    {
+        return string.Equals(directory.Name, "stdlib", StringComparison.OrdinalIgnoreCase)
+            && (Directory.Exists(Path.Combine(directory.FullName, "templates"))
+                || Directory.Exists(Path.Combine(directory.FullName, "src"))
+                || Directory.Exists(Path.Combine(directory.FullName, "dist"))
+                || File.Exists(Path.Combine(directory.FullName, "Stark.toml")));
     }
 }

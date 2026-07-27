@@ -787,11 +787,9 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
   - [x] compile-only vs link-only CLI modes
   - [x] explicit linker and archiver selection
   - [x] multi-object link orchestration tests
-- [x] optimization level controls
-  - [x] CLI optimization-level surface
-  - [x] pipeline behavior per optimization level
-  - [x] native toolchain flag forwarding
-  - [x] tests that optimization settings change tool invocation/output
+- [x] Obsolete: optimization level controls were removed in June 2026; the
+  compiler has a single always-optimized pipeline (all Stark SSA passes plus
+  clang -O3), and native toolchain flag forwarding is fixed to -O3
 - [x] debug info emission
   - [x] carry source spans through MIR and SSA
   - [x] emit line-table debug info
@@ -1503,9 +1501,9 @@ Everything before this point is frozen
   - [x] Add fixed-buffer peer handshake construction and validation example
 - [ ] Build a Breakout Clone with Stark and Raylib
   - [x] Add deterministic fixed-grid Breakout game-state update example before Raylib binding
-  - [x] Research Raylib 5.5 local build and Linux link requirements
-  - [x] Add split Raylib 5.5 Stark bindings for core, shapes, textures, text, models, audio, and shared types
-  - [x] Add C ABI shim coverage for Raylib calls that pass or return structs by value
+  - [x] Research Raylib 6.0 local build and Linux link requirements
+  - [x] Add split Raylib 6.0 Stark bindings for core, shapes, textures, text, models, audio, and shared types
+  - [x] Add direct C ABI aggregate-carrier coverage for Raylib calls that pass or return structs by value
   - [x] Add headless Raylib smoke example that checks and links against the binding surface
   - [x] Discuss and design the initial Raylib-backed playable clone scope before implementation
   - [x] Add first playable Raylib Breakout shell with paddle input, ball bounce, fixed bricks, and score text
@@ -2206,8 +2204,7 @@ semantic restrictions expose facts that C cannot safely promise. The tasks below
 are written as assignable implementation work. Each optimizer task must include
 SSA or pipeline regression tests, LLVM emission checks when LLVM output changes,
 and at least one executable benchmark or microbenchmark when the transform is
-expected to affect runtime speed. Optimizations must preserve `-O0` and `-Og`
-debuggability unless a task explicitly says otherwise. 
+expected to affect runtime speed. 
 
 - [x] Add an SSA value-fact model artifact
   - [x] introduce a compiler artifact for per-function SSA facts, such as `SsaValueFactModel` or equivalent
@@ -2236,7 +2233,7 @@ debuggability unless a task explicitly says otherwise.
 
 - [x] Add an SSA value-range and proof-propagation pass
   - [x] add a `value-facts` pass after `const-prop` and before `lower-abi`
-  - [x] run it at `-O1`, `-O2`, and `-O3`; skip fact-based rewrites at `-O0` and `-Og`
+  - [x] run it in every compilation (the compiler has a single always-optimized mode)
   - [x] propagate source-level integer range constraints through `add`, `sub`, `mul`, shifts, bitwise operations, comparisons, casts, and phis
     - [x] propagate integer facts through dependent SSA instructions after phi joins reach a fixed point
     - [x] fix MIR lowering so shift expressions do not keep stale constrained left-operand ranges as their result type
@@ -2659,7 +2656,7 @@ debuggability unless a task explicitly says otherwise.
   - [ ] add tests for index arithmetic, pointer stepping, and no-wrap loop increments
 
 - [ ] Add small fixed-count loop unrolling
-  - [ ] unroll loops with statically proven small trip counts at `-O2` and `-O3`
+  - [ ] unroll loops with statically proven small trip counts
   - [ ] use a speed-first threshold by default, with a larger threshold for hot functions and a smaller threshold for cold functions
   - [ ] preserve semantics for `break`, `continue`, early returns, drops, and lifetime markers
   - [ ] rerun cleanup, constant propagation, and value-facts after unrolling
@@ -2727,7 +2724,7 @@ debuggability unless a task explicitly says otherwise.
 
 - [ ] Add optimization benchmark gates against Rust and C
   - [x] add a scriptable benchmark regression gate for current CSV vs baseline CSV and optional same-run Stark/C/Rust ratios
-  - [ ] add a microbenchmark for every new optimizer pass before enabling it by default at `-O2` or `-O3`
+  - [ ] add a microbenchmark for every new optimizer pass before enabling it by default
     - [x] add a Stark/C/Rust microbenchmark for the first `inline-ssa` pass
     - [x] add a Stark/C/Rust microbenchmark for stack-scalar load forwarding
     - [x] add a Stark/C/Rust microbenchmark for bitwise-derived range pruning
@@ -2801,7 +2798,7 @@ debuggability unless a task explicitly says otherwise.
 
 - [x] Reduce `MemoryStatus` overhead in hot infallible helper paths.
   - [x] identify helpers that always return `MemoryStatus.Ok` after local validation, such as initialized fill and disjoint copy
-  - [x] either expose infallible variants for those operations or ensure status construction plus caller `Ok(...)` checks are folded away at `-O3`
+  - [x] either expose infallible variants for those operations or ensure status construction plus caller `Ok(...)` checks are folded away
   - [x] add LLVM checks that hot copy/fill benchmark loops do not retain unnecessary enum switch branches after optimization
 
 - [x] Improve benchmark confidence for experimental standard library comparisons.
@@ -2918,7 +2915,7 @@ debuggability unless a task explicitly says otherwise.
   - [x] make source-loaded imported `inline` and `alwaysinline` helper bodies available to optimized root-module builds when the dependency is transparent and the callee is not `ffi`, `cold`, explicitly `noinline`, recursive, or `[Backend(Opaque)]`
   - [x] include non-law exported helpers such as `System.Experimental.Memory.CopyBytesDisjointInfallible`, `FillInitializedBytesInfallible`, `CopyCodePointsDisjointInfallible`, `FillInitializedCodePointsInfallible`, `MoveBytesInfallible`, and `MoveCodePointsInfallible`; these currently appear as external `alwaysinline` declarations in `MemoryCopyFill` IR, which LLVM cannot inline without bodies
   - [x] preserve function effects, parameter alias facts, bounded region facts, `disjoint` contracts, and `independent` loop metadata when cloning imported helper bodies into the caller optimization unit
-  - [x] add LLVM regression tests proving imported experimental memory helpers inline the same way as same-module helpers at `-O3`
+  - [x] add LLVM regression tests proving imported experimental memory helpers inline the same way as same-module helpers
   - [x] add `MemoryCopyFill` IR gates proving the hot loop contains no calls to `System_Experimental_Memory_Copy*`, `Fill*`, or `Move*` helpers when the helper body is available
 
 - [x] Lower experimental memory copy, fill, and move hot paths to LLVM memory intrinsics or equivalent vectorized code.

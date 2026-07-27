@@ -1,0 +1,691 @@
+export import Compiler.Typing.TypedAssignmentKinds
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedAssignmentModel
+
+public struct TypedAssignmentExpressionTable
+{
+    internal dynamic TypedAssignmentContext Contexts;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] AssignmentNodes;
+    internal dynamic u32[0 max] AssignmentTokens;
+    internal dynamic u32[0 max] TargetNodes;
+    internal dynamic u32[0 max] ValueNodes;
+    internal dynamic TypedAssignmentOperatorKind OperatorKinds;
+    internal dynamic TypedAssignmentTargetKind TargetKinds;
+    internal dynamic TypedAssignmentValueKind ValueKinds;
+    internal dynamic TypedIdentifierTargetKind IdentifierTargetKinds;
+    internal dynamic TypedMemberTargetKind MemberTargetKinds;
+    internal dynamic TypedIndexAccessKind IndexAccessKinds;
+    internal dynamic u32[0 max] TargetDeclarationIndices;
+    internal dynamic u32[0 max] TargetSymbolIndices;
+    internal dynamic u32[0 max] TargetNameTokens;
+    internal dynamic TypedGlobalStorageKind TargetStorageKinds;
+    internal dynamic TypedGlobalBindingKind TargetBindingKinds;
+    internal dynamic TypedSignatureTypeKind TargetTypeKinds;
+    internal dynamic u32[0 max] TargetTypeHeadTokens;
+    internal dynamic u32[0 max] TargetTypePrimaryTokens;
+    internal dynamic u32[0 max] TargetTypeStartTokens;
+    internal dynamic u32[0 max] TargetTypeEndTokens;
+    internal dynamic u32[0 max] TargetRangeStartTokens;
+    internal dynamic u32[0 max] TargetRangeEndTokens;
+    internal dynamic u32[0 max] TargetElementCountStartTokens;
+    internal dynamic u32[0 max] TargetElementCountEndTokens;
+    internal dynamic u32[0 max] TargetBitWidths;
+    internal dynamic u32[0 max] TargetTypeArgumentCounts;
+    internal dynamic u32[0 max] TargetComptimeArgumentCounts;
+    internal dynamic u32[0 max] TargetTypeFlags;
+    internal dynamic TypedSignatureTypeKind ValueTypeKinds;
+    internal dynamic u32[0 max] ValueTypeHeadTokens;
+    internal dynamic u32[0 max] ValueTypePrimaryTokens;
+    internal dynamic u32[0 max] ValueTypeStartTokens;
+    internal dynamic u32[0 max] ValueTypeEndTokens;
+    internal dynamic u32[0 max] ValueRangeStartTokens;
+    internal dynamic u32[0 max] ValueRangeEndTokens;
+    internal dynamic u32[0 max] ValueElementCountStartTokens;
+    internal dynamic u32[0 max] ValueElementCountEndTokens;
+    internal dynamic u32[0 max] ValueBitWidths;
+    internal dynamic u32[0 max] ValueTypeArgumentCounts;
+    internal dynamic u32[0 max] ValueComptimeArgumentCounts;
+    internal dynamic u32[0 max] ValueTypeFlags;
+    internal dynamic u32[0 max] AssignmentFlags;
+
+    TypedAssignmentExpressionTable()
+    {
+        self.Contexts = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.AssignmentNodes = new();
+        self.AssignmentTokens = new();
+        self.TargetNodes = new();
+        self.ValueNodes = new();
+        self.OperatorKinds = new();
+        self.TargetKinds = new();
+        self.ValueKinds = new();
+        self.IdentifierTargetKinds = new();
+        self.MemberTargetKinds = new();
+        self.IndexAccessKinds = new();
+        self.TargetDeclarationIndices = new();
+        self.TargetSymbolIndices = new();
+        self.TargetNameTokens = new();
+        self.TargetStorageKinds = new();
+        self.TargetBindingKinds = new();
+        self.TargetTypeKinds = new();
+        self.TargetTypeHeadTokens = new();
+        self.TargetTypePrimaryTokens = new();
+        self.TargetTypeStartTokens = new();
+        self.TargetTypeEndTokens = new();
+        self.TargetRangeStartTokens = new();
+        self.TargetRangeEndTokens = new();
+        self.TargetElementCountStartTokens = new();
+        self.TargetElementCountEndTokens = new();
+        self.TargetBitWidths = new();
+        self.TargetTypeArgumentCounts = new();
+        self.TargetComptimeArgumentCounts = new();
+        self.TargetTypeFlags = new();
+        self.ValueTypeKinds = new();
+        self.ValueTypeHeadTokens = new();
+        self.ValueTypePrimaryTokens = new();
+        self.ValueTypeStartTokens = new();
+        self.ValueTypeEndTokens = new();
+        self.ValueRangeStartTokens = new();
+        self.ValueRangeEndTokens = new();
+        self.ValueElementCountStartTokens = new();
+        self.ValueElementCountEndTokens = new();
+        self.ValueBitWidths = new();
+        self.ValueTypeArgumentCounts = new();
+        self.ValueComptimeArgumentCounts = new();
+        self.ValueTypeFlags = new();
+        self.AssignmentFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedAssignmentExpressionTable self)
+    {
+        return self.AssignmentNodes.Length;
+    }
+
+    public law TypedAssignmentContext ContextAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedAssignmentContext context = TypedAssignmentContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] AssignmentNodeAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.AssignmentNodes.Length)
+        {
+            node = self.AssignmentNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] AssignmentTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AssignmentTokens.Length)
+        {
+            token = self.AssignmentTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetNodeAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.TargetNodes.Length)
+        {
+            node = self.TargetNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] ValueNodeAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ValueNodes.Length)
+        {
+            node = self.ValueNodes[index];
+        }
+
+        return node;
+    }
+
+    public law TypedAssignmentOperatorKind OperatorKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedAssignmentOperatorKind kind = TypedAssignmentOperatorKind.Unknown;
+        if (index < self.OperatorKinds.Length)
+        {
+            kind = self.OperatorKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedAssignmentTargetKind TargetKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedAssignmentTargetKind kind = TypedAssignmentTargetKind.Unknown;
+        if (index < self.TargetKinds.Length)
+        {
+            kind = self.TargetKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedAssignmentValueKind ValueKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedAssignmentValueKind kind = TypedAssignmentValueKind.Unknown;
+        if (index < self.ValueKinds.Length)
+        {
+            kind = self.ValueKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedIdentifierTargetKind IdentifierTargetKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedIdentifierTargetKind kind = TypedIdentifierTargetKind.Unknown;
+        if (index < self.IdentifierTargetKinds.Length)
+        {
+            kind = self.IdentifierTargetKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedMemberTargetKind MemberTargetKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedMemberTargetKind kind = TypedMemberTargetKind.Unknown;
+        if (index < self.MemberTargetKinds.Length)
+        {
+            kind = self.MemberTargetKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedIndexAccessKind IndexAccessKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedIndexAccessKind kind = TypedIndexAccessKind.Unknown;
+        if (index < self.IndexAccessKinds.Length)
+        {
+            kind = self.IndexAccessKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TargetDeclarationIndexAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetDeclarationIndices.Length)
+        {
+            value = self.TargetDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetSymbolIndexPlusOneAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetSymbolIndices.Length)
+        {
+            value = self.TargetSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetNameTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetNameTokens.Length)
+        {
+            token = self.TargetNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedGlobalStorageKind TargetStorageKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGlobalStorageKind kind = TypedGlobalStorageKind.Unknown;
+        if (index < self.TargetStorageKinds.Length)
+        {
+            kind = self.TargetStorageKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedGlobalBindingKind TargetBindingKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGlobalBindingKind kind = TypedGlobalBindingKind.Unknown;
+        if (index < self.TargetBindingKinds.Length)
+        {
+            kind = self.TargetBindingKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedSignatureTypeKind TargetTypeKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TargetTypeKinds.Length)
+        {
+            kind = self.TargetTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TargetTypeHeadTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeHeadTokens.Length)
+        {
+            token = self.TargetTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypePrimaryTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypePrimaryTokens.Length)
+        {
+            token = self.TargetTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypeStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeStartTokens.Length)
+        {
+            token = self.TargetTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypeEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeEndTokens.Length)
+        {
+            token = self.TargetTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetRangeStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetRangeStartTokens.Length)
+        {
+            token = self.TargetRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetRangeEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetRangeEndTokens.Length)
+        {
+            token = self.TargetRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetElementCountStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetElementCountStartTokens.Length)
+        {
+            token = self.TargetElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetElementCountEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetElementCountEndTokens.Length)
+        {
+            token = self.TargetElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetBitWidthAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.TargetBitWidths.Length)
+        {
+            width = self.TargetBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TargetTypeArgumentCountAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TargetTypeArgumentCounts.Length)
+        {
+            count = self.TargetTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TargetComptimeArgumentCountAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TargetComptimeArgumentCounts.Length)
+        {
+            count = self.TargetComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TargetTypeFlagsAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TargetTypeFlags.Length)
+        {
+            flags = self.TargetTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law TypedSignatureTypeKind ValueTypeKindAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.ValueTypeKinds.Length)
+        {
+            kind = self.ValueTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ValueTypeHeadTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeHeadTokens.Length)
+        {
+            token = self.ValueTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypePrimaryTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypePrimaryTokens.Length)
+        {
+            token = self.ValueTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypeStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeStartTokens.Length)
+        {
+            token = self.ValueTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypeEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeEndTokens.Length)
+        {
+            token = self.ValueTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueRangeStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueRangeStartTokens.Length)
+        {
+            token = self.ValueRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueRangeEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueRangeEndTokens.Length)
+        {
+            token = self.ValueRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueElementCountStartTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueElementCountStartTokens.Length)
+        {
+            token = self.ValueElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueElementCountEndTokenAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueElementCountEndTokens.Length)
+        {
+            token = self.ValueElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueBitWidthAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.ValueBitWidths.Length)
+        {
+            width = self.ValueBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] ValueTypeArgumentCountAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ValueTypeArgumentCounts.Length)
+        {
+            count = self.ValueTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ValueComptimeArgumentCountAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ValueComptimeArgumentCounts.Length)
+        {
+            count = self.ValueComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ValueTypeFlagsAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ValueTypeFlags.Length)
+        {
+            flags = self.ValueTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] AssignmentFlagsAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.AssignmentFlags.Length)
+        {
+            flags = self.AssignmentFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool TargetResolvedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagTargetResolved());
+    }
+
+    public law bool ValueResolvedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagValueResolved());
+    }
+
+    public law bool IsSimpleAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagSimple());
+    }
+
+    public law bool IsCompoundAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagCompound());
+    }
+
+    public law bool IsPlaceTargetAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagPlaceTarget());
+    }
+
+    public law bool IsNumericCompoundAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedAssignmentFlagPresent(self.AssignmentFlagsAt(index), TypedAssignmentFlagNumericCompound());
+    }
+
+    public law bool TargetIsIntegerSignedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool TargetIsIntegerUnsignedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool TargetHasIntegerRangeAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool ValueIsIntegerSignedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool ValueIsIntegerUnsignedAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool ValueHasIntegerRangeAt(borrow TypedAssignmentExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+}

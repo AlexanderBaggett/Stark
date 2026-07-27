@@ -1,0 +1,2209 @@
+import Vendor.Raylib.Types
+import System.Memory
+import System.Text
+export import Vendor.Raylib.Types
+module Vendor.Raylib.Core
+
+public enum RaylibBytesResult
+{
+    [Ok] Ok(RaylibOwnedBytes),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedBytes
+{
+    internal rawmutptr<u8[0 max]> Data;
+    internal u64[0 2 ** 63 - 1] ByteLength;
+
+    RaylibOwnedBytes()
+    {
+        self.Data = null;
+        self.ByteLength = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedBytes self)
+    {
+        return self.ByteLength;
+    }
+
+    public inline finite law bool IsEmpty(borrow RaylibOwnedBytes self)
+    {
+        return self.ByteLength == 0;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedBytes self, borrow mut u8[0 max][] destination)
+    {
+        if (destination.Length < self.ByteLength)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.ByteLength)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedBytes self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_MemFree((rawmutptr<i8[min max]>)self.Data);
+                self.Data = null;
+                self.ByteLength = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public enum RaylibRandomSequenceResult
+{
+    [Ok] Ok(RaylibOwnedRandomSequence),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedRandomSequence
+{
+    internal rawmutptr<i32[min max]> Data;
+    internal u64[0 2 ** 63 - 1] Count;
+
+    RaylibOwnedRandomSequence()
+    {
+        self.Data = null;
+        self.Count = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedRandomSequence self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow RaylibOwnedRandomSequence self, u64[0 2 ** 63 - 1] index, out i32[min max] value)
+    {
+        value = 0;
+        if (index >= self.Count || self.Data == null)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            value = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedRandomSequence self, borrow mut i32[min max][] destination)
+    {
+        if (destination.Length < self.Count)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.Count)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedRandomSequence self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_UnloadRandomSequence(self.Data);
+                self.Data = null;
+                self.Count = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
+internal unsafe inline finite law rawptr<u8[0 max]> ReadU8OrNull(borrow u8[0 max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe fn RaylibBytesResult OwnedBytesFromPointer(rawmutptr<u8[0 max]> data, i32[min max] byteLength)
+{
+    if (byteLength < 0)
+    {
+        if (data != null)
+        {
+            stark_raylib_MemFree((rawmutptr<i8[min max]>)data);
+        }
+
+        return RaylibBytesResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    if (byteLength == 0)
+    {
+        if (data != null)
+        {
+            stark_raylib_MemFree((rawmutptr<i8[min max]>)data);
+        }
+
+        return RaylibBytesResult.Ok(new RaylibOwnedBytes());
+    }
+
+    if (data == null)
+    {
+        return RaylibBytesResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    return RaylibBytesResult.Ok(new RaylibOwnedBytes()
+    {
+        Data = data,
+        ByteLength = (u64[0 2 ** 63 - 1])byteLength
+    });
+}
+
+internal unsafe fn System.Memory.MemoryResult<System.Text.OwnedAscii> CopyCString(rawptr<i8[min max]> data)
+{
+    if (data == null)
+    {
+        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] length = 0;
+    while willexit (*(&data[length]) != 0)
+    {
+        if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+        {
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        length += 1;
+    }
+
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(length);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        stack System.Memory.MemoryStatus appendStatus = destination.AppendByte(*(&data[index]));
+        switch (appendStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        index += 1;
+    }
+
+    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+}
+
+[LinkName("InitWindow")]
+internal unsafe ffi fn void stark_raylib_InitWindow(i32[min max] width, i32[min max] height, ascii title);
+public fn void InitWindow(i32[min max] width, i32[min max] height, ascii title) {
+    unsafe {
+        stark_raylib_InitWindow(width, height, title);
+    }
+    return;
+}
+[LinkName("CloseWindow")]
+internal unsafe ffi fn void stark_raylib_CloseWindow();
+public fn void CloseWindow() {
+    unsafe {
+        stark_raylib_CloseWindow();
+    }
+    return;
+}
+[LinkName("WindowShouldClose")]
+internal unsafe ffi fn bool stark_raylib_WindowShouldClose();
+public fn bool WindowShouldClose() {
+    unsafe {
+        return stark_raylib_WindowShouldClose();
+    }
+}
+[LinkName("IsWindowReady")]
+internal unsafe ffi fn bool stark_raylib_IsWindowReady();
+public fn bool IsWindowReady() {
+    unsafe {
+        return stark_raylib_IsWindowReady();
+    }
+}
+[LinkName("IsWindowFullscreen")]
+internal unsafe ffi fn bool stark_raylib_IsWindowFullscreen();
+public fn bool IsWindowFullscreen() {
+    unsafe {
+        return stark_raylib_IsWindowFullscreen();
+    }
+}
+[LinkName("IsWindowHidden")]
+internal unsafe ffi fn bool stark_raylib_IsWindowHidden();
+public fn bool IsWindowHidden() {
+    unsafe {
+        return stark_raylib_IsWindowHidden();
+    }
+}
+[LinkName("IsWindowMinimized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowMinimized();
+public fn bool IsWindowMinimized() {
+    unsafe {
+        return stark_raylib_IsWindowMinimized();
+    }
+}
+[LinkName("IsWindowMaximized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowMaximized();
+public fn bool IsWindowMaximized() {
+    unsafe {
+        return stark_raylib_IsWindowMaximized();
+    }
+}
+[LinkName("IsWindowFocused")]
+internal unsafe ffi fn bool stark_raylib_IsWindowFocused();
+public fn bool IsWindowFocused() {
+    unsafe {
+        return stark_raylib_IsWindowFocused();
+    }
+}
+[LinkName("IsWindowResized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowResized();
+public fn bool IsWindowResized() {
+    unsafe {
+        return stark_raylib_IsWindowResized();
+    }
+}
+[LinkName("IsWindowState")]
+internal unsafe ffi fn bool stark_raylib_IsWindowState(u32[0 max] flag);
+public fn bool IsWindowState(u32[0 max] flag) {
+    unsafe {
+        return stark_raylib_IsWindowState(flag);
+    }
+}
+
+public fn bool IsWindowState(ConfigFlags flag) {
+    return IsWindowState(ConfigFlagsNative(flag));
+}
+[LinkName("SetWindowState")]
+internal unsafe ffi fn void stark_raylib_SetWindowState(u32[0 max] flags);
+public fn void SetWindowState(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetWindowState(flags);
+    }
+    return;
+}
+
+public fn void SetWindowState(ConfigFlags flags) {
+    SetWindowState(ConfigFlagsNative(flags));
+    return;
+}
+[LinkName("ClearWindowState")]
+internal unsafe ffi fn void stark_raylib_ClearWindowState(u32[0 max] flags);
+public fn void ClearWindowState(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_ClearWindowState(flags);
+    }
+    return;
+}
+
+public fn void ClearWindowState(ConfigFlags flags) {
+    ClearWindowState(ConfigFlagsNative(flags));
+    return;
+}
+[LinkName("ToggleFullscreen")]
+internal unsafe ffi fn void stark_raylib_ToggleFullscreen();
+public fn void ToggleFullscreen() {
+    unsafe {
+        stark_raylib_ToggleFullscreen();
+    }
+    return;
+}
+[LinkName("ToggleBorderlessWindowed")]
+internal unsafe ffi fn void stark_raylib_ToggleBorderlessWindowed();
+public fn void ToggleBorderlessWindowed() {
+    unsafe {
+        stark_raylib_ToggleBorderlessWindowed();
+    }
+    return;
+}
+[LinkName("MaximizeWindow")]
+internal unsafe ffi fn void stark_raylib_MaximizeWindow();
+public fn void MaximizeWindow() {
+    unsafe {
+        stark_raylib_MaximizeWindow();
+    }
+    return;
+}
+[LinkName("MinimizeWindow")]
+internal unsafe ffi fn void stark_raylib_MinimizeWindow();
+public fn void MinimizeWindow() {
+    unsafe {
+        stark_raylib_MinimizeWindow();
+    }
+    return;
+}
+[LinkName("RestoreWindow")]
+internal unsafe ffi fn void stark_raylib_RestoreWindow();
+public fn void RestoreWindow() {
+    unsafe {
+        stark_raylib_RestoreWindow();
+    }
+    return;
+}
+[LinkName("SetWindowIcon")]
+internal unsafe ffi fn void stark_raylib_SetWindowIcon(Image image);
+public fn void SetWindowIcon(Image image) {
+    unsafe {
+        stark_raylib_SetWindowIcon(image);
+    }
+    return;
+}
+
+[LinkName("SetWindowIcons")]
+internal unsafe ffi fn void stark_raylib_SetWindowIcons(rawptr<Image> images, i32[min max] count);
+public fn RaylibStatus SetWindowIcons(borrow Image[] images) {
+    if (images.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (images.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_SetWindowIcons(&images[0], (i32[min max])images.Length);
+    }
+    return RaylibStatus.Ok;
+}
+[LinkName("SetWindowTitle")]
+internal unsafe ffi fn void stark_raylib_SetWindowTitle(ascii title);
+public fn void SetWindowTitle(ascii title) {
+    unsafe {
+        stark_raylib_SetWindowTitle(title);
+    }
+    return;
+}
+[LinkName("SetWindowPosition")]
+internal unsafe ffi fn void stark_raylib_SetWindowPosition(i32[min max] x, i32[min max] y);
+public fn void SetWindowPosition(i32[min max] x, i32[min max] y) {
+    unsafe {
+        stark_raylib_SetWindowPosition(x, y);
+    }
+    return;
+}
+[LinkName("SetWindowMonitor")]
+internal unsafe ffi fn void stark_raylib_SetWindowMonitor(i32[min max] monitor);
+public fn void SetWindowMonitor(i32[min max] monitor) {
+    unsafe {
+        stark_raylib_SetWindowMonitor(monitor);
+    }
+    return;
+}
+[LinkName("SetWindowMinSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowMinSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowMinSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowMinSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowMaxSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowMaxSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowMaxSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowMaxSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowOpacity")]
+internal unsafe ffi fn void stark_raylib_SetWindowOpacity(f32 opacity);
+public fn void SetWindowOpacity(f32 opacity) {
+    unsafe {
+        stark_raylib_SetWindowOpacity(opacity);
+    }
+    return;
+}
+[LinkName("SetWindowFocused")]
+internal unsafe ffi fn void stark_raylib_SetWindowFocused();
+public fn void SetWindowFocused() {
+    unsafe {
+        stark_raylib_SetWindowFocused();
+    }
+    return;
+}
+[LinkName("GetWindowHandle")]
+public unsafe ffi fn rawmutptr<i8[min max]> GetWindowHandle();
+[LinkName("GetScreenWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetScreenWidth();
+public fn i32[min max] GetScreenWidth() {
+    unsafe {
+        return stark_raylib_GetScreenWidth();
+    }
+}
+[LinkName("GetScreenHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetScreenHeight();
+public fn i32[min max] GetScreenHeight() {
+    unsafe {
+        return stark_raylib_GetScreenHeight();
+    }
+}
+[LinkName("GetRenderWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRenderWidth();
+public fn i32[min max] GetRenderWidth() {
+    unsafe {
+        return stark_raylib_GetRenderWidth();
+    }
+}
+[LinkName("GetRenderHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRenderHeight();
+public fn i32[min max] GetRenderHeight() {
+    unsafe {
+        return stark_raylib_GetRenderHeight();
+    }
+}
+[LinkName("GetMonitorCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorCount();
+public fn i32[min max] GetMonitorCount() {
+    unsafe {
+        return stark_raylib_GetMonitorCount();
+    }
+}
+[LinkName("GetCurrentMonitor")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCurrentMonitor();
+public fn i32[min max] GetCurrentMonitor() {
+    unsafe {
+        return stark_raylib_GetCurrentMonitor();
+    }
+}
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMonitorPosition(i32[min max] monitor);
+public fn Vector2 GetMonitorPosition(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorPosition(monitor);
+    }
+}
+
+[LinkName("GetMonitorWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorWidth(i32[min max] monitor);
+public fn i32[min max] GetMonitorWidth(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorWidth(monitor);
+    }
+}
+[LinkName("GetMonitorHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorHeight(i32[min max] monitor);
+public fn i32[min max] GetMonitorHeight(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorHeight(monitor);
+    }
+}
+[LinkName("GetMonitorPhysicalWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorPhysicalWidth(i32[min max] monitor);
+public fn i32[min max] GetMonitorPhysicalWidth(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorPhysicalWidth(monitor);
+    }
+}
+[LinkName("GetMonitorPhysicalHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorPhysicalHeight(i32[min max] monitor);
+public fn i32[min max] GetMonitorPhysicalHeight(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorPhysicalHeight(monitor);
+    }
+}
+[LinkName("GetMonitorRefreshRate")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorRefreshRate(i32[min max] monitor);
+public fn i32[min max] GetMonitorRefreshRate(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorRefreshRate(monitor);
+    }
+}
+[LinkName("GetWindowPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWindowPosition();
+public fn Vector2 GetWindowPosition() {
+    unsafe {
+        return stark_raylib_GetWindowPosition();
+    }
+}
+
+[LinkName("GetWindowScaleDPI")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWindowScaleDPI();
+public fn Vector2 GetWindowScaleDPI() {
+    unsafe {
+        return stark_raylib_GetWindowScaleDPI();
+    }
+}
+
+[LinkName("GetMonitorName")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetMonitorName(i32[min max] monitor);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetMonitorName(i32[min max] monitor) {
+    unsafe {
+        return CopyCString(stark_raylib_GetMonitorName(monitor));
+    }
+}
+[LinkName("SetClipboardText")]
+internal unsafe ffi fn void stark_raylib_SetClipboardText(ascii text);
+public fn void SetClipboardText(ascii text) {
+    unsafe {
+        stark_raylib_SetClipboardText(text);
+    }
+    return;
+}
+[LinkName("GetClipboardText")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetClipboardText();
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetClipboardText() {
+    unsafe {
+        return CopyCString(stark_raylib_GetClipboardText());
+    }
+}
+[LinkName("GetClipboardImage")]
+internal unsafe ffi fn Image stark_raylib_GetClipboardImage();
+public fn Image GetClipboardImage() {
+    unsafe {
+        return stark_raylib_GetClipboardImage();
+    }
+}
+
+[LinkName("EnableEventWaiting")]
+internal unsafe ffi fn void stark_raylib_EnableEventWaiting();
+public fn void EnableEventWaiting() {
+    unsafe {
+        stark_raylib_EnableEventWaiting();
+    }
+    return;
+}
+[LinkName("DisableEventWaiting")]
+internal unsafe ffi fn void stark_raylib_DisableEventWaiting();
+public fn void DisableEventWaiting() {
+    unsafe {
+        stark_raylib_DisableEventWaiting();
+    }
+    return;
+}
+[LinkName("ShowCursor")]
+internal unsafe ffi fn void stark_raylib_ShowCursor();
+public fn void ShowCursor() {
+    unsafe {
+        stark_raylib_ShowCursor();
+    }
+    return;
+}
+[LinkName("HideCursor")]
+internal unsafe ffi fn void stark_raylib_HideCursor();
+public fn void HideCursor() {
+    unsafe {
+        stark_raylib_HideCursor();
+    }
+    return;
+}
+[LinkName("IsCursorHidden")]
+internal unsafe ffi fn bool stark_raylib_IsCursorHidden();
+public fn bool IsCursorHidden() {
+    unsafe {
+        return stark_raylib_IsCursorHidden();
+    }
+}
+[LinkName("EnableCursor")]
+internal unsafe ffi fn void stark_raylib_EnableCursor();
+public fn void EnableCursor() {
+    unsafe {
+        stark_raylib_EnableCursor();
+    }
+    return;
+}
+[LinkName("DisableCursor")]
+internal unsafe ffi fn void stark_raylib_DisableCursor();
+public fn void DisableCursor() {
+    unsafe {
+        stark_raylib_DisableCursor();
+    }
+    return;
+}
+[LinkName("IsCursorOnScreen")]
+internal unsafe ffi fn bool stark_raylib_IsCursorOnScreen();
+public fn bool IsCursorOnScreen() {
+    unsafe {
+        return stark_raylib_IsCursorOnScreen();
+    }
+}
+[LinkName("ClearBackground")]
+internal unsafe ffi fn void stark_raylib_ClearBackground(Color color);
+public fn void ClearBackground(Color color) {
+    unsafe {
+        stark_raylib_ClearBackground(color);
+    }
+    return;
+}
+
+[LinkName("BeginDrawing")]
+internal unsafe ffi fn void stark_raylib_BeginDrawing();
+public fn void BeginDrawing() {
+    unsafe {
+        stark_raylib_BeginDrawing();
+    }
+    return;
+}
+[LinkName("EndDrawing")]
+internal unsafe ffi fn void stark_raylib_EndDrawing();
+public fn void EndDrawing() {
+    unsafe {
+        stark_raylib_EndDrawing();
+    }
+    return;
+}
+[LinkName("BeginMode2D")]
+internal unsafe ffi fn void stark_raylib_BeginMode2D(Camera2D camera);
+public fn void BeginMode2D(Camera2D camera) {
+    unsafe {
+        stark_raylib_BeginMode2D(camera);
+    }
+    return;
+}
+
+[LinkName("EndMode2D")]
+internal unsafe ffi fn void stark_raylib_EndMode2D();
+public fn void EndMode2D() {
+    unsafe {
+        stark_raylib_EndMode2D();
+    }
+    return;
+}
+[LinkName("BeginMode3D")]
+internal unsafe ffi fn void stark_raylib_BeginMode3D(Camera3D camera);
+public fn void BeginMode3D(Camera3D camera) {
+    unsafe {
+        stark_raylib_BeginMode3D(camera);
+    }
+    return;
+}
+
+[LinkName("EndMode3D")]
+internal unsafe ffi fn void stark_raylib_EndMode3D();
+public fn void EndMode3D() {
+    unsafe {
+        stark_raylib_EndMode3D();
+    }
+    return;
+}
+[LinkName("BeginTextureMode")]
+internal unsafe ffi fn void stark_raylib_BeginTextureMode(RenderTexture2D target);
+public fn void BeginTextureMode(RenderTexture2D target) {
+    unsafe {
+        stark_raylib_BeginTextureMode(target);
+    }
+    return;
+}
+
+[LinkName("EndTextureMode")]
+internal unsafe ffi fn void stark_raylib_EndTextureMode();
+public fn void EndTextureMode() {
+    unsafe {
+        stark_raylib_EndTextureMode();
+    }
+    return;
+}
+[LinkName("BeginShaderMode")]
+internal unsafe ffi fn void stark_raylib_BeginShaderMode(Shader shader);
+public fn void BeginShaderMode(Shader shader) {
+    unsafe {
+        stark_raylib_BeginShaderMode(shader);
+    }
+    return;
+}
+
+[LinkName("EndShaderMode")]
+internal unsafe ffi fn void stark_raylib_EndShaderMode();
+public fn void EndShaderMode() {
+    unsafe {
+        stark_raylib_EndShaderMode();
+    }
+    return;
+}
+[LinkName("BeginBlendMode")]
+internal unsafe ffi fn void stark_raylib_BeginBlendMode(i32[min max] mode);
+public fn void BeginBlendMode(i32[min max] mode) {
+    unsafe {
+        stark_raylib_BeginBlendMode(mode);
+    }
+    return;
+}
+
+public fn void BeginBlendMode(BlendMode mode) {
+    BeginBlendMode(BlendModeNative(mode));
+    return;
+}
+[LinkName("EndBlendMode")]
+internal unsafe ffi fn void stark_raylib_EndBlendMode();
+public fn void EndBlendMode() {
+    unsafe {
+        stark_raylib_EndBlendMode();
+    }
+    return;
+}
+[LinkName("BeginScissorMode")]
+internal unsafe ffi fn void stark_raylib_BeginScissorMode(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height);
+public fn void BeginScissorMode(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_BeginScissorMode(x, y, width, height);
+    }
+    return;
+}
+[LinkName("EndScissorMode")]
+internal unsafe ffi fn void stark_raylib_EndScissorMode();
+public fn void EndScissorMode() {
+    unsafe {
+        stark_raylib_EndScissorMode();
+    }
+    return;
+}
+[LinkName("BeginVrStereoMode")]
+internal unsafe ffi fn void stark_raylib_BeginVrStereoMode(VrStereoConfig config);
+public fn void BeginVrStereoMode(VrStereoConfig config) {
+    unsafe {
+        stark_raylib_BeginVrStereoMode(config);
+    }
+    return;
+}
+
+[LinkName("EndVrStereoMode")]
+internal unsafe ffi fn void stark_raylib_EndVrStereoMode();
+public fn void EndVrStereoMode() {
+    unsafe {
+        stark_raylib_EndVrStereoMode();
+    }
+    return;
+}
+[LinkName("LoadVrStereoConfig")]
+internal unsafe ffi fn VrStereoConfig stark_raylib_LoadVrStereoConfig(VrDeviceInfo device);
+public fn VrStereoConfig LoadVrStereoConfig(VrDeviceInfo device) {
+    unsafe {
+        return stark_raylib_LoadVrStereoConfig(device);
+    }
+}
+
+[LinkName("UnloadVrStereoConfig")]
+internal unsafe ffi fn void stark_raylib_UnloadVrStereoConfig(VrStereoConfig config);
+public fn void UnloadVrStereoConfig(VrStereoConfig config) {
+    unsafe {
+        stark_raylib_UnloadVrStereoConfig(config);
+    }
+    return;
+}
+
+[LinkName("LoadShader")]
+internal unsafe ffi fn Shader stark_raylib_LoadShader(ascii vsFileName, ascii fsFileName);
+public fn Shader LoadShader(ascii vsFileName, ascii fsFileName) {
+    unsafe {
+        return stark_raylib_LoadShader(vsFileName, fsFileName);
+    }
+}
+
+[LinkName("LoadShaderFromMemory")]
+internal unsafe ffi fn Shader stark_raylib_LoadShaderFromMemory(ascii vsCode, ascii fsCode);
+public fn Shader LoadShaderFromMemory(ascii vsCode, ascii fsCode) {
+    unsafe {
+        return stark_raylib_LoadShaderFromMemory(vsCode, fsCode);
+    }
+}
+
+[LinkName("IsShaderValid")]
+internal unsafe ffi fn bool stark_raylib_IsShaderValid(Shader shader);
+public fn bool IsShaderValid(Shader shader) {
+    unsafe {
+        return stark_raylib_IsShaderValid(shader);
+    }
+}
+
+[LinkName("GetShaderLocation")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocation(Shader shader, ascii uniformName);
+public fn i32[min max] GetShaderLocation(Shader shader, ascii uniformName) {
+    unsafe {
+        return stark_raylib_GetShaderLocation(shader, uniformName);
+    }
+}
+
+[LinkName("GetShaderLocationAttrib")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocationAttrib(Shader shader, ascii attribName);
+public fn i32[min max] GetShaderLocationAttrib(Shader shader, ascii attribName) {
+    unsafe {
+        return stark_raylib_GetShaderLocationAttrib(shader, attribName);
+    }
+}
+
+[LinkName("SetShaderValue")]
+internal unsafe ffi fn void stark_raylib_SetShaderValue(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType);
+public fn RaylibStatus SetShaderValue(Shader shader, i32[min max] locIndex, borrow i8[min max][] value, i32[min max] uniformType) {
+    if (value.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
+    }
+
+    unsafe {
+        stark_raylib_SetShaderValue(shader, locIndex, &value[0], uniformType);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+public fn RaylibStatus SetShaderValue(Shader shader, ShaderLocationIndex locIndex, borrow i8[min max][] value, ShaderUniformDataType uniformType) {
+    return SetShaderValue(shader, ShaderLocationIndexNative(locIndex), value, ShaderUniformDataTypeNative(uniformType));
+}
+
+[LinkName("SetShaderValueV")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueV(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType, i32[min max] count);
+public fn RaylibStatus SetShaderValueV(Shader shader, i32[min max] locIndex, borrow i8[min max][] value, i32[min max] uniformType, i32[min max] count) {
+    if (value.Length == 0 || count < 0)
+    {
+        return RaylibStatus.InvalidArgument;
+    }
+
+    unsafe {
+        stark_raylib_SetShaderValueV(shader, locIndex, &value[0], uniformType, count);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+public fn RaylibStatus SetShaderValueV(Shader shader, ShaderLocationIndex locIndex, borrow i8[min max][] value, ShaderUniformDataType uniformType, i32[min max] count) {
+    return SetShaderValueV(shader, ShaderLocationIndexNative(locIndex), value, ShaderUniformDataTypeNative(uniformType), count);
+}
+
+[LinkName("SetShaderValueMatrix")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueMatrix(Shader shader, i32[min max] locIndex, Matrix mat);
+public fn void SetShaderValueMatrix(Shader shader, i32[min max] locIndex, Matrix mat) {
+    unsafe {
+        stark_raylib_SetShaderValueMatrix(shader, locIndex, mat);
+    }
+    return;
+}
+
+public fn void SetShaderValueMatrix(Shader shader, ShaderLocationIndex locIndex, Matrix mat) {
+    SetShaderValueMatrix(shader, ShaderLocationIndexNative(locIndex), mat);
+    return;
+}
+
+[LinkName("SetShaderValueTexture")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueTexture(Shader shader, i32[min max] locIndex, Texture2D texture);
+public fn void SetShaderValueTexture(Shader shader, i32[min max] locIndex, Texture2D texture) {
+    unsafe {
+        stark_raylib_SetShaderValueTexture(shader, locIndex, texture);
+    }
+    return;
+}
+
+public fn void SetShaderValueTexture(Shader shader, ShaderLocationIndex locIndex, Texture2D texture) {
+    SetShaderValueTexture(shader, ShaderLocationIndexNative(locIndex), texture);
+    return;
+}
+
+[LinkName("UnloadShader")]
+internal unsafe ffi fn void stark_raylib_UnloadShader(Shader shader);
+public fn void UnloadShader(Shader shader) {
+    unsafe {
+        stark_raylib_UnloadShader(shader);
+    }
+    return;
+}
+
+[LinkName("GetScreenToWorldRay")]
+internal unsafe ffi fn Ray stark_raylib_GetScreenToWorldRay(Vector2 position, Camera camera);
+public fn Ray GetScreenToWorldRay(Vector2 position, Camera camera) {
+    unsafe {
+        return stark_raylib_GetScreenToWorldRay(position, camera);
+    }
+}
+
+[LinkName("GetScreenToWorldRayEx")]
+internal unsafe ffi fn Ray stark_raylib_GetScreenToWorldRayEx(Vector2 position, Camera camera, i32[min max] width, i32[min max] height);
+public fn Ray GetScreenToWorldRayEx(Vector2 position, Camera camera, i32[min max] width, i32[min max] height) {
+    unsafe {
+        return stark_raylib_GetScreenToWorldRayEx(position, camera, width, height);
+    }
+}
+
+[LinkName("GetWorldToScreen")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreen(Vector3 position, Camera camera);
+public fn Vector2 GetWorldToScreen(Vector3 position, Camera camera) {
+    unsafe {
+        return stark_raylib_GetWorldToScreen(position, camera);
+    }
+}
+
+[LinkName("GetWorldToScreenEx")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreenEx(Vector3 position, Camera camera, i32[min max] width, i32[min max] height);
+public fn Vector2 GetWorldToScreenEx(Vector3 position, Camera camera, i32[min max] width, i32[min max] height) {
+    unsafe {
+        return stark_raylib_GetWorldToScreenEx(position, camera, width, height);
+    }
+}
+
+[LinkName("GetWorldToScreen2D")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreen2D(Vector2 position, Camera2D camera);
+public fn Vector2 GetWorldToScreen2D(Vector2 position, Camera2D camera) {
+    unsafe {
+        return stark_raylib_GetWorldToScreen2D(position, camera);
+    }
+}
+
+[LinkName("GetScreenToWorld2D")]
+internal unsafe ffi fn Vector2 stark_raylib_GetScreenToWorld2D(Vector2 position, Camera2D camera);
+public fn Vector2 GetScreenToWorld2D(Vector2 position, Camera2D camera) {
+    unsafe {
+        return stark_raylib_GetScreenToWorld2D(position, camera);
+    }
+}
+
+[LinkName("GetCameraMatrix")]
+internal unsafe ffi fn Matrix stark_raylib_GetCameraMatrix(Camera camera);
+public fn Matrix GetCameraMatrix(Camera camera) {
+    unsafe {
+        return stark_raylib_GetCameraMatrix(camera);
+    }
+}
+
+[LinkName("GetCameraMatrix2D")]
+internal unsafe ffi fn Matrix stark_raylib_GetCameraMatrix2D(Camera2D camera);
+public fn Matrix GetCameraMatrix2D(Camera2D camera) {
+    unsafe {
+        return stark_raylib_GetCameraMatrix2D(camera);
+    }
+}
+
+[LinkName("SetTargetFPS")]
+internal unsafe ffi fn void stark_raylib_SetTargetFPS(i32[min max] fps);
+public fn void SetTargetFPS(i32[min max] fps) {
+    unsafe {
+        stark_raylib_SetTargetFPS(fps);
+    }
+    return;
+}
+[LinkName("GetFrameTime")]
+internal unsafe ffi fn f32 stark_raylib_GetFrameTime();
+public fn f32 GetFrameTime() {
+    unsafe {
+        return stark_raylib_GetFrameTime();
+    }
+}
+[LinkName("GetTime")]
+internal unsafe ffi fn f64 stark_raylib_GetTime();
+public fn f64 GetTime() {
+    unsafe {
+        return stark_raylib_GetTime();
+    }
+}
+[LinkName("GetFPS")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetFPS();
+public fn i32[min max] GetFPS() {
+    unsafe {
+        return stark_raylib_GetFPS();
+    }
+}
+[LinkName("SwapScreenBuffer")]
+internal unsafe ffi fn void stark_raylib_SwapScreenBuffer();
+public fn void SwapScreenBuffer() {
+    unsafe {
+        stark_raylib_SwapScreenBuffer();
+    }
+    return;
+}
+[LinkName("PollInputEvents")]
+internal unsafe ffi fn void stark_raylib_PollInputEvents();
+public fn void PollInputEvents() {
+    unsafe {
+        stark_raylib_PollInputEvents();
+    }
+    return;
+}
+[LinkName("WaitTime")]
+internal unsafe ffi fn void stark_raylib_WaitTime(f64 seconds);
+public fn void WaitTime(f64 seconds) {
+    unsafe {
+        stark_raylib_WaitTime(seconds);
+    }
+    return;
+}
+[LinkName("SetRandomSeed")]
+internal unsafe ffi fn void stark_raylib_SetRandomSeed(u32[0 max] seed);
+public fn void SetRandomSeed(u32[0 max] seed) {
+    unsafe {
+        stark_raylib_SetRandomSeed(seed);
+    }
+    return;
+}
+[LinkName("GetRandomValue")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRandomValue(i32[min max] minValue, i32[min max] maxValue);
+public fn i32[min max] GetRandomValue(i32[min max] minValue, i32[min max] maxValue) {
+    unsafe {
+        return stark_raylib_GetRandomValue(minValue, maxValue);
+    }
+}
+[LinkName("LoadRandomSequence")]
+internal unsafe ffi fn rawmutptr<i32[min max]> stark_raylib_LoadRandomSequence(u32[0 max] count, i32[min max] minValue, i32[min max] maxValue);
+[LinkName("UnloadRandomSequence")]
+internal unsafe ffi fn void stark_raylib_UnloadRandomSequence(rawmutptr<i32[min max]> sequence);
+public fn RaylibRandomSequenceResult LoadRandomSequence(u32[0 max] count, i32[min max] minValue, i32[min max] maxValue) {
+    if (count == 0 || count > (u32[0 max])(2 ** 31 - 1))
+    {
+        return RaylibRandomSequenceResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    unsafe {
+        stack rawmutptr<i32[min max]> data = stark_raylib_LoadRandomSequence(count, minValue, maxValue);
+        if (data == null)
+        {
+            return RaylibRandomSequenceResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibRandomSequenceResult.Ok(new RaylibOwnedRandomSequence()
+        {
+            Data = data,
+            Count = (u64[0 2 ** 63 - 1])count
+        });
+    }
+}
+[LinkName("TakeScreenshot")]
+internal unsafe ffi fn void stark_raylib_TakeScreenshot(ascii fileName);
+public fn void TakeScreenshot(ascii fileName) {
+    unsafe {
+        stark_raylib_TakeScreenshot(fileName);
+    }
+    return;
+}
+[LinkName("SetConfigFlags")]
+internal unsafe ffi fn void stark_raylib_SetConfigFlags(u32[0 max] flags);
+public fn void SetConfigFlags(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetConfigFlags(flags);
+    }
+    return;
+}
+
+public fn void SetConfigFlags(ConfigFlags flags) {
+    SetConfigFlags(ConfigFlagsNative(flags));
+    return;
+}
+[LinkName("OpenURL")]
+internal unsafe ffi fn void stark_raylib_OpenURL(ascii url);
+public fn void OpenURL(ascii url) {
+    unsafe {
+        stark_raylib_OpenURL(url);
+    }
+    return;
+}
+public unsafe ffi varargs fn void TraceLog(i32[min max] logLevel, ascii text);
+public fn void TraceLog(TraceLogLevel logLevel, ascii text) {
+    unsafe {
+        TraceLog(TraceLogLevelNative(logLevel), text);
+    }
+    return;
+}
+[LinkName("SetTraceLogLevel")]
+internal unsafe ffi fn void stark_raylib_SetTraceLogLevel(i32[min max] logLevel);
+public fn void SetTraceLogLevel(i32[min max] logLevel) {
+    unsafe {
+        stark_raylib_SetTraceLogLevel(logLevel);
+    }
+    return;
+}
+
+public fn void SetTraceLogLevel(TraceLogLevel logLevel) {
+    SetTraceLogLevel(TraceLogLevelNative(logLevel));
+    return;
+}
+[LinkName("MemAlloc")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_MemAlloc(u32[0 max] size);
+[LinkName("MemRealloc")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_MemRealloc(rawmutptr<i8[min max]> ptr, u32[0 max] size);
+[LinkName("MemFree")]
+internal unsafe ffi fn void stark_raylib_MemFree(rawmutptr<i8[min max]> ptr);
+public unsafe ffi fn void SetTraceLogCallback(TraceLogCallback callback);
+[LinkName("SetLoadFileDataCallback")]
+internal unsafe ffi fn void stark_raylib_SetLoadFileDataCallback(rawptr<i8[min max]> callback);
+public fn void SetLoadFileDataCallback(LoadFileDataCallback callback) {
+    unsafe {
+        stark_raylib_SetLoadFileDataCallback((rawptr<i8[min max]>)callback);
+    }
+    return;
+}
+
+public fn void ClearLoadFileDataCallback() {
+    unsafe {
+        stark_raylib_SetLoadFileDataCallback(null);
+    }
+    return;
+}
+
+[LinkName("SetSaveFileDataCallback")]
+internal unsafe ffi fn void stark_raylib_SetSaveFileDataCallback(rawptr<i8[min max]> callback);
+public fn void SetSaveFileDataCallback(SaveFileDataCallback callback) {
+    unsafe {
+        stark_raylib_SetSaveFileDataCallback((rawptr<i8[min max]>)callback);
+    }
+    return;
+}
+
+public fn void ClearSaveFileDataCallback() {
+    unsafe {
+        stark_raylib_SetSaveFileDataCallback(null);
+    }
+    return;
+}
+
+[LinkName("SetLoadFileTextCallback")]
+internal unsafe ffi fn void stark_raylib_SetLoadFileTextCallback(rawptr<i8[min max]> callback);
+public fn void SetLoadFileTextCallback(LoadFileTextCallback callback) {
+    unsafe {
+        stark_raylib_SetLoadFileTextCallback((rawptr<i8[min max]>)callback);
+    }
+    return;
+}
+
+public fn void ClearLoadFileTextCallback() {
+    unsafe {
+        stark_raylib_SetLoadFileTextCallback(null);
+    }
+    return;
+}
+
+[LinkName("SetSaveFileTextCallback")]
+internal unsafe ffi fn void stark_raylib_SetSaveFileTextCallback(rawptr<i8[min max]> callback);
+public fn void SetSaveFileTextCallback(SaveFileTextCallback callback) {
+    unsafe {
+        stark_raylib_SetSaveFileTextCallback((rawptr<i8[min max]>)callback);
+    }
+    return;
+}
+
+public fn void ClearSaveFileTextCallback() {
+    unsafe {
+        stark_raylib_SetSaveFileTextCallback(null);
+    }
+    return;
+}
+[LinkName("LoadFileData")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_LoadFileData(ascii fileName, rawmutptr<i32[min max]> dataSize);
+[LinkName("UnloadFileData")]
+internal unsafe ffi fn void stark_raylib_UnloadFileData(rawmutptr<u8[0 max]> data);
+[LinkName("SaveFileData")]
+internal unsafe ffi fn bool stark_raylib_SaveFileData(ascii fileName, rawptr<u8[0 max]> data, i32[min max] dataSize);
+[LinkName("ExportDataAsCode")]
+internal unsafe ffi fn bool stark_raylib_ExportDataAsCode(rawptr<u8[0 max]> data, i32[min max] dataSize, ascii fileName);
+[LinkName("LoadFileText")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_LoadFileText(ascii fileName);
+[LinkName("UnloadFileText")]
+internal unsafe ffi fn void stark_raylib_UnloadFileText(rawmutptr<i8[min max]> text);
+[LinkName("SaveFileText")]
+internal unsafe ffi fn bool stark_raylib_SaveFileText(ascii fileName, ascii text);
+
+public fn RaylibBytesResult LoadFileData(ascii fileName) {
+    unsafe {
+        stack mut i32[min max] dataSize = 0;
+        stack rawmutptr<u8[0 max]> data = stark_raylib_LoadFileData(fileName, &dataSize);
+        return OwnedBytesFromPointer(data, dataSize);
+    }
+}
+
+public fn bool SaveFileData(ascii fileName, borrow u8[0 max][] data) {
+    if (TooManyForI32(data.Length))
+    {
+        return false;
+    }
+
+    unsafe {
+        return stark_raylib_SaveFileData(fileName, ReadU8OrNull(data), (i32[min max])data.Length);
+    }
+}
+
+public fn bool ExportDataAsCode(borrow u8[0 max][] data, ascii fileName) {
+    if (TooManyForI32(data.Length))
+    {
+        return false;
+    }
+
+    unsafe {
+        return stark_raylib_ExportDataAsCode(ReadU8OrNull(data), (i32[min max])data.Length, fileName);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> LoadFileText(ascii fileName) {
+    unsafe {
+        stack rawmutptr<i8[min max]> text = stark_raylib_LoadFileText(fileName);
+        stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = CopyCString(text);
+        if (text != null)
+        {
+            stark_raylib_UnloadFileText(text);
+        }
+
+        return result;
+    }
+}
+
+public fn bool SaveFileText(ascii fileName, ascii text) {
+    unsafe {
+        return stark_raylib_SaveFileText(fileName, text);
+    }
+}
+[LinkName("FileExists")]
+internal unsafe ffi fn bool stark_raylib_FileExists(ascii fileName);
+public fn bool FileExists(ascii fileName) {
+    unsafe {
+        return stark_raylib_FileExists(fileName);
+    }
+}
+[LinkName("DirectoryExists")]
+internal unsafe ffi fn bool stark_raylib_DirectoryExists(ascii dirPath);
+public fn bool DirectoryExists(ascii dirPath) {
+    unsafe {
+        return stark_raylib_DirectoryExists(dirPath);
+    }
+}
+[LinkName("IsFileExtension")]
+internal unsafe ffi fn bool stark_raylib_IsFileExtension(ascii fileName, ascii ext);
+public fn bool IsFileExtension(ascii fileName, ascii ext) {
+    unsafe {
+        return stark_raylib_IsFileExtension(fileName, ext);
+    }
+}
+[LinkName("GetFileLength")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetFileLength(ascii fileName);
+public fn i32[min max] GetFileLength(ascii fileName) {
+    unsafe {
+        return stark_raylib_GetFileLength(fileName);
+    }
+}
+[LinkName("FileRename")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileRename(ascii fileName, ascii fileRename);
+public fn i32[min max] FileRename(ascii fileName, ascii fileRename) {
+    unsafe {
+        return stark_raylib_FileRename(fileName, fileRename);
+    }
+}
+[LinkName("FileRemove")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileRemove(ascii fileName);
+public fn i32[min max] FileRemove(ascii fileName) {
+    unsafe {
+        return stark_raylib_FileRemove(fileName);
+    }
+}
+[LinkName("FileCopy")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileCopy(ascii srcPath, ascii dstPath);
+public fn i32[min max] FileCopy(ascii srcPath, ascii dstPath) {
+    unsafe {
+        return stark_raylib_FileCopy(srcPath, dstPath);
+    }
+}
+[LinkName("FileMove")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileMove(ascii srcPath, ascii dstPath);
+public fn i32[min max] FileMove(ascii srcPath, ascii dstPath) {
+    unsafe {
+        return stark_raylib_FileMove(srcPath, dstPath);
+    }
+}
+[LinkName("FileTextReplace")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileTextReplace(ascii fileName, ascii search, ascii replacement);
+public fn i32[min max] FileTextReplace(ascii fileName, ascii search, ascii replacement) {
+    unsafe {
+        return stark_raylib_FileTextReplace(fileName, search, replacement);
+    }
+}
+[LinkName("FileTextFindIndex")]
+internal unsafe ffi fn i32[min max] stark_raylib_FileTextFindIndex(ascii fileName, ascii search);
+public fn i32[min max] FileTextFindIndex(ascii fileName, ascii search) {
+    unsafe {
+        return stark_raylib_FileTextFindIndex(fileName, search);
+    }
+}
+[LinkName("GetFileExtension")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetFileExtension(ascii fileName);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetFileExtension(ascii fileName) {
+    unsafe {
+        return CopyCString(stark_raylib_GetFileExtension(fileName));
+    }
+}
+
+[LinkName("GetFileName")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetFileName(ascii filePath);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetFileName(ascii filePath) {
+    unsafe {
+        return CopyCString(stark_raylib_GetFileName(filePath));
+    }
+}
+
+[LinkName("GetFileNameWithoutExt")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetFileNameWithoutExt(ascii filePath);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetFileNameWithoutExt(ascii filePath) {
+    unsafe {
+        return CopyCString(stark_raylib_GetFileNameWithoutExt(filePath));
+    }
+}
+
+[LinkName("GetDirectoryPath")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetDirectoryPath(ascii filePath);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetDirectoryPath(ascii filePath) {
+    unsafe {
+        return CopyCString(stark_raylib_GetDirectoryPath(filePath));
+    }
+}
+
+[LinkName("GetPrevDirectoryPath")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetPrevDirectoryPath(ascii dirPath);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetPrevDirectoryPath(ascii dirPath) {
+    unsafe {
+        return CopyCString(stark_raylib_GetPrevDirectoryPath(dirPath));
+    }
+}
+
+[LinkName("GetWorkingDirectory")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetWorkingDirectory();
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetWorkingDirectory() {
+    unsafe {
+        return CopyCString(stark_raylib_GetWorkingDirectory());
+    }
+}
+
+[LinkName("GetApplicationDirectory")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetApplicationDirectory();
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetApplicationDirectory() {
+    unsafe {
+        return CopyCString(stark_raylib_GetApplicationDirectory());
+    }
+}
+[LinkName("MakeDirectory")]
+internal unsafe ffi fn i32[min max] stark_raylib_MakeDirectory(ascii dirPath);
+public fn i32[min max] MakeDirectory(ascii dirPath) {
+    unsafe {
+        return stark_raylib_MakeDirectory(dirPath);
+    }
+}
+[LinkName("ChangeDirectory")]
+internal unsafe ffi fn bool stark_raylib_ChangeDirectory(ascii dir);
+public fn bool ChangeDirectory(ascii dir) {
+    unsafe {
+        return stark_raylib_ChangeDirectory(dir);
+    }
+}
+[LinkName("IsPathFile")]
+internal unsafe ffi fn bool stark_raylib_IsPathFile(ascii path);
+public fn bool IsPathFile(ascii path) {
+    unsafe {
+        return stark_raylib_IsPathFile(path);
+    }
+}
+[LinkName("IsFileNameValid")]
+internal unsafe ffi fn bool stark_raylib_IsFileNameValid(ascii fileName);
+public fn bool IsFileNameValid(ascii fileName) {
+    unsafe {
+        return stark_raylib_IsFileNameValid(fileName);
+    }
+}
+[LinkName("LoadDirectoryFiles")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDirectoryFiles(ascii dirPath);
+public fn FilePathList LoadDirectoryFiles(ascii dirPath) {
+    unsafe {
+        return stark_raylib_LoadDirectoryFiles(dirPath);
+    }
+}
+
+[LinkName("LoadDirectoryFilesEx")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDirectoryFilesEx(ascii basePath, ascii filter, bool scanSubdirs);
+public fn FilePathList LoadDirectoryFilesEx(ascii basePath, ascii filter, bool scanSubdirs) {
+    unsafe {
+        return stark_raylib_LoadDirectoryFilesEx(basePath, filter, scanSubdirs);
+    }
+}
+
+[LinkName("GetDirectoryFileCount")]
+internal unsafe ffi fn u32[0 max] stark_raylib_GetDirectoryFileCount(ascii dirPath);
+public fn u32[0 max] GetDirectoryFileCount(ascii dirPath) {
+    unsafe {
+        return stark_raylib_GetDirectoryFileCount(dirPath);
+    }
+}
+
+[LinkName("GetDirectoryFileCountEx")]
+internal unsafe ffi fn u32[0 max] stark_raylib_GetDirectoryFileCountEx(ascii basePath, ascii filter, bool scanSubdirs);
+public fn u32[0 max] GetDirectoryFileCountEx(ascii basePath, ascii filter, bool scanSubdirs) {
+    unsafe {
+        return stark_raylib_GetDirectoryFileCountEx(basePath, filter, scanSubdirs);
+    }
+}
+
+[LinkName("UnloadDirectoryFiles")]
+internal unsafe ffi fn void stark_raylib_UnloadDirectoryFiles(FilePathList files);
+public fn void UnloadDirectoryFiles(FilePathList files) {
+    unsafe {
+        stark_raylib_UnloadDirectoryFiles(files);
+    }
+    return;
+}
+
+[LinkName("IsFileDropped")]
+internal unsafe ffi fn bool stark_raylib_IsFileDropped();
+public fn bool IsFileDropped() {
+    unsafe {
+        return stark_raylib_IsFileDropped();
+    }
+}
+[LinkName("LoadDroppedFiles")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDroppedFiles();
+public fn FilePathList LoadDroppedFiles() {
+    unsafe {
+        return stark_raylib_LoadDroppedFiles();
+    }
+}
+
+[LinkName("UnloadDroppedFiles")]
+internal unsafe ffi fn void stark_raylib_UnloadDroppedFiles(FilePathList files);
+public fn void UnloadDroppedFiles(FilePathList files) {
+    unsafe {
+        stark_raylib_UnloadDroppedFiles(files);
+    }
+    return;
+}
+
+// Raylib returns C long here. Keep the FFI declaration header-shaped and widen
+// at the safe Stark wrapper boundary so this stays correct on LP64 and LLP64.
+[LinkName("GetFileModTime")]
+internal unsafe ffi(c) fn System.C.c_long stark_raylib_GetFileModTime(ascii fileName);
+public fn i64[min max] GetFileModTime(ascii fileName) {
+    unsafe {
+        stack System.C.c_long nativeTime = stark_raylib_GetFileModTime(fileName);
+        return (i64[min max])nativeTime;
+    }
+}
+[LinkName("CompressData")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_CompressData(rawptr<u8[0 max]> data, i32[min max] dataSize, rawmutptr<i32[min max]> compDataSize);
+[LinkName("DecompressData")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_DecompressData(rawptr<u8[0 max]> compData, i32[min max] compDataSize, rawmutptr<i32[min max]> dataSize);
+[LinkName("EncodeDataBase64")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_EncodeDataBase64(rawptr<u8[0 max]> data, i32[min max] dataSize, rawmutptr<i32[min max]> outputSize);
+[LinkName("DecodeDataBase64")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_DecodeDataBase64(rawptr<u8[0 max]> data, rawmutptr<i32[min max]> outputSize);
+[LinkName("ComputeCRC32")]
+internal unsafe ffi fn u32[0 max] stark_raylib_ComputeCRC32(rawptr<u8[0 max]> data, i32[min max] dataSize);
+public fn RaylibBytesResult CompressData(borrow u8[0 max][] data) {
+    if (TooManyForI32(data.Length))
+    {
+        return RaylibBytesResult.Err(RaylibStatus.TooManyItems);
+    }
+
+    unsafe {
+        stack mut i32[min max] compressedSize = 0;
+        stack rawmutptr<u8[0 max]> compressed = stark_raylib_CompressData(ReadU8OrNull(data), (i32[min max])data.Length, &compressedSize);
+        return OwnedBytesFromPointer(compressed, compressedSize);
+    }
+}
+
+public fn RaylibBytesResult DecompressData(borrow u8[0 max][] compressedData) {
+    if (TooManyForI32(compressedData.Length))
+    {
+        return RaylibBytesResult.Err(RaylibStatus.TooManyItems);
+    }
+
+    unsafe {
+        stack mut i32[min max] dataSize = 0;
+        stack rawmutptr<u8[0 max]> data = stark_raylib_DecompressData(ReadU8OrNull(compressedData), (i32[min max])compressedData.Length, &dataSize);
+        return OwnedBytesFromPointer(data, dataSize);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> EncodeDataBase64(borrow u8[0 max][] data) {
+    if (TooManyForI32(data.Length))
+    {
+        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    unsafe {
+        stack mut i32[min max] outputSize = 0;
+        stack rawmutptr<i8[min max]> encoded = stark_raylib_EncodeDataBase64(ReadU8OrNull(data), (i32[min max])data.Length, &outputSize);
+        stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = CopyCString(encoded);
+        if (encoded != null)
+        {
+            stark_raylib_MemFree(encoded);
+        }
+
+        return result;
+    }
+}
+
+public fn u32[0 max] ComputeCRC32(borrow u8[0 max][] data) {
+    if (TooManyForI32(data.Length))
+    {
+        return 0;
+    }
+
+    unsafe {
+        return stark_raylib_ComputeCRC32(ReadU8OrNull(data), (i32[min max])data.Length);
+    }
+}
+[LinkName("ComputeMD5")]
+internal unsafe ffi fn rawmutptr<u32[0 max]> stark_raylib_ComputeMD5(rawptr<u8[0 max]> data, i32[min max] dataSize);
+[LinkName("ComputeSHA1")]
+internal unsafe ffi fn rawmutptr<u32[0 max]> stark_raylib_ComputeSHA1(rawptr<u8[0 max]> data, i32[min max] dataSize);
+[LinkName("ComputeSHA256")]
+internal unsafe ffi fn rawmutptr<u32[0 max]> stark_raylib_ComputeSHA256(rawptr<u8[0 max]> data, i32[min max] dataSize);
+
+public fn bool ComputeMD5(borrow u8[0 max][] data, out u32[0 max][4] hash) {
+    hash[0] = 0;
+    hash[1] = 0;
+    hash[2] = 0;
+    hash[3] = 0;
+    if (TooManyForI32(data.Length))
+    {
+        return false;
+    }
+
+    unsafe {
+        stack rawmutptr<u32[0 max]> result = stark_raylib_ComputeMD5(ReadU8OrNull(data), (i32[min max])data.Length);
+        if (result == null)
+        {
+            return false;
+        }
+
+        hash[0] = *(&result[0]);
+        hash[1] = *(&result[1]);
+        hash[2] = *(&result[2]);
+        hash[3] = *(&result[3]);
+        stark_raylib_MemFree((rawmutptr<i8[min max]>)result);
+        return true;
+    }
+}
+
+public fn bool ComputeSHA1(borrow u8[0 max][] data, out u32[0 max][5] hash) {
+    hash[0] = 0;
+    hash[1] = 0;
+    hash[2] = 0;
+    hash[3] = 0;
+    hash[4] = 0;
+    if (TooManyForI32(data.Length))
+    {
+        return false;
+    }
+
+    unsafe {
+        stack rawmutptr<u32[0 max]> result = stark_raylib_ComputeSHA1(ReadU8OrNull(data), (i32[min max])data.Length);
+        if (result == null)
+        {
+            return false;
+        }
+
+        hash[0] = *(&result[0]);
+        hash[1] = *(&result[1]);
+        hash[2] = *(&result[2]);
+        hash[3] = *(&result[3]);
+        hash[4] = *(&result[4]);
+        stark_raylib_MemFree((rawmutptr<i8[min max]>)result);
+        return true;
+    }
+}
+
+public fn bool ComputeSHA256(borrow u8[0 max][] data, out u32[0 max][8] hash) {
+    hash[0] = 0;
+    hash[1] = 0;
+    hash[2] = 0;
+    hash[3] = 0;
+    hash[4] = 0;
+    hash[5] = 0;
+    hash[6] = 0;
+    hash[7] = 0;
+    if (TooManyForI32(data.Length))
+    {
+        return false;
+    }
+
+    unsafe {
+        stack rawmutptr<u32[0 max]> result = stark_raylib_ComputeSHA256(ReadU8OrNull(data), (i32[min max])data.Length);
+        if (result == null)
+        {
+            return false;
+        }
+
+        hash[0] = *(&result[0]);
+        hash[1] = *(&result[1]);
+        hash[2] = *(&result[2]);
+        hash[3] = *(&result[3]);
+        hash[4] = *(&result[4]);
+        hash[5] = *(&result[5]);
+        hash[6] = *(&result[6]);
+        hash[7] = *(&result[7]);
+        stark_raylib_MemFree((rawmutptr<i8[min max]>)result);
+        return true;
+    }
+}
+[LinkName("LoadAutomationEventList")]
+internal unsafe ffi fn AutomationEventList stark_raylib_LoadAutomationEventList(ascii fileName);
+public fn AutomationEventList LoadAutomationEventList(ascii fileName) {
+    unsafe {
+        return stark_raylib_LoadAutomationEventList(fileName);
+    }
+}
+
+[LinkName("UnloadAutomationEventList")]
+internal unsafe ffi fn void stark_raylib_UnloadAutomationEventList(AutomationEventList list);
+public fn void UnloadAutomationEventList(AutomationEventList list) {
+    unsafe {
+        stark_raylib_UnloadAutomationEventList(list);
+    }
+    return;
+}
+
+[LinkName("ExportAutomationEventList")]
+internal unsafe ffi fn bool stark_raylib_ExportAutomationEventList(AutomationEventList list, ascii fileName);
+public fn bool ExportAutomationEventList(AutomationEventList list, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportAutomationEventList(list, fileName);
+    }
+}
+
+[LinkName("SetAutomationEventList")]
+internal unsafe ffi fn void stark_raylib_SetAutomationEventList(rawmutptr<AutomationEventList> list);
+public fn void SetAutomationEventList(mut borrow AutomationEventList list) {
+    unsafe {
+        stark_raylib_SetAutomationEventList((rawmutptr<AutomationEventList>)&list);
+    }
+    return;
+}
+[LinkName("SetAutomationEventBaseFrame")]
+internal unsafe ffi fn void stark_raylib_SetAutomationEventBaseFrame(i32[min max] frame);
+public fn void SetAutomationEventBaseFrame(i32[min max] frame) {
+    unsafe {
+        stark_raylib_SetAutomationEventBaseFrame(frame);
+    }
+    return;
+}
+[LinkName("StartAutomationEventRecording")]
+internal unsafe ffi fn void stark_raylib_StartAutomationEventRecording();
+public fn void StartAutomationEventRecording() {
+    unsafe {
+        stark_raylib_StartAutomationEventRecording();
+    }
+    return;
+}
+[LinkName("StopAutomationEventRecording")]
+internal unsafe ffi fn void stark_raylib_StopAutomationEventRecording();
+public fn void StopAutomationEventRecording() {
+    unsafe {
+        stark_raylib_StopAutomationEventRecording();
+    }
+    return;
+}
+[LinkName("PlayAutomationEvent")]
+internal unsafe ffi fn void stark_raylib_PlayAutomationEvent(AutomationEvent event);
+public fn void PlayAutomationEvent(AutomationEvent event) {
+    unsafe {
+        stark_raylib_PlayAutomationEvent(event);
+    }
+    return;
+}
+
+[LinkName("IsKeyPressed")]
+internal unsafe ffi fn bool stark_raylib_IsKeyPressed(i32[min max] key);
+public fn bool IsKeyPressed(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyPressed(key);
+    }
+}
+
+public fn bool IsKeyPressed(KeyboardKey key) {
+    return IsKeyPressed(KeyboardKeyNative(key));
+}
+[LinkName("IsKeyPressedRepeat")]
+internal unsafe ffi fn bool stark_raylib_IsKeyPressedRepeat(i32[min max] key);
+public fn bool IsKeyPressedRepeat(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyPressedRepeat(key);
+    }
+}
+
+public fn bool IsKeyPressedRepeat(KeyboardKey key) {
+    return IsKeyPressedRepeat(KeyboardKeyNative(key));
+}
+[LinkName("IsKeyDown")]
+internal unsafe ffi fn bool stark_raylib_IsKeyDown(i32[min max] key);
+public fn bool IsKeyDown(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyDown(key);
+    }
+}
+
+public fn bool IsKeyDown(KeyboardKey key) {
+    return IsKeyDown(KeyboardKeyNative(key));
+}
+[LinkName("IsKeyReleased")]
+internal unsafe ffi fn bool stark_raylib_IsKeyReleased(i32[min max] key);
+public fn bool IsKeyReleased(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyReleased(key);
+    }
+}
+
+public fn bool IsKeyReleased(KeyboardKey key) {
+    return IsKeyReleased(KeyboardKeyNative(key));
+}
+[LinkName("IsKeyUp")]
+internal unsafe ffi fn bool stark_raylib_IsKeyUp(i32[min max] key);
+public fn bool IsKeyUp(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyUp(key);
+    }
+}
+
+public fn bool IsKeyUp(KeyboardKey key) {
+    return IsKeyUp(KeyboardKeyNative(key));
+}
+[LinkName("GetKeyPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetKeyPressed();
+public fn i32[min max] GetKeyPressed() {
+    unsafe {
+        return stark_raylib_GetKeyPressed();
+    }
+}
+
+public fn KeyboardKey GetKeyPressedKey() {
+    return KeyboardKeyFromNative(GetKeyPressed());
+}
+[LinkName("GetKeyName")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetKeyName(i32[min max] key);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetKeyName(i32[min max] key) {
+    unsafe {
+        return CopyCString(stark_raylib_GetKeyName(key));
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetKeyName(KeyboardKey key) {
+    return GetKeyName(KeyboardKeyNative(key));
+}
+[LinkName("GetCharPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCharPressed();
+public fn i32[min max] GetCharPressed() {
+    unsafe {
+        return stark_raylib_GetCharPressed();
+    }
+}
+[LinkName("SetExitKey")]
+internal unsafe ffi fn void stark_raylib_SetExitKey(i32[min max] key);
+public fn void SetExitKey(i32[min max] key) {
+    unsafe {
+        stark_raylib_SetExitKey(key);
+    }
+    return;
+}
+
+public fn void SetExitKey(KeyboardKey key) {
+    SetExitKey(KeyboardKeyNative(key));
+    return;
+}
+[LinkName("IsGamepadAvailable")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadAvailable(i32[min max] gamepad);
+public fn bool IsGamepadAvailable(i32[min max] gamepad) {
+    unsafe {
+        return stark_raylib_IsGamepadAvailable(gamepad);
+    }
+}
+[LinkName("GetGamepadName")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_GetGamepadName(i32[min max] gamepad);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetGamepadName(i32[min max] gamepad) {
+    unsafe {
+        return CopyCString(stark_raylib_GetGamepadName(gamepad));
+    }
+}
+[LinkName("IsGamepadButtonPressed")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonPressed(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonPressed(i32[min max] gamepad, i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsGamepadButtonPressed(gamepad, button);
+    }
+}
+
+public fn bool IsGamepadButtonPressed(i32[min max] gamepad, GamepadButton button) {
+    return IsGamepadButtonPressed(gamepad, GamepadButtonNative(button));
+}
+[LinkName("IsGamepadButtonDown")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonDown(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonDown(i32[min max] gamepad, i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsGamepadButtonDown(gamepad, button);
+    }
+}
+
+public fn bool IsGamepadButtonDown(i32[min max] gamepad, GamepadButton button) {
+    return IsGamepadButtonDown(gamepad, GamepadButtonNative(button));
+}
+[LinkName("IsGamepadButtonReleased")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonReleased(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonReleased(i32[min max] gamepad, i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsGamepadButtonReleased(gamepad, button);
+    }
+}
+
+public fn bool IsGamepadButtonReleased(i32[min max] gamepad, GamepadButton button) {
+    return IsGamepadButtonReleased(gamepad, GamepadButtonNative(button));
+}
+[LinkName("IsGamepadButtonUp")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonUp(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonUp(i32[min max] gamepad, i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsGamepadButtonUp(gamepad, button);
+    }
+}
+
+public fn bool IsGamepadButtonUp(i32[min max] gamepad, GamepadButton button) {
+    return IsGamepadButtonUp(gamepad, GamepadButtonNative(button));
+}
+[LinkName("GetGamepadButtonPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGamepadButtonPressed();
+public fn i32[min max] GetGamepadButtonPressed() {
+    unsafe {
+        return stark_raylib_GetGamepadButtonPressed();
+    }
+}
+
+public fn GamepadButton GetGamepadButtonPressedButton() {
+    return GamepadButtonFromNative(GetGamepadButtonPressed());
+}
+[LinkName("GetGamepadAxisCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGamepadAxisCount(i32[min max] gamepad);
+public fn i32[min max] GetGamepadAxisCount(i32[min max] gamepad) {
+    unsafe {
+        return stark_raylib_GetGamepadAxisCount(gamepad);
+    }
+}
+[LinkName("GetGamepadAxisMovement")]
+internal unsafe ffi fn f32 stark_raylib_GetGamepadAxisMovement(i32[min max] gamepad, i32[min max] axis);
+public fn f32 GetGamepadAxisMovement(i32[min max] gamepad, i32[min max] axis) {
+    unsafe {
+        return stark_raylib_GetGamepadAxisMovement(gamepad, axis);
+    }
+}
+
+public fn f32 GetGamepadAxisMovement(i32[min max] gamepad, GamepadAxis axis) {
+    return GetGamepadAxisMovement(gamepad, GamepadAxisNative(axis));
+}
+[LinkName("SetGamepadMappings")]
+internal unsafe ffi fn i32[min max] stark_raylib_SetGamepadMappings(ascii mappings);
+public fn i32[min max] SetGamepadMappings(ascii mappings) {
+    unsafe {
+        return stark_raylib_SetGamepadMappings(mappings);
+    }
+}
+[LinkName("SetGamepadVibration")]
+internal unsafe ffi fn void stark_raylib_SetGamepadVibration(i32[min max] gamepad, f32 leftMotor, f32 rightMotor, f32 duration);
+public fn void SetGamepadVibration(i32[min max] gamepad, f32 leftMotor, f32 rightMotor, f32 duration) {
+    unsafe {
+        stark_raylib_SetGamepadVibration(gamepad, leftMotor, rightMotor, duration);
+    }
+    return;
+}
+[LinkName("IsMouseButtonPressed")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonPressed(i32[min max] button);
+public fn bool IsMouseButtonPressed(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonPressed(button);
+    }
+}
+
+public fn bool IsMouseButtonPressed(MouseButton button) {
+    return IsMouseButtonPressed(MouseButtonNative(button));
+}
+[LinkName("IsMouseButtonDown")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonDown(i32[min max] button);
+public fn bool IsMouseButtonDown(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonDown(button);
+    }
+}
+
+public fn bool IsMouseButtonDown(MouseButton button) {
+    return IsMouseButtonDown(MouseButtonNative(button));
+}
+[LinkName("IsMouseButtonReleased")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonReleased(i32[min max] button);
+public fn bool IsMouseButtonReleased(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonReleased(button);
+    }
+}
+
+public fn bool IsMouseButtonReleased(MouseButton button) {
+    return IsMouseButtonReleased(MouseButtonNative(button));
+}
+[LinkName("IsMouseButtonUp")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonUp(i32[min max] button);
+public fn bool IsMouseButtonUp(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonUp(button);
+    }
+}
+
+public fn bool IsMouseButtonUp(MouseButton button) {
+    return IsMouseButtonUp(MouseButtonNative(button));
+}
+[LinkName("GetMouseX")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMouseX();
+public fn i32[min max] GetMouseX() {
+    unsafe {
+        return stark_raylib_GetMouseX();
+    }
+}
+[LinkName("GetMouseY")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMouseY();
+public fn i32[min max] GetMouseY() {
+    unsafe {
+        return stark_raylib_GetMouseY();
+    }
+}
+[LinkName("GetMousePosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMousePosition();
+public fn Vector2 GetMousePosition() {
+    unsafe {
+        return stark_raylib_GetMousePosition();
+    }
+}
+
+[LinkName("GetMouseDelta")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMouseDelta();
+public fn Vector2 GetMouseDelta() {
+    unsafe {
+        return stark_raylib_GetMouseDelta();
+    }
+}
+
+[LinkName("SetMousePosition")]
+internal unsafe ffi fn void stark_raylib_SetMousePosition(i32[min max] x, i32[min max] y);
+public fn void SetMousePosition(i32[min max] x, i32[min max] y) {
+    unsafe {
+        stark_raylib_SetMousePosition(x, y);
+    }
+    return;
+}
+[LinkName("SetMouseOffset")]
+internal unsafe ffi fn void stark_raylib_SetMouseOffset(i32[min max] offsetX, i32[min max] offsetY);
+public fn void SetMouseOffset(i32[min max] offsetX, i32[min max] offsetY) {
+    unsafe {
+        stark_raylib_SetMouseOffset(offsetX, offsetY);
+    }
+    return;
+}
+[LinkName("SetMouseScale")]
+internal unsafe ffi fn void stark_raylib_SetMouseScale(f32 scaleX, f32 scaleY);
+public fn void SetMouseScale(f32 scaleX, f32 scaleY) {
+    unsafe {
+        stark_raylib_SetMouseScale(scaleX, scaleY);
+    }
+    return;
+}
+[LinkName("GetMouseWheelMove")]
+internal unsafe ffi fn f32 stark_raylib_GetMouseWheelMove();
+public fn f32 GetMouseWheelMove() {
+    unsafe {
+        return stark_raylib_GetMouseWheelMove();
+    }
+}
+[LinkName("GetMouseWheelMoveV")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMouseWheelMoveV();
+public fn Vector2 GetMouseWheelMoveV() {
+    unsafe {
+        return stark_raylib_GetMouseWheelMoveV();
+    }
+}
+
+[LinkName("SetMouseCursor")]
+internal unsafe ffi fn void stark_raylib_SetMouseCursor(i32[min max] cursor);
+public fn void SetMouseCursor(i32[min max] cursor) {
+    unsafe {
+        stark_raylib_SetMouseCursor(cursor);
+    }
+    return;
+}
+
+public fn void SetMouseCursor(MouseCursor cursor) {
+    SetMouseCursor(MouseCursorNative(cursor));
+    return;
+}
+[LinkName("GetTouchX")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchX();
+public fn i32[min max] GetTouchX() {
+    unsafe {
+        return stark_raylib_GetTouchX();
+    }
+}
+[LinkName("GetTouchY")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchY();
+public fn i32[min max] GetTouchY() {
+    unsafe {
+        return stark_raylib_GetTouchY();
+    }
+}
+[LinkName("GetTouchPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetTouchPosition(i32[min max] index);
+public fn Vector2 GetTouchPosition(i32[min max] index) {
+    unsafe {
+        return stark_raylib_GetTouchPosition(index);
+    }
+}
+
+[LinkName("GetTouchPointId")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchPointId(i32[min max] index);
+public fn i32[min max] GetTouchPointId(i32[min max] index) {
+    unsafe {
+        return stark_raylib_GetTouchPointId(index);
+    }
+}
+[LinkName("GetTouchPointCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchPointCount();
+public fn i32[min max] GetTouchPointCount() {
+    unsafe {
+        return stark_raylib_GetTouchPointCount();
+    }
+}
+[LinkName("SetGesturesEnabled")]
+internal unsafe ffi fn void stark_raylib_SetGesturesEnabled(u32[0 max] flags);
+public fn void SetGesturesEnabled(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetGesturesEnabled(flags);
+    }
+    return;
+}
+
+public fn void SetGesturesEnabled(Gesture flags) {
+    SetGesturesEnabled(GestureNative(flags));
+    return;
+}
+[LinkName("IsGestureDetected")]
+internal unsafe ffi fn bool stark_raylib_IsGestureDetected(u32[0 max] gesture);
+public fn bool IsGestureDetected(u32[0 max] gesture) {
+    unsafe {
+        return stark_raylib_IsGestureDetected(gesture);
+    }
+}
+
+public fn bool IsGestureDetected(Gesture gesture) {
+    return IsGestureDetected(GestureNative(gesture));
+}
+[LinkName("GetGestureDetected")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGestureDetected();
+public fn i32[min max] GetGestureDetected() {
+    unsafe {
+        return stark_raylib_GetGestureDetected();
+    }
+}
+
+public fn Gesture GetGestureDetectedGesture() {
+    return GestureFromNative((u32[0 max])GetGestureDetected());
+}
+[LinkName("GetGestureHoldDuration")]
+internal unsafe ffi fn f32 stark_raylib_GetGestureHoldDuration();
+public fn f32 GetGestureHoldDuration() {
+    unsafe {
+        return stark_raylib_GetGestureHoldDuration();
+    }
+}
+[LinkName("GetGestureDragVector")]
+internal unsafe ffi fn Vector2 stark_raylib_GetGestureDragVector();
+public fn Vector2 GetGestureDragVector() {
+    unsafe {
+        return stark_raylib_GetGestureDragVector();
+    }
+}
+
+[LinkName("GetGestureDragAngle")]
+internal unsafe ffi fn f32 stark_raylib_GetGestureDragAngle();
+public fn f32 GetGestureDragAngle() {
+    unsafe {
+        return stark_raylib_GetGestureDragAngle();
+    }
+}
+[LinkName("GetGesturePinchVector")]
+internal unsafe ffi fn Vector2 stark_raylib_GetGesturePinchVector();
+public fn Vector2 GetGesturePinchVector() {
+    unsafe {
+        return stark_raylib_GetGesturePinchVector();
+    }
+}
+
+[LinkName("GetGesturePinchAngle")]
+internal unsafe ffi fn f32 stark_raylib_GetGesturePinchAngle();
+public fn f32 GetGesturePinchAngle() {
+    unsafe {
+        return stark_raylib_GetGesturePinchAngle();
+    }
+}
+[LinkName("UpdateCamera")]
+internal unsafe ffi fn void stark_raylib_UpdateCamera(rawmutptr<Camera> camera, i32[min max] mode);
+public fn Camera UpdateCamera(Camera camera, i32[min max] mode) {
+    stack mut Camera result = camera;
+    unsafe {
+        stark_raylib_UpdateCamera(&result, mode);
+    }
+    return result;
+}
+
+public fn Camera UpdateCamera(Camera camera, CameraMode mode) {
+    return UpdateCamera(camera, CameraModeNative(mode));
+}
+
+[LinkName("UpdateCameraPro")]
+internal unsafe ffi fn void stark_raylib_UpdateCameraPro(rawmutptr<Camera> camera, Vector3 movement, Vector3 rotation, f32 zoom);
+public fn Camera UpdateCameraPro(Camera camera, Vector3 movement, Vector3 rotation, f32 zoom) {
+    stack mut Camera result = camera;
+    unsafe {
+        stark_raylib_UpdateCameraPro(&result, movement, rotation, zoom);
+    }
+    return result;
+}
+
+public fn Ray GetMouseRay(Vector2 mousePosition, Camera camera) {
+    return GetScreenToWorldRay(mousePosition, camera);
+}

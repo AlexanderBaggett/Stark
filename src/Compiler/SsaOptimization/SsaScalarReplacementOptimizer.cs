@@ -1366,6 +1366,19 @@ internal sealed class SsaScalarReplacementOptimizer
             return false;
         }
 
+        if (effects.ReadsOtherMemory)
+        {
+            // The callee reads memory beyond its own arguments -- e.g. the object
+            // behind a `dyn` trait object's data pointer, or memory reached through a
+            // global. It can only reach a local through a pointer to that local, so
+            // the locals it may read are exactly those whose address has escaped (had
+            // its address taken anywhere in this function). Locals whose address is
+            // never taken cannot be observed by such a callee, so their field stores
+            // remain eligible for elimination.
+            CollectAddressEscapedLocals(definitions, roots);
+            return true;
+        }
+
         if (!effects.ReadsArgumentMemory)
         {
             return true;
@@ -1385,6 +1398,35 @@ internal sealed class SsaScalarReplacementOptimizer
         }
 
         return true;
+    }
+
+    // Locals whose address is taken anywhere in the function (directly, or via a
+    // field/element/slice address). Only these can be observed by a callee that
+    // reads memory beyond its arguments, so they bound such a callee's local reads.
+    private static void CollectAddressEscapedLocals(
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> escapedLocals)
+    {
+        foreach (var rvalue in definitions.Values)
+        {
+            switch (rvalue)
+            {
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    escapedLocals.Add(addressOfLocal.LocalName);
+                    break;
+                case SsaMakeSliceFromLocalRValue makeSlice:
+                    escapedLocals.Add(makeSlice.LocalName);
+                    break;
+                case SsaFieldAddressRValue fieldAddress
+                    when TryResolveFieldAddressRoot(fieldAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var fieldRoot, out _):
+                    escapedLocals.Add(fieldRoot);
+                    break;
+                case SsaElementAddressRValue elementAddress
+                    when TryResolveFieldAddressRoot(elementAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var elementRoot, out _):
+                    escapedLocals.Add(elementRoot);
+                    break;
+            }
+        }
     }
 
     private static bool TryCollectLocalMemoryReads(
@@ -1731,6 +1773,40 @@ internal sealed class SsaScalarReplacementOptimizer
         if (terminator.Value is not null)
         {
             yield return terminator.Value;
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            yield return terminator.TailIndirectCall.Target;
+
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
         }
 
         if (terminator.SwitchCases is not null)

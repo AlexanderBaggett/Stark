@@ -1,0 +1,654 @@
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+
+// Shared manifest-JSON shape, scalar, and text-member readers for section loaders.
+
+internal fn bool LogicalPackageImageJsonMemberHasValue(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName)
+{
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    return document.TryFindMember(objectNode, memberName, member)
+        && document.KindAt(member) != JsonKind.Null;
+}
+
+internal fn bool LogicalPackageImageJsonArrayNodeCount(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] node,
+    out u32[0 max] count)
+{
+    count = 0;
+    if (document.KindAt(node) != JsonKind.Array)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] childCount = document.ChildCountAt(node);
+    if (childCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    count = (u32[0 max])childCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonRequiredArrayMember(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u64[0 2 ** 63 - 1] member,
+    out u32[0 max] count)
+{
+    member = 0;
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryFindMember(objectNode, memberName, found))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageImageJsonArrayNodeCount(document, found, count))
+    {
+        return false;
+    }
+
+    member = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonRequiredArrayMemberCount(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u32[0 max] count)
+{
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member))
+    {
+        return false;
+    }
+
+    return LogicalPackageImageJsonArrayNodeCount(document, member, count);
+}
+
+internal fn bool LogicalPackageImageJsonOptionalArrayMember(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u64[0 2 ** 63 - 1] member,
+    out u32[0 max] count)
+{
+    member = 0;
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryFindMember(objectNode, memberName, found)
+        || document.KindAt(found) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (!LogicalPackageImageJsonArrayNodeCount(document, found, count))
+    {
+        return false;
+    }
+
+    member = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalArrayMemberCount(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u32[0 max] count)
+{
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    return LogicalPackageImageJsonArrayNodeCount(document, member, count);
+}
+
+internal fn bool LogicalPackageImageJsonRequiredObjectMember(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u64[0 2 ** 63 - 1] member)
+{
+    member = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryFindMember(objectNode, memberName, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    member = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalObjectMember(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u64[0 2 ** 63 - 1] member,
+    out bool present)
+{
+    member = 0;
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryFindMember(objectNode, memberName, found)
+        || document.KindAt(found) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    member = found;
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMemberIsPresentNumber(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Number)
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalU32MemberValue(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool present,
+    out u32[0 max] value)
+{
+    present = false;
+    value = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Number)
+    {
+        return false;
+    }
+
+    switch (document.I64At(member))
+    {
+        case JsonResult<i64[min max]>.Err(var error):
+            return false;
+        case JsonResult<i64[min max]>.Ok(var parsed):
+            if (parsed < 0 || parsed > (i64[min max])(2 ** 32 - 1))
+            {
+                return false;
+            }
+
+            present = true;
+            value = (u32[0 max])parsed;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonRequiredU32MemberValue(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u32[0 max] value)
+{
+    value = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Number)
+    {
+        return false;
+    }
+
+    switch (document.I64At(member))
+    {
+        case JsonResult<i64[min max]>.Err(var error):
+            return false;
+        case JsonResult<i64[min max]>.Ok(var parsed):
+            if (parsed < 0 || parsed > (i64[min max])(2 ** 32 - 1))
+            {
+                return false;
+            }
+
+            value = (u32[0 max])parsed;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonRequiredI64MemberValue(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out i64[min max] value)
+{
+    value = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Number)
+    {
+        return false;
+    }
+
+    switch (document.I64At(member))
+    {
+        case JsonResult<i64[min max]>.Err(var error):
+            return false;
+        case JsonResult<i64[min max]>.Ok(var parsed):
+            value = parsed;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonRequiredBoolMemberValue(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool value)
+{
+    value = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member))
+    {
+        return false;
+    }
+
+    stack JsonKind kind = document.KindAt(member);
+    if (kind != JsonKind.True && kind != JsonKind.False)
+    {
+        return false;
+    }
+
+    value = document.BoolAt(member);
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalBoolMemberPresenceValueWithDefault(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    bool defaultValue,
+    out bool present,
+    out bool value)
+{
+    present = false;
+    value = defaultValue;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    stack JsonKind kind = document.KindAt(member);
+    if (kind != JsonKind.True && kind != JsonKind.False)
+    {
+        return false;
+    }
+
+    present = true;
+    value = document.BoolAt(member);
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalBoolMemberValue(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool value)
+{
+    value = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    stack JsonKind kind = document.KindAt(member);
+    if (kind != JsonKind.True && kind != JsonKind.False)
+    {
+        return false;
+    }
+
+    value = document.BoolAt(member);
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalBoolMemberValueWithDefault(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    bool defaultValue,
+    out bool value)
+{
+    value = defaultValue;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    stack JsonKind kind = document.KindAt(member);
+    if (kind != JsonKind.True && kind != JsonKind.False)
+    {
+        return false;
+    }
+
+    value = document.BoolAt(member);
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonAppendRequiredTextMember(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    switch (sink.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonMemberIsPresentText(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonAppendOptionalTextMember(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    mut borrow OwnedAscii sink,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    switch (sink.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            present = true;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonAppendOptionalTextMemberAllowEmpty(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    mut borrow OwnedAscii sink,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return true;
+    }
+
+    switch (sink.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            present = true;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonRequiredTextMemberPresent(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName)
+{
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    return System.Text.AsciiLength(document.TextAt(member)) > 0;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalTextMemberPresentAllowEmpty(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    if (System.Text.AsciiLength(document.TextAt(member)) <= 0)
+    {
+        return true;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalTextArrayMemberCount(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u32[0 max] count)
+{
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] localCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, objectNode, memberName, arrayNode, localCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] itemNode = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, itemNode)
+            || document.KindAt(itemNode) != JsonKind.Text
+            || System.Text.AsciiLength(document.TextAt(itemNode)) <= 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    count = localCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonOptionalComptimeGenericParameterArrayMemberCount(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u32[0 max] count)
+{
+    count = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] localCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, objectNode, memberName, arrayNode, localCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !document.TryFindMember(parameterNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || System.Text.AsciiLength(document.TextAt(nameNode)) <= 0
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    count = localCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonModuleNode(
+    borrow JsonDocument document,
+    u32[0 max] moduleOrdinal,
+    out u64[0 2 ** 63 - 1] moduleNode)
+{
+    moduleNode = 0;
+    if (document.Count() == 0 || document.KindAt(0) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] modulesNode = 0;
+    if (!document.TryFindMember(0, "Modules", modulesNode)
+        || document.KindAt(modulesNode) != JsonKind.Array)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] moduleCount = document.ChildCountAt(modulesNode);
+    if (moduleCount == 0
+        || moduleCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || (u64[0 2 ** 63 - 1])moduleOrdinal >= moduleCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryChildAt(modulesNode, (u64[0 2 ** 63 - 1])moduleOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    moduleNode = found;
+    return true;
+}

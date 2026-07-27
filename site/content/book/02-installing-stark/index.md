@@ -9,8 +9,12 @@ next = "/book/03-hello-stark/"
 
 # Installing Stark and Building Programs
 
-This chapter assumes the Stark compiler executable is already installed and
-available on your machine.
+Stark is distributed as a relocatable SDK archive. The compiler executable,
+root `sdk.json`, System and official Vendor libraries, native payloads, examples,
+licenses, and compiler-private backend are one installation unit. Public
+commands live in the archive's `bin` directory. The archive follows Odin's
+distribution boundary: it carries compiler-version-sensitive dependencies, but
+uses the documented host development layer for final native linking.
 
 The website [Getting Started](/getting-started/) page tracks current
 prerequisites, installation details, and first-run checks outside the book
@@ -18,9 +22,10 @@ narrative.
 
 ## Step 1: Put `stark` On Your `PATH`
 
-Put the compiler binary in a stable directory, then add that directory to your
-`PATH`. The `PATH` entry is the directory containing the compiler, not the
-compiler file itself.
+Extract the complete archive into a stable directory, then add the extracted
+SDK's `bin` directory to `PATH`. Do not copy the compiler binary out of the
+archive: `stark` resolves the SDK root containing `sdk.json` and relative
+package paths from its canonical `bin` location.
 
 In the examples below, replace `./stark` with the path to the compiler binary
 you downloaded or built.
@@ -28,28 +33,27 @@ you downloaded or built.
 On macOS, the default shell is usually `zsh`:
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-cp ./stark "$HOME/.local/bin/stark"
-chmod +x "$HOME/.local/bin/stark"
-printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zshrc"
+mkdir -p "$HOME/.local/stark"
+tar -xzf stark-<version>-macos-arm64.tar.gz -C "$HOME/.local/stark"
+printf '\nexport PATH="$HOME/.local/stark/stark-<version>-macos-arm64/bin:$PATH"\n' >> "$HOME/.zshrc"
 exec zsh
 ```
 
 On Linux, the default shell is often `bash`:
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-cp ./stark "$HOME/.local/bin/stark"
-chmod +x "$HOME/.local/bin/stark"
-printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.bashrc"
+mkdir -p "$HOME/.local/stark"
+tar -xzf stark-<version>-linux-x64.tar.gz -C "$HOME/.local/stark"
+printf '\nexport PATH="$HOME/.local/stark/stark-<version>-linux-x64/bin:$PATH"\n' >> "$HOME/.bashrc"
 exec bash
 ```
 
-On Windows, put `stark.exe` in a stable directory such as `C:\Tools\Stark`,
-then add that directory to the user `Path` from PowerShell:
+On Windows, extract the complete archive to a stable directory such as
+`C:\Tools\Stark`, then add its `bin` directory to the user `Path` from
+PowerShell:
 
 ```powershell
-$starkBin = "C:\Tools\Stark"
+$starkBin = "C:\Tools\Stark\bin"
 $current = [Environment]::GetEnvironmentVariable("Path", "User")
 $parts = @($current -split ";" | Where-Object
 {
@@ -68,11 +72,15 @@ binary, use that checkout's launcher in place of `stark`.
 
 ## Step 2: Check The Compiler
 
-Ask the compiler for help:
+Validate the compiler, SDK packages, compiler-private backend, and host
+prerequisites:
 
 ```bash
-stark --help
+stark doctor --strict
 ```
+
+Plain `stark doctor` prints an informational report; `--strict` is the install
+and release-integrity check. Then ask for command help with `stark --help`.
 
 ## Step 3: Compile One File Directly
 
@@ -115,30 +123,36 @@ A solution manifest collects several projects and names defaults:
 
 {{< file-sample "samples/Stark.solution.toml" "toml" >}}
 
-## Step 5: Add Native Package Facts When Needed
+## Step 5: Use Official Vendor Packages Directly
 
-Native-backed packages use the same manifest system. The Raylib wrapper in
-`examples/raylib` is a real example: the Stark package owns its Stark root, its
-native C shim, the preferred `pkg-config` discovery name, and the Linux fallback
-link metadata.
+Official `System.*` and `Vendor.*` modules belong to the SDK, not application
+dependencies. An application can `import Vendor.Raylib` without adding Raylib
+to `[dependencies]`, configuring `STARK_PATH`, or repeating native linker facts.
+The package owns its archive, runtime files, and ordered link metadata.
 
-{{< file-sample "samples/raylib/Stark.toml" "toml" >}}
+The SDK's `bin` directory contains the Stark commands, not a flat copy of every
+native library. Vendor payloads remain under their owning package, such as
+`vendor/dist/<sdk-target>/native/raylib/`, and `sdk.json` supplies their
+relocation-safe paths and checksums.
 
-The normal path is `pkg-config = ["raylib"]`. The fallback section is for
-systems where Raylib is built locally instead of installed through the system
-package manager. The `${native.paths.raylib-src}` value is deliberately not a
-hardcoded repository path; it is supplied by user-local configuration or the
-example build script.
+The application manifest remains an ordinary executable manifest with no
+Raylib dependency entry; the source selects the SDK package by importing it:
 
-From the `examples` directory, a machine with Raylib available can build that
-package by name:
-
-```bash
-stark build raylib
+```stark
+import Vendor.Raylib
+module Game
 ```
 
-The native-package project chapter returns to this example later and walks
-through the wrapper boundary in detail.
+`pkg-config`, source paths, and custom native fallback tables remain package
+author tools for non-SDK native packages; they are not normal installation
+steps for an official vendor package.
+
+If an official import reports missing native metadata, or a native call links
+but small struct values such as Raylib colors are corrupt, run
+`stark doctor --strict`, clean the project, and verify `command -v stark` on
+macOS/Linux or `Get-Command stark` in PowerShell. Repair or replace the complete
+SDK rather than adding host search paths: the compiler, package image, Stark
+archive, and native payload are one ABI-coherent unit.
 
 ## Step 6: Let Manifests Own Build Facts
 

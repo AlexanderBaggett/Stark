@@ -1,0 +1,1049 @@
+import Compiler.Artifacts
+import Compiler.ArtifactRendering
+import Compiler.Binding
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir
+import Compiler.Parsing
+import Compiler.Typing
+import System.Text
+import System.Text.Interning
+import System.Testing
+[Collection("artifacts")]
+module ArtifactsTests
+
+fn bool MemoryStatusOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn bool BuildParsedCompilation(
+    ascii source,
+    out TokenStream stream,
+    out CompilationUnitHeader header,
+    out DeclarationList declarations)
+{
+    stream = new();
+    header = new();
+    declarations = new();
+
+    stack mut TokenStream parsedStream = new();
+    switch (Compiler.Lexing.LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var streamValue):
+            parsedStream = streamValue;
+    }
+
+    stack mut CompilationUnitHeader parsedHeader = new();
+    switch (ParseHeader(parsedStream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var headerValue):
+            parsedHeader = headerValue;
+    }
+
+    switch (ParseDeclarations(parsedStream, parsedHeader.NextToken))
+    {
+        case ParseResult<DeclarationList>.Err(var declarationError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var declarationValue):
+            stream = parsedStream;
+            header = parsedHeader;
+            declarations = declarationValue;
+            return true;
+    }
+}
+
+[Fact]
+fn bool CompilerArtifactKindsMatchHostNames()
+{
+    stack mut CompilerArtifactKind kind = CompilerArtifactKind.Unknown;
+    return CompilerArtifactKindCount() == 25
+        && CompilerArtifactKindAtOrdinal(0) == CompilerArtifactKind.ParseResult
+        && CompilerArtifactKindAtOrdinal(24) == CompilerArtifactKind.LlvmIrModule
+        && CompilerArtifactKindAtOrdinal(25) == CompilerArtifactKind.Unknown
+        && CompilerArtifactKindOrdinal(CompilerArtifactKind.ParseResult) == 0
+        && CompilerArtifactKindOrdinal(CompilerArtifactKind.LlvmIrModule) == 24
+        && System.Text.Equals(CompilerArtifactKindName(CompilerArtifactKind.ParseResult), "parse.result")
+        && System.Text.Equals(CompilerArtifactKindName(CompilerArtifactKind.SyntaxModel), "syntax.model")
+        && System.Text.Equals(CompilerArtifactKindName(CompilerArtifactKind.ClosedWorldOptimization), "semantics.closed-world-optimization")
+        && System.Text.Equals(CompilerArtifactKindName(CompilerArtifactKind.SsaValueFacts), "optimization.ssa.value-facts")
+        && System.Text.Equals(CompilerArtifactKindName(CompilerArtifactKind.LlvmIrModule), "codegen.llvm-ir")
+        && TryParseCompilerArtifactKindName("lowering.mir", kind)
+        && kind == CompilerArtifactKind.MidLevelIr
+        && !TryParseCompilerArtifactKindName("lowering.not-real", kind)
+        && kind == CompilerArtifactKind.Unknown;
+}
+
+[Fact]
+fn bool ArtifactCatalogInternsStandardKeysInStableOrder()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (EnsureStandardCompilerArtifactKeys(catalog))
+    {
+        case ArtifactStatus.Err(var error):
+            return false;
+        case ArtifactStatus.Ok:
+    }
+
+    stack mut System.Text.Interning.ArtifactKeyId parseId = new();
+    stack mut System.Text.Interning.ArtifactKeyId llvmId = new();
+    stack mut CompilerArtifactKind kind = CompilerArtifactKind.Unknown;
+    return catalog.HasStandardKeys()
+        && catalog.StandardKeyCount() == 25
+        && catalog.InternedKeyCount() == 25
+        && TryGetCompilerArtifactKeyId(catalog, CompilerArtifactKind.ParseResult, parseId)
+        && TryGetCompilerArtifactKeyId(catalog, CompilerArtifactKind.LlvmIrModule, llvmId)
+        && parseId.Index() == 0
+        && llvmId.Index() == 24
+        && TryGetCompilerArtifactKindById(catalog, llvmId, kind)
+        && kind == CompilerArtifactKind.LlvmIrModule;
+}
+
+[Fact]
+fn bool TypedArtifactKeysCarrySameInternedSlot()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var error):
+            return System.Testing.Fail("parse-i32");
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var parseI32):
+            switch (GetCompilerArtifactKey<bool>(catalog, CompilerArtifactKind.ParseResult))
+            {
+                case ArtifactResult<ArtifactKey<bool>>.Err(var boolError):
+                    return System.Testing.Fail("parse-bool");
+                case ArtifactResult<ArtifactKey<bool>>.Ok(var parseBool):
+                    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.LlvmIrModule))
+                    {
+                        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var llvmError):
+                            return System.Testing.Fail("llvm");
+                        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var llvmI32):
+                            stack AnyArtifactKey parseAny = UntypeArtifactKey<i32[min max]>(parseI32);
+                            stack AnyArtifactKey llvmAny = UntypeArtifactKey<i32[min max]>(llvmI32);
+                            return ArtifactKeyIsValid<i32[min max]>(parseI32)
+                                && ArtifactKeyIsValid<bool>(parseBool)
+                                && ArtifactKeyIsValid<i32[min max]>(llvmI32)
+                                && ArtifactKeyKind<i32[min max]>(parseI32) == CompilerArtifactKind.ParseResult
+                                && System.Text.Equals(ArtifactKeyName<i32[min max]>(parseI32), "parse.result")
+                                && ArtifactKeyIdValue<i32[min max]>(parseI32).Index() == 0
+                                && ArtifactKeysShareSlot<i32[min max], bool>(parseI32, parseBool)
+                                && !ArtifactKeyEquals<i32[min max]>(parseI32, llvmI32)
+                                && !ArtifactKeysShareSlot<i32[min max], i32[min max]>(parseI32, llvmI32)
+                                && AnyArtifactKeyEquals(parseAny, UntypeArtifactKey<bool>(parseBool))
+                                && !AnyArtifactKeyEquals(parseAny, llvmAny);
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool ArtifactCatalogRejectsUnknownKinds()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.Unknown))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var key):
+            return false;
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var error):
+            return error == ArtifactError.UnknownArtifactKind
+                && catalog.StandardKeyCount() == 0
+                && !catalog.HasStandardKeys();
+    }
+}
+
+[Fact]
+fn bool ArtifactSlotStoresAndCopiesTypedValues()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var parseError):
+            return System.Testing.Fail("parse-key");
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var parseKey):
+            switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.LlvmIrModule))
+            {
+                case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var llvmError):
+                    return System.Testing.Fail("llvm-key");
+                case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var llvmKey):
+                    stack mut ArtifactSlot<i32[min max]> slot = ArtifactSlotOf<i32[min max]>(parseKey);
+                    stack mut i32[min max] copied = 0;
+                    switch (StoreArtifactValue<i32[min max]>(slot, parseKey, 42))
+                    {
+                        case ArtifactStatus.Err(var storeError):
+                            return System.Testing.Fail("store-first");
+                        case ArtifactStatus.Ok:
+                    }
+
+                    if (!ArtifactSlotHasValue<i32[min max]>(slot, parseKey)
+                        || ArtifactSlotHasValue<i32[min max]>(slot, llvmKey)
+                        || ArtifactSlotStoredValueCount<i32[min max]>(slot) != 1
+                        || !TryCopyArtifactValue<i32[min max]>(slot, parseKey, copied)
+                        || copied != 42)
+                    {
+                        return System.Testing.Fail("read-first");
+                    }
+
+                    switch (StoreArtifactValue<i32[min max]>(slot, parseKey, 7))
+                    {
+                        case ArtifactStatus.Err(var replaceError):
+                            return System.Testing.Fail("replace");
+                        case ArtifactStatus.Ok:
+                    }
+
+                    if (!TryCopyArtifactValue<i32[min max]>(slot, parseKey, copied) || copied != 7)
+                    {
+                        return System.Testing.Fail("read-replaced");
+                    }
+
+                    switch (StoreArtifactValue<i32[min max]>(slot, llvmKey, 99))
+                    {
+                        case ArtifactStatus.Ok:
+                            return false;
+                        case ArtifactStatus.Err(var mismatch):
+                            return mismatch == ArtifactError.ArtifactKeyMismatch;
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool ArtifactTypedAccessReportsPreciseFailures()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var parseError):
+            return System.Testing.Fail("parse-key");
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var parseKey):
+            switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.LlvmIrModule))
+            {
+                case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var llvmError):
+                    return System.Testing.Fail("llvm-key");
+                case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var llvmKey):
+                    stack mut ArtifactSlot<i32[min max]> slot = ArtifactSlotOf<i32[min max]>(parseKey);
+                    switch (ValidateArtifactAccess<i32[min max]>(slot, parseKey))
+                    {
+                        case ArtifactStatus.Ok:
+                            return System.Testing.Fail("empty-ok");
+                        case ArtifactStatus.Err(var missing):
+                            if (missing != ArtifactError.MissingArtifact)
+                            {
+                                return System.Testing.Fail("missing-error");
+                            }
+                    }
+
+                    switch (StoreArtifactValue<i32[min max]>(slot, parseKey, 11))
+                    {
+                        case ArtifactStatus.Err(var storeError):
+                            return System.Testing.Fail("store");
+                        case ArtifactStatus.Ok:
+                    }
+
+                    switch (ValidateArtifactAccess<i32[min max]>(slot, llvmKey))
+                    {
+                        case ArtifactStatus.Ok:
+                            return System.Testing.Fail("mismatch-ok");
+                        case ArtifactStatus.Err(var mismatch):
+                            if (mismatch != ArtifactError.ArtifactKeyMismatch)
+                            {
+                                return System.Testing.Fail("mismatch-error");
+                            }
+                    }
+
+                    switch (ValidateArtifactAccess<i32[min max]>(slot, parseKey))
+                    {
+                        case ArtifactStatus.Err(var accessError):
+                            return System.Testing.Fail("valid-error");
+                        case ArtifactStatus.Ok:
+                            return true;
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool CopyArtifactValueReturnsTypedResult()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var keyError):
+            return System.Testing.Fail("key");
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var key):
+            stack mut ArtifactSlot<i32[min max]> slot = ArtifactSlotOf<i32[min max]>(key);
+            switch (CopyArtifactValue<i32[min max]>(slot, key))
+            {
+                case ArtifactResult<i32[min max]>.Ok(var emptyValue):
+                    return System.Testing.Fail("empty-ok");
+                case ArtifactResult<i32[min max]>.Err(var emptyError):
+                    if (emptyError != ArtifactError.MissingArtifact)
+                    {
+                        return System.Testing.Fail("empty-error");
+                    }
+            }
+
+            switch (StoreArtifactValue<i32[min max]>(slot, key, 123))
+            {
+                case ArtifactStatus.Err(var storeError):
+                    return System.Testing.Fail("store");
+                case ArtifactStatus.Ok:
+            }
+
+            switch (CopyArtifactValue<i32[min max]>(slot, key))
+            {
+                case ArtifactResult<i32[min max]>.Err(var copyError):
+                    return System.Testing.Fail("copy-error");
+                case ArtifactResult<i32[min max]>.Ok(var copied):
+                    return copied == 123;
+            }
+    }
+}
+
+[Fact]
+fn bool MoveArtifactValueTransfersOwnedPayload()
+{
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<System.Text.OwnedAscii>(catalog, CompilerArtifactKind.SyntaxModel))
+    {
+        case ArtifactResult<ArtifactKey<System.Text.OwnedAscii>>.Err(var keyError):
+            return System.Testing.Fail("key");
+        case ArtifactResult<ArtifactKey<System.Text.OwnedAscii>>.Ok(var key):
+            stack mut ArtifactSlot<System.Text.OwnedAscii> slot = ArtifactSlotOf<System.Text.OwnedAscii>(key);
+            stack mut System.Text.OwnedAscii payload = new();
+            switch (payload.AppendAscii("owned-artifact"))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Testing.Fail("append");
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (StoreArtifactValue<System.Text.OwnedAscii>(slot, key, payload))
+            {
+                case ArtifactStatus.Err(var storeError):
+                    return System.Testing.Fail("store");
+                case ArtifactStatus.Ok:
+            }
+
+            switch (MoveArtifactValue<System.Text.OwnedAscii>(slot, key))
+            {
+                case ArtifactResult<System.Text.OwnedAscii>.Err(var moveError):
+                    return System.Testing.Fail("move");
+                case ArtifactResult<System.Text.OwnedAscii>.Ok(var moved):
+                    if (!System.Text.OwnedAsciiEqualsAscii(moved, "owned-artifact")
+                        || ArtifactSlotHasValue<System.Text.OwnedAscii>(slot, key)
+                        || ArtifactSlotStoredValueCount<System.Text.OwnedAscii>(slot) != 0)
+                    {
+                        return System.Testing.Fail("moved-value");
+                    }
+            }
+
+            switch (MoveArtifactValue<System.Text.OwnedAscii>(slot, key))
+            {
+                case ArtifactResult<System.Text.OwnedAscii>.Ok(var secondMove):
+                    return false;
+                case ArtifactResult<System.Text.OwnedAscii>.Err(var missing):
+                    return missing == ArtifactError.MissingArtifact;
+            }
+    }
+}
+
+[Fact]
+fn bool ArtifactInventoryTracksPresentKinds()
+{
+    stack mut ArtifactInventory inventory = new();
+    if (ArtifactIsPresent(inventory, CompilerArtifactKind.ParseResult)
+        || ArtifactPresentCount(inventory) != 0)
+    {
+        return System.Testing.Fail("empty");
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var parseError):
+            return System.Testing.Fail("mark-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.LlvmIrModule))
+    {
+        case ArtifactStatus.Err(var llvmError):
+            return System.Testing.Fail("mark-llvm");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.Unknown))
+    {
+        case ArtifactStatus.Ok:
+            return false;
+        case ArtifactStatus.Err(var unknownError):
+            if (unknownError != ArtifactError.UnknownArtifactKind)
+            {
+                return System.Testing.Fail("unknown-error");
+            }
+    }
+
+    return inventory.IsInitialized()
+        && inventory.SlotCount() == 25
+        && ArtifactPresentCount(inventory) == 2
+        && ArtifactIsPresent(inventory, CompilerArtifactKind.ParseResult)
+        && ArtifactIsPresent(inventory, CompilerArtifactKind.LlvmIrModule)
+        && !ArtifactIsPresent(inventory, CompilerArtifactKind.SyntaxModel);
+}
+
+[Fact]
+fn bool ArtifactDependencySetDeduplicatesRequiredArtifacts()
+{
+    stack mut ArtifactDependencySet dependencies = new();
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var parseError):
+            return System.Testing.Fail("add-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var duplicateError):
+            return System.Testing.Fail("add-duplicate");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.TypeCheckModel))
+    {
+        case ArtifactStatus.Err(var typeError):
+            return System.Testing.Fail("add-type");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.Unknown))
+    {
+        case ArtifactStatus.Ok:
+            return false;
+        case ArtifactStatus.Err(var unknownError):
+            return unknownError == ArtifactError.UnknownArtifactKind
+                && ArtifactDependencyRequiredCount(dependencies) == 2
+                && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.ParseResult)
+                && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.TypeCheckModel)
+                && ArtifactDependencyRequiredAt(dependencies, 0) == CompilerArtifactKind.ParseResult
+                && ArtifactDependencyRequiredAt(dependencies, 2) == CompilerArtifactKind.Unknown;
+    }
+}
+
+[Fact]
+fn bool ArtifactDependencyValidationReportsMissingArtifacts()
+{
+    stack mut ArtifactInventory inventory = new();
+    stack mut ArtifactDependencySet dependencies = new();
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var parseDependencyError):
+            return System.Testing.Fail("require-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AddRequiredArtifact(dependencies, CompilerArtifactKind.TypeCheckModel))
+    {
+        case ArtifactStatus.Err(var typeDependencyError):
+            return System.Testing.Fail("require-type");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var markError):
+            return System.Testing.Fail("mark-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (ValidateArtifactDependencies(inventory, dependencies))
+    {
+        case ArtifactResult<ArtifactDependencyReport>.Err(var validateError):
+            return System.Testing.Fail("validate-missing");
+        case ArtifactResult<ArtifactDependencyReport>.Ok(var missingReport):
+            if (ArtifactDependenciesSatisfied(missingReport)
+                || ArtifactDependencyMissingCount(missingReport) != 1
+                || !ArtifactDependencyReportContains(missingReport, CompilerArtifactKind.TypeCheckModel)
+                || ArtifactDependencyMissingAt(missingReport, 0) != CompilerArtifactKind.TypeCheckModel
+                || ArtifactDependencyMissingAt(missingReport, 1) != CompilerArtifactKind.Unknown)
+            {
+                return System.Testing.Fail("missing-report");
+            }
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.TypeCheckModel))
+    {
+        case ArtifactStatus.Err(var markTypeError):
+            return System.Testing.Fail("mark-type");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (ValidateArtifactDependencies(inventory, dependencies))
+    {
+        case ArtifactResult<ArtifactDependencyReport>.Err(var validateFullError):
+            return System.Testing.Fail("validate-full");
+        case ArtifactResult<ArtifactDependencyReport>.Ok(var fullReport):
+            return ArtifactDependenciesSatisfied(fullReport)
+                && ArtifactDependencyMissingCount(fullReport) == 0;
+    }
+}
+
+[Fact]
+fn bool ArtifactInspectionTablesExposeInventoryAndTypedSlots()
+{
+    stack mut ArtifactInventory inventory = new();
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var parseError):
+            return System.Testing.Fail("mark-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.LlvmIrModule))
+    {
+        case ArtifactStatus.Err(var llvmError):
+            return System.Testing.Fail("mark-llvm");
+        case ArtifactStatus.Ok:
+    }
+
+    stack mut ArtifactInspectionTable inventoryTable = new();
+    switch (AppendArtifactInventoryInspection(inventoryTable, inventory))
+    {
+        case ArtifactStatus.Err(var inspectInventoryError):
+            return System.Testing.Fail("inspect-inventory");
+        case ArtifactStatus.Ok:
+    }
+
+    if (inventoryTable.Count() != 25
+        || inventoryTable.KindAt(0) != CompilerArtifactKind.ParseResult
+        || inventoryTable.StateAt(0) != ArtifactInspectionState.Present
+        || inventoryTable.StateAt(1) != ArtifactInspectionState.Missing
+        || inventoryTable.HasKeyAt(0)
+        || !ArtifactInspectionHasPresentKind(inventoryTable, CompilerArtifactKind.LlvmIrModule))
+    {
+        return System.Testing.Fail("inventory-table");
+    }
+
+    stack mut ArtifactKeyCatalog catalog = new();
+    switch (GetCompilerArtifactKey<i32[min max]>(catalog, CompilerArtifactKind.TypeCheckModel))
+    {
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Err(var keyError):
+            return System.Testing.Fail("key");
+        case ArtifactResult<ArtifactKey<i32[min max]>>.Ok(var key):
+            stack mut ArtifactSlot<i32[min max]> slot = ArtifactSlotOf<i32[min max]>(key);
+            stack mut ArtifactInspectionTable emptySlotTable = new();
+            switch (AppendArtifactSlotInspection<i32[min max]>(emptySlotTable, slot))
+            {
+                case ArtifactStatus.Err(var emptyInspectError):
+                    return System.Testing.Fail("inspect-empty-slot");
+                case ArtifactStatus.Ok:
+            }
+
+            if (emptySlotTable.Count() != 1
+                || emptySlotTable.KindAt(0) != CompilerArtifactKind.TypeCheckModel
+                || emptySlotTable.StateAt(0) != ArtifactInspectionState.Missing
+                || !emptySlotTable.HasKeyAt(0)
+                || emptySlotTable.KeyIdIndexAt(0) != 9
+                || emptySlotTable.StoredValueCountAt(0) != 0)
+            {
+                return System.Testing.Fail("empty-slot-table");
+            }
+
+            switch (StoreArtifactValue<i32[min max]>(slot, key, 77))
+            {
+                case ArtifactStatus.Err(var storeError):
+                    return System.Testing.Fail("store");
+                case ArtifactStatus.Ok:
+            }
+
+            stack mut ArtifactInspectionTable presentSlotTable = new();
+            switch (AppendArtifactSlotInspection<i32[min max]>(presentSlotTable, slot))
+            {
+                case ArtifactStatus.Err(var presentInspectError):
+                    return System.Testing.Fail("inspect-present-slot");
+                case ArtifactStatus.Ok:
+            }
+
+            stack ArtifactInspectionRow row = ArtifactInspectionRowAt(presentSlotTable, 0);
+            return row.Kind() == CompilerArtifactKind.TypeCheckModel
+                && row.State() == ArtifactInspectionState.Present
+                && row.HasKey()
+                && row.KeyIdIndex() == 9
+                && row.StoredValueCount() == 1
+                && ArtifactInspectionHasPresentKind(presentSlotTable, CompilerArtifactKind.TypeCheckModel)
+                && System.Text.Equals(ArtifactInspectionStateName(row.State()), "present");
+    }
+}
+
+[Fact]
+fn bool ArtifactStageComparisonReportsAddedAndKeyChangedArtifacts()
+{
+    stack mut ArtifactInventory leftInventory = new ArtifactInventory();
+    stack mut ArtifactInventory rightInventory = new ArtifactInventory();
+    switch (MarkArtifactPresent(leftInventory, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var leftParseError):
+            return System.Testing.Fail("left-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(rightInventory, CompilerArtifactKind.ParseResult))
+    {
+        case ArtifactStatus.Err(var rightParseError):
+            return System.Testing.Fail("right-parse");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (MarkArtifactPresent(rightInventory, CompilerArtifactKind.LlvmIrModule))
+    {
+        case ArtifactStatus.Err(var rightLlvmError):
+            return System.Testing.Fail("right-llvm");
+        case ArtifactStatus.Ok:
+    }
+
+    stack mut ArtifactInspectionTable leftTable = new ArtifactInspectionTable();
+    stack mut ArtifactInspectionTable rightTable = new ArtifactInspectionTable();
+    switch (AppendArtifactInventoryInspection(leftTable, leftInventory))
+    {
+        case ArtifactStatus.Err(var leftInspectError):
+            return System.Testing.Fail("left-inspect");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AppendArtifactInventoryInspection(rightTable, rightInventory))
+    {
+        case ArtifactStatus.Err(var rightInspectError):
+            return System.Testing.Fail("right-inspect");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (CompareArtifactInspectionTables(leftTable, rightTable))
+    {
+        case ArtifactResult<ArtifactStageComparison>.Err(var compareError):
+            return System.Testing.Fail("compare-inventory");
+        case ArtifactResult<ArtifactStageComparison>.Ok(var comparison):
+            stack mut ArtifactStageDifference llvmDifference = ArtifactStageDifference.Match;
+            stack mut ArtifactStageDifference parseDifference = ArtifactStageDifference.StateChanged;
+            if (!TryFindArtifactStageDifference(comparison, CompilerArtifactKind.LlvmIrModule, llvmDifference)
+                || !TryFindArtifactStageDifference(comparison, CompilerArtifactKind.ParseResult, parseDifference)
+                || llvmDifference != ArtifactStageDifference.Added
+                || parseDifference != ArtifactStageDifference.Match
+                || comparison.Count() != 25
+                || ArtifactStageDifferenceCount(comparison, ArtifactStageDifference.Added) != 1
+                || !System.Text.Equals(ArtifactStageDifferenceName(llvmDifference), "added"))
+            {
+                return System.Testing.Fail("inventory-comparison");
+            }
+    }
+
+    stack mut ArtifactKeyCatalog catalog = new ArtifactKeyCatalog();
+    switch (EnsureStandardCompilerArtifactKeys(catalog))
+    {
+        case ArtifactStatus.Err(var catalogError):
+            return System.Testing.Fail("catalog");
+        case ArtifactStatus.Ok:
+    }
+
+    stack mut System.Text.Interning.ArtifactKeyId parseId = new();
+    stack mut System.Text.Interning.ArtifactKeyId llvmId = new();
+    if (!TryGetCompilerArtifactKeyId(catalog, CompilerArtifactKind.ParseResult, parseId)
+        || !TryGetCompilerArtifactKeyId(catalog, CompilerArtifactKind.LlvmIrModule, llvmId))
+    {
+        return System.Testing.Fail("ids");
+    }
+
+    stack mut ArtifactInspectionTable keyedLeft = new ArtifactInspectionTable();
+    stack mut ArtifactInspectionTable keyedRight = new ArtifactInspectionTable();
+    switch (AppendArtifactInspectionRow(
+        keyedLeft,
+        ArtifactInspectionRowOf(CompilerArtifactKind.ParseResult, ArtifactInspectionState.Present, true, parseId, 1)))
+    {
+        case ArtifactStatus.Err(var leftRowError):
+            return System.Testing.Fail("left-row");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (AppendArtifactInspectionRow(
+        keyedRight,
+        ArtifactInspectionRowOf(CompilerArtifactKind.ParseResult, ArtifactInspectionState.Present, true, llvmId, 1)))
+    {
+        case ArtifactStatus.Err(var rightRowError):
+            return System.Testing.Fail("right-row");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (CompareArtifactInspectionTables(keyedLeft, keyedRight))
+    {
+        case ArtifactResult<ArtifactStageComparison>.Err(var keyedCompareError):
+            return System.Testing.Fail("compare-keyed");
+        case ArtifactResult<ArtifactStageComparison>.Ok(var keyedComparison):
+            stack mut ArtifactStageDifference keyDifference = ArtifactStageDifference.Match;
+            return TryFindArtifactStageDifference(keyedComparison, CompilerArtifactKind.ParseResult, keyDifference)
+                && keyDifference == ArtifactStageDifference.KeyChanged
+                && ArtifactStageDifferenceCount(keyedComparison, ArtifactStageDifference.KeyChanged) == 1;
+    }
+}
+
+[Fact]
+fn bool CompilationUnitSyntaxArtifactRendererShowsHeadersDeclarationsAndDiagnostics()
+{
+    stack ascii source = "import System.Text\nmodule Demo\nstruct Box { }\nfn i32[min max] main() { return 0; }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var parseError):
+            return System.Testing.Fail("parse");
+        case ParseResult<CompilationUnitSyntax>.Ok(var syntax):
+            stack mut System.Text.OwnedAscii rendered = new();
+            if (!MemoryStatusOk(AppendCompilationUnitSyntaxArtifact(rendered, source, syntax)))
+            {
+                return System.Testing.Fail("render");
+            }
+
+            stack ascii text = rendered.View();
+            return System.Text.Contains(text, "syntax compilation-unit\n")
+                && System.Text.Contains(text, "  succeeded: true\n")
+                && System.Text.Contains(text, "  headers: 2\n")
+                && System.Text.Contains(text, "0: import System.Text")
+                && System.Text.Contains(text, "1: module Demo")
+                && System.Text.Contains(text, "  declarations: 2\n")
+                && System.Text.Contains(text, "struct name=Box")
+                && System.Text.Contains(text, "function name=main")
+                && System.Text.Contains(text, "  diagnostics: 0\n");
+    }
+}
+
+[Fact]
+fn bool CompilationUnitSyntaxArtifactRendererShowsSyntaxDiagnostics()
+{
+    stack ascii source = "module ;";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var parseError):
+            return System.Testing.Fail("parse");
+        case ParseResult<CompilationUnitSyntax>.Ok(var syntax):
+            stack mut System.Text.OwnedAscii rendered = new();
+            if (!MemoryStatusOk(AppendCompilationUnitSyntaxArtifact(rendered, source, syntax)))
+            {
+                return System.Testing.Fail("render");
+            }
+
+            stack ascii text = rendered.View();
+            return System.Text.Contains(text, "  succeeded: false\n")
+                && System.Text.Contains(text, "  diagnostics: 1\n")
+                && System.Text.Contains(text, "expected-name token=1");
+    }
+}
+
+[Fact]
+fn bool ExpressionSyntaxArtifactRendererShowsExpressionTree()
+{
+    stack ascii source = "value + 1 * other";
+    switch (ParseExpressionSyntax(source))
+    {
+        case ParseResult<ExpressionSyntax>.Err(var parseError):
+            return System.Testing.Fail("parse");
+        case ParseResult<ExpressionSyntax>.Ok(var syntax):
+            stack mut System.Text.OwnedAscii rendered = new();
+            if (!MemoryStatusOk(AppendExpressionSyntaxArtifact(rendered, source, syntax)))
+            {
+                return System.Testing.Fail("render");
+            }
+
+            stack ascii text = rendered.View();
+            return System.Text.Contains(text, "syntax expression\n")
+                && System.Text.Contains(text, "  succeeded: true\n")
+                && System.Text.Contains(text, "  root: ")
+                && System.Text.Contains(text, "identifier token=0 text=value")
+                && System.Text.Contains(text, "int-literal token=2 text=1")
+                && System.Text.Contains(text, "binary token=1 text=+")
+                && System.Text.Contains(text, "binary token=3 text=*")
+                && System.Text.Contains(text, "  diagnostics: 0\n");
+    }
+}
+
+[Fact]
+fn bool TypedSemanticArtifactRenderersShowSymbolFacts()
+{
+    stack ascii source = raw"""
+    module Demo
+    public struct Box { i32[0 max] Count; }
+    export fn i32[min max] main() { return 0; }
+    static mut i32[0 max] Counter = 0;
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut CompilationUnitHeader header = new();
+    stack mut DeclarationList declarations = new();
+    if (!BuildParsedCompilation(source, stream, header, declarations))
+    {
+        return System.Testing.Fail("parse");
+    }
+
+    stack mut TypedModuleSymbolTable moduleSymbols = new();
+    switch (BuildTypedModuleSymbols(source, stream, header, declarations, ModuleOrigin.Source, 0))
+    {
+        case BindResult<TypedModuleSymbolTable>.Err(var moduleError):
+            return System.Testing.Fail("module-symbols");
+        case BindResult<TypedModuleSymbolTable>.Ok(var value):
+            moduleSymbols = value;
+    }
+
+    stack mut TypedDeclarationSymbolTable declarationSymbols = new();
+    switch (BuildTypedDeclarationSymbols(source, stream, declarations, moduleSymbols))
+    {
+        case BindResult<TypedDeclarationSymbolTable>.Err(var declarationError):
+            return System.Testing.Fail("declaration-symbols");
+        case BindResult<TypedDeclarationSymbolTable>.Ok(var value):
+            declarationSymbols = value;
+    }
+
+    stack mut System.Text.OwnedAscii rendered = new();
+    if (!MemoryStatusOk(AppendTypedModuleSymbolArtifact(rendered, source, stream, moduleSymbols)))
+    {
+        return System.Testing.Fail("render-module");
+    }
+
+    if (!MemoryStatusOk(AppendTypedDeclarationSymbolArtifact(rendered, source, stream, declarationSymbols)))
+    {
+        return System.Testing.Fail("render-declarations");
+    }
+
+    stack ascii text = rendered.View();
+    return System.Text.Contains(text, "semantic typed-module-symbols\n")
+        && System.Text.Contains(text, "  symbols: 3\n")
+        && System.Text.Contains(text, "struct name=Box visibility=public")
+        && System.Text.Contains(text, "function name=main visibility=export")
+        && System.Text.Contains(text, "semantic typed-declaration-symbols\n")
+        && System.Text.Contains(text, "  functions: 1\n")
+        && System.Text.Contains(text, "  exports: 1\n")
+        && System.Text.Contains(text, "value static name=Counter")
+        && System.Text.Contains(text, "storage=static")
+        && System.Text.Contains(text, "mutable=true");
+}
+
+[Fact]
+fn bool TypedArtifactRenderersShowBackendTypeFacts()
+{
+    stack ascii source = raw"""
+    module Demo
+    unsafe fn i32[0 max] Fill(
+        out rawmutptr<i8[min max]>[length] buffer,
+        u64[1 16] length,
+        borrow bool flag)
+        where dead_on_return(buffer)
+    {
+        return 0;
+    }
+
+    const i32[0 max] Limit = 8;
+
+    struct Box
+    {
+        i32[0 max] Count;
+        ascii Name;
+    }
+
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut CompilationUnitHeader header = new();
+    stack mut DeclarationList declarations = new();
+    if (!BuildParsedCompilation(source, stream, header, declarations))
+    {
+        return System.Testing.Fail("parse");
+    }
+
+    stack mut TypedFunctionSignatureTable signatures = new();
+    switch (BuildTypedFunctionSignatures(source, stream, declarations))
+    {
+        case ParseResult<TypedFunctionSignatureTable>.Err(var signatureError):
+            return System.Testing.Fail("signatures");
+        case ParseResult<TypedFunctionSignatureTable>.Ok(var value):
+            signatures = value;
+    }
+
+    stack mut TypedGlobalDeclarationTable globals = new();
+    switch (BuildTypedGlobalDeclarations(source, stream, declarations))
+    {
+        case ParseResult<TypedGlobalDeclarationTable>.Err(var globalError):
+            return System.Testing.Fail("globals");
+        case ParseResult<TypedGlobalDeclarationTable>.Ok(var value):
+            globals = value;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return System.Testing.Fail("fields");
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var value):
+            fields = value;
+    }
+
+    stack mut TypedEnumPayloadTable payloads = new();
+    switch (BuildTypedEnumPayloads(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return System.Testing.Fail("payloads");
+        case ParseResult<TypedEnumPayloadTable>.Ok(var value):
+            payloads = value;
+    }
+
+    stack mut TypedEnumLayoutTable layouts = new();
+    switch (BuildTypedEnumLayouts(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return System.Testing.Fail("layouts");
+        case ParseResult<TypedEnumLayoutTable>.Ok(var value):
+            layouts = value;
+    }
+
+    stack mut System.Text.OwnedAscii rendered = new();
+    if (!MemoryStatusOk(AppendTypedFunctionSignatureArtifact(rendered, source, stream, signatures)))
+    {
+        return System.Testing.Fail("render-signatures");
+    }
+
+    if (!MemoryStatusOk(AppendTypedGlobalDeclarationArtifact(rendered, source, stream, globals)))
+    {
+        return System.Testing.Fail("render-globals");
+    }
+
+    if (!MemoryStatusOk(AppendTypedFieldDeclarationArtifact(rendered, source, stream, fields)))
+    {
+        return System.Testing.Fail("render-fields");
+    }
+
+    if (!MemoryStatusOk(AppendTypedEnumPayloadArtifact(rendered, source, stream, payloads)))
+    {
+        return System.Testing.Fail("render-payloads");
+    }
+
+    if (!MemoryStatusOk(AppendTypedEnumLayoutArtifact(rendered, source, stream, layouts)))
+    {
+        return System.Testing.Fail("render-layouts");
+    }
+
+    stack ascii text = rendered.View();
+    return System.Text.Contains(text, "type function-signatures\n")
+        && System.Text.Contains(text, "  signatures: 1\n")
+        && System.Text.Contains(text, "type=raw-pointer")
+        && System.Text.Contains(text, "counted=true")
+        && System.Text.Contains(text, "dead-on-return=true")
+        && System.Text.Contains(text, "type global-declarations\n")
+        && System.Text.Contains(text, "const storage=const name=Limit")
+        && System.Text.Contains(text, "type field-declarations\n")
+        && System.Text.Contains(text, "owner=Box")
+        && System.Text.Contains(text, "name=Count")
+        && System.Text.Contains(text, "type enum-payloads\n")
+        && System.Text.Contains(text, "variant=Data")
+        && System.Text.Contains(text, "payload-kind=positional")
+        && System.Text.Contains(text, "type enum-layouts\n")
+        && System.Text.Contains(text, "concrete=true");
+}
+
+[Fact]
+fn bool MirAndSsaArtifactRenderersShowBackendRowsAndFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack MirValueId param = MirParam(instructions, 0);
+    stack MirValueId one = MirConstIntTyped(instructions, MirType.I32, 1);
+    stack MirValueId sum = MirAddTyped(instructions, MirType.I32, param, one);
+    stack MirValueId ret = MirReturn(instructions, sum);
+
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId entry = MirReturnBlock(blocks, sum);
+
+    stack mut IrTable<MirFunction> functions = new();
+    stack MirFuncId fnId = MirDefineFunction(functions, entry, entry, 1, param, 4);
+
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts sumFacts = new();
+    sumFacts.SetAlignment(4);
+    sumFacts.MarkNoAlias();
+    sumFacts.SetIntegerRange(1, 65);
+    if (!RecordGeneratedValueFactsForMirValue(facts, sum, sumFacts))
+    {
+        return System.Testing.Fail("facts");
+    }
+
+    stack mut System.Text.OwnedAscii rendered = new();
+    if (!MemoryStatusOk(AppendMirArtifact(rendered, instructions, blocks, functions)))
+    {
+        return System.Testing.Fail("render-mir");
+    }
+
+    if (!MemoryStatusOk(AppendSsaValueFactsArtifact(rendered, facts)))
+    {
+        return System.Testing.Fail("render-facts");
+    }
+
+    stack ascii text = rendered.View();
+    return System.Text.Contains(text, "mir instructions\n")
+        && System.Text.Contains(text, "  instructions: 4\n")
+        && System.Text.Contains(text, "1: param type=i64 a=0 b=0 c=0 d=0 imm=0")
+        && System.Text.Contains(text, "2: const-int type=i32 a=0 b=0 c=0 d=0 imm=1")
+        && System.Text.Contains(text, "3: add type=i32 a=1 b=2 c=0 d=0 imm=0")
+        && System.Text.Contains(text, "4: return type=i64 a=3 b=0 c=0 d=0 imm=0")
+        && System.Text.Contains(text, "mir blocks\n")
+        && System.Text.Contains(text, "1: return slot0=3 slot1=0 slot2=0")
+        && System.Text.Contains(text, "mir functions\n")
+        && System.Text.Contains(text, "1: entry=1 blocks=1+1 instructions=1+4")
+        && System.Text.Contains(text, "ssa value-facts\n")
+        && System.Text.Contains(text, "3: align-present=true align=4")
+        && System.Text.Contains(text, "noalias=true")
+        && System.Text.Contains(text, "range-present=true range=1..65");
+}
+
+[Fact]
+fn bool LlvmAndPackageArtifactRenderersDelegateToCanonicalEmitters()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack MirValueId one = MirConstInt(instructions, 1);
+    stack MirValueId ret = MirReturn(instructions, one);
+
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId entry = MirReturnBlock(blocks, one);
+
+    stack mut IrTable<MirFunction> functions = new();
+    stack MirFuncId fnId = MirDefineFunction(functions, entry, entry, 1, one, 2);
+
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] globalId = MirDefineGlobal(globals, 7);
+
+    stack mut IrTable<u8[0 max]> packageImage = new();
+    SerializePackageImage(instructions, blocks, functions, globals, packageImage);
+
+    stack mut System.Text.OwnedAscii rendered = new();
+    if (!MemoryStatusOk(AppendLlvmModuleArtifact(rendered, instructions, blocks, functions, globals)))
+    {
+        return System.Testing.Fail("render-llvm");
+    }
+
+    if (!MemoryStatusOk(AppendPackageImageArtifact(rendered, packageImage)))
+    {
+        return System.Testing.Fail("render-package");
+    }
+
+    stack ascii text = rendered.View();
+    return System.Text.Contains(text, "llvm module\n")
+        && System.Text.Contains(text, "@g1 = global i64 7\n")
+        && System.Text.Contains(text, "define i64 @f1()")
+        && System.Text.Contains(text, "ret i64 %v1")
+        && System.Text.Contains(text, "package image\n")
+        && System.Text.Contains(text, "2 instructions, 1 blocks, 1 functions, 1 globals");
+}

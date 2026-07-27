@@ -1,0 +1,74 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+import System.Testing
+[Collection("c-abi-aggregate")]
+module CAbiAggregateTests
+
+fn bool TextEquals(borrow OwnedAscii actual, const ascii expectedText)
+{
+    stack mut OwnedAscii expected = new();
+    switch (expected.AppendConstAscii(expectedText))
+    {
+        case MemoryStatus.Ok:
+            return OwnedAscii.Equals(actual, expected);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool CAbiAggregateCarrierFactsRecordDirectMultiCarrierShape()
+{
+    stack mut CAbiAggregateCarrierFacts facts = new();
+    facts.SetDirect(
+        16,
+        4,
+        2,
+        AbiCarrierKind.Vector2F32,
+        AbiCarrierKind.Vector2F32,
+        AbiCarrierKind.None,
+        AbiCarrierKind.None);
+
+    return facts.Present()
+        && facts.Kind() == CAbiAggregatePassKind.Direct
+        && facts.IsDirect()
+        && !facts.IsIndirect()
+        && facts.ByteSize() == 16
+        && facts.ByteAlignment() == 4
+        && facts.LlvmParameterCarrierCount() == 2
+        && facts.ReturnCarrierIsLlvmStruct()
+        && facts.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && facts.CarrierKindAt(1) == AbiCarrierKind.Vector2F32
+        && facts.CarrierKindAt(2) == AbiCarrierKind.None
+        && facts.CarrierKindAt(4) == AbiCarrierKind.None;
+}
+
+[Fact]
+fn bool EmitsCAbiAggregateBoundaryFactsForRaylibShapes()
+{
+    stack ascii source = raw"""
+    [StructLayout(C)]
+    struct Vector2 { f32 X; f32 Y; }
+    [StructLayout(C)]
+    struct Vector3 { f32 X; f32 Y; f32 Z; }
+    [StructLayout(C)]
+    struct Rectangle { f32 X; f32 Y; f32 Width; f32 Height; }
+    [StructLayout(C)]
+    struct Color { u8[0 max] R; u8[0 max] G; u8[0 max] B; u8[0 max] A; }
+
+    unsafe ffi(c) fn Vector2 NativeGetVector2();
+    unsafe ffi(c) fn Vector3 NativeGetVector3();
+    unsafe ffi(c) fn void NativeDraw(Rectangle rec, Vector2 origin, Color tint);
+    """;
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitCAbiAggregateBoundaryFacts(source, sink))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            return TextEquals(sink, "return NativeGetVector2 Vector2 direct <2 x float>\nreturn NativeGetVector3 Vector3 direct { <2 x float>, float }\nparam NativeDraw#0 Rectangle direct <2 x float>, <2 x float>\nparam NativeDraw#1 Vector2 direct <2 x float>\nparam NativeDraw#2 Color direct i32\n");
+    }
+}

@@ -1,0 +1,709 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Loader.PackageImageLoader
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Inspection.PackageImageInspection
+
+internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out PackageImageSummary summary)
+{
+    summary = new();
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut u32[0 max] instrOffset = 0;
+        stack mut u32[0 max] blockOffset = 0;
+        stack mut u32[0 max] funcOffset = 0;
+        stack mut u32[0 max] globalOffset = 0;
+        stack mut u32[0 max] asmOffset = 0;
+        stack mut u32[0 max] asmFunctionCount = 0;
+        stack mut bool hasAsm = false;
+        stack mut u32[0 max] enumLayoutOffset = 0;
+        stack mut u32[0 max] enumLayoutFactCount = 0;
+        stack mut bool hasEnumLayoutFacts = false;
+        stack mut u32[0 max] textPayloadOffset = 0;
+        stack mut u32[0 max] textPayloadByteCount = 0;
+        stack mut bool hasTextPayloadBytes = false;
+        stack mut u32[0 max] textConstantOffset = 0;
+        stack mut u32[0 max] textConstantCount = 0;
+        stack mut bool hasTextConstants = false;
+        stack mut u32[0 max] floatPayloadOffset = 0;
+        stack mut u32[0 max] floatPayloadByteCount = 0;
+        stack mut bool hasFloatPayloadBytes = false;
+        stack mut u32[0 max] floatConstantOffset = 0;
+        stack mut u32[0 max] floatConstantCount = 0;
+        stack mut bool hasFloatConstants = false;
+        stack PackageImageValidationStatus mirStatus = ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+            buf,
+            instrOffset,
+            blockOffset,
+            funcOffset,
+            globalOffset,
+            asmOffset,
+            asmFunctionCount,
+            hasAsm,
+            enumLayoutOffset,
+            enumLayoutFactCount,
+            hasEnumLayoutFacts,
+            textPayloadOffset,
+            textPayloadByteCount,
+            hasTextPayloadBytes,
+            textConstantOffset,
+            textConstantCount,
+            hasTextConstants,
+            floatPayloadOffset,
+            floatPayloadByteCount,
+            hasFloatPayloadBytes,
+            floatConstantOffset,
+            floatConstantCount,
+            hasFloatConstants);
+        if (mirStatus != PackageImageValidationStatus.Ok)
+        {
+            return TryReadLogicalPackageImageSummary(buf, summary);
+        }
+
+        summary = PackageImageSummaryOf(
+            true,
+            hasAsm,
+            ReadU32(buf, instrOffset),
+            ReadU32(buf, blockOffset),
+            ReadU32(buf, funcOffset),
+            ReadU32(buf, globalOffset),
+            asmFunctionCount);
+        summary.HasEnumLayoutFacts = hasEnumLayoutFacts;
+        summary.EnumLayoutFactCount = enumLayoutFactCount;
+        summary.HasTextConstants = hasTextConstants;
+        summary.TextPayloadByteCount = textPayloadByteCount;
+        summary.TextConstantCount = textConstantCount;
+        summary.HasFloatConstants = hasFloatConstants;
+        summary.FloatPayloadByteCount = floatPayloadByteCount;
+        summary.FloatConstantCount = floatConstantCount;
+        return true;
+    }
+
+    stack mut u32[0 max] magic = 0;
+    if (!TryReadU32FromImage(buf, 1, magic))
+    {
+        return false;
+    }
+
+    if (magic == MirImageMagic())
+    {
+        stack mut u32[0 max] instrOffset = 0;
+        stack mut u32[0 max] blockOffset = 0;
+        stack mut u32[0 max] funcOffset = 0;
+        stack mut u32[0 max] globalOffset = 0;
+        if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
+        {
+            return false;
+        }
+
+        summary = PackageImageSummaryOf(
+            false,
+            false,
+            ReadU32(buf, instrOffset),
+            ReadU32(buf, blockOffset),
+            ReadU32(buf, funcOffset),
+            ReadU32(buf, globalOffset),
+            0);
+        return true;
+    }
+
+    if (magic != MirImageWithAsmMagic())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    summary = PackageImageSummaryOf(
+        false,
+        true,
+        ReadU32(buf, instrOffset),
+        ReadU32(buf, blockOffset),
+        ReadU32(buf, funcOffset),
+        ReadU32(buf, globalOffset),
+        asmFunctionCount);
+    return true;
+}
+
+internal inline finite law i8[min max] JsonHexDigit(u8[0 15] value)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide < 10)
+    {
+        return (i8[min max])((u16[0 max])48 + (u16[0 max])wide);
+    }
+
+    return (i8[min max])((u16[0 max])87 + (u16[0 max])wide);
+}
+
+
+internal fn MemoryStatus AppendJsonEscapedImageByte(u8[0 max] value, mut borrow OwnedAscii sink)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide == 34 || wide == 92)
+    {
+        try sink.AppendByte(92);
+        try sink.AppendByte(ImageByteAsI8(value));
+        return MemoryStatus.Ok;
+    }
+
+    if (wide == 10)
+    {
+        return sink.AppendConstAscii("\\n");
+    }
+
+    if (wide == 13)
+    {
+        return sink.AppendConstAscii("\\r");
+    }
+
+    if (wide == 9)
+    {
+        return sink.AppendConstAscii("\\t");
+    }
+
+    if (wide == 8)
+    {
+        return sink.AppendConstAscii("\\b");
+    }
+
+    if (wide == 12)
+    {
+        return sink.AppendConstAscii("\\f");
+    }
+
+    if (wide < 32)
+    {
+        try sink.AppendConstAscii("\\u00");
+        try sink.AppendByte(JsonHexDigit((u8[0 15])(wide / 16)));
+        try sink.AppendByte(JsonHexDigit((u8[0 15])(wide % 16)));
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendByte(ImageByteAsI8(value));
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalStringTableEntryJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] entryOffset = 0;
+    stack mut u32[0 max] entryLength = 0;
+    if (!TryFindLogicalStringTableEntry(
+        buf,
+        summary.StringTableOffset,
+        summary.StringTableLength,
+        stringIndex,
+        entryOffset,
+        entryLength))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendByte(34);
+    stack u64[0 max] end = (u64[0 max])entryOffset + (u64[0 max])entryLength;
+    stack mut u64[0 max] cursor = (u64[0 max])entryOffset;
+    while willexit (cursor < end)
+    {
+        stack u8[0 max] value = buf.Get((u32[0 max])cursor);
+        try AppendJsonEscapedImageByte(value, sink);
+        cursor = cursor + 1;
+    }
+
+    try sink.AppendByte(34);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalStringTableEntryJsonNullable(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (!LogicalStringIndexIsPresent(stringIndex))
+    {
+        return sink.AppendConstAscii("null");
+    }
+
+    return AppendLogicalStringTableEntryJson(buf, summary, stringIndex, sink);
+}
+
+internal fn bool TryReadLogicalTargetFeatureStringIndex(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] featureIndex,
+    out u32[0 max] stringIndex)
+{
+    stringIndex = PackageImageNullStringIndex();
+    if (featureIndex >= summary.TargetFeatureCount || summary.FeatureStringIndexOffset == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 max] cursor = (u64[0 max])summary.FeatureStringIndexOffset + (u64[0 max])featureIndex * 4;
+    if (cursor > (u64[0 max])(2 ** 32 - 1)
+        || !CanReadImageBytes(buf, (u32[0 max])cursor, 4))
+    {
+        return false;
+    }
+
+    stringIndex = ReadU32(buf, (u32[0 max])cursor);
+    return true;
+}
+
+internal fn MemoryStatus AppendLogicalTargetFeatureListText(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] featureIndex = 0;
+    while willexit (featureIndex < summary.TargetFeatureCount)
+    {
+        if (featureIndex > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        stack mut u32[0 max] stringIndex = 0;
+        if (!TryReadLogicalTargetFeatureStringIndex(buf, summary, featureIndex, stringIndex))
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        try AppendLogicalStringTableEntry(buf, summary, stringIndex, sink);
+        featureIndex = featureIndex + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalTargetFeatureListJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] featureIndex = 0;
+    while willexit (featureIndex < summary.TargetFeatureCount)
+    {
+        if (featureIndex > 0)
+        {
+            try sink.AppendConstAscii(",");
+        }
+
+        stack mut u32[0 max] stringIndex = 0;
+        if (!TryReadLogicalTargetFeatureStringIndex(buf, summary, featureIndex, stringIndex))
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        try AppendLogicalStringTableEntryJson(buf, summary, stringIndex, sink);
+        featureIndex = featureIndex + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendJsonBool(bool value, mut borrow OwnedAscii sink)
+{
+    if (value)
+    {
+        return sink.AppendConstAscii("true");
+    }
+
+    return sink.AppendConstAscii("false");
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryText(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("package: ");
+    if (summary.IsLogical)
+    {
+        try sink.AppendConstAscii("STARKPKG, logical image, ");
+        try sink.AppendU64((u64[0 max])summary.SectionCount);
+        try sink.AppendConstAscii(" sections, ");
+        try sink.AppendU64((u64[0 max])summary.StringCount);
+        try sink.AppendConstAscii(" strings, ");
+        try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+        try sink.AppendConstAscii(" target features\n");
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsSectioned)
+    {
+        try sink.AppendConstAscii("STARKPKG, ");
+    }
+
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(" instructions, ");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(" blocks, ");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(" functions, ");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    try sink.AppendConstAscii(" globals");
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+        try sink.AppendConstAscii(" asm functions");
+    }
+
+    if (summary.HasEnumLayoutFacts)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.EnumLayoutFactCount);
+        try sink.AppendConstAscii(" enum layout facts");
+    }
+
+    if (summary.HasTextConstants)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.TextPayloadByteCount);
+        try sink.AppendConstAscii(" text payload bytes, ");
+        try sink.AppendU64((u64[0 max])summary.TextConstantCount);
+        try sink.AppendConstAscii(" text constants");
+    }
+
+    if (summary.HasFloatConstants)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.FloatPayloadByteCount);
+        try sink.AppendConstAscii(" float payload bytes, ");
+        try sink.AppendU64((u64[0 max])summary.FloatConstantCount);
+        try sink.AppendConstAscii(" float constants");
+    }
+
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalPackageImageSummaryText(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("package: STARKPKG, logical image, root ");
+    try AppendLogicalStringTableEntry(buf, summary, summary.RootModuleStringIndex, sink);
+    try sink.AppendConstAscii(", library ");
+    try AppendLogicalStringTableEntry(buf, summary, summary.LibraryFileNameStringIndex, sink);
+    if (summary.HasBuildProfile)
+    {
+        try sink.AppendConstAscii(", profile ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.BuildProfileStringIndex, sink);
+    }
+
+    if (summary.HasTarget)
+    {
+        try sink.AppendConstAscii(", target ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.TargetTripleStringIndex, sink);
+        if (LogicalStringIndexIsPresent(summary.TargetDataLayoutStringIndex))
+        {
+            try sink.AppendConstAscii(", data-layout ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.TargetDataLayoutStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.TargetCpuStringIndex))
+        {
+            try sink.AppendConstAscii(", cpu ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.TargetCpuStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.RelocationModelStringIndex))
+        {
+            try sink.AppendConstAscii(", relocation ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.RelocationModelStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.CodeModelStringIndex))
+        {
+            try sink.AppendConstAscii(", code-model ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.CodeModelStringIndex, sink);
+        }
+
+        if (summary.TargetFeatureCount > 0)
+        {
+            try sink.AppendConstAscii(", features ");
+            try AppendLogicalTargetFeatureListText(buf, summary, sink);
+        }
+    }
+
+    if (summary.HasCDataModel)
+    {
+        try sink.AppendConstAscii(", c-data-model ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.CDataModelKindStringIndex, sink);
+        try sink.AppendConstAscii(" char-signed=");
+        try AppendJsonBool(summary.CCharIsSigned, sink);
+        try sink.AppendConstAscii(" pointer=");
+        try sink.AppendU64((u64[0 max])summary.CPointerBitWidth);
+        try sink.AppendConstAscii(" long=");
+        try sink.AppendU64((u64[0 max])summary.CLongBitWidth);
+        try sink.AppendConstAscii(" size_t=");
+        try sink.AppendU64((u64[0 max])summary.CSizeTBitWidth);
+        try sink.AppendConstAscii(" ptrdiff_t=");
+        try sink.AppendU64((u64[0 max])summary.CPtrDiffTBitWidth);
+    }
+
+    if (summary.HasAggregateLayout)
+    {
+        try sink.AppendConstAscii(", aggregate-layout pointer-size=");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerSizeBytes);
+        try sink.AppendConstAscii(" pointer-align=");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerAlignmentBytes);
+    }
+
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])summary.SectionCount);
+    try sink.AppendConstAscii(" sections, ");
+    try sink.AppendU64((u64[0 max])summary.StringCount);
+    try sink.AppendConstAscii(" strings, ");
+    try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+    try sink.AppendConstAscii(" target features\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryJson(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    if (summary.IsLogical)
+    {
+        try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"sections\":");
+        try sink.AppendU64((u64[0 max])summary.SectionCount);
+        try sink.AppendConstAscii(",\"strings\":");
+        try sink.AppendU64((u64[0 max])summary.StringCount);
+        try sink.AppendConstAscii(",\"targetFeatures\":");
+        try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+        try sink.AppendConstAscii(",\"hasBuildProfile\":");
+        try AppendJsonBool(summary.HasBuildProfile, sink);
+        try sink.AppendConstAscii(",\"hasTarget\":");
+        try AppendJsonBool(summary.HasTarget, sink);
+        try sink.AppendConstAscii(",\"hasCDataModel\":");
+        try AppendJsonBool(summary.HasCDataModel, sink);
+        try sink.AppendConstAscii(",\"hasAggregateLayout\":");
+        try AppendJsonBool(summary.HasAggregateLayout, sink);
+        try sink.AppendConstAscii("}\n");
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsSectioned)
+    {
+        if (summary.HasAsm)
+        {
+            try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"MIR2\",\"instructions\":");
+        }
+        else
+        {
+            try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":");
+        }
+    }
+    else if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR2\",\"instructions\":");
+    }
+    else
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR1\",\"instructions\":");
+    }
+
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(",\"blocks\":");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(",\"functions\":");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(",\"globals\":");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(",\"asmFunctions\":");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+    }
+
+    if (summary.HasEnumLayoutFacts)
+    {
+        try sink.AppendConstAscii(",\"enumLayoutFacts\":");
+        try sink.AppendU64((u64[0 max])summary.EnumLayoutFactCount);
+    }
+
+    if (summary.HasTextConstants)
+    {
+        try sink.AppendConstAscii(",\"textPayloadBytes\":");
+        try sink.AppendU64((u64[0 max])summary.TextPayloadByteCount);
+        try sink.AppendConstAscii(",\"textConstants\":");
+        try sink.AppendU64((u64[0 max])summary.TextConstantCount);
+    }
+
+    if (summary.HasFloatConstants)
+    {
+        try sink.AppendConstAscii(",\"floatPayloadBytes\":");
+        try sink.AppendU64((u64[0 max])summary.FloatPayloadByteCount);
+        try sink.AppendConstAscii(",\"floatConstants\":");
+        try sink.AppendU64((u64[0 max])summary.FloatConstantCount);
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalPackageImageSummaryJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"rootModule\":");
+    try AppendLogicalStringTableEntryJson(buf, summary, summary.RootModuleStringIndex, sink);
+    try sink.AppendConstAscii(",\"libraryFileName\":");
+    try AppendLogicalStringTableEntryJson(buf, summary, summary.LibraryFileNameStringIndex, sink);
+    try sink.AppendConstAscii(",\"buildProfile\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.BuildProfileStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetTriple\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetTripleStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetDataLayout\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetDataLayoutStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetCpu\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetCpuStringIndex, sink);
+    try sink.AppendConstAscii(",\"relocationModel\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.RelocationModelStringIndex, sink);
+    try sink.AppendConstAscii(",\"codeModel\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.CodeModelStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetFeatureNames\":");
+    try AppendLogicalTargetFeatureListJson(buf, summary, sink);
+    try sink.AppendConstAscii(",\"cDataModel\":");
+    if (summary.HasCDataModel)
+    {
+        try sink.AppendConstAscii("{\"kind\":");
+        try AppendLogicalStringTableEntryJson(buf, summary, summary.CDataModelKindStringIndex, sink);
+        try sink.AppendConstAscii(",\"charIsSigned\":");
+        try AppendJsonBool(summary.CCharIsSigned, sink);
+        try sink.AppendConstAscii(",\"pointerBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CPointerBitWidth);
+        try sink.AppendConstAscii(",\"longBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CLongBitWidth);
+        try sink.AppendConstAscii(",\"sizeTBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CSizeTBitWidth);
+        try sink.AppendConstAscii(",\"ptrDiffTBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CPtrDiffTBitWidth);
+        try sink.AppendConstAscii("}");
+    }
+    else
+    {
+        try sink.AppendConstAscii("null");
+    }
+
+    try sink.AppendConstAscii(",\"aggregateLayout\":");
+    if (summary.HasAggregateLayout)
+    {
+        try sink.AppendConstAscii("{\"pointerSizeBytes\":");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerSizeBytes);
+        try sink.AppendConstAscii(",\"pointerAlignmentBytes\":");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerAlignmentBytes);
+        try sink.AppendConstAscii("}");
+    }
+    else
+    {
+        try sink.AppendConstAscii("null");
+    }
+
+    try sink.AppendConstAscii(",\"sections\":");
+    try sink.AppendU64((u64[0 max])summary.SectionCount);
+    try sink.AppendConstAscii(",\"strings\":");
+    try sink.AppendU64((u64[0 max])summary.StringCount);
+    try sink.AppendConstAscii(",\"targetFeatures\":");
+    try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+    try sink.AppendConstAscii(",\"hasBuildProfile\":");
+    try AppendJsonBool(summary.HasBuildProfile, sink);
+    try sink.AppendConstAscii(",\"hasTarget\":");
+    try AppendJsonBool(summary.HasTarget, sink);
+    try sink.AppendConstAscii(",\"hasCDataModel\":");
+    try AppendJsonBool(summary.HasCDataModel, sink);
+    try sink.AppendConstAscii(",\"hasAggregateLayout\":");
+    try AppendJsonBool(summary.HasAggregateLayout, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn bool PackageImageIsValid(borrow IrTable<u8[0 max]> buf)
+{
+    return ValidatePackageImage(buf) == PackageImageValidationStatus.Ok;
+}
+
+// Emits an `inspect-pkg` one-line summary of a package image, reading only the header
+// and each section's count (no IR materialized). Empty when the magic is wrong.
+public fn MemoryStatus InspectPackageImage(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsLogical)
+    {
+        return AppendLogicalPackageImageSummaryText(buf, summary, sink);
+    }
+
+    return AppendPackageImageSummaryText(summary, sink);
+}
+
+// Emits a deterministic JSON summary view of the same validated binary image counts
+// used by the text inspector. Empty when the image is not recognized or malformed.
+public fn MemoryStatus InspectPackageImageJson(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsLogical)
+    {
+        return AppendLogicalPackageImageSummaryJson(buf, summary, sink);
+    }
+
+    return AppendPackageImageSummaryJson(summary, sink);
+}
+
+public fn bool RenderPackageImageInspection(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageInspectionFormat format,
+    mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return false;
+    }
+
+    switch (format)
+    {
+        case PackageImageInspectionFormat.Text:
+            if (summary.IsLogical)
+            {
+                return AppendLogicalPackageImageSummaryText(buf, summary, sink) == MemoryStatus.Ok;
+            }
+
+            return AppendPackageImageSummaryText(summary, sink) == MemoryStatus.Ok;
+        case PackageImageInspectionFormat.Json:
+            if (summary.IsLogical)
+            {
+                return AppendLogicalPackageImageSummaryJson(buf, summary, sink) == MemoryStatus.Ok;
+            }
+
+            return AppendPackageImageSummaryJson(summary, sink) == MemoryStatus.Ok;
+    }
+}

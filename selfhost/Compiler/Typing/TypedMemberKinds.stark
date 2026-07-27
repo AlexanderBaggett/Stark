@@ -1,0 +1,48 @@
+module Compiler.Typing.TypedMemberKinds
+
+public enum TypedMemberContext
+{
+    GlobalInitializer,
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedMemberReceiverKind
+{
+    Value,
+    StaticType,
+    Unknown,
+}
+
+public enum TypedMemberTargetKind
+{
+    Field,
+    InstanceMethod,
+    StaticMethod,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagReceiverResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagResolved()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagField()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedMemberFlagMethodCandidate()
+{
+    return 8;
+}
+
+internal inline finite law bool TypedMemberFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}

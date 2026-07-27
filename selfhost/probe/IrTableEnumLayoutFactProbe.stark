@@ -1,0 +1,14 @@
+import Compiler.Ir
+import Compiler.Mir.EnumLayout
+module Compiler.Probe.IrTableEnumLayoutFact
+
+export fn i32[min max] main()
+{
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (facts.Count() == 0)
+    {
+        return 0;
+    }
+
+    return 1;
+}

@@ -1,0 +1,373 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedAssignmentNodeFacts
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallMemberDependencies
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedIdentifierLookup
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedReturnFacts
+import Compiler.Typing.TypedReturnModel
+import Compiler.Typing.TypedSignatures
+import System.Memory
+import System.Text
+module Compiler.Typing.TypedReturns
+
+internal fn System.Memory.MemoryStatus AppendTypedReturnExpression(
+    mut borrow TypedReturnExpressionTable table,
+    TypedReturnContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] returnToken,
+    u32[0 max] valueNode,
+    TypedReturnValueKind valueKind,
+    borrow TypedMemberTypeFacts expectedFacts,
+    borrow TypedMemberTypeFacts valueFacts)
+{
+    stack mut u32[0 max] flags = 0;
+    stack mut TypedReturnValueKind storedValueKind = valueKind;
+    if (valueNode != 0)
+    {
+        flags = flags | TypedReturnFlagHasValue();
+    }
+    else
+    {
+        flags = flags | TypedReturnFlagBare();
+        storedValueKind = TypedReturnValueKind.None;
+    }
+
+    if (expectedFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedReturnFlagExpectedResolved();
+    }
+
+    if (expectedFacts.TypeKind == TypedSignatureTypeKind.Void)
+    {
+        flags = flags | TypedReturnFlagExpectedVoid();
+    }
+
+    if (valueFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedReturnFlagValueResolved();
+    }
+
+    return table.AppendReturn(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        returnToken,
+        valueNode,
+        storedValueKind,
+        expectedFacts.TypeKind,
+        expectedFacts.TypeHeadToken,
+        expectedFacts.TypePrimaryToken,
+        expectedFacts.TypeStartToken,
+        expectedFacts.TypeEndToken,
+        expectedFacts.RangeStartToken,
+        expectedFacts.RangeEndToken,
+        expectedFacts.ElementCountStartToken,
+        expectedFacts.ElementCountEndToken,
+        expectedFacts.BitWidth,
+        expectedFacts.TypeArgumentCount,
+        expectedFacts.ComptimeArgumentCount,
+        expectedFacts.TypeFlags,
+        valueFacts.TypeKind,
+        valueFacts.TypeHeadToken,
+        valueFacts.TypePrimaryToken,
+        valueFacts.TypeStartToken,
+        valueFacts.TypeEndToken,
+        valueFacts.RangeStartToken,
+        valueFacts.RangeEndToken,
+        valueFacts.ElementCountStartToken,
+        valueFacts.ElementCountEndToken,
+        valueFacts.BitWidth,
+        valueFacts.TypeArgumentCount,
+        valueFacts.ComptimeArgumentCount,
+        valueFacts.TypeFlags,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedReturnsFromBodyStatement(
+    mut borrow TypedReturnExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow TypedMemberTypeFacts expectedFacts,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex)
+{
+    stack StatementItem item = body.ItemAt(statementIndex);
+    if (item.Kind != StatementKind.Return)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] statementIndexPlusOne = (u32[0 max])(statementIndex + 1);
+    stack u32[0 max] valueNode = body.ExprRootAt(statementIndex);
+    stack mut TypedMemberTypeFacts valueFacts = new();
+    stack mut TypedAssignmentValueKind assignmentValueKind = TypedAssignmentValueKind.Unknown;
+    if (valueNode != 0)
+    {
+        TypedAssignmentValueFactsFromBodyNode(
+            source,
+            stream,
+            declarations,
+            literals,
+            identifiers,
+            calls,
+            members,
+            indexes,
+            conversions,
+            assignments,
+            body,
+            TypedAssignmentContext.FunctionBody,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode,
+            valueFacts,
+            assignmentValueKind);
+    }
+
+    stack TypedReturnValueKind valueKind = TypedReturnValueKindFromAssignmentValueKind(assignmentValueKind);
+    return AppendTypedReturnExpression(
+        table,
+        TypedReturnContext.FunctionBody,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        item.StartToken,
+        valueNode,
+        valueKind,
+        expectedFacts,
+        valueFacts);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedReturnsFromBody(
+    mut borrow TypedReturnExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow TypedMemberTypeFacts expectedFacts,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedReturnsFromBodyStatement(
+            table,
+            source,
+            stream,
+            declarations,
+            literals,
+            identifiers,
+            calls,
+            members,
+            indexes,
+            conversions,
+            assignments,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            expectedFacts,
+            body,
+            index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedReturnsForFunction(
+    mut borrow TypedReturnExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    stack u32[0 max] signatureIndexPlusOne = TypedIdentifierSignatureIndexForFunction(signatures, ownerNameToken, signature.Name(), fnKeyword);
+    stack mut TypedMemberTypeFacts expectedFacts = new();
+    TypedReturnExpectedFactsFromSignature(signatures, signatureIndexPlusOne, expectedFacts);
+    return AppendTypedReturnsFromBody(
+        table,
+        source,
+        stream,
+        declarations,
+        literals,
+        identifiers,
+        calls,
+        members,
+        indexes,
+        conversions,
+        assignments,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        expectedFacts,
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedReturnsForMemberFunctions(
+    mut borrow TypedReturnExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedReturnsForFunction(table, source, stream, declarations, signatures, literals, identifiers, calls, members, indexes, conversions, assignments, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn ParseResult<TypedReturnExpressionTable> BuildTypedReturnExpressionsFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments)
+{
+    stack mut TypedReturnExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedReturnsForFunction(table, source, stream, declarations, signatures, literals, identifiers, calls, members, indexes, conversions, assignments, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedReturnsForMemberFunctions(table, source, stream, declarations, signatures, literals, identifiers, calls, members, indexes, conversions, assignments, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberFunctionError):
+                    return ParseResult<TypedReturnExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedReturnExpressionTable>.Ok(table);
+}

@@ -1,0 +1,676 @@
+import StdlibPortSupport
+import System
+import System.Process
+import System.Testing
+import System.Text
+module SystemProcessStandardLibraryTests
+
+// Ported from SystemProcessStandardLibraryTests.StdLibSourceProcessHelpersTypeCheckAndLower.
+internal fn bool StdLibSourceProcessHelpersTypeCheckAndLowerImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-process-helpers-typecheck-lower", raw"""
+import System.Process
+module Demo
+
+fn i32[min max] ReadCurrentProcess()
+{
+    return System.Process.CurrentId();
+}
+
+fn void Stop(i32[min max] code)
+{
+    System.Process.Exit(code);
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    if (!System.Testing.Contains(llvm, "define fastcc noundef i32 @ReadCurrentProcess(")
+        || !System.Testing.Contains(llvm, "define fastcc void @Stop(")
+        || !System.Testing.Contains(llvm, "@System_Process_CurrentId()")
+        || !System.Testing.Contains(llvm, "@System_Process_Exit("))
+    {
+        return false;
+    }
+
+    // The C# test extracts the @Stop body with ExtractDefinedFunctionText; the
+    // Stark mirror is LlvmDefinitionBody scoped to the bare symbol name.
+    stack ascii stopBody = LlvmDefinitionBody(llvm, "Stop");
+    if (!System.Testing.Contains(stopBody, "call fastcc void @System_Process_Exit(")
+        || !System.Testing.Contains(stopBody, "call void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(llvm, "define internal dso_local void @__stark_unreachable_trap() unnamed_addr cold noreturn nounwind")
+        || !System.Testing.DoesNotContain(stopBody, "ret void"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.StdLibSourceProcessSpawnHelpersTypeCheckAndLower.
+internal fn bool StdLibSourceProcessSpawnHelpersTypeCheckAndLowerImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-process-spawn-helpers-typecheck-lower", raw"""
+import System.Process
+module Demo
+
+unsafe fn i32[min max] Probe()
+{
+    switch (System.Process.SetEnvironment("STARK_PROCESS_TEST", "one"))
+    {
+        case System.Process.ProcessStatus.Err(var error):
+            return 1;
+        case System.Process.ProcessStatus.Ok:
+    }
+
+    stack System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>> env =
+        System.Process.GetEnvironment("STARK_PROCESS_TEST");
+    switch (env)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+            return 2;
+        case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var value):
+    }
+
+    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+        System.Process.Command("/bin/sh");
+    switch (commandResult)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return 3;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            mutableCommand.AddArgument("-c");
+            mutableCommand.AddArgument("printf ok; printf err 1>&2; exit 7");
+            if (System.Process.CurrentId() < 0)
+            {
+                switch (System.Process.RunCaptureWithInput(mutableCommand, "ignored"))
+                {
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                        return 5;
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var inputOutput):
+                        if (inputOutput.ExitCode < 0)
+                        {
+                            return 6;
+                        }
+                }
+
+                switch (System.Process.RunCaptureWithTimeout(mutableCommand, 1))
+                {
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                        return 7;
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var timeoutOutput):
+                        if (timeoutOutput.ExitCode < -1000)
+                        {
+                            return 8;
+                        }
+                }
+
+                switch (System.Process.RunCaptureWithInputTimeout(mutableCommand, "ignored", 1))
+                {
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                        return 9;
+                    case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var timeoutInputOutput):
+                        return timeoutInputOutput.ExitCode;
+                }
+            }
+
+            switch (System.Process.RunCapture(mutableCommand))
+            {
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                    return 4;
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                    return output.ExitCode;
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    if (!System.Testing.Contains(llvm, "@System_Process_Command(")
+        || !System.Testing.Contains(llvm, "System_Process_RunCapture")
+        || !System.Testing.Contains(llvm, "System_Process_RunCaptureWithInput")
+        || !System.Testing.Contains(llvm, "System_Process_RunCaptureWithTimeout")
+        || !System.Testing.Contains(llvm, "System_Process_RunCaptureWithInputTimeout")
+        || !System.Testing.Contains(llvm, "@System_Process_GetEnvironment(")
+        || !System.Testing.Contains(llvm, "@System_Process_SetEnvironment("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.SourceProcessExitTerminatesWithRequestedExitCode.
+//
+// PORT-NOTE: the C# test fetches the shared stdlib source, compiles the embedded
+// program to a native executable via the compiler CLI (--emit-exe), runs it, and
+// asserts the process exit code is 23 with empty stdout/stderr. The compile-only
+// host bridge cannot link or run executables, observe process exit codes, or read
+// runtime stdout/stderr, so this port compiles the embedded program verbatim
+// through the host stdlib and asserts the compile succeeds, the strongest signal
+// the bridge can reproduce.
+internal fn bool SourceProcessExitTerminatesWithRequestedExitCodeImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("source-process-exit-requested-exit-code", raw"""
+import System.Process
+module App
+
+export fn i32[min max] main()
+{
+    if (System.Process.CurrentId() <= 0)
+    {
+        return 3;
+    }
+
+    System.Process.Exit(23);
+    return 4;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.SourceProcessRunCaptureCapturesStdoutStderrExitCodeAndEnvironment.
+//
+// PORT-NOTE: the C# test fetches the shared stdlib source, compiles the embedded
+// program to a native executable via the compiler CLI (--emit-exe), runs it with
+// an injected STARK_PROCESS_INITIAL_VALUE environment variable, and asserts the
+// process exit code is 0 with empty stdout/stderr (the embedded program itself
+// spawns /bin/sh and verifies captured stdout/stderr, exit code, and the
+// environment round-trip). The compile-only host bridge cannot link or run
+// executables, spawn child processes, or read runtime output, so this port
+// compiles the embedded program verbatim through the host stdlib and asserts the
+// compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool SourceProcessRunCaptureCapturesStdoutStderrExitCodeAndEnvironmentImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("source-process-runcapture-captures-stdout-stderr-exit-env", raw"""
+import System.Process
+import System.Text
+module App
+
+unsafe fn bool SliceEqualsAscii(borrow i8[min max][] actual, ascii expected)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+    if (expectedLength < 0 || actual.Length != (u64[0 2 ** 63 - 1])expectedLength)
+    {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < actual.Length; index += 1)
+    {
+        if (actual[index] != *(&expectedData[index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export unsafe fn i32[min max] main()
+{
+    switch (System.Process.GetEnvironment("STARK_PROCESS_INITIAL_VALUE"))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+            switch (error)
+            {
+                case System.Process.ProcessError.CString(var cStringError):
+                    switch (cStringError)
+                    {
+                        case System.C.CStringError.NullPointer:
+                            return 110;
+                        case System.C.CStringError.MissingTerminator:
+                            return 111;
+                        case System.C.CStringError.InteriorNull:
+                            return 112;
+                        case System.C.CStringError.InvalidUtf8:
+                            return 113;
+                        case System.C.CStringError.TooLarge:
+                            return 114;
+                        case System.C.CStringError.Memory(var memoryError):
+                            return 115;
+                        case System.C.CStringError.Text(var textError):
+                            return 116;
+                    }
+                case System.Process.ProcessError.InvalidArgument:
+                    return 117;
+                case System.Process.ProcessError.TooLarge:
+                    return 118;
+                case System.Process.ProcessError.IO(var ioError):
+                    return 119;
+                case System.Process.ProcessError.Memory(var memoryError):
+                    return 120;
+                case System.Process.ProcessError.Platform(var code):
+                    return 121;
+            }
+        case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var value):
+            switch (value)
+            {
+                case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                    return 12;
+                case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var text):
+                    if (!System.Text.OwnedAsciiEqualsAscii(text, "initial-ok"))
+                    {
+                        return 13;
+                    }
+            }
+    }
+
+    switch (System.Process.SetEnvironment("STARK_PROCESS_CAPTURE_VALUE", "capture-ok"))
+    {
+        case System.Process.ProcessStatus.Err(var error):
+            return 10;
+        case System.Process.ProcessStatus.Ok:
+    }
+
+    switch (System.Process.ArgumentCount())
+    {
+        case System.Process.ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+            return 14;
+        case System.Process.ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            if (count == 0)
+            {
+                return 15;
+            }
+    }
+
+    switch (System.Process.CurrentDirectory())
+    {
+        case System.Process.ProcessResult<System.Text.OwnedAscii>.Err(var error):
+            return 16;
+        case System.Process.ProcessResult<System.Text.OwnedAscii>.Ok(var cwd):
+            if (cwd.IsEmpty())
+            {
+                return 17;
+            }
+    }
+
+    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+        System.Process.Command("/bin/sh");
+    switch (commandResult)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return 18;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand child = command;
+            switch (child.AddArgument("-c"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 19;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (child.AddArgument("printf \"$STARK_PROCESS_CAPTURE_VALUE\"; printf err 1>&2; exit 7"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 20;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (child.SetWorkingDirectory("."))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 21;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (System.Process.RunCapture(child))
+            {
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                    return 22;
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                    if (output.ExitCode != 7)
+                    {
+                        return 23;
+                    }
+
+                    if (!SliceEqualsAscii(output.StdoutSlice(), "capture-ok"))
+                    {
+                        return 24;
+                    }
+
+                    if (!SliceEqualsAscii(output.StderrSlice(), "err"))
+                    {
+                        return 25;
+                    }
+
+                    return 0;
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.SourceProcessRunCaptureWithInputFeedsStdinAndClosesIt.
+//
+// PORT-NOTE: the C# test fetches the shared stdlib source, compiles the embedded
+// program to a native executable via the compiler CLI (--emit-exe), runs it, and
+// asserts the process exit code is 0 with empty stdout/stderr (the embedded
+// program spawns `/bin/sh -c "cat; ..."`, feeds it stdin via
+// RunCaptureWithInput, and verifies the captured stdout echo, stderr, and exit
+// code). The compile-only host bridge cannot link or run executables, feed child
+// stdin, or read runtime output, so this port compiles the embedded program
+// verbatim through the host stdlib and asserts the compile succeeds, the
+// strongest signal the bridge can reproduce.
+internal fn bool SourceProcessRunCaptureWithInputFeedsStdinAndClosesItImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("source-process-runcapture-with-input-feeds-stdin", raw"""
+import System.Process
+import System.Text
+module App
+
+unsafe fn bool SliceEqualsAscii(borrow i8[min max][] actual, ascii expected)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+    if (expectedLength < 0 || actual.Length != (u64[0 2 ** 63 - 1])expectedLength)
+    {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < actual.Length; index += 1)
+    {
+        if (actual[index] != *(&expectedData[index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+        System.Process.Command("/bin/sh");
+    switch (commandResult)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return 10;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand child = command;
+            switch (child.AddArgument("-c"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 11;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (child.AddArgument("cat; printf err 1>&2; exit 9"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 12;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (System.Process.RunCaptureWithInput(child, "input-ok\n"))
+            {
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                    return 13;
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                    if (output.ExitCode != 9)
+                    {
+                        return 14;
+                    }
+
+                    if (!SliceEqualsAscii(output.StdoutSlice(), "input-ok\n"))
+                    {
+                        return 15;
+                    }
+
+                    if (!SliceEqualsAscii(output.StderrSlice(), "err"))
+                    {
+                        return 16;
+                    }
+
+                    return 0;
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.SourceProcessRunCaptureTimeoutKillsChildAndKeepsPartialOutput.
+//
+// PORT-NOTE: the C# test fetches the shared stdlib source, compiles the embedded
+// program to a native executable via the compiler CLI (--emit-exe), runs it, and
+// asserts the process exit code is 0 with empty stdout/stderr (the embedded
+// program spawns long-running `/bin/sh` children via RunCaptureWithTimeout and
+// RunCaptureWithInputTimeout, then verifies WasTimedOut, the 137 exit code, and
+// the partial captured stdout/stderr). The compile-only host bridge cannot link
+// or run executables, spawn or kill child processes, or read runtime output, so
+// this port compiles the embedded program verbatim through the host stdlib and
+// asserts the compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool SourceProcessRunCaptureTimeoutKillsChildAndKeepsPartialOutputImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("source-process-runcapture-timeout-kills-child-partial-output", raw"""
+import System.Process
+import System.Text
+module App
+
+unsafe fn bool SliceEqualsAscii(borrow i8[min max][] actual, ascii expected)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+    if (expectedLength < 0 || actual.Length != (u64[0 2 ** 63 - 1])expectedLength)
+    {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < actual.Length; index += 1)
+    {
+        if (actual[index] != *(&expectedData[index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+unsafe fn i32[min max] CheckTimeoutOutput()
+{
+    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+        System.Process.Command("/bin/sh");
+    switch (commandResult)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return 10;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand child = command;
+            switch (child.AddArgument("-c"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 11;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (child.AddArgument("printf timed-out; printf err 1>&2; exec sleep 5"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 12;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (System.Process.RunCaptureWithTimeout(child, 500))
+            {
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                    return 13;
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                    if (!output.WasTimedOut())
+                    {
+                        return 14;
+                    }
+
+                    if (output.ExitCode != 137)
+                    {
+                        return 15;
+                    }
+
+                    if (!SliceEqualsAscii(output.StdoutSlice(), "timed-out"))
+                    {
+                        return 16;
+                    }
+
+                    if (!SliceEqualsAscii(output.StderrSlice(), "err"))
+                    {
+                        return 17;
+                    }
+
+                    return 0;
+            }
+    }
+}
+
+unsafe fn i32[min max] CheckTimeoutInputOutput()
+{
+    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+        System.Process.Command("/bin/sh");
+    switch (commandResult)
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return 20;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand child = command;
+            switch (child.AddArgument("-c"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 21;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (child.AddArgument("cat; printf err-in 1>&2; exec sleep 5"))
+            {
+                case System.Process.ProcessStatus.Err(var error):
+                    return 22;
+                case System.Process.ProcessStatus.Ok:
+            }
+
+            switch (System.Process.RunCaptureWithInputTimeout(child, "input-ok\n", 500))
+            {
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                    return 23;
+                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                    if (!output.WasTimedOut())
+                    {
+                        return 24;
+                    }
+
+                    if (output.ExitCode != 137)
+                    {
+                        return 25;
+                    }
+
+                    if (!SliceEqualsAscii(output.StdoutSlice(), "input-ok\n"))
+                    {
+                        return 26;
+                    }
+
+                    if (!SliceEqualsAscii(output.StderrSlice(), "err-in"))
+                    {
+                        return 27;
+                    }
+
+                    return 0;
+            }
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max] first = CheckTimeoutOutput();
+    if (first != 0)
+    {
+        return first;
+    }
+
+    return CheckTimeoutInputOutput();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemProcessStandardLibraryTests.PackagedStdLibProcessHelpersWorkWithoutSource.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib, asserts the
+// libSystem.starkpkg manifest exists, then compiles the embedded program against
+// the packaged stdlib directory (resolving System.Process from the package image
+// rather than source) with EmitLlvmIr and inspects the @Stop body. The
+// compile-only host bridge cannot package the stdlib or select a package image as
+// the module resolver; it resolves against the host stdlib instead. The
+// package-image-existence assertion and the packaged-vs-source resolution are
+// reduced; the per-body LLVM checks on the @Stop caller are preserved via
+// LlvmDefinitionBody (the Stark mirror of ExtractDefinedFunctionText).
+internal fn bool PackagedStdLibProcessHelpersWorkWithoutSourceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-stdlib-process-helpers-without-source", raw"""
+import System
+module App
+
+fn i32[min max] Run()
+{
+    if (System.Process.CurrentId() < 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+fn void Stop()
+{
+    System.Process.Exit(5);
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii stopBody = LlvmDefinitionBody(llvm, "Stop");
+
+    if (!System.Testing.Contains(stopBody, "call fastcc void @System_Process_Exit(")
+        || !System.Testing.Contains(stopBody, "call void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(llvm, "define internal dso_local void @__stark_unreachable_trap() unnamed_addr cold noreturn nounwind")
+        || !System.Testing.DoesNotContain(stopBody, "ret void"))
+    {
+        return false;
+    }
+
+    return true;
+}

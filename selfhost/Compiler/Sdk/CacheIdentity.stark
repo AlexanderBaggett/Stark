@@ -1,0 +1,488 @@
+import Compiler.Sdk.LinkPlan
+import Compiler.Sdk.ManifestModel
+import Compiler.Sdk.TargetDescriptor
+import System.Cryptography.Sha256
+import System.Memory
+import System.Text
+module Compiler.Sdk.CacheIdentity
+
+// Stage1 does not yet have a project incremental stamp or dependency-LLVM
+// cache consumer. This module owns the deterministic identity boundary those
+// consumers will use: the manifest file digest is combined with every backend
+// target fact and the exact selected package/native graph. SDK root paths are
+// intentionally absent, so relocating byte-identical SDK contents does not
+// rotate cache keys.
+
+public enum SdkCacheIdentityError
+{
+    InvalidText,
+    SelectedPackageIndexOutOfRange,
+    Hash from Sha256Error,
+    Memory from MemoryError,
+}
+
+public enum SdkCacheIdentityResult
+{
+    [Ok] Ok(SdkCacheIdentity),
+    [Err] Err(SdkCacheIdentityError),
+}
+
+internal enum SdkCacheHashStatus
+{
+    [Ok] Ok,
+    [Err] Err(SdkCacheIdentityError),
+}
+
+public struct SdkCacheIdentity
+{
+    internal OwnedAscii Sha256Value;
+
+    SdkCacheIdentity()
+    {
+        self.Sha256Value = new();
+    }
+
+    public fn ascii Sha256(mut borrow SdkCacheIdentity self)
+    {
+        return self.Sha256Value.View();
+    }
+}
+
+public finite law ascii Stage1SdkCacheIdentityAlgorithm()
+{
+    return "stark-stage1-sdk-cache-v1";
+}
+
+internal finite law i8[min max] SdkCacheSignedByte(u8[0 max] value)
+{
+    if (value < 128)
+    {
+        return (i8[min max])value;
+    }
+    return (i8[min max])((i16[min max])value - 256);
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateAscii(
+    mut borrow Sha256State state,
+    ascii value)
+{
+    switch (UpdateSha256Ascii(state, value))
+    {
+        case Sha256Status.Err(var error):
+            return SdkCacheHashStatus.Err(SdkCacheIdentityError.Hash(error));
+        case Sha256Status.Ok:
+            return SdkCacheHashStatus.Ok;
+    }
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateU64(
+    mut borrow Sha256State state,
+    u64[0 max] value)
+{
+    stack mut i8[min max][8] storage = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1)
+    {
+        stack u8[0 56] shift = (u8[0 56])((7 - index) * 8);
+        stack u8[0 max] unit = (u8[0 max])((value >> shift) & 255);
+        storage[index] = SdkCacheSignedByte(unit);
+    }
+
+    stack i8[min max][] bytes = storage;
+    switch (UpdateSha256(state, bytes))
+    {
+        case Sha256Status.Err(var error):
+            return SdkCacheHashStatus.Err(SdkCacheIdentityError.Hash(error));
+        case Sha256Status.Ok:
+            return SdkCacheHashStatus.Ok;
+    }
+}
+
+// Text fields are length framed. The identity encoding therefore remains
+// unambiguous even when future manifest text permits separators or newlines.
+internal fn SdkCacheHashStatus SdkCacheUpdateTextFieldDisjoint(
+    mut borrow Sha256State state,
+    ascii tag,
+    ascii value)
+    where overlap(tag, value)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(value);
+    if (signedLength < 0)
+    {
+        return SdkCacheHashStatus.Err(SdkCacheIdentityError.InvalidText);
+    }
+
+    try SdkCacheUpdateAscii(state, tag);
+    try SdkCacheUpdateU64(state, (u64[0 max])signedLength);
+    try SdkCacheUpdateAscii(state, value);
+    return SdkCacheHashStatus.Ok;
+}
+
+// Manifest accessors return text views whose storage roots are deliberately
+// hidden behind the model API. The common path proves the fresh hash state is
+// disjoint at runtime without copying. The impossible safe-code alias case
+// snapshots the text before updating, so this helper remains sound without an
+// unsafe assumption or per-field allocation on ordinary SDKs.
+internal fn SdkCacheHashStatus SdkCacheUpdateTextField(
+    mut borrow Sha256State state,
+    ascii tag,
+    ascii value)
+    where overlap(state, value),
+          overlap(tag, value)
+{
+    if disjoint(state, value)
+    {
+        return SdkCacheUpdateTextFieldDisjoint(state, tag, value);
+    }
+
+    stack mut OwnedAscii snapshot = new();
+    switch (snapshot.AppendAscii(value))
+    {
+        case MemoryStatus.Err(var error):
+            return SdkCacheHashStatus.Err(SdkCacheIdentityError.Memory(error));
+        case MemoryStatus.Ok:
+            return SdkCacheUpdateTextFieldDisjoint(state, tag, snapshot.View());
+    }
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateU64Field(
+    mut borrow Sha256State state,
+    ascii tag,
+    u64[0 max] value)
+{
+    try SdkCacheUpdateAscii(state, tag);
+    try SdkCacheUpdateU64(state, value);
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateOptionalTextField(
+    mut borrow Sha256State state,
+    ascii tag,
+    bool present,
+    ascii value)
+    where overlap(state, value),
+          overlap(tag, value)
+{
+    try SdkCacheUpdateU64Field(state, "present", present ? (u64[0 max])1 : (u64[0 max])0);
+    if (present)
+    {
+        try SdkCacheUpdateTextField(state, tag, value);
+    }
+    return SdkCacheHashStatus.Ok;
+}
+
+internal finite law u8[0 3] SdkCacheDistributionKindValue(
+    SdkDistributionKind kind)
+{
+    switch (kind)
+    {
+        case SdkDistributionKind.Unknown:
+            return 0;
+        case SdkDistributionKind.Release:
+            return 1;
+        case SdkDistributionKind.Development:
+            return 2;
+        case SdkDistributionKind.Stage:
+            return 3;
+    }
+}
+
+internal finite law u8[0 2] SdkCacheEndiannessValue(
+    SdkTargetEndianness endianness)
+{
+    switch (endianness)
+    {
+        case SdkTargetEndianness.Unknown:
+            return 0;
+        case SdkTargetEndianness.Little:
+            return 1;
+        case SdkTargetEndianness.Big:
+            return 2;
+    }
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateManifestDigest(
+    mut borrow Sha256State state,
+    borrow Sha256Digest manifestDigest)
+{
+    try SdkCacheUpdateAscii(state, "manifest-digest");
+    for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1)
+    {
+        try SdkCacheUpdateU64(
+            state,
+            (u64[0 max])manifestDigest.WordAt((u8[0 7])index));
+    }
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateTarget(
+    mut borrow Sha256State state,
+    mut borrow SdkTargetDescriptor target)
+{
+    try SdkCacheUpdateTextField(state, "target-id", target.Id());
+    try SdkCacheUpdateTextField(state, "llvm-triple", target.LlvmTriple());
+    try SdkCacheUpdateTextField(state, "data-layout", target.DataLayout());
+    try SdkCacheUpdateTextField(state, "architecture", target.Architecture());
+    try SdkCacheUpdateTextField(state, "operating-system", target.OperatingSystem());
+    try SdkCacheUpdateTextField(state, "abi", target.Abi());
+    try SdkCacheUpdateU64Field(state, "pointer-bit-width", (u64[0 max])target.PointerBitWidth());
+    try SdkCacheUpdateU64Field(
+        state,
+        "endianness",
+        (u64[0 max])SdkCacheEndiannessValue(target.Endianness()));
+    try SdkCacheUpdateTextField(state, "baseline-cpu", target.BaselineCpu());
+    try SdkCacheUpdateU64Field(state, "feature-count", target.BaselineFeatureCount());
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < target.BaselineFeatureCount();
+        index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "feature", target.BaselineFeatureAt(index));
+    }
+    try SdkCacheUpdateTextField(state, "relocation-model", target.RelocationModel());
+    try SdkCacheUpdateTextField(state, "code-model", target.CodeModel());
+    try SdkCacheUpdateTextField(state, "c-data-model", target.CDataModel());
+    try SdkCacheUpdateTextField(
+        state,
+        "minimum-operating-system-version",
+        target.MinimumOperatingSystemVersion());
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdatePackageDependencies(
+    mut borrow Sha256State state,
+    mut borrow SdkPackageDescriptor package)
+{
+    try SdkCacheUpdateU64Field(state, "dependency-count", package.DependencyCount());
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < package.DependencyCount();
+        index += 1)
+    {
+        try SdkCacheUpdateTextField(
+            state,
+            "dependency-id",
+            package.DependencyAt(index).PackageId());
+        try SdkCacheUpdateOptionalTextField(
+            state,
+            "dependency-api-hash",
+            package.DependencyAt(index).HasApiHash(),
+            package.DependencyAt(index).ApiHash());
+        try SdkCacheUpdateOptionalTextField(
+            state,
+            "dependency-content-hash",
+            package.DependencyAt(index).HasContentHash(),
+            package.DependencyAt(index).ContentHash());
+    }
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdateNativeFacts(
+    mut borrow Sha256State state,
+    mut borrow SdkNativePackageDescriptor native)
+{
+    try SdkCacheUpdateU64Field(state, "native-artifact-count", native.ArtifactCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.ArtifactCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "native-artifact", native.ArtifactAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-include-count", native.IncludeDirectoryCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.IncludeDirectoryCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "native-include", native.IncludeDirectoryAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-library-directory-count", native.LibraryDirectoryCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.LibraryDirectoryCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(
+            state,
+            "native-library-directory",
+            native.LibraryDirectoryAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-runtime-count", native.RuntimeFileCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.RuntimeFileCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "native-runtime", native.RuntimeFileAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-license-count", native.LicenseFileCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.LicenseFileCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "native-license", native.LicenseFileAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-checksum-count", native.FileChecksumCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.FileChecksumCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(
+            state,
+            "native-checksum-path",
+            native.FileChecksumAt(index).Path());
+        try SdkCacheUpdateTextField(
+            state,
+            "native-checksum-sha256",
+            native.FileChecksumAt(index).Sha256());
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-library-count", native.LibraryCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.LibraryCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(state, "native-library", native.LibraryAt(index));
+    }
+
+    try SdkCacheUpdateU64Field(state, "native-link-argument-count", native.LinkArgumentCount());
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < native.LinkArgumentCount(); index += 1)
+    {
+        try SdkCacheUpdateTextField(
+            state,
+            "native-link-argument",
+            native.LinkArgumentAt(index));
+    }
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn SdkCacheHashStatus SdkCacheUpdatePackage(
+    mut borrow Sha256State state,
+    mut borrow SdkPackageDescriptor package)
+{
+    try SdkCacheUpdateTextField(state, "package-id", package.Id());
+    try SdkCacheUpdateTextField(state, "package-version", package.Version());
+    try SdkCacheUpdateTextField(state, "package-profile", package.Profile());
+    try SdkCacheUpdateTextField(state, "package-image", package.ImagePath());
+    try SdkCacheUpdateOptionalTextField(
+        state,
+        "package-library",
+        package.HasLibraryPath(),
+        package.LibraryPath());
+    try SdkCacheUpdateOptionalTextField(
+        state,
+        "package-api-hash",
+        package.HasApiHash(),
+        package.ApiHash());
+    try SdkCacheUpdateOptionalTextField(
+        state,
+        "package-content-hash",
+        package.HasContentHash(),
+        package.ContentHash());
+    try SdkCacheUpdateOptionalTextField(
+        state,
+        "package-image-sha256",
+        package.HasImageSha256(),
+        package.ImageSha256());
+    try SdkCacheUpdateOptionalTextField(
+        state,
+        "package-library-sha256",
+        package.HasLibrarySha256(),
+        package.LibrarySha256());
+    try SdkCacheUpdatePackageDependencies(state, package);
+    try SdkCacheUpdateNativeFacts(state, package.Native());
+    return SdkCacheHashStatus.Ok;
+}
+
+internal fn MemoryStatus SdkCacheAppendHexNibble(
+    mut borrow OwnedAscii destination,
+    u8[0 15] value)
+{
+    if (value == 0) return destination.AppendConstAscii("0");
+    if (value == 1) return destination.AppendConstAscii("1");
+    if (value == 2) return destination.AppendConstAscii("2");
+    if (value == 3) return destination.AppendConstAscii("3");
+    if (value == 4) return destination.AppendConstAscii("4");
+    if (value == 5) return destination.AppendConstAscii("5");
+    if (value == 6) return destination.AppendConstAscii("6");
+    if (value == 7) return destination.AppendConstAscii("7");
+    if (value == 8) return destination.AppendConstAscii("8");
+    if (value == 9) return destination.AppendConstAscii("9");
+    if (value == 10) return destination.AppendConstAscii("a");
+    if (value == 11) return destination.AppendConstAscii("b");
+    if (value == 12) return destination.AppendConstAscii("c");
+    if (value == 13) return destination.AppendConstAscii("d");
+    if (value == 14) return destination.AppendConstAscii("e");
+    return destination.AppendConstAscii("f");
+}
+
+internal fn MemoryStatus SdkCacheAppendDigestHex(
+    mut borrow OwnedAscii destination,
+    borrow Sha256Digest digest)
+{
+    for willexit (stack mut u8[0 64] nibbleIndex = 0; nibbleIndex < 64; nibbleIndex += 1)
+    {
+        stack u8[0 7] wordIndex = (u8[0 7])(nibbleIndex / 8);
+        stack u8[0 7] wordNibble = (u8[0 7])(nibbleIndex % 8);
+        stack u8[0 28] shift = (u8[0 28])(28 - wordNibble * 4);
+        stack u8[0 15] value = (u8[0 15])((digest.WordAt(wordIndex) >> shift) & 15);
+        try SdkCacheAppendHexNibble(destination, value);
+    }
+    return MemoryStatus.Ok;
+}
+
+// Builds one owned lowercase SHA-256 value suitable for a future Stage1
+// project stamp or dependency-LLVM cache key. The selected plan must have been
+// built from this manifest; an out-of-range index is rejected rather than
+// silently dropping package/native inputs.
+public fn SdkCacheIdentityResult BuildStage1SdkCacheIdentity(
+    borrow Sha256Digest manifestDigest,
+    mut borrow SdkManifest manifest,
+    borrow SdkPackageLinkPlan selectedPackages)
+{
+    stack mut Sha256State state = new();
+    try SdkCacheUpdateTextField(
+        state,
+        "algorithm",
+        Stage1SdkCacheIdentityAlgorithm());
+    try SdkCacheUpdateManifestDigest(state, manifestDigest);
+    try SdkCacheUpdateU64Field(state, "schema-version", (u64[0 max])manifest.SchemaVersion());
+    try SdkCacheUpdateU64Field(
+        state,
+        "distribution-kind",
+        (u64[0 max])SdkCacheDistributionKindValue(manifest.Kind()));
+    try SdkCacheUpdateTextField(state, "sdk-version", manifest.SdkVersion());
+    try SdkCacheUpdateTextField(
+        state,
+        "compiler-compatibility",
+        manifest.CompilerCompatibility());
+    try SdkCacheUpdateU64Field(
+        state,
+        "package-format-version",
+        (u64[0 max])manifest.PackageFormatVersion());
+    try SdkCacheUpdateTarget(state, manifest.Target());
+
+    try SdkCacheUpdateU64Field(
+        state,
+        "selected-package-count",
+        selectedPackages.PackageCount());
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < selectedPackages.PackageCount();
+        index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] packageIndex =
+            selectedPackages.PackageIndexAt(index);
+        if (packageIndex >= manifest.PackageCount())
+        {
+            return SdkCacheIdentityResult.Err(
+                SdkCacheIdentityError.SelectedPackageIndexOutOfRange);
+        }
+
+        try SdkCacheUpdateU64Field(state, "manifest-package-index", packageIndex);
+        try SdkCacheUpdatePackage(state, manifest.PackageAt(packageIndex));
+    }
+
+    stack Sha256Digest digest = FinishSha256(state);
+    stack mut SdkCacheIdentity identity = new();
+    switch (identity.Sha256Value.Reserve(64))
+    {
+        case MemoryStatus.Err(var error):
+            return SdkCacheIdentityResult.Err(SdkCacheIdentityError.Memory(error));
+        case MemoryStatus.Ok:
+    }
+    switch (SdkCacheAppendDigestHex(identity.Sha256Value, digest))
+    {
+        case MemoryStatus.Err(var error):
+            return SdkCacheIdentityResult.Err(SdkCacheIdentityError.Memory(error));
+        case MemoryStatus.Ok:
+            return SdkCacheIdentityResult.Ok(identity);
+    }
+}

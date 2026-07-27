@@ -1,0 +1,149 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMemberMethods
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedMemberModelRows
+import Compiler.Typing.TypedMemberReceiverFacts
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedMemberRows
+
+internal fn System.Memory.MemoryStatus AppendTypedMemberExpression(
+    mut borrow TypedMemberExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedFieldDeclarationTable fields,
+    TypedMemberContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] memberNode,
+    u32[0 max] receiverNode,
+    u32[0 max] memberNameToken,
+    borrow TypedMemberTypeFacts receiver)
+{
+    stack mut TypedMemberTargetKind targetKind = TypedMemberTargetKind.Unknown;
+    stack mut u32[0 max] targetDeclarationIndex = 0;
+    stack mut u32[0 max] targetSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] targetNameToken = 0;
+    stack mut u32[0 max] candidateStartIndexPlusOne = 0;
+    stack mut u32[0 max] candidateCount = 0;
+    stack mut u32[0 max] flags = 0;
+    stack mut TypedMemberTypeFacts result = new();
+
+    if (receiver.ReceiverKind != TypedMemberReceiverKind.Unknown)
+    {
+        flags = flags | TypedMemberFlagReceiverResolved();
+    }
+
+    if (receiver.ReceiverKind == TypedMemberReceiverKind.Value && receiver.TypeHeadToken != 0)
+    {
+        stack u32[0 max] fieldIndexPlusOne = TypedMemberFieldIndexForOwnerAndName(source, stream, fields, receiver.TypeHeadToken, memberNameToken);
+        if (fieldIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] fieldIndex = (u64[0 2 ** 63 - 1])(fieldIndexPlusOne - 1);
+            targetKind = TypedMemberTargetKind.Field;
+            targetDeclarationIndex = fields.OwnerDeclarationIndexAt(fieldIndex);
+            targetSymbolIndexPlusOne = fieldIndexPlusOne;
+            targetNameToken = fields.NameTokenAt(fieldIndex);
+            flags = flags | TypedMemberFlagResolved() | TypedMemberFlagField();
+            TypedMemberFactsFromField(fields, fieldIndexPlusOne, result);
+        }
+
+        candidateCount = TypedMemberMethodCandidateCount(source, stream, signatures, receiver.TypeHeadToken, memberNameToken, false);
+        if (candidateCount > 0)
+        {
+            if (targetKind == TypedMemberTargetKind.Unknown)
+            {
+                targetKind = TypedMemberTargetKind.InstanceMethod;
+                targetDeclarationIndex = receiver.DeclarationIndex;
+                targetNameToken = memberNameToken;
+            }
+
+            candidateStartIndexPlusOne = (u32[0 max])(table.CandidateCount() + 1);
+            flags = flags | TypedMemberFlagResolved() | TypedMemberFlagMethodCandidate();
+        }
+    }
+    else if (receiver.ReceiverKind == TypedMemberReceiverKind.StaticType && receiver.TypeHeadToken != 0)
+    {
+        candidateCount = TypedMemberMethodCandidateCount(source, stream, signatures, receiver.TypeHeadToken, memberNameToken, true);
+        if (candidateCount > 0)
+        {
+            targetKind = TypedMemberTargetKind.StaticMethod;
+            targetDeclarationIndex = receiver.DeclarationIndex;
+            targetNameToken = memberNameToken;
+            candidateStartIndexPlusOne = (u32[0 max])(table.CandidateCount() + 1);
+            flags = flags | TypedMemberFlagResolved() | TypedMemberFlagMethodCandidate();
+        }
+    }
+
+    stack mut u32[0 max] memberIndexPlusOne = 0;
+    switch (AppendTypedMemberRow(
+        table,
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        memberNode,
+        receiverNode,
+        memberNameToken,
+        receiver.ReceiverKind,
+        receiver.DeclarationIndex,
+        receiver.NameToken,
+        receiver.TypeKind,
+        receiver.TypeHeadToken,
+        receiver.TypePrimaryToken,
+        receiver.TypeStartToken,
+        receiver.TypeEndToken,
+        receiver.RangeStartToken,
+        receiver.RangeEndToken,
+        receiver.ElementCountStartToken,
+        receiver.ElementCountEndToken,
+        receiver.BitWidth,
+        receiver.TypeArgumentCount,
+        receiver.ComptimeArgumentCount,
+        receiver.TypeFlags,
+        targetKind,
+        targetDeclarationIndex,
+        targetSymbolIndexPlusOne,
+        targetNameToken,
+        candidateStartIndexPlusOne,
+        candidateCount,
+        flags,
+        result.TypeKind,
+        result.TypeHeadToken,
+        result.TypePrimaryToken,
+        result.TypeStartToken,
+        result.TypeEndToken,
+        result.RangeStartToken,
+        result.RangeEndToken,
+        result.ElementCountStartToken,
+        result.ElementCountEndToken,
+        result.BitWidth,
+        result.TypeArgumentCount,
+        result.ComptimeArgumentCount,
+        result.TypeFlags,
+        memberIndexPlusOne))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (candidateCount > 0)
+    {
+        stack bool wantStatic = receiver.ReceiverKind == TypedMemberReceiverKind.StaticType;
+        switch (AppendTypedMemberMethodCandidates(table, source, stream, signatures, memberIndexPlusOne, receiver.TypeHeadToken, memberNameToken, wantStatic))
+        {
+            case System.Memory.MemoryStatus.Err(var candidateError):
+                return System.Memory.MemoryStatus.Err(candidateError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

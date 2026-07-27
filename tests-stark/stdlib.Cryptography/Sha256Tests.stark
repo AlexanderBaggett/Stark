@@ -1,0 +1,73 @@
+import System.Cryptography.Sha256
+import System.Testing
+[Collection("cryptography")]
+module Sha256Tests
+
+fn bool Sha256AsciiMatches(ascii source, ascii expected)
+{
+    switch (HashSha256Ascii(source))
+    {
+        case Sha256Result.Err(var error):
+            return false;
+        case Sha256Result.Ok(var digest):
+            return Sha256DigestMatchesLowerHex(digest, expected);
+    }
+}
+
+[Fact]
+fn bool Sha256MatchesEmptyKnownVector()
+{
+    return Sha256AsciiMatches(
+        "",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+[Fact]
+fn bool Sha256MatchesAbcKnownVector()
+{
+    return Sha256AsciiMatches(
+        "abc",
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+[Fact]
+fn bool Sha256MatchesMultiBlockKnownVector()
+{
+    return Sha256AsciiMatches(
+        "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+        "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
+}
+
+[Fact]
+fn bool Sha256StreamingUpdatesMatchOneShotDigest()
+{
+    stack mut Sha256State state = new();
+    if (UpdateSha256Ascii(state, "a") != Sha256Status.Ok
+        || UpdateSha256Ascii(state, "b") != Sha256Status.Ok
+        || UpdateSha256Ascii(state, "c") != Sha256Status.Ok)
+    {
+        return false;
+    }
+
+    stack Sha256Digest digest = FinishSha256(state);
+    return state.IsFinalized()
+        && state.InputByteCount() == 3
+        && Sha256DigestMatchesLowerHex(
+            digest,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        && UpdateSha256Ascii(state, "d") == Sha256Status.Err(Sha256Error.Finalized);
+}
+
+[Fact]
+fn bool Sha256FileHashStreamsKnownFixture()
+{
+    switch (HashSha256File("../../tests/fixtures/sha256/abc.txt"))
+    {
+        case Sha256FileResult.Err(var error):
+            return false;
+        case Sha256FileResult.Ok(var digest):
+            return Sha256DigestMatchesLowerHex(
+                digest,
+                "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb");
+    }
+}

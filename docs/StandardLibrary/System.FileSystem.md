@@ -35,6 +35,17 @@ public struct FileSystemEntryInfo
     FileSystemEntryKind Kind;
 }
 
+public struct FileMetadata
+{
+    u64[0 2 ** 63 - 1] Size;
+    i64[min max] ModifiedUnixSeconds;
+    i64[min max] ModifiedNanoseconds;
+    u32[0 max] Permissions;
+    FileSystemEntryKind Kind;
+
+    inline finite law bool IsExecutable(borrow FileMetadata self);
+}
+
 public enum DirectoryReadResult
 {
     Entry(FileSystemEntry),
@@ -59,16 +70,54 @@ public struct Directory
 
 public fn System.IO.IOStatus CreateDirectory(ascii path);
 public fn System.IO.IOStatus DeleteDirectory(ascii path);
+public fn System.IO.IOStatus DeleteTree(ascii root);
+public fn System.IO.IOStatus DeleteTreeIfExists(ascii root);
 public fn System.IO.IOResult<Directory> OpenDirectory(ascii path);
 public fn System.IO.IOResult<bool> Exists(ascii path);
 public fn System.IO.IOResult<bool> IsFile(ascii path);
 public fn System.IO.IOResult<bool> IsDirectory(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
+public fn System.IO.IOResult<FileMetadata> Metadata(ascii path);
+public fn System.IO.IOResult<FileMetadata> LinkMetadata(ascii path);
+public fn System.IO.IOResult<bool> IsSymlink(ascii path);
+public fn System.IO.IOStatus CreateSymlink(ascii target, ascii linkPath);
+public fn System.IO.IOResult<System.Text.OwnedAscii> ReadSymlink(ascii path);
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectoryIn(ascii parent, ascii prefix);
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectory(ascii prefix);
+public fn System.IO.IOStatus WalkRecursive(ascii root, inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor);
+public fn System.IO.IOStatus Glob(ascii root, ascii pattern, inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor) where overlap(root, pattern);
 ```
 
 `DeleteDirectory` is intentionally non-recursive so mistakes do not delete a
-tree by accident. Recursive deletion can be added later as a deliberately named
-helper.
+tree by accident. Recursive deletion is deliberately named `DeleteTree`, while
+`DeleteTreeIfExists` is the idempotent cleanup helper for temp fixtures.
+
+`Metadata` reports size, modification time, permissions, and entry kind for a
+single path. Linux and macOS preserve POSIX mode permission bits. Windows maps
+read-only/directory attributes into POSIX-like read/write/execute bits so shared
+compiler logic can make deterministic permission checks. The internal platform
+metadata boundary maps common OS errors into `IOError` values.
+
+## Symlinks
+
+`LinkMetadata`, `IsSymlink`, `CreateSymlink`, and `ReadSymlink` provide explicit
+symbolic-link operations that never silently resolve the final link.
+
+`LinkMetadata` reads metadata for a path *without* following a final symbolic
+link (`lstat` semantics): when the path is itself a symlink, the returned `Kind`
+is `FileSystemEntryKind.Symlink`. This contrasts with `Metadata`, which follows
+the link and reports the target's kind instead. `IsSymlink` is the small helper
+built on top of `LinkMetadata`; it likewise does not follow the link and simply
+reports whether the path itself is a symbolic link.
+
+`CreateSymlink(target, linkPath)` creates a symbolic link at `linkPath` that
+points at `target`. The `target` is stored verbatim and may be relative to the
+link's own directory; the standard library does not resolve, normalize, or
+validate it. `ReadSymlink` returns the raw link contents as an owned
+`System.Text.OwnedAscii`, i.e. the exact stored target path, again without
+resolving it to an absolute path. Reading a link whose stored target exactly
+fills the internal read buffer is rejected as a possibly truncated result with
+`IOError.InvalidPath`.
 
 ## Directory Listing
 
@@ -119,6 +168,55 @@ The loop is marked `non-deterministic` because directory iteration depends on
 external filesystem state and therefore should not be used inside a `finite`
 function.
 
+## Recursive Walk
+
+`WalkRecursive` visits the root path and each descendant path with its
+`FileSystemEntryKind`. It streams through a caller-provided callback instead of
+allocating a full path list.
+
+```stark
+fn System.IO.IOStatus Visit(ascii path, System.FileSystem.FileSystemEntryKind kind)
+{
+    System.Console.WriteLine(path);
+    return System.IO.IOStatus.Ok;
+}
+
+fn System.IO.IOStatus PrintTree(ascii root)
+{
+    return System.FileSystem.WalkRecursive(root, Visit);
+}
+```
+
+The current walk does not follow symlink directories, which avoids accidental
+cycles.
+
+## Glob
+
+`Glob` walks `root` recursively and calls the visitor only for paths that match
+the root-relative `pattern`. The matcher uses `System.IO.Path.GlobMatches`: `*`
+matches within one path segment, `?` matches one unit within one path segment,
+and `**` as a whole segment matches zero or more path segments.
+
+```stark
+fn System.IO.IOStatus VisitSource(ascii path, System.FileSystem.FileSystemEntryKind kind)
+{
+    if (kind == System.FileSystem.FileSystemEntryKind.File)
+    {
+        System.Console.WriteLine(path);
+    }
+
+    return System.IO.IOStatus.Ok;
+}
+
+fn System.IO.IOStatus PrintStarkSources(ascii root)
+{
+    return System.FileSystem.Glob(root, "**/*.stark", VisitSource);
+}
+```
+
+`Glob` streams matches through the callback and does not allocate a result list.
+It uses the same symlink-directory policy as `WalkRecursive`.
+
 ## Function Kinds
 
 `Directory.IsOpen` is `finite law` because it only reads local handle state and
@@ -145,9 +243,22 @@ split.
 
 ## Current Status
 
-- `CreateDirectory`, non-recursive `DeleteDirectory`, `OpenDirectory`,
+- `CreateDirectory`, non-recursive `DeleteDirectory`, recursive `DeleteTree`,
+  idempotent `DeleteTreeIfExists`, `OpenDirectory`,
   `Directory.ReadNextInfo`, `Directory.ReadNext`, `Exists`, `IsFile`,
-  `IsDirectory`, and `Move` are available.
+  `IsDirectory`, `Move`, `Metadata`, `CreateTempDirectoryIn`,
+  `CreateTempDirectory`, `WalkRecursive`, and `Glob` are available.
+- `CreateTempDirectoryIn` builds candidate paths with
+  `System.IO.Path.TryTempPathIn` and retries explicit attempts on
+  `AlreadyExists`; callers that only need candidate paths can use
+  `System.IO.Path` directly.
+- `CreateTempDirectory` uses `System.IO.Path.TempDirectory` for the platform
+  temp root before applying the same explicit retry loop.
 - `Directory` is an owned handle with best-effort close-on-drop cleanup.
 - `FileSystemEntry.Name` is owned entry-name storage, so callers are not tied to
   the directory iterator's internal buffer.
+- Metadata behavior is implemented for Linux, macOS, and Windows.
+- Symbolic-link operations are available: `LinkMetadata` (`lstat`-style metadata
+  that does not follow the final link), `IsSymlink`, `CreateSymlink` (target
+  stored verbatim, may be relative), and `ReadSymlink` (raw, unresolved link
+  target).

@@ -1,0 +1,17 @@
+export import Compiler.Sdk.Activation
+export import Compiler.Sdk.CacheIdentity
+export import Compiler.Sdk.Diagnostics
+export import Compiler.Sdk.ManifestModel
+export import Compiler.Sdk.ManifestLoading
+export import Compiler.Sdk.ManifestNormalization
+export import Compiler.Sdk.IntegrityValidation
+export import Compiler.Sdk.LinkPlan
+export import Compiler.Sdk.PackageIndex
+export import Compiler.Sdk.RootResolution
+export import Compiler.Sdk.TargetDescriptor
+export import Compiler.Sdk.TargetCompatibility
+module Compiler.Sdk
+
+// Stage1 SDK contract surface. Keep the individual concerns in focused
+// modules so root discovery, manifest decoding, indexing, integrity, and
+// diagnostics can evolve without coupling them to the compiler driver.

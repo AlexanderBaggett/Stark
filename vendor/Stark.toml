@@ -1,0 +1,21 @@
+[project]
+name = "vendor"
+version = "0.1.0"
+kind = "library"
+
+[library]
+root = "src/Vendor/Raylib.stark"
+output = "VendorRaylib"
+
+[native]
+pkg-config = ["raylib"]
+
+[native.fallback.linux]
+include-dirs = ["${native.paths.raylib-src}"]
+library-dirs = ["${native.paths.raylib-src}"]
+libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
+
+[native.fallback.windows]
+include-dirs = ["${native.paths.raylib-include}"]
+library-dirs = ["${native.paths.raylib-lib}"]
+libraries = ["raylib", "opengl32", "gdi32", "winmm"]

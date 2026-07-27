@@ -93,7 +93,10 @@ for chapter in "${chapters[@]}"; do
         fail "Book chapter should contain exactly one H1 heading, found ${h1_count}: ${relative}."
     fi
 
-    mapfile -t steps < <(grep -E '^## Step [0-9]+:' "${chapter}" || true)
+    steps=()
+    while IFS= read -r step; do
+        steps+=("${step}")
+    done < <(grep -E '^## Step [0-9]+:' "${chapter}" || true)
     if [[ "${#steps[@]}" -lt 3 ]]; then
         fail "Book chapter should have at least three tutorial steps: ${relative}."
     fi

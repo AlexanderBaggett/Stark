@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-filesystem-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "FileSystemSymlinkTests.stark"
+output = "stdlib-filesystem-tests"

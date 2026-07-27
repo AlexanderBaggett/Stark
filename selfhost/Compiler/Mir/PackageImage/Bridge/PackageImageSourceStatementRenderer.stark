@@ -1,0 +1,1369 @@
+import Compiler.Parsing
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+import System.Json
+import System.Memory
+import System.Text
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridgeCore
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceExpressionRenderer
+module Compiler.Mir.PackageImage.Bridge.PackageImageSourceStatementRenderer
+
+// Typed for headers, patterns, statements, operation bodies, and template-body
+// preparation for compatibility-only parser/binder paths.
+
+internal fn bool PackageImageSourceBridgeAppendIndent(
+    mut borrow OwnedAscii sink,
+    u8[0 64] indentLevel)
+{
+    stack mut u8[0 64] indentIndex = 0;
+    while willexit (indentIndex < indentLevel)
+    {
+        if (!PackageImageSourceBridgeAppendConst(sink, "    "))
+        {
+            return false;
+        }
+
+        indentIndex = indentIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypedForHeaderStatementArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] templateNode,
+    u64[0 2 ** 63 - 1] statementsNode,
+    u32[0 max] statementCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] statementIndex = 0;
+    while willexit (statementIndex < statementCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] expressionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] targetExpressionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] assignmentOperatorNode = 0;
+        stack mut u64[0 2 ** 63 - 1] storageClassNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut bool hasExpression = false;
+        stack mut bool hasTargetExpression = false;
+        stack mut bool hasName = false;
+        stack mut bool hasAssignmentOperator = false;
+        stack mut bool hasStorageClass = false;
+        stack mut bool hasType = false;
+        stack mut bool isMutable = false;
+        stack mut bool isConstant = false;
+        if (!document.TryChildAt(
+                statementsNode,
+                (u64[0 2 ** 63 - 1])statementIndex,
+                statementNode)
+            || document.KindAt(statementNode) != JsonKind.Object
+            || !document.TryFindMember(statementNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "Expression",
+                expressionNode,
+                hasExpression)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "TargetExpression",
+                targetExpressionNode,
+                hasTargetExpression)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "Name",
+                nameNode,
+                hasName)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "AssignmentOperator",
+                assignmentOperatorNode,
+                hasAssignmentOperator)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "StorageClass",
+                storageClassNode,
+                hasStorageClass)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "Type",
+                typeNode,
+                hasType)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                statementNode,
+                "IsMutable",
+                isMutable)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                statementNode,
+                "IsConstant",
+                isConstant)
+            || (statementIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", ")))
+        {
+            return false;
+        }
+
+        stack ascii kind = document.TextAt(kindNode);
+        if (kind == "local-variable")
+        {
+            if (!hasName
+                || AsciiLength(document.TextAt(nameNode)) == 0
+                || !hasType
+                || !hasExpression
+                || (isConstant
+                    ? !PackageImageSourceBridgeAppendConst(sink, "const ")
+                    : !hasStorageClass
+                        || AsciiLength(document.TextAt(storageClassNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(storageClassNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, " ")
+                        || (isMutable
+                            && !PackageImageSourceBridgeAppendConst(sink, "mut ")))
+                || !PackageImageSourceBridgeRenderTypedTypeReference(
+                    document,
+                    typeNode,
+                    0,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, " = ")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else if (kind == "expression")
+        {
+            if (!hasExpression
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else if (kind == "assignment")
+        {
+            stack ascii assignmentOperator = hasAssignmentOperator
+                ? document.TextAt(assignmentOperatorNode)
+                : "=";
+            if (!hasExpression
+                || (!hasTargetExpression && !hasName)
+                || (assignmentOperator == "init ="
+                    && !PackageImageSourceBridgeAppendConst(sink, "init "))
+                || (hasTargetExpression
+                    ? !PackageImageSourceBridgeRenderTypedExpression(
+                        document,
+                        templateNode,
+                        targetExpressionNode,
+                        0,
+                        sink)
+                    : !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode)))
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    assignmentOperator == "init =" ? "=" : assignmentOperator)
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        statementIndex = statementIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypedPattern(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] templateNode,
+    u64[0 2 ** 63 - 1] patternNode,
+    u8[0 64] depth,
+    mut borrow OwnedAscii sink)
+{
+    if (depth == 64)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] expressionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] endExpressionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+    stack mut bool hasName = false;
+    stack mut bool hasExpression = false;
+    stack mut bool hasEndExpression = false;
+    stack mut u32[0 max] memberCount = 0;
+    if (!document.TryFindMember(patternNode, "Kind", kindNode)
+        || document.KindAt(kindNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(kindNode)) == 0
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            patternNode,
+            "Name",
+            nameNode,
+            hasName)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            patternNode,
+            "Expression",
+            expressionNode,
+            hasExpression)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            patternNode,
+            "EndExpression",
+            endExpressionNode,
+            hasEndExpression)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            patternNode,
+            "Members",
+            membersNode,
+            memberCount))
+    {
+        return false;
+    }
+
+    stack ascii kind = document.TextAt(kindNode);
+    if (kind == "discard" || (kind == "match-all" && !hasName))
+    {
+        return PackageImageSourceBridgeAppendConst(sink, "_");
+    }
+
+    if (kind == "capture" || kind == "match-all")
+    {
+        return hasName
+            && AsciiLength(document.TextAt(nameNode)) != 0
+            && PackageImageSourceBridgeAppendConst(sink, "var ")
+            && PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode));
+    }
+
+    if (kind == "literal")
+    {
+        return hasExpression
+            && PackageImageSourceBridgeRenderTypedExpression(
+                document,
+                templateNode,
+                expressionNode,
+                depth + 1,
+                sink);
+    }
+
+    if (kind == "range")
+    {
+        return hasExpression
+            && hasEndExpression
+            && PackageImageSourceBridgeRenderTypedExpression(
+                document,
+                templateNode,
+                expressionNode,
+                depth + 1,
+                sink)
+            && PackageImageSourceBridgeAppendConst(sink, "..")
+            && PackageImageSourceBridgeRenderTypedExpression(
+                document,
+                templateNode,
+                endExpressionNode,
+                depth + 1,
+                sink);
+    }
+
+    if (kind == "list-pattern")
+    {
+        if (!PackageImageSourceBridgeAppendConst(sink, "["))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] listMemberIndex = 0;
+        while willexit (listMemberIndex < memberCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+            if (!document.TryChildAt(
+                    membersNode,
+                    (u64[0 2 ** 63 - 1])listMemberIndex,
+                    memberNode)
+                || document.KindAt(memberNode) != JsonKind.Object
+                || (listMemberIndex != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                || !PackageImageSourceBridgeRenderTypedPattern(
+                    document,
+                    templateNode,
+                    memberNode,
+                    depth + 1,
+                    sink))
+            {
+                return false;
+            }
+
+            listMemberIndex = listMemberIndex + 1;
+        }
+
+        return PackageImageSourceBridgeAppendConst(sink, "]");
+    }
+
+    if (kind != "enum-pattern" && kind != "aggregate-pattern")
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] ordinal = 0;
+    stack mut u64[0 2 ** 63 - 1] operationNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] variantNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] publishedMembersNode = 0;
+    stack mut u32[0 max] publishedMemberCount = 0;
+    if (!LogicalPackageImageJsonRequiredU32MemberValue(
+            document,
+            patternNode,
+            "Ordinal",
+            ordinal)
+        || !PackageImageSourceBridgeFindTemplateOperationByOrdinal(
+            document,
+            templateNode,
+            kind == "enum-pattern" ? "EnumPatterns" : "AggregatePatterns",
+            ordinal,
+            operationNode)
+        || !LogicalPackageImageJsonRequiredObjectMember(
+            document,
+            operationNode,
+            kind == "enum-pattern" ? "EnumType" : "Type",
+            typeNode)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            operationNode,
+            "Members",
+            publishedMembersNode,
+            publishedMemberCount)
+        || (kind == "enum-pattern"
+            && (!document.TryFindMember(
+                    operationNode,
+                    "VariantName",
+                    variantNameNode)
+                || document.KindAt(variantNameNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(variantNameNode)) == 0))
+        || !PackageImageSourceBridgeRenderTypedTypeReference(
+            document,
+            typeNode,
+            depth + 1,
+            sink)
+        || (kind == "enum-pattern"
+            && (!PackageImageSourceBridgeAppendConst(sink, ".")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    document.TextAt(variantNameNode)))))
+    {
+        return false;
+    }
+
+    if (hasName)
+    {
+        return memberCount == 0
+            && AsciiLength(document.TextAt(nameNode)) != 0
+            && PackageImageSourceBridgeAppendConst(sink, " ")
+            && PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode));
+    }
+
+    if (memberCount == 0)
+    {
+        return true;
+    }
+
+    stack bool usesNamedMembers = publishedMemberCount == memberCount;
+    if (!PackageImageSourceBridgeAppendConst(
+            sink,
+            usesNamedMembers ? " { " : "("))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] memberIndex = 0;
+    while willexit (memberIndex < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] publishedMemberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldNameNode = 0;
+        if (!document.TryChildAt(
+                membersNode,
+                (u64[0 2 ** 63 - 1])memberIndex,
+                memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || (memberIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || (usesNamedMembers
+                && (!document.TryChildAt(
+                        publishedMembersNode,
+                        (u64[0 2 ** 63 - 1])memberIndex,
+                        publishedMemberNode)
+                    || document.KindAt(publishedMemberNode) != JsonKind.Object
+                    || !document.TryFindMember(
+                        publishedMemberNode,
+                        "FieldName",
+                        fieldNameNode)
+                    || document.KindAt(fieldNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(fieldNameNode)) == 0
+                    || !PackageImageSourceBridgeAppend(
+                        sink,
+                        document.TextAt(fieldNameNode))
+                    || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+            || !PackageImageSourceBridgeRenderTypedPattern(
+                document,
+                templateNode,
+                memberNode,
+                depth + 1,
+                sink))
+        {
+            return false;
+        }
+
+        memberIndex = memberIndex + 1;
+    }
+
+    return PackageImageSourceBridgeAppendConst(
+        sink,
+        usesNamedMembers ? " }" : ")");
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypedStatementArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] templateNode,
+    u64[0 2 ** 63 - 1] statementsNode,
+    u32[0 max] statementCount,
+    u8[0 64] indentLevel,
+    mut borrow OwnedAscii sink)
+{
+    if (indentLevel == 64)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] statementIndex = 0;
+    while willexit (statementIndex < statementCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementNode = 0;
+        stack mut u64[0 2 ** 63 - 1] statementKindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] expressionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] targetExpressionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] assignmentOperatorNode = 0;
+        stack mut u64[0 2 ** 63 - 1] storageClassNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut bool hasExpression = false;
+        stack mut bool hasTargetExpression = false;
+        stack mut bool hasName = false;
+        stack mut bool hasAssignmentOperator = false;
+        stack mut bool hasStorageClass = false;
+        stack mut bool hasType = false;
+        stack mut bool isMutable = false;
+        stack mut bool isConstant = false;
+        if (!document.TryChildAt(
+                statementsNode,
+                (u64[0 2 ** 63 - 1])statementIndex,
+                statementNode)
+            || document.KindAt(statementNode) != JsonKind.Object
+            || !document.TryFindMember(statementNode, "Kind", statementKindNode)
+            || document.KindAt(statementKindNode) != JsonKind.Text
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "Expression",
+                expressionNode,
+                hasExpression)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "TargetExpression",
+                targetExpressionNode,
+                hasTargetExpression)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "Name",
+                nameNode,
+                hasName)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "AssignmentOperator",
+                assignmentOperatorNode,
+                hasAssignmentOperator)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                statementNode,
+                "StorageClass",
+                storageClassNode,
+                hasStorageClass)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                statementNode,
+                "Type",
+                typeNode,
+                hasType)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                statementNode,
+                "IsMutable",
+                isMutable)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                statementNode,
+                "IsConstant",
+                isConstant)
+            || !PackageImageSourceBridgeAppendIndent(sink, indentLevel))
+        {
+            return false;
+        }
+
+        stack ascii statementKind = document.TextAt(statementKindNode);
+        stack mut bool isBlockStatement = false;
+        if (statementKind == "block")
+        {
+            stack mut u64[0 2 ** 63 - 1] bodyStatementsNode = 0;
+            stack mut u32[0 max] bodyStatementCount = 0;
+            if (!LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "BodyStatements",
+                    bodyStatementsNode,
+                    bodyStatementCount)
+                || !PackageImageSourceBridgeAppendConst(sink, "{\n")
+                || !PackageImageSourceBridgeRenderTypedStatementArray(
+                    document,
+                    templateNode,
+                    bodyStatementsNode,
+                    bodyStatementCount,
+                    indentLevel + 1,
+                    sink)
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}"))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "switch")
+        {
+            stack mut u64[0 2 ** 63 - 1] switchCasesNode = 0;
+            stack mut u32[0 max] switchCaseCount = 0;
+            if (!hasExpression
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "SwitchCases",
+                    switchCasesNode,
+                    switchCaseCount)
+                || switchCaseCount == 0
+                || (hasName
+                    && (AsciiLength(document.TextAt(nameNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(nameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+                || !PackageImageSourceBridgeAppendConst(sink, "switch (")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, ")\n")
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "{\n"))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] switchCaseIndex = 0;
+            while willexit (switchCaseIndex < switchCaseCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] switchCaseNode = 0;
+                stack mut u64[0 2 ** 63 - 1] switchCaseKindNode = 0;
+                stack mut u64[0 2 ** 63 - 1] guardExpressionNode = 0;
+                stack mut u64[0 2 ** 63 - 1] caseStatementsNode = 0;
+                stack mut bool hasGuardExpression = false;
+                stack mut u32[0 max] caseStatementCount = 0;
+                if (!document.TryChildAt(
+                        switchCasesNode,
+                        (u64[0 2 ** 63 - 1])switchCaseIndex,
+                        switchCaseNode)
+                    || document.KindAt(switchCaseNode) != JsonKind.Object
+                    || !document.TryFindMember(
+                        switchCaseNode,
+                        "Kind",
+                        switchCaseKindNode)
+                    || document.KindAt(switchCaseKindNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(switchCaseKindNode)) == 0
+                    || !LogicalPackageImageJsonOptionalObjectMember(
+                        document,
+                        switchCaseNode,
+                        "GuardExpression",
+                        guardExpressionNode,
+                        hasGuardExpression)
+                    || !LogicalPackageImageJsonOptionalArrayMember(
+                        document,
+                        switchCaseNode,
+                        "Statements",
+                        caseStatementsNode,
+                        caseStatementCount)
+                    || !PackageImageSourceBridgeAppendIndent(
+                        sink,
+                        indentLevel + 1))
+                {
+                    return false;
+                }
+
+                stack ascii switchCaseKind = document.TextAt(switchCaseKindNode);
+                if (switchCaseKind == "default")
+                {
+                    if (!PackageImageSourceBridgeAppendConst(sink, "default"))
+                    {
+                        return false;
+                    }
+                }
+                else if (!PackageImageSourceBridgeAppendConst(sink, "case ")
+                    || !PackageImageSourceBridgeRenderTypedPattern(
+                        document,
+                        templateNode,
+                        switchCaseNode,
+                        0,
+                        sink))
+                {
+                    return false;
+                }
+
+                if ((hasGuardExpression
+                        && (!PackageImageSourceBridgeAppendConst(sink, " when ")
+                            || !PackageImageSourceBridgeRenderTypedExpression(
+                                document,
+                                templateNode,
+                                guardExpressionNode,
+                                0,
+                                sink)))
+                    || !PackageImageSourceBridgeAppendConst(sink, ":\n")
+                    || !PackageImageSourceBridgeRenderTypedStatementArray(
+                        document,
+                        templateNode,
+                        caseStatementsNode,
+                        caseStatementCount,
+                        indentLevel + 2,
+                        sink))
+                {
+                    return false;
+                }
+
+                switchCaseIndex = switchCaseIndex + 1;
+            }
+
+            if (!PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}"))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "for")
+        {
+            stack mut u64[0 2 ** 63 - 1] loopBehaviorNode = 0;
+            stack mut u64[0 2 ** 63 - 1] loopContractsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] initializerStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] iteratorStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] bodyStatementsNode = 0;
+            stack mut bool hasLoopBehavior = false;
+            stack mut u32[0 max] loopContractCount = 0;
+            stack mut u32[0 max] initializerStatementCount = 0;
+            stack mut u32[0 max] iteratorStatementCount = 0;
+            stack mut u32[0 max] bodyStatementCount = 0;
+            if (!PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "LoopBehavior",
+                    loopBehaviorNode,
+                    hasLoopBehavior)
+                || !hasLoopBehavior
+                || AsciiLength(document.TextAt(loopBehaviorNode)) == 0
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "LoopContracts",
+                    loopContractsNode,
+                    loopContractCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "InitializerStatements",
+                    initializerStatementsNode,
+                    initializerStatementCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "IteratorStatements",
+                    iteratorStatementsNode,
+                    iteratorStatementCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "BodyStatements",
+                    bodyStatementsNode,
+                    bodyStatementCount)
+                || (hasName
+                    && (AsciiLength(document.TextAt(nameNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(nameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+                || !PackageImageSourceBridgeAppendConst(sink, "for ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    document.TextAt(loopBehaviorNode)))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] loopContractIndex = 0;
+            while willexit (loopContractIndex < loopContractCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] loopContractNode = 0;
+                if (!document.TryChildAt(
+                        loopContractsNode,
+                        (u64[0 2 ** 63 - 1])loopContractIndex,
+                        loopContractNode)
+                    || document.KindAt(loopContractNode) != JsonKind.Text
+                    || (AsciiLength(document.TextAt(loopContractNode)) != 0
+                        && (!PackageImageSourceBridgeAppendConst(sink, " ")
+                            || !PackageImageSourceBridgeAppend(
+                                sink,
+                                document.TextAt(loopContractNode)))))
+                {
+                    return false;
+                }
+
+                loopContractIndex = loopContractIndex + 1;
+            }
+
+            if (!PackageImageSourceBridgeAppendConst(sink, " (")
+                || !PackageImageSourceBridgeRenderTypedForHeaderStatementArray(
+                    document,
+                    templateNode,
+                    initializerStatementsNode,
+                    initializerStatementCount,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, "; ")
+                || (hasExpression
+                    && !PackageImageSourceBridgeRenderTypedExpression(
+                        document,
+                        templateNode,
+                        expressionNode,
+                        0,
+                        sink))
+                || !PackageImageSourceBridgeAppendConst(sink, "; ")
+                || !PackageImageSourceBridgeRenderTypedForHeaderStatementArray(
+                    document,
+                    templateNode,
+                    iteratorStatementsNode,
+                    iteratorStatementCount,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, ") {\n")
+                || !PackageImageSourceBridgeRenderTypedStatementArray(
+                    document,
+                    templateNode,
+                    bodyStatementsNode,
+                    bodyStatementCount,
+                    indentLevel + 1,
+                    sink)
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}"))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "for-traversal")
+        {
+            stack mut u64[0 2 ** 63 - 1] loopBehaviorNode = 0;
+            stack mut u64[0 2 ** 63 - 1] loopContractsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] bodyStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalSourceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalIndexNameNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalIndexStorageClassNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalIndexTypeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalElementNameNode = 0;
+            stack mut u64[0 2 ** 63 - 1] traversalElementTypeNode = 0;
+            stack mut bool hasLoopBehavior = false;
+            stack mut bool hasTraversalSource = false;
+            stack mut bool hasTraversalIndexName = false;
+            stack mut bool hasTraversalIndexStorageClass = false;
+            stack mut bool hasTraversalIndexType = false;
+            stack mut bool hasTraversalElementName = false;
+            stack mut bool hasTraversalElementType = false;
+            stack mut u32[0 max] loopContractCount = 0;
+            stack mut u32[0 max] bodyStatementCount = 0;
+            if (!PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "LoopBehavior",
+                    loopBehaviorNode,
+                    hasLoopBehavior)
+                || !hasLoopBehavior
+                || AsciiLength(document.TextAt(loopBehaviorNode)) == 0
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "LoopContracts",
+                    loopContractsNode,
+                    loopContractCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "BodyStatements",
+                    bodyStatementsNode,
+                    bodyStatementCount)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    statementNode,
+                    "TraversalSource",
+                    traversalSourceNode,
+                    hasTraversalSource)
+                || !PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "TraversalIndexName",
+                    traversalIndexNameNode,
+                    hasTraversalIndexName)
+                || !PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "TraversalIndexStorageClass",
+                    traversalIndexStorageClassNode,
+                    hasTraversalIndexStorageClass)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    statementNode,
+                    "TraversalIndexType",
+                    traversalIndexTypeNode,
+                    hasTraversalIndexType)
+                || !PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "TraversalElementName",
+                    traversalElementNameNode,
+                    hasTraversalElementName)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    statementNode,
+                    "TraversalElementType",
+                    traversalElementTypeNode,
+                    hasTraversalElementType)
+                || !hasTraversalSource
+                || !hasTraversalElementName
+                || AsciiLength(document.TextAt(traversalElementNameNode)) == 0
+                || !hasTraversalElementType
+                || (hasTraversalIndexName != hasTraversalIndexStorageClass)
+                || (hasTraversalIndexName != hasTraversalIndexType)
+                || (hasTraversalIndexName
+                    && (AsciiLength(document.TextAt(traversalIndexNameNode)) == 0
+                        || AsciiLength(document.TextAt(
+                            traversalIndexStorageClassNode)) == 0))
+                || (hasName
+                    && (AsciiLength(document.TextAt(nameNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(nameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+                || !PackageImageSourceBridgeAppendConst(sink, "for ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    document.TextAt(loopBehaviorNode)))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] loopContractIndex = 0;
+            while willexit (loopContractIndex < loopContractCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] loopContractNode = 0;
+                if (!document.TryChildAt(
+                        loopContractsNode,
+                        (u64[0 2 ** 63 - 1])loopContractIndex,
+                        loopContractNode)
+                    || document.KindAt(loopContractNode) != JsonKind.Text
+                    || (AsciiLength(document.TextAt(loopContractNode)) != 0
+                        && (!PackageImageSourceBridgeAppendConst(sink, " ")
+                            || !PackageImageSourceBridgeAppend(
+                                sink,
+                                document.TextAt(loopContractNode)))))
+                {
+                    return false;
+                }
+
+                loopContractIndex = loopContractIndex + 1;
+            }
+
+            if (!PackageImageSourceBridgeAppendConst(sink, " (")
+                || (hasTraversalIndexName
+                    && (!PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(traversalIndexStorageClassNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, " ")
+                        || !PackageImageSourceBridgeRenderTypedTypeReference(
+                            document,
+                            traversalIndexTypeNode,
+                            0,
+                            sink)
+                        || !PackageImageSourceBridgeAppendConst(sink, " ")
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(traversalIndexNameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ", ")))
+                || !PackageImageSourceBridgeRenderTypedTypeReference(
+                    document,
+                    traversalElementTypeNode,
+                    0,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    document.TextAt(traversalElementNameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, " in ")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    traversalSourceNode,
+                    0,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, ") {\n")
+                || !PackageImageSourceBridgeRenderTypedStatementArray(
+                    document,
+                    templateNode,
+                    bodyStatementsNode,
+                    bodyStatementCount,
+                    indentLevel + 1,
+                    sink)
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}"))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "while")
+        {
+            stack mut u64[0 2 ** 63 - 1] loopBehaviorNode = 0;
+            stack mut u64[0 2 ** 63 - 1] loopContractsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] bodyStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] conditionPatternNode = 0;
+            stack mut bool hasLoopBehavior = false;
+            stack mut bool hasConditionPattern = false;
+            stack mut u32[0 max] loopContractCount = 0;
+            stack mut u32[0 max] bodyStatementCount = 0;
+            if (!hasExpression
+                || !PackageImageSourceBridgeOptionalTextMemberNode(
+                    document,
+                    statementNode,
+                    "LoopBehavior",
+                    loopBehaviorNode,
+                    hasLoopBehavior)
+                || !hasLoopBehavior
+                || AsciiLength(document.TextAt(loopBehaviorNode)) == 0
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "LoopContracts",
+                    loopContractsNode,
+                    loopContractCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "BodyStatements",
+                    bodyStatementsNode,
+                    bodyStatementCount)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    statementNode,
+                    "ConditionPattern",
+                    conditionPatternNode,
+                    hasConditionPattern)
+                || (hasName
+                    && (AsciiLength(document.TextAt(nameNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(nameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+                || !PackageImageSourceBridgeAppendConst(sink, "while ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    document.TextAt(loopBehaviorNode)))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] loopContractIndex = 0;
+            while willexit (loopContractIndex < loopContractCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] loopContractNode = 0;
+                if (!document.TryChildAt(
+                        loopContractsNode,
+                        (u64[0 2 ** 63 - 1])loopContractIndex,
+                        loopContractNode)
+                    || document.KindAt(loopContractNode) != JsonKind.Text
+                    || (AsciiLength(document.TextAt(loopContractNode)) != 0
+                        && (!PackageImageSourceBridgeAppendConst(sink, " ")
+                            || !PackageImageSourceBridgeAppend(
+                                sink,
+                                document.TextAt(loopContractNode)))))
+                {
+                    return false;
+                }
+
+                loopContractIndex = loopContractIndex + 1;
+            }
+
+            if (!PackageImageSourceBridgeAppendConst(sink, " (")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink)
+                || (hasConditionPattern
+                    && (!PackageImageSourceBridgeAppendConst(sink, " is ")
+                        || !PackageImageSourceBridgeRenderTypedPattern(
+                            document,
+                            templateNode,
+                            conditionPatternNode,
+                            0,
+                            sink)))
+                || !PackageImageSourceBridgeAppendConst(sink, ") {\n")
+                || !PackageImageSourceBridgeRenderTypedStatementArray(
+                    document,
+                    templateNode,
+                    bodyStatementsNode,
+                    bodyStatementCount,
+                    indentLevel + 1,
+                    sink)
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}"))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "if")
+        {
+            stack mut u64[0 2 ** 63 - 1] thenStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] elseStatementsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] conditionPatternNode = 0;
+            stack mut u32[0 max] thenStatementCount = 0;
+            stack mut u32[0 max] elseStatementCount = 0;
+            stack mut bool hasConditionPattern = false;
+            if (!hasExpression
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "ThenStatements",
+                    thenStatementsNode,
+                    thenStatementCount)
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    statementNode,
+                    "ElseStatements",
+                    elseStatementsNode,
+                    elseStatementCount)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    statementNode,
+                    "ConditionPattern",
+                    conditionPatternNode,
+                    hasConditionPattern)
+                || !PackageImageSourceBridgeAppendConst(sink, "if (")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink)
+                || (hasConditionPattern
+                    && (!PackageImageSourceBridgeAppendConst(sink, " is ")
+                        || !PackageImageSourceBridgeRenderTypedPattern(
+                            document,
+                            templateNode,
+                            conditionPatternNode,
+                            0,
+                            sink)))
+                || !PackageImageSourceBridgeAppendConst(sink, ") {\n")
+                || !PackageImageSourceBridgeRenderTypedStatementArray(
+                    document,
+                    templateNode,
+                    thenStatementsNode,
+                    thenStatementCount,
+                    indentLevel + 1,
+                    sink)
+                || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                || !PackageImageSourceBridgeAppendConst(sink, "}")
+                || (elseStatementCount != 0
+                    && (!PackageImageSourceBridgeAppendConst(sink, " else {\n")
+                        || !PackageImageSourceBridgeRenderTypedStatementArray(
+                            document,
+                            templateNode,
+                            elseStatementsNode,
+                            elseStatementCount,
+                            indentLevel + 1,
+                            sink)
+                        || !PackageImageSourceBridgeAppendIndent(sink, indentLevel)
+                        || !PackageImageSourceBridgeAppendConst(sink, "}"))))
+            {
+                return false;
+            }
+
+            isBlockStatement = true;
+        }
+        else if (statementKind == "local-variable")
+        {
+            if (!hasName
+                || AsciiLength(document.TextAt(nameNode)) == 0
+                || !hasType
+                || !hasExpression
+                || (isConstant
+                    ? !PackageImageSourceBridgeAppendConst(sink, "const ")
+                    : !hasStorageClass
+                        || AsciiLength(document.TextAt(storageClassNode)) == 0
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(storageClassNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, " ")
+                        || (isMutable
+                            && !PackageImageSourceBridgeAppendConst(sink, "mut ")))
+                || !PackageImageSourceBridgeRenderTypedTypeReference(
+                    document,
+                    typeNode,
+                    0,
+                    sink)
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, " = ")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else if (statementKind == "return")
+        {
+            if (!PackageImageSourceBridgeAppendConst(sink, "return")
+                || (hasExpression
+                    && (!PackageImageSourceBridgeAppendConst(sink, " ")
+                        || !PackageImageSourceBridgeRenderTypedExpression(
+                            document,
+                            templateNode,
+                            expressionNode,
+                            0,
+                            sink))))
+            {
+                return false;
+            }
+        }
+        else if (statementKind == "expression")
+        {
+            if (!hasExpression
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else if (statementKind == "assignment")
+        {
+            stack ascii assignmentOperator = hasAssignmentOperator
+                ? document.TextAt(assignmentOperatorNode)
+                : "=";
+            if (!hasExpression
+                || (!hasTargetExpression && !hasName)
+                || (assignmentOperator == "init ="
+                    && !PackageImageSourceBridgeAppendConst(sink, "init "))
+                || (hasTargetExpression
+                    ? !PackageImageSourceBridgeRenderTypedExpression(
+                        document,
+                        templateNode,
+                        targetExpressionNode,
+                        0,
+                        sink)
+                    : !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode)))
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(
+                    sink,
+                    assignmentOperator == "init =" ? "=" : assignmentOperator)
+                || !PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeRenderTypedExpression(
+                    document,
+                    templateNode,
+                    expressionNode,
+                    0,
+                    sink))
+            {
+                return false;
+            }
+        }
+        else if (statementKind == "break" || statementKind == "continue")
+        {
+            if (!PackageImageSourceBridgeAppend(sink, statementKind)
+                || (hasName
+                    && (!PackageImageSourceBridgeAppendConst(sink, " ")
+                        || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode)))))
+            {
+                return false;
+            }
+        }
+        else if (statementKind != "empty")
+        {
+            return false;
+        }
+
+        if (!(isBlockStatement
+                ? PackageImageSourceBridgeAppendConst(sink, "\n")
+                : PackageImageSourceBridgeAppendConst(sink, ";\n")))
+        {
+            return false;
+        }
+
+        statementIndex = statementIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypedOperationBody(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] templateNode,
+    u64[0 2 ** 63 - 1] typedBodyNode,
+    mut borrow OwnedAscii sink)
+{
+    sink.Clear();
+    stack mut u64[0 2 ** 63 - 1] statementsNode = 0;
+    stack mut u32[0 max] statementCount = 0;
+    return LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            typedBodyNode,
+            "Statements",
+            statementsNode,
+            statementCount)
+        && statementCount != 0
+        && PackageImageSourceBridgeAppendConst(sink, "{\n")
+        && PackageImageSourceBridgeRenderTypedStatementArray(
+            document,
+            templateNode,
+            statementsNode,
+            statementCount,
+            1,
+            sink)
+        && PackageImageSourceBridgeAppendConst(sink, "}");
+}
+
+internal fn bool PackageImageSourceBridgePrepareTemplateBody(
+    mut borrow JsonDocument document,
+    borrow PackageImageSourceBridgeTemplateContext context,
+    u64[0 2 ** 63 - 1] callableNode,
+    mut borrow OwnedAscii overloadKeyScratch,
+    mut borrow OwnedAscii typedBodyScratch,
+    out u64[0 2 ** 63 - 1] legacyBodyTextNode,
+    out bool hasLegacyBodyText,
+    out bool hasTypedBodyText)
+{
+    legacyBodyTextNode = 0;
+    hasLegacyBodyText = false;
+    hasTypedBodyText = false;
+    typedBodyScratch.Clear();
+    stack mut PackageImageSourceBridgeTemplateBodyMatch match = new();
+    if (!PackageImageSourceBridgeFindTemplateBody(
+            document,
+            context,
+            callableNode,
+            overloadKeyScratch,
+            match))
+    {
+        return false;
+    }
+
+    legacyBodyTextNode = match.LegacyBodyTextNode;
+    hasLegacyBodyText = match.HasLegacyBodyText;
+    if (!match.HasTypedBody)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] statementsNode = 0;
+    stack mut u32[0 max] statementCount = 0;
+    stack mut bool requiresBody = false;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            match.TypedBodyNode,
+            "Statements",
+            statementsNode,
+            statementCount)
+        || !PackageImageSourceBridgeTypedStatementArrayRequiresBody(
+            document,
+            statementsNode,
+            statementCount,
+            0,
+            requiresBody))
+    {
+        return false;
+    }
+
+    if (!requiresBody)
+    {
+        return true;
+    }
+
+    stack bool renderedTypedBody = PackageImageSourceBridgeRenderTypedOperationBody(
+        document,
+        match.TemplateNode,
+        match.TypedBodyNode,
+        typedBodyScratch);
+    hasTypedBodyText = renderedTypedBody;
+    return renderedTypedBody;
+}

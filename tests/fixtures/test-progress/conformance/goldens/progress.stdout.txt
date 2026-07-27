@@ -1,0 +1,18 @@
+run FirstPasses
+ok FirstPasses (1/10)
+run SecondFailsByDesign
+skipped SkippedOffPlatform: target does not match [Platform]
+run Adds[AddCases:0]
+ok Adds[AddCases:0] (4/10)
+run Adds[AddCases:1]
+ok Adds[AddCases:1] (5/10)
+run Adds[AddCases:2]
+ok Adds[AddCases:2] (6/10)
+run AlphaOne
+ok AlphaOne (7/10)
+run AlphaTwo
+ok AlphaTwo (8/10)
+run BetaOne
+ok BetaOne (9/10)
+run TenthPasses
+ok TenthPasses (10/10)

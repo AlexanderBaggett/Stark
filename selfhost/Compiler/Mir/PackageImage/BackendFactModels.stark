@@ -1,0 +1,2740 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.ModelKinds
+module Compiler.Mir.PackageImage.BackendFactModels
+
+// Native metadata, layout, type-reference, ABI, and function-effect fact
+// carriers. Their exact ranges, alias/ABI facts, and backend effect flags stay
+// in the same allocation-free table representations consumed by lowering.
+
+public struct LogicalPackageNativeMetadataFactTextRow
+{
+    LogicalPackageNativeMetadataFactTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageNativeMetadataFactTextRow()
+    {
+        self.TextKindValue = LogicalPackageNativeMetadataFactTextKind.NativeSource;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law LogicalPackageNativeMetadataFactTextKind TextKind(
+        borrow LogicalPackageNativeMetadataFactTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(
+        borrow LogicalPackageNativeMetadataFactTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(
+        borrow LogicalPackageNativeMetadataFactTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(
+        borrow LogicalPackageNativeMetadataFactTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageNativeDependencyRow
+{
+    LogicalPackageNativeDependencyKind KindValue;
+    u32[0 max] DependencyOrdinalValue;
+    u32[0 max] TextRowValue;
+
+    LogicalPackageNativeDependencyRow()
+    {
+        self.KindValue = LogicalPackageNativeDependencyKind.Source;
+        self.DependencyOrdinalValue = 0;
+        self.TextRowValue = 0;
+    }
+
+    public inline finite law LogicalPackageNativeDependencyKind Kind(
+        borrow LogicalPackageNativeDependencyRow self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law u32[0 max] DependencyOrdinal(
+        borrow LogicalPackageNativeDependencyRow self)
+    {
+        return self.DependencyOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TextRow(borrow LogicalPackageNativeDependencyRow self)
+    {
+        return self.TextRowValue;
+    }
+}
+
+public struct LogicalPackageLinkageRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] ObjectFileNameTextRowValue;
+    u32[0 max] FirstDefinedSymbolRowValue;
+    u32[0 max] DefinedSymbolRowCountValue;
+    u32[0 max] FirstReferencedSymbolRowValue;
+    u32[0 max] ReferencedSymbolRowCountValue;
+
+    LogicalPackageLinkageRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.ObjectFileNameTextRowValue = 0;
+        self.FirstDefinedSymbolRowValue = 0;
+        self.DefinedSymbolRowCountValue = 0;
+        self.FirstReferencedSymbolRowValue = 0;
+        self.ReferencedSymbolRowCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageLinkageRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ObjectFileNameTextRow(
+        borrow LogicalPackageLinkageRow self)
+    {
+        return self.ObjectFileNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] FirstDefinedSymbolRow(
+        borrow LogicalPackageLinkageRow self)
+    {
+        return self.FirstDefinedSymbolRowValue;
+    }
+
+    public inline finite law u32[0 max] DefinedSymbolRowCount(
+        borrow LogicalPackageLinkageRow self)
+    {
+        return self.DefinedSymbolRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstReferencedSymbolRow(
+        borrow LogicalPackageLinkageRow self)
+    {
+        return self.FirstReferencedSymbolRowValue;
+    }
+
+    public inline finite law u32[0 max] ReferencedSymbolRowCount(
+        borrow LogicalPackageLinkageRow self)
+    {
+        return self.ReferencedSymbolRowCountValue;
+    }
+}
+
+public struct LogicalPackageLinkageSymbolRow
+{
+    u32[0 max] LinkageRowValue;
+    u32[0 max] SymbolOrdinalValue;
+    u32[0 max] TextRowValue;
+
+    LogicalPackageLinkageSymbolRow()
+    {
+        self.LinkageRowValue = 0;
+        self.SymbolOrdinalValue = 0;
+        self.TextRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] LinkageRow(borrow LogicalPackageLinkageSymbolRow self)
+    {
+        return self.LinkageRowValue;
+    }
+
+    public inline finite law u32[0 max] SymbolOrdinal(borrow LogicalPackageLinkageSymbolRow self)
+    {
+        return self.SymbolOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TextRow(borrow LogicalPackageLinkageSymbolRow self)
+    {
+        return self.TextRowValue;
+    }
+}
+
+public struct LogicalPackageNativeMetadataFactGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageNativeMetadataFactTextRow> TextRows;
+    internal IrTable<LogicalPackageNativeDependencyRow> NativeDependencyRows;
+    internal IrTable<LogicalPackageLinkageRow> LinkageRows;
+    internal IrTable<LogicalPackageLinkageSymbolRow> DefinedSymbolRows;
+    internal IrTable<LogicalPackageLinkageSymbolRow> ReferencedSymbolRows;
+
+    LogicalPackageNativeMetadataFactGraph()
+    {
+        self.TextBytes = new();
+        self.TextRows = new();
+        self.NativeDependencyRows = new();
+        self.LinkageRows = new();
+        self.DefinedSymbolRows = new();
+        self.ReferencedSymbolRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] NativeDependencyRowCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.NativeDependencyRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LinkageRowCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.LinkageRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DefinedSymbolRowCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.DefinedSymbolRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ReferencedSymbolRowCount(
+        borrow LogicalPackageNativeMetadataFactGraph self)
+    {
+        return self.ReferencedSymbolRows.Count();
+    }
+
+    public finite law retborrow LogicalPackageNativeMetadataFactTextRow TextRowAt(
+        borrow LogicalPackageNativeMetadataFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageNativeDependencyRow NativeDependencyRowAt(
+        borrow LogicalPackageNativeMetadataFactGraph self,
+        u32[0 max] row)
+    {
+        return self.NativeDependencyRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageLinkageRow LinkageRowAt(
+        borrow LogicalPackageNativeMetadataFactGraph self,
+        u32[0 max] row)
+    {
+        return self.LinkageRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageLinkageSymbolRow DefinedSymbolRowAt(
+        borrow LogicalPackageNativeMetadataFactGraph self,
+        u32[0 max] row)
+    {
+        return self.DefinedSymbolRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageLinkageSymbolRow ReferencedSymbolRowAt(
+        borrow LogicalPackageNativeMetadataFactGraph self,
+        u32[0 max] row)
+    {
+        return self.ReferencedSymbolRows.Get(row);
+    }
+}
+
+public struct LogicalPackageFunctionMemoryEffectFacts
+{
+    bool ReadsArgumentMemoryValue;
+    bool WritesArgumentMemoryValue;
+    bool CapturesArgumentMemoryValue;
+    bool ReadsOtherMemoryValue;
+    bool WritesOtherMemoryValue;
+    bool InitializesArgumentMemoryValue;
+    bool HasPointeeDeadOnReturnArgumentValue;
+
+    LogicalPackageFunctionMemoryEffectFacts()
+    {
+        self.ReadsArgumentMemoryValue = false;
+        self.WritesArgumentMemoryValue = false;
+        self.CapturesArgumentMemoryValue = false;
+        self.ReadsOtherMemoryValue = false;
+        self.WritesOtherMemoryValue = false;
+        self.InitializesArgumentMemoryValue = false;
+        self.HasPointeeDeadOnReturnArgumentValue = false;
+    }
+
+    public inline finite law bool ReadsArgumentMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.ReadsArgumentMemoryValue;
+    }
+
+    public inline finite law bool WritesArgumentMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.WritesArgumentMemoryValue;
+    }
+
+    public inline finite law bool CapturesArgumentMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.CapturesArgumentMemoryValue;
+    }
+
+    public inline finite law bool ReadsOtherMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.ReadsOtherMemoryValue;
+    }
+
+    public inline finite law bool WritesOtherMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.WritesOtherMemoryValue;
+    }
+
+    public inline finite law bool InitializesArgumentMemory(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.InitializesArgumentMemoryValue;
+    }
+
+    public inline finite law bool HasPointeeDeadOnReturnArgument(
+        borrow LogicalPackageFunctionMemoryEffectFacts self)
+    {
+        return self.HasPointeeDeadOnReturnArgumentValue;
+    }
+}
+
+// Public concrete-layout fact graph model. Population and JSON
+// materialization helpers remain outside Models.
+
+public struct LogicalPackageLayoutFactTextRow
+{
+    LogicalPackageLayoutFactTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageLayoutFactTextRow()
+    {
+        self.TextKindValue = LogicalPackageLayoutFactTextKind.QualifiedTypeName;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law LogicalPackageLayoutFactTextKind TextKind(
+        borrow LogicalPackageLayoutFactTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(borrow LogicalPackageLayoutFactTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(borrow LogicalPackageLayoutFactTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(borrow LogicalPackageLayoutFactTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageConcreteTypeLayoutRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] LayoutOrdinalValue;
+    u32[0 max] QualifiedTypeNameTextRowValue;
+    u32[0 max] SizeBytesValue;
+    u32[0 max] AlignmentBytesValue;
+    u32[0 max] FirstFieldRowValue;
+    u32[0 max] FieldRowCountValue;
+
+    LogicalPackageConcreteTypeLayoutRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.LayoutOrdinalValue = 0;
+        self.QualifiedTypeNameTextRowValue = 0;
+        self.SizeBytesValue = 0;
+        self.AlignmentBytesValue = 0;
+        self.FirstFieldRowValue = 0;
+        self.FieldRowCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] LayoutOrdinal(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.LayoutOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] QualifiedTypeNameTextRow(
+        borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.QualifiedTypeNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] SizeBytes(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.SizeBytesValue;
+    }
+
+    public inline finite law u32[0 max] AlignmentBytes(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.AlignmentBytesValue;
+    }
+
+    public inline finite law u32[0 max] FirstFieldRow(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.FirstFieldRowValue;
+    }
+
+    public inline finite law u32[0 max] FieldRowCount(borrow LogicalPackageConcreteTypeLayoutRow self)
+    {
+        return self.FieldRowCountValue;
+    }
+}
+
+public struct LogicalPackageConcreteFieldLayoutRow
+{
+    u32[0 max] ConcreteLayoutRowValue;
+    u32[0 max] FieldOrdinalValue;
+    u32[0 max] NameTextRowValue;
+    u32[0 max] OffsetBytesValue;
+    u32[0 max] SizeBytesValue;
+    u32[0 max] NaturalAlignmentBytesValue;
+    u32[0 max] EffectiveAlignmentBytesValue;
+    bool IsMisalignedValue;
+
+    LogicalPackageConcreteFieldLayoutRow()
+    {
+        self.ConcreteLayoutRowValue = 0;
+        self.FieldOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+        self.OffsetBytesValue = 0;
+        self.SizeBytesValue = 0;
+        self.NaturalAlignmentBytesValue = 0;
+        self.EffectiveAlignmentBytesValue = 0;
+        self.IsMisalignedValue = false;
+    }
+
+    public inline finite law u32[0 max] ConcreteLayoutRow(
+        borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.ConcreteLayoutRowValue;
+    }
+
+    public inline finite law u32[0 max] FieldOrdinal(borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.FieldOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.NameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] OffsetBytes(borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.OffsetBytesValue;
+    }
+
+    public inline finite law u32[0 max] SizeBytes(borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.SizeBytesValue;
+    }
+
+    public inline finite law u32[0 max] NaturalAlignmentBytes(
+        borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.NaturalAlignmentBytesValue;
+    }
+
+    public inline finite law u32[0 max] EffectiveAlignmentBytes(
+        borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.EffectiveAlignmentBytesValue;
+    }
+
+    public inline finite law bool IsMisaligned(borrow LogicalPackageConcreteFieldLayoutRow self)
+    {
+        return self.IsMisalignedValue;
+    }
+}
+
+public struct LogicalPackageEnumLayoutRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] LayoutOrdinalValue;
+    u32[0 max] QualifiedTypeNameTextRowValue;
+    LogicalPackageEnumLayoutKind KindValue;
+    u32[0 max] KindTextRowValue;
+    u32[0 max] TagFieldNameTextRowValue;
+    u32[0 max] TagFieldTypeReferenceRowValue;
+    u32[0 max] FirstOrderedFieldRowValue;
+    u32[0 max] OrderedFieldRowCountValue;
+    u32[0 max] FirstVariantRowValue;
+    u32[0 max] VariantRowCountValue;
+
+    LogicalPackageEnumLayoutRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.LayoutOrdinalValue = 0;
+        self.QualifiedTypeNameTextRowValue = 0;
+        self.KindValue = LogicalPackageEnumLayoutKind.DirectTag;
+        self.KindTextRowValue = 0;
+        self.TagFieldNameTextRowValue = 0;
+        self.TagFieldTypeReferenceRowValue = 0;
+        self.FirstOrderedFieldRowValue = 0;
+        self.OrderedFieldRowCountValue = 0;
+        self.FirstVariantRowValue = 0;
+        self.VariantRowCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] LayoutOrdinal(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.LayoutOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] QualifiedTypeNameTextRow(
+        borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.QualifiedTypeNameTextRowValue;
+    }
+
+    public inline finite law LogicalPackageEnumLayoutKind Kind(
+        borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law u32[0 max] KindTextRow(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.KindTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TagFieldNameTextRow(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.TagFieldNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TagFieldTypeReferenceRow(
+        borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.TagFieldTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] FirstOrderedFieldRow(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.FirstOrderedFieldRowValue;
+    }
+
+    public inline finite law u32[0 max] OrderedFieldRowCount(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.OrderedFieldRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstVariantRow(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.FirstVariantRowValue;
+    }
+
+    public inline finite law u32[0 max] VariantRowCount(borrow LogicalPackageEnumLayoutRow self)
+    {
+        return self.VariantRowCountValue;
+    }
+}
+
+public struct LogicalPackageEnumOrderedFieldLayoutRow
+{
+    u32[0 max] EnumLayoutRowValue;
+    u32[0 max] FieldOrdinalValue;
+    u32[0 max] NameTextRowValue;
+    u32[0 max] TypeReferenceRowValue;
+
+    LogicalPackageEnumOrderedFieldLayoutRow()
+    {
+        self.EnumLayoutRowValue = 0;
+        self.FieldOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+        self.TypeReferenceRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] EnumLayoutRow(
+        borrow LogicalPackageEnumOrderedFieldLayoutRow self)
+    {
+        return self.EnumLayoutRowValue;
+    }
+
+    public inline finite law u32[0 max] FieldOrdinal(
+        borrow LogicalPackageEnumOrderedFieldLayoutRow self)
+    {
+        return self.FieldOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(
+        borrow LogicalPackageEnumOrderedFieldLayoutRow self)
+    {
+        return self.NameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(
+        borrow LogicalPackageEnumOrderedFieldLayoutRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+}
+
+public struct LogicalPackageEnumVariantLayoutRow
+{
+    u32[0 max] EnumLayoutRowValue;
+    u32[0 max] VariantOrdinalValue;
+    u32[0 max] NameTextRowValue;
+    u32[0 max] TagValueValue;
+    u32[0 max] FirstFieldRowValue;
+    u32[0 max] FieldRowCountValue;
+    bool UsesNamedFieldsValue;
+
+    LogicalPackageEnumVariantLayoutRow()
+    {
+        self.EnumLayoutRowValue = 0;
+        self.VariantOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+        self.TagValueValue = 0;
+        self.FirstFieldRowValue = 0;
+        self.FieldRowCountValue = 0;
+        self.UsesNamedFieldsValue = false;
+    }
+
+    public inline finite law u32[0 max] EnumLayoutRow(
+        borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.EnumLayoutRowValue;
+    }
+
+    public inline finite law u32[0 max] VariantOrdinal(
+        borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.VariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.NameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TagValue(borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.TagValueValue;
+    }
+
+    public inline finite law u32[0 max] FirstFieldRow(borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.FirstFieldRowValue;
+    }
+
+    public inline finite law u32[0 max] FieldRowCount(borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.FieldRowCountValue;
+    }
+
+    public inline finite law bool UsesNamedFields(borrow LogicalPackageEnumVariantLayoutRow self)
+    {
+        return self.UsesNamedFieldsValue;
+    }
+}
+
+public struct LogicalPackageEnumVariantFieldLayoutRow
+{
+    u32[0 max] EnumVariantRowValue;
+    u32[0 max] FieldOrdinalValue;
+    u32[0 max] SourcePositionValue;
+    u32[0 max] SourceFieldNameTextRowValue;
+    u32[0 max] StorageFieldNameTextRowValue;
+    u32[0 max] StorageFieldIndexValue;
+    u32[0 max] TypeReferenceRowValue;
+    bool HasSourceFieldNameValue;
+
+    LogicalPackageEnumVariantFieldLayoutRow()
+    {
+        self.EnumVariantRowValue = 0;
+        self.FieldOrdinalValue = 0;
+        self.SourcePositionValue = 0;
+        self.SourceFieldNameTextRowValue = 0;
+        self.StorageFieldNameTextRowValue = 0;
+        self.StorageFieldIndexValue = 0;
+        self.TypeReferenceRowValue = 0;
+        self.HasSourceFieldNameValue = false;
+    }
+
+    public inline finite law u32[0 max] EnumVariantRow(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.EnumVariantRowValue;
+    }
+
+    public inline finite law u32[0 max] FieldOrdinal(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.FieldOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] SourcePosition(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.SourcePositionValue;
+    }
+
+    public inline finite law bool HasSourceFieldName(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.HasSourceFieldNameValue;
+    }
+
+    public inline finite law u32[0 max] SourceFieldNameTextRow(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.SourceFieldNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] StorageFieldNameTextRow(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.StorageFieldNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] StorageFieldIndex(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.StorageFieldIndexValue;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(
+        borrow LogicalPackageEnumVariantFieldLayoutRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+}
+
+public struct LogicalPackageLayoutFactGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageLayoutFactTextRow> TextRows;
+    internal IrTable<LogicalPackageConcreteTypeLayoutRow> ConcreteLayoutRows;
+    internal IrTable<LogicalPackageConcreteFieldLayoutRow> ConcreteFieldRows;
+    internal IrTable<LogicalPackageEnumLayoutRow> EnumLayoutRows;
+    internal IrTable<LogicalPackageEnumOrderedFieldLayoutRow> EnumOrderedFieldRows;
+    internal IrTable<LogicalPackageEnumVariantLayoutRow> EnumVariantRows;
+    internal IrTable<LogicalPackageEnumVariantFieldLayoutRow> EnumVariantFieldRows;
+    internal LogicalPackageTypeReferenceGraph TypeReferences;
+
+    LogicalPackageLayoutFactGraph()
+    {
+        self.TextBytes = new();
+        self.TextRows = new();
+        self.ConcreteLayoutRows = new();
+        self.ConcreteFieldRows = new();
+        self.EnumLayoutRows = new();
+        self.EnumOrderedFieldRows = new();
+        self.EnumVariantRows = new();
+        self.EnumVariantFieldRows = new();
+        self.TypeReferences = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ConcreteLayoutRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.ConcreteLayoutRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ConcreteFieldRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.ConcreteFieldRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] EnumLayoutRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.EnumLayoutRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] EnumOrderedFieldRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.EnumOrderedFieldRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] EnumVariantRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.EnumVariantRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] EnumVariantFieldRowCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.EnumVariantFieldRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeReferenceCount(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.TypeReferences.TypeReferenceCount();
+    }
+
+    public finite law retborrow LogicalPackageLayoutFactTextRow TextRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageConcreteTypeLayoutRow ConcreteLayoutRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.ConcreteLayoutRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageConcreteFieldLayoutRow ConcreteFieldRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.ConcreteFieldRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageEnumLayoutRow EnumLayoutRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.EnumLayoutRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageEnumOrderedFieldLayoutRow EnumOrderedFieldRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.EnumOrderedFieldRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageEnumVariantLayoutRow EnumVariantRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.EnumVariantRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageEnumVariantFieldLayoutRow EnumVariantFieldRowAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.EnumVariantFieldRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceGraph TypeReferenceGraph(
+        borrow LogicalPackageLayoutFactGraph self)
+    {
+        return self.TypeReferences;
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceRow TypeReferenceAt(
+        borrow LogicalPackageLayoutFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeReferences.TypeReferenceAt(row);
+    }
+}
+
+// Public typed type-alias fact graph model. Population and JSON
+// materialization helpers remain outside Models.
+
+public struct LogicalPackageTypedTypeAliasFactTextRow
+{
+    LogicalPackageTypedTypeAliasFactTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageTypedTypeAliasFactTextRow()
+    {
+        self.TextKindValue = LogicalPackageTypedTypeAliasFactTextKind.GenericParameterName;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law LogicalPackageTypedTypeAliasFactTextKind TextKind(
+        borrow LogicalPackageTypedTypeAliasFactTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(
+        borrow LogicalPackageTypedTypeAliasFactTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(
+        borrow LogicalPackageTypedTypeAliasFactTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(
+        borrow LogicalPackageTypedTypeAliasFactTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageTypedTypeAliasRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeAliasOrdinalValue;
+    u32[0 max] TargetTypeReferenceRowValue;
+    u32[0 max] FirstGenericParameterRowValue;
+    u32[0 max] GenericParameterRowCountValue;
+    u32[0 max] FirstComptimeGenericParameterRowValue;
+    u32[0 max] ComptimeGenericParameterRowCountValue;
+
+    LogicalPackageTypedTypeAliasRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.TypeAliasOrdinalValue = 0;
+        self.TargetTypeReferenceRowValue = 0;
+        self.FirstGenericParameterRowValue = 0;
+        self.GenericParameterRowCountValue = 0;
+        self.FirstComptimeGenericParameterRowValue = 0;
+        self.ComptimeGenericParameterRowCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasOrdinal(borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.TypeAliasOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TargetTypeReferenceRow(borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.TargetTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] FirstGenericParameterRow(
+        borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.FirstGenericParameterRowValue;
+    }
+
+    public inline finite law u32[0 max] GenericParameterRowCount(
+        borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.GenericParameterRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstComptimeGenericParameterRow(
+        borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.FirstComptimeGenericParameterRowValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeGenericParameterRowCount(
+        borrow LogicalPackageTypedTypeAliasRow self)
+    {
+        return self.ComptimeGenericParameterRowCountValue;
+    }
+}
+
+public struct LogicalPackageTypedTypeAliasGenericParameterRow
+{
+    u32[0 max] TypeAliasRowValue;
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeAliasOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+    u32[0 max] NameTextRowValue;
+
+    LogicalPackageTypedTypeAliasGenericParameterRow()
+    {
+        self.TypeAliasRowValue = 0;
+        self.ModuleOrdinalValue = 0;
+        self.TypeAliasOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] TypeAliasRow(
+        borrow LogicalPackageTypedTypeAliasGenericParameterRow self)
+    {
+        return self.TypeAliasRowValue;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageTypedTypeAliasGenericParameterRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasOrdinal(
+        borrow LogicalPackageTypedTypeAliasGenericParameterRow self)
+    {
+        return self.TypeAliasOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(
+        borrow LogicalPackageTypedTypeAliasGenericParameterRow self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(
+        borrow LogicalPackageTypedTypeAliasGenericParameterRow self)
+    {
+        return self.NameTextRowValue;
+    }
+}
+
+public struct LogicalPackageTypedTypeAliasComptimeGenericParameterRow
+{
+    u32[0 max] TypeAliasRowValue;
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] TypeAliasOrdinalValue;
+    u32[0 max] ParameterOrdinalValue;
+    u32[0 max] NameTextRowValue;
+    u32[0 max] TypeReferenceRowValue;
+
+    LogicalPackageTypedTypeAliasComptimeGenericParameterRow()
+    {
+        self.TypeAliasRowValue = 0;
+        self.ModuleOrdinalValue = 0;
+        self.TypeAliasOrdinalValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+        self.TypeReferenceRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] TypeAliasRow(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.TypeAliasRowValue;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeAliasOrdinal(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.TypeAliasOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.NameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(
+        borrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+}
+
+public struct LogicalPackageTypedTypeAliasFactGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageTypedTypeAliasFactTextRow> TextRows;
+    internal IrTable<LogicalPackageTypedTypeAliasRow> TypeAliasRows;
+    internal IrTable<LogicalPackageTypedTypeAliasGenericParameterRow> GenericParameterRows;
+    internal IrTable<LogicalPackageTypedTypeAliasComptimeGenericParameterRow> ComptimeGenericParameterRows;
+    internal LogicalPackageTypeReferenceGraph TypeReferences;
+
+    LogicalPackageTypedTypeAliasFactGraph()
+    {
+        self.TextBytes = new();
+        self.TextRows = new();
+        self.TypeAliasRows = new();
+        self.GenericParameterRows = new();
+        self.ComptimeGenericParameterRows = new();
+        self.TypeReferences = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeAliasRowCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.TypeAliasRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] GenericParameterRowCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.GenericParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ComptimeGenericParameterRowCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.ComptimeGenericParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeReferenceCount(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.TypeReferences.TypeReferenceCount();
+    }
+
+    public finite law retborrow LogicalPackageTypedTypeAliasFactTextRow TextRowAt(
+        borrow LogicalPackageTypedTypeAliasFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypedTypeAliasRow TypeAliasRowAt(
+        borrow LogicalPackageTypedTypeAliasFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeAliasRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypedTypeAliasGenericParameterRow GenericParameterRowAt(
+        borrow LogicalPackageTypedTypeAliasFactGraph self,
+        u32[0 max] row)
+    {
+        return self.GenericParameterRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypedTypeAliasComptimeGenericParameterRow
+        ComptimeGenericParameterRowAt(
+            borrow LogicalPackageTypedTypeAliasFactGraph self,
+            u32[0 max] row)
+    {
+        return self.ComptimeGenericParameterRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceGraph TypeReferenceGraph(
+        borrow LogicalPackageTypedTypeAliasFactGraph self)
+    {
+        return self.TypeReferences;
+    }
+}
+
+// Public durable type-reference graph model and parser work-item shapes.
+// Byte/text population and JSON materialization helpers remain outside Models.
+
+public struct LogicalPackageTypeReferenceTextRow
+{
+    u32[0 max] TypeReferenceRowValue;
+    LogicalPackageTypeReferenceTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageTypeReferenceTextRow()
+    {
+        self.TypeReferenceRowValue = 0;
+        self.TextKindValue = LogicalPackageTypeReferenceTextKind.Kind;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(borrow LogicalPackageTypeReferenceTextRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+
+    public inline finite law LogicalPackageTypeReferenceTextKind TextKind(borrow LogicalPackageTypeReferenceTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(borrow LogicalPackageTypeReferenceTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(borrow LogicalPackageTypeReferenceTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(borrow LogicalPackageTypeReferenceTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceChildRow
+{
+    u32[0 max] ParentTypeReferenceRowValue;
+    u32[0 max] ChildTypeReferenceRowValue;
+    LogicalPackageTypeReferenceChildKind ChildKindValue;
+    u32[0 max] ChildOrdinalValue;
+
+    LogicalPackageTypeReferenceChildRow()
+    {
+        self.ParentTypeReferenceRowValue = 0;
+        self.ChildTypeReferenceRowValue = 0;
+        self.ChildKindValue = LogicalPackageTypeReferenceChildKind.Root;
+        self.ChildOrdinalValue = 0;
+    }
+
+    public inline finite law u32[0 max] ParentTypeReferenceRow(borrow LogicalPackageTypeReferenceChildRow self)
+    {
+        return self.ParentTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] ChildTypeReferenceRow(borrow LogicalPackageTypeReferenceChildRow self)
+    {
+        return self.ChildTypeReferenceRowValue;
+    }
+
+    public inline finite law LogicalPackageTypeReferenceChildKind ChildKind(borrow LogicalPackageTypeReferenceChildRow self)
+    {
+        return self.ChildKindValue;
+    }
+
+    public inline finite law u32[0 max] ChildOrdinal(borrow LogicalPackageTypeReferenceChildRow self)
+    {
+        return self.ChildOrdinalValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceComptimeValueArgumentRow
+{
+    u32[0 max] TypeReferenceRowValue;
+    u32[0 max] ArgumentOrdinalValue;
+    u32[0 max] ParameterNameTextRowValue;
+    u32[0 max] IntegerValueTextRowValue;
+    u32[0 max] TypeChildTypeReferenceRowValue;
+    u32[0 max] SymbolicSourceNameTextRowValue;
+    bool IsSymbolicValue;
+    bool HasSymbolicSourceNameValue;
+
+    LogicalPackageTypeReferenceComptimeValueArgumentRow()
+    {
+        self.TypeReferenceRowValue = 0;
+        self.ArgumentOrdinalValue = 0;
+        self.ParameterNameTextRowValue = 0;
+        self.IntegerValueTextRowValue = 0;
+        self.TypeChildTypeReferenceRowValue = 0;
+        self.SymbolicSourceNameTextRowValue = 0;
+        self.IsSymbolicValue = false;
+        self.HasSymbolicSourceNameValue = false;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] ArgumentOrdinal(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.ArgumentOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterNameTextRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.ParameterNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] IntegerValueTextRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.IntegerValueTextRowValue;
+    }
+
+    public inline finite law bool HasTypeChildTypeReferenceRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.TypeChildTypeReferenceRowValue != 0;
+    }
+
+    public inline finite law u32[0 max] TypeChildTypeReferenceRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.TypeChildTypeReferenceRowValue;
+    }
+
+    public inline finite law bool IsSymbolic(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.IsSymbolicValue;
+    }
+
+    public inline finite law bool HasSymbolicSourceName(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.HasSymbolicSourceNameValue;
+    }
+
+    public inline finite law u32[0 max] SymbolicSourceNameTextRow(borrow LogicalPackageTypeReferenceComptimeValueArgumentRow self)
+    {
+        return self.SymbolicSourceNameTextRowValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceParameterGroupRow
+{
+    u32[0 max] TypeReferenceRowValue;
+    LogicalPackageTypeReferenceParameterGroupKind GroupKindValue;
+    u32[0 max] GroupOrdinalValue;
+    u32[0 max] FirstNameRowValue;
+    u32[0 max] NameRowCountValue;
+    u32[0 max] FirstRegionRowValue;
+    u32[0 max] RegionRowCountValue;
+
+    LogicalPackageTypeReferenceParameterGroupRow()
+    {
+        self.TypeReferenceRowValue = 0;
+        self.GroupKindValue = LogicalPackageTypeReferenceParameterGroupKind.Disjoint;
+        self.GroupOrdinalValue = 0;
+        self.FirstNameRowValue = 0;
+        self.NameRowCountValue = 0;
+        self.FirstRegionRowValue = 0;
+        self.RegionRowCountValue = 0;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+
+    public inline finite law LogicalPackageTypeReferenceParameterGroupKind GroupKind(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.GroupKindValue;
+    }
+
+    public inline finite law u32[0 max] GroupOrdinal(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.GroupOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FirstNameRow(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.FirstNameRowValue;
+    }
+
+    public inline finite law u32[0 max] NameRowCount(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.NameRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstRegionRow(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.FirstRegionRowValue;
+    }
+
+    public inline finite law u32[0 max] RegionRowCount(borrow LogicalPackageTypeReferenceParameterGroupRow self)
+    {
+        return self.RegionRowCountValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceParameterGroupNameRow
+{
+    u32[0 max] ParameterGroupRowValue;
+    u32[0 max] ParameterOrdinalValue;
+    u32[0 max] NameTextRowValue;
+
+    LogicalPackageTypeReferenceParameterGroupNameRow()
+    {
+        self.ParameterGroupRowValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.NameTextRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] ParameterGroupRow(borrow LogicalPackageTypeReferenceParameterGroupNameRow self)
+    {
+        return self.ParameterGroupRowValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(borrow LogicalPackageTypeReferenceParameterGroupNameRow self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] NameTextRow(borrow LogicalPackageTypeReferenceParameterGroupNameRow self)
+    {
+        return self.NameTextRowValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceParameterGroupRegionRow
+{
+    u32[0 max] ParameterGroupRowValue;
+    u32[0 max] RegionOrdinalValue;
+    u32[0 max] ParameterNameTextRowValue;
+    u32[0 max] StartExpressionTextRowValue;
+    u32[0 max] CountExpressionTextRowValue;
+    bool HasStartExpressionValue;
+    bool HasCountExpressionValue;
+
+    LogicalPackageTypeReferenceParameterGroupRegionRow()
+    {
+        self.ParameterGroupRowValue = 0;
+        self.RegionOrdinalValue = 0;
+        self.ParameterNameTextRowValue = 0;
+        self.StartExpressionTextRowValue = 0;
+        self.CountExpressionTextRowValue = 0;
+        self.HasStartExpressionValue = false;
+        self.HasCountExpressionValue = false;
+    }
+
+    public inline finite law u32[0 max] ParameterGroupRow(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.ParameterGroupRowValue;
+    }
+
+    public inline finite law u32[0 max] RegionOrdinal(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.RegionOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ParameterNameTextRow(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.ParameterNameTextRowValue;
+    }
+
+    public inline finite law bool HasStartExpression(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.HasStartExpressionValue;
+    }
+
+    public inline finite law u32[0 max] StartExpressionTextRow(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.StartExpressionTextRowValue;
+    }
+
+    public inline finite law bool HasCountExpression(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.HasCountExpressionValue;
+    }
+
+    public inline finite law u32[0 max] CountExpressionTextRow(borrow LogicalPackageTypeReferenceParameterGroupRegionRow self)
+    {
+        return self.CountExpressionTextRowValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceRow
+{
+    LogicalPackageTypeReferenceSummary SummaryValue;
+    u32[0 max] ParentTypeReferenceRowValue;
+    LogicalPackageTypeReferenceChildKind ParentChildKindValue;
+    u32[0 max] ParentChildOrdinalValue;
+    u32[0 max] FirstTextRowValue;
+    u32[0 max] TextRowCountValue;
+    u32[0 max] FirstChildRowValue;
+    u32[0 max] ChildRowCountValue;
+    u32[0 max] FirstComptimeValueArgumentRowValue;
+    u32[0 max] ComptimeValueArgumentRowCountValue;
+    u32[0 max] FirstParameterGroupRowValue;
+    u32[0 max] ParameterGroupRowCountValue;
+
+    LogicalPackageTypeReferenceRow()
+    {
+        self.SummaryValue = new();
+        self.ParentTypeReferenceRowValue = 0;
+        self.ParentChildKindValue = LogicalPackageTypeReferenceChildKind.Root;
+        self.ParentChildOrdinalValue = 0;
+        self.FirstTextRowValue = 0;
+        self.TextRowCountValue = 0;
+        self.FirstChildRowValue = 0;
+        self.ChildRowCountValue = 0;
+        self.FirstComptimeValueArgumentRowValue = 0;
+        self.ComptimeValueArgumentRowCountValue = 0;
+        self.FirstParameterGroupRowValue = 0;
+        self.ParameterGroupRowCountValue = 0;
+    }
+
+    public inline finite law LogicalPackageTypeReferenceSummary Summary(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.SummaryValue;
+    }
+
+    public inline finite law u32[0 max] ParentTypeReferenceRow(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ParentTypeReferenceRowValue;
+    }
+
+    public inline finite law LogicalPackageTypeReferenceChildKind ParentChildKind(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ParentChildKindValue;
+    }
+
+    public inline finite law u32[0 max] ParentChildOrdinal(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ParentChildOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FirstTextRow(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.FirstTextRowValue;
+    }
+
+    public inline finite law u32[0 max] TextRowCount(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.TextRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstChildRow(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.FirstChildRowValue;
+    }
+
+    public inline finite law u32[0 max] ChildRowCount(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ChildRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstComptimeValueArgumentRow(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.FirstComptimeValueArgumentRowValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeValueArgumentRowCount(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ComptimeValueArgumentRowCountValue;
+    }
+
+    public inline finite law u32[0 max] FirstParameterGroupRow(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.FirstParameterGroupRowValue;
+    }
+
+    public inline finite law u32[0 max] ParameterGroupRowCount(borrow LogicalPackageTypeReferenceRow self)
+    {
+        return self.ParameterGroupRowCountValue;
+    }
+}
+
+public struct LogicalPackageTypeReferenceGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageTypeReferenceRow> TypeReferenceRows;
+    internal IrTable<LogicalPackageTypeReferenceTextRow> TextRows;
+    internal IrTable<LogicalPackageTypeReferenceChildRow> ChildRows;
+    internal IrTable<LogicalPackageTypeReferenceComptimeValueArgumentRow> ComptimeValueArgumentRows;
+    internal IrTable<LogicalPackageTypeReferenceParameterGroupRow> ParameterGroupRows;
+    internal IrTable<LogicalPackageTypeReferenceParameterGroupNameRow> ParameterGroupNameRows;
+    internal IrTable<LogicalPackageTypeReferenceParameterGroupRegionRow> ParameterGroupRegionRows;
+
+    LogicalPackageTypeReferenceGraph()
+    {
+        self.TextBytes = new();
+        self.TypeReferenceRows = new();
+        self.TextRows = new();
+        self.ChildRows = new();
+        self.ComptimeValueArgumentRows = new();
+        self.ParameterGroupRows = new();
+        self.ParameterGroupNameRows = new();
+        self.ParameterGroupRegionRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeReferenceCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.TypeReferenceRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ChildRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.ChildRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ComptimeValueArgumentRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.ComptimeValueArgumentRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ParameterGroupRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.ParameterGroupRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ParameterGroupNameRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.ParameterGroupNameRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ParameterGroupRegionRowCount(borrow LogicalPackageTypeReferenceGraph self)
+    {
+        return self.ParameterGroupRegionRows.Count();
+    }
+
+    public inline finite law bool ContainsTypeReference(borrow LogicalPackageTypeReferenceGraph self, u32[0 max] row)
+    {
+        return self.TypeReferenceRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsTextRow(borrow LogicalPackageTypeReferenceGraph self, u32[0 max] row)
+    {
+        return self.TextRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsChildRow(borrow LogicalPackageTypeReferenceGraph self, u32[0 max] row)
+    {
+        return self.ChildRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsComptimeValueArgumentRow(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ComptimeValueArgumentRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsParameterGroupRow(borrow LogicalPackageTypeReferenceGraph self, u32[0 max] row)
+    {
+        return self.ParameterGroupRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsParameterGroupNameRow(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterGroupNameRows.Contains(row);
+    }
+
+    public inline finite law bool ContainsParameterGroupRegionRow(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterGroupRegionRows.Contains(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceRow TypeReferenceAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeReferenceRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceTextRow TextRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceChildRow ChildRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ChildRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceComptimeValueArgumentRow ComptimeValueArgumentRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ComptimeValueArgumentRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceParameterGroupRow ParameterGroupRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterGroupRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceParameterGroupNameRow ParameterGroupNameRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterGroupNameRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceParameterGroupRegionRow ParameterGroupRegionRowAt(
+        borrow LogicalPackageTypeReferenceGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterGroupRegionRows.Get(row);
+    }
+}
+
+internal struct LogicalPackageTypeReferenceWorkItem
+{
+    u64[0 2 ** 63 - 1] NodeValue;
+    u32[0 max] ParentTypeReferenceRowValue;
+    LogicalPackageTypeReferenceChildKind ParentChildKindValue;
+    u32[0 max] ParentChildOrdinalValue;
+
+    LogicalPackageTypeReferenceWorkItem()
+    {
+        self.NodeValue = 0;
+        self.ParentTypeReferenceRowValue = 0;
+        self.ParentChildKindValue = LogicalPackageTypeReferenceChildKind.Root;
+        self.ParentChildOrdinalValue = 0;
+    }
+}
+
+internal struct LogicalPackageTypedConstantInitializerWorkItem
+{
+    u64[0 2 ** 63 - 1] NodeValue;
+    u32[0 max] ParentInitializerRowValue;
+    u32[0 max] ParentChildOrdinalValue;
+
+    LogicalPackageTypedConstantInitializerWorkItem()
+    {
+        self.NodeValue = 0;
+        self.ParentInitializerRowValue = 0;
+        self.ParentChildOrdinalValue = 0;
+    }
+}
+
+public struct LogicalPackageTypeReferenceSummary
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] DeclarationOrdinalValue;
+    u32[0 max] MethodOrdinalValue;
+    u32[0 max] VariantOrdinalValue;
+    LogicalPackageTypedDeclarationKind DeclarationKindValue;
+    LogicalPackageTypedTypeReferenceSource SourceValue;
+    u32[0 max] PayloadOrdinalValue;
+    u32[0 max] TypeArgumentCountValue;
+    u32[0 max] ComptimeValueArgumentCountValue;
+    u32[0 max] ParameterTypeCountValue;
+    u32[0 max] ParameterRawPointerElementCountExpressionCountValue;
+    u32[0 max] DisjointParameterGroupCountValue;
+    u32[0 max] OverlapParameterGroupCountValue;
+    u32[0 max] SameParameterGroupCountValue;
+    u32[0 max] PointeeDeadOnReturnParameterNameCountValue;
+    u32[0 max] BitWidthValue;
+    u32[0 max] FixedLengthValue;
+    bool HasNameValue;
+    bool HasBitWidthValue;
+    bool HasRangeMinValue;
+    bool HasRangeMaxValue;
+    bool HasIsUnsignedValue;
+    bool IsUnsignedValue;
+    bool IsMutablePointerValue;
+    bool HasBorrowKindValue;
+    bool HasAccessKindValue;
+    bool HasInitializationKindValue;
+    bool IsMutableViewValue;
+    bool HasFixedLengthValue;
+    bool HasFixedLengthParameterNameValue;
+    bool HasElementTypeValue;
+    bool HasFunctionKindValue;
+    bool HasFunctionAbiValue;
+    bool HasFunctionIsUnsafeValue;
+    bool FunctionIsUnsafeValue;
+    bool HasFunctionIsTailCallableValue;
+    bool FunctionIsTailCallableValue;
+    bool HasClosureStorageKindValue;
+    bool HasClosureCallCapabilityValue;
+    bool HasDynTraitStorageKindValue;
+    bool HasReturnTypeValue;
+    bool HasAssociatedOwnerTypeValue;
+    bool HasAssociatedTypeNameValue;
+    bool HasSourceAliasNameValue;
+
+    LogicalPackageTypeReferenceSummary()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.DeclarationOrdinalValue = 0;
+        self.MethodOrdinalValue = 0;
+        self.VariantOrdinalValue = 0;
+        self.DeclarationKindValue = LogicalPackageTypedDeclarationKind.TypeAlias;
+        self.SourceValue = LogicalPackageTypedTypeReferenceSource.TypeAliasTarget;
+        self.PayloadOrdinalValue = 0;
+        self.TypeArgumentCountValue = 0;
+        self.ComptimeValueArgumentCountValue = 0;
+        self.ParameterTypeCountValue = 0;
+        self.ParameterRawPointerElementCountExpressionCountValue = 0;
+        self.DisjointParameterGroupCountValue = 0;
+        self.OverlapParameterGroupCountValue = 0;
+        self.SameParameterGroupCountValue = 0;
+        self.PointeeDeadOnReturnParameterNameCountValue = 0;
+        self.BitWidthValue = 0;
+        self.FixedLengthValue = 0;
+        self.HasNameValue = false;
+        self.HasBitWidthValue = false;
+        self.HasRangeMinValue = false;
+        self.HasRangeMaxValue = false;
+        self.HasIsUnsignedValue = false;
+        self.IsUnsignedValue = false;
+        self.IsMutablePointerValue = false;
+        self.HasBorrowKindValue = false;
+        self.HasAccessKindValue = false;
+        self.HasInitializationKindValue = false;
+        self.IsMutableViewValue = false;
+        self.HasFixedLengthValue = false;
+        self.HasFixedLengthParameterNameValue = false;
+        self.HasElementTypeValue = false;
+        self.HasFunctionKindValue = false;
+        self.HasFunctionAbiValue = false;
+        self.HasFunctionIsUnsafeValue = false;
+        self.FunctionIsUnsafeValue = false;
+        self.HasFunctionIsTailCallableValue = false;
+        self.FunctionIsTailCallableValue = false;
+        self.HasClosureStorageKindValue = false;
+        self.HasClosureCallCapabilityValue = false;
+        self.HasDynTraitStorageKindValue = false;
+        self.HasReturnTypeValue = false;
+        self.HasAssociatedOwnerTypeValue = false;
+        self.HasAssociatedTypeNameValue = false;
+        self.HasSourceAliasNameValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] DeclarationOrdinal(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.DeclarationOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] MethodOrdinal(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.MethodOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] VariantOrdinal(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.VariantOrdinalValue;
+    }
+
+    public inline finite law LogicalPackageTypedDeclarationKind DeclarationKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.DeclarationKindValue;
+    }
+
+    public inline finite law LogicalPackageTypedTypeReferenceSource Source(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.SourceValue;
+    }
+
+    public inline finite law u32[0 max] PayloadOrdinal(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.PayloadOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeArgumentCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.TypeArgumentCountValue;
+    }
+
+    public inline finite law u32[0 max] ComptimeValueArgumentCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.ComptimeValueArgumentCountValue;
+    }
+
+    public inline finite law u32[0 max] ParameterTypeCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.ParameterTypeCountValue;
+    }
+
+    public inline finite law u32[0 max] ParameterRawPointerElementCountExpressionCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.ParameterRawPointerElementCountExpressionCountValue;
+    }
+
+    public inline finite law u32[0 max] DisjointParameterGroupCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.DisjointParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] OverlapParameterGroupCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.OverlapParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] SameParameterGroupCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.SameParameterGroupCountValue;
+    }
+
+    public inline finite law u32[0 max] PointeeDeadOnReturnParameterNameCount(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.PointeeDeadOnReturnParameterNameCountValue;
+    }
+
+    public inline finite law bool HasName(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasNameValue;
+    }
+
+    public inline finite law bool HasBitWidth(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasBitWidthValue;
+    }
+
+    public inline finite law u32[0 max] BitWidth(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.BitWidthValue;
+    }
+
+    public inline finite law bool HasRangeMin(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasRangeMinValue;
+    }
+
+    public inline finite law bool HasRangeMax(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasRangeMaxValue;
+    }
+
+    public inline finite law bool HasIsUnsigned(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasIsUnsignedValue;
+    }
+
+    public inline finite law bool IsUnsigned(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.IsUnsignedValue;
+    }
+
+    public inline finite law bool IsMutablePointer(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.IsMutablePointerValue;
+    }
+
+    public inline finite law bool HasBorrowKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasBorrowKindValue;
+    }
+
+    public inline finite law bool HasAccessKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasAccessKindValue;
+    }
+
+    public inline finite law bool HasInitializationKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasInitializationKindValue;
+    }
+
+    public inline finite law bool IsMutableView(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.IsMutableViewValue;
+    }
+
+    public inline finite law bool HasFixedLength(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFixedLengthValue;
+    }
+
+    public inline finite law u32[0 max] FixedLength(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.FixedLengthValue;
+    }
+
+    public inline finite law bool HasFixedLengthParameterName(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFixedLengthParameterNameValue;
+    }
+
+    public inline finite law bool HasElementType(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasElementTypeValue;
+    }
+
+    public inline finite law bool HasFunctionKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFunctionKindValue;
+    }
+
+    public inline finite law bool HasFunctionAbi(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFunctionAbiValue;
+    }
+
+    public inline finite law bool HasFunctionIsUnsafe(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFunctionIsUnsafeValue;
+    }
+
+    public inline finite law bool FunctionIsUnsafe(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.FunctionIsUnsafeValue;
+    }
+
+    public inline finite law bool HasFunctionIsTailCallable(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasFunctionIsTailCallableValue;
+    }
+
+    public inline finite law bool FunctionIsTailCallable(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.FunctionIsTailCallableValue;
+    }
+
+    public inline finite law bool HasClosureStorageKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasClosureStorageKindValue;
+    }
+
+    public inline finite law bool HasClosureCallCapability(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasClosureCallCapabilityValue;
+    }
+
+    public inline finite law bool HasDynTraitStorageKind(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasDynTraitStorageKindValue;
+    }
+
+    public inline finite law bool HasReturnType(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasReturnTypeValue;
+    }
+
+    public inline finite law bool HasAssociatedOwnerType(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasAssociatedOwnerTypeValue;
+    }
+
+    public inline finite law bool HasAssociatedTypeName(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasAssociatedTypeNameValue;
+    }
+
+    public inline finite law bool HasSourceAliasName(borrow LogicalPackageTypeReferenceSummary self)
+    {
+        return self.HasSourceAliasNameValue;
+    }
+}
+
+// Public ABI fact graph model. Byte/text population and JSON materialization
+// helpers remain outside Models.
+
+public struct LogicalPackageAbiFactTextRow
+{
+    LogicalPackageAbiFactTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageAbiFactTextRow()
+    {
+        self.TextKindValue = LogicalPackageAbiFactTextKind.QualifiedResolvedName;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law LogicalPackageAbiFactTextKind TextKind(
+        borrow LogicalPackageAbiFactTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(borrow LogicalPackageAbiFactTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(borrow LogicalPackageAbiFactTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(borrow LogicalPackageAbiFactTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageAbiFunctionRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] AbiFunctionOrdinalValue;
+    u32[0 max] QualifiedResolvedNameTextRowValue;
+    u32[0 max] SymbolNameTextRowValue;
+    u32[0 max] SourceReturnTypeReferenceRowValue;
+    u32[0 max] LlvmReturnTypeReferenceRowValue;
+    u32[0 max] FirstParameterRowValue;
+    u32[0 max] ParameterRowCountValue;
+    u32[0 max] SourceNameTextRowValue;
+    u32[0 max] FfiAbiTextRowValue;
+    u32[0 max] LinkNameTextRowValue;
+    bool IsFfiValue;
+    bool UsesFastCallingConventionValue;
+    bool IsVarargsValue;
+    bool UsesTailCallingConventionValue;
+    bool HasSourceNameValue;
+    bool HasFfiAbiValue;
+    bool HasLinkNameValue;
+
+    LogicalPackageAbiFunctionRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.AbiFunctionOrdinalValue = 0;
+        self.QualifiedResolvedNameTextRowValue = 0;
+        self.SymbolNameTextRowValue = 0;
+        self.SourceReturnTypeReferenceRowValue = 0;
+        self.LlvmReturnTypeReferenceRowValue = 0;
+        self.FirstParameterRowValue = 0;
+        self.ParameterRowCountValue = 0;
+        self.SourceNameTextRowValue = 0;
+        self.FfiAbiTextRowValue = 0;
+        self.LinkNameTextRowValue = 0;
+        self.IsFfiValue = false;
+        self.UsesFastCallingConventionValue = false;
+        self.IsVarargsValue = false;
+        self.UsesTailCallingConventionValue = false;
+        self.HasSourceNameValue = false;
+        self.HasFfiAbiValue = false;
+        self.HasLinkNameValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] AbiFunctionOrdinal(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.AbiFunctionOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] QualifiedResolvedNameTextRow(
+        borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.QualifiedResolvedNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] SymbolNameTextRow(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.SymbolNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] SourceReturnTypeReferenceRow(
+        borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.SourceReturnTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] LlvmReturnTypeReferenceRow(
+        borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.LlvmReturnTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] FirstParameterRow(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.FirstParameterRowValue;
+    }
+
+    public inline finite law u32[0 max] ParameterRowCount(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.ParameterRowCountValue;
+    }
+
+    public inline finite law bool IsFfi(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.IsFfiValue;
+    }
+
+    public inline finite law bool UsesFastCallingConvention(
+        borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.UsesFastCallingConventionValue;
+    }
+
+    public inline finite law bool IsVarargs(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.IsVarargsValue;
+    }
+
+    public inline finite law bool UsesTailCallingConvention(
+        borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.UsesTailCallingConventionValue;
+    }
+
+    public inline finite law bool HasSourceName(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.HasSourceNameValue;
+    }
+
+    public inline finite law u32[0 max] SourceNameTextRow(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.SourceNameTextRowValue;
+    }
+
+    public inline finite law bool HasFfiAbi(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.HasFfiAbiValue;
+    }
+
+    public inline finite law u32[0 max] FfiAbiTextRow(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.FfiAbiTextRowValue;
+    }
+
+    public inline finite law bool HasLinkName(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.HasLinkNameValue;
+    }
+
+    public inline finite law u32[0 max] LinkNameTextRow(borrow LogicalPackageAbiFunctionRow self)
+    {
+        return self.LinkNameTextRowValue;
+    }
+}
+
+public struct LogicalPackageAbiParameterRow
+{
+    u32[0 max] AbiFunctionRowValue;
+    u32[0 max] ParameterOrdinalValue;
+    u32[0 max] SourceNameTextRowValue;
+    u32[0 max] LlvmNameTextRowValue;
+    u32[0 max] SourceTypeReferenceRowValue;
+    u32[0 max] LlvmTypeReferenceRowValue;
+    LogicalPackageAbiParameterKind KindValue;
+    u32[0 max] RawPointerElementCountExpressionTextRowValue;
+    u32[0 max] FirstLlvmParameterTypeRowValue;
+    u32[0 max] LlvmParameterTypeRowCountValue;
+    bool HasRawPointerElementCountExpressionValue;
+
+    LogicalPackageAbiParameterRow()
+    {
+        self.AbiFunctionRowValue = 0;
+        self.ParameterOrdinalValue = 0;
+        self.SourceNameTextRowValue = 0;
+        self.LlvmNameTextRowValue = 0;
+        self.SourceTypeReferenceRowValue = 0;
+        self.LlvmTypeReferenceRowValue = 0;
+        self.KindValue = LogicalPackageAbiParameterKind.Direct;
+        self.RawPointerElementCountExpressionTextRowValue = 0;
+        self.FirstLlvmParameterTypeRowValue = 0;
+        self.LlvmParameterTypeRowCountValue = 0;
+        self.HasRawPointerElementCountExpressionValue = false;
+    }
+
+    public inline finite law u32[0 max] AbiFunctionRow(borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.AbiFunctionRowValue;
+    }
+
+    public inline finite law u32[0 max] ParameterOrdinal(borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.ParameterOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] SourceNameTextRow(borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.SourceNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] LlvmNameTextRow(borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.LlvmNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] SourceTypeReferenceRow(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.SourceTypeReferenceRowValue;
+    }
+
+    public inline finite law u32[0 max] LlvmTypeReferenceRow(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.LlvmTypeReferenceRowValue;
+    }
+
+    public inline finite law LogicalPackageAbiParameterKind Kind(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law bool HasRawPointerElementCountExpression(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.HasRawPointerElementCountExpressionValue;
+    }
+
+    public inline finite law u32[0 max] RawPointerElementCountExpressionTextRow(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.RawPointerElementCountExpressionTextRowValue;
+    }
+
+    public inline finite law u32[0 max] FirstLlvmParameterTypeRow(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.FirstLlvmParameterTypeRowValue;
+    }
+
+    public inline finite law u32[0 max] LlvmParameterTypeRowCount(
+        borrow LogicalPackageAbiParameterRow self)
+    {
+        return self.LlvmParameterTypeRowCountValue;
+    }
+}
+
+public struct LogicalPackageAbiParameterLlvmTypeRow
+{
+    u32[0 max] AbiParameterRowValue;
+    u32[0 max] TypeOrdinalValue;
+    u32[0 max] TypeReferenceRowValue;
+
+    LogicalPackageAbiParameterLlvmTypeRow()
+    {
+        self.AbiParameterRowValue = 0;
+        self.TypeOrdinalValue = 0;
+        self.TypeReferenceRowValue = 0;
+    }
+
+    public inline finite law u32[0 max] AbiParameterRow(
+        borrow LogicalPackageAbiParameterLlvmTypeRow self)
+    {
+        return self.AbiParameterRowValue;
+    }
+
+    public inline finite law u32[0 max] TypeOrdinal(
+        borrow LogicalPackageAbiParameterLlvmTypeRow self)
+    {
+        return self.TypeOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] TypeReferenceRow(
+        borrow LogicalPackageAbiParameterLlvmTypeRow self)
+    {
+        return self.TypeReferenceRowValue;
+    }
+}
+
+public struct LogicalPackageAbiFactGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageAbiFactTextRow> TextRows;
+    internal IrTable<LogicalPackageAbiFunctionRow> AbiFunctionRows;
+    internal IrTable<LogicalPackageAbiParameterRow> ParameterRows;
+    internal IrTable<LogicalPackageAbiParameterLlvmTypeRow> LlvmParameterTypeRows;
+    internal LogicalPackageTypeReferenceGraph TypeReferences;
+
+    LogicalPackageAbiFactGraph()
+    {
+        self.TextBytes = new();
+        self.TextRows = new();
+        self.AbiFunctionRows = new();
+        self.ParameterRows = new();
+        self.LlvmParameterTypeRows = new();
+        self.TypeReferences = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] AbiFunctionRowCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.AbiFunctionRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ParameterRowCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.ParameterRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LlvmParameterTypeRowCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.LlvmParameterTypeRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TypeReferenceCount(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.TypeReferences.TypeReferenceCount();
+    }
+
+    public finite law retborrow LogicalPackageAbiFactTextRow TextRowAt(
+        borrow LogicalPackageAbiFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageAbiFunctionRow AbiFunctionRowAt(
+        borrow LogicalPackageAbiFactGraph self,
+        u32[0 max] row)
+    {
+        return self.AbiFunctionRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageAbiParameterRow ParameterRowAt(
+        borrow LogicalPackageAbiFactGraph self,
+        u32[0 max] row)
+    {
+        return self.ParameterRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageAbiParameterLlvmTypeRow LlvmParameterTypeRowAt(
+        borrow LogicalPackageAbiFactGraph self,
+        u32[0 max] row)
+    {
+        return self.LlvmParameterTypeRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceGraph TypeReferenceGraph(
+        borrow LogicalPackageAbiFactGraph self)
+    {
+        return self.TypeReferences;
+    }
+
+    public finite law retborrow LogicalPackageTypeReferenceRow TypeReferenceAt(
+        borrow LogicalPackageAbiFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeReferences.TypeReferenceAt(row);
+    }
+}
+
+// Public compiler-function-effect graph model. Population and JSON
+// materialization helpers remain outside Models.
+
+public struct LogicalPackageFunctionEffectFactTextRow
+{
+    LogicalPackageFunctionEffectFactTextKind TextKindValue;
+    u32[0 max] TextOrdinalValue;
+    u32[0 max] ByteOffsetValue;
+    u32[0 max] ByteLengthValue;
+
+    LogicalPackageFunctionEffectFactTextRow()
+    {
+        self.TextKindValue = LogicalPackageFunctionEffectFactTextKind.QualifiedResolvedName;
+        self.TextOrdinalValue = 0;
+        self.ByteOffsetValue = 0;
+        self.ByteLengthValue = 0;
+    }
+
+    public inline finite law LogicalPackageFunctionEffectFactTextKind TextKind(
+        borrow LogicalPackageFunctionEffectFactTextRow self)
+    {
+        return self.TextKindValue;
+    }
+
+    public inline finite law u32[0 max] TextOrdinal(
+        borrow LogicalPackageFunctionEffectFactTextRow self)
+    {
+        return self.TextOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ByteOffset(
+        borrow LogicalPackageFunctionEffectFactTextRow self)
+    {
+        return self.ByteOffsetValue;
+    }
+
+    public inline finite law u32[0 max] ByteLength(
+        borrow LogicalPackageFunctionEffectFactTextRow self)
+    {
+        return self.ByteLengthValue;
+    }
+}
+
+public struct LogicalPackageFunctionEffectRow
+{
+    u32[0 max] ModuleOrdinalValue;
+    u32[0 max] FunctionEffectOrdinalValue;
+    u32[0 max] QualifiedResolvedNameTextRowValue;
+    u32[0 max] KindTextRowValue;
+    u32[0 max] InlinePreferenceTextRowValue;
+    u32[0 max] FfiAbiTextRowValue;
+    u32[0 max] BackendOptimizationModeTextRowValue;
+    bool ReadsArgumentMemoryValue;
+    bool IsPureValue;
+    bool NoSyncValue;
+    bool NoFreeValue;
+    bool NoUnwindValue;
+    bool WillReturnValue;
+    bool MustProgressValue;
+    bool UsesFastCallingConventionValue;
+    bool IsFfiValue;
+    bool IsHotValue;
+    bool IsColdValue;
+    bool IsStrictFpValue;
+    bool IsVarargsValue;
+    bool IsTailCallableValue;
+    bool HasFfiAbiValue;
+    bool HasBackendOptimizationModeValue;
+    bool NoRecurseValue;
+
+    LogicalPackageFunctionEffectRow()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.FunctionEffectOrdinalValue = 0;
+        self.QualifiedResolvedNameTextRowValue = 0;
+        self.KindTextRowValue = 0;
+        self.InlinePreferenceTextRowValue = 0;
+        self.FfiAbiTextRowValue = 0;
+        self.BackendOptimizationModeTextRowValue = 0;
+        self.ReadsArgumentMemoryValue = false;
+        self.IsPureValue = false;
+        self.NoSyncValue = false;
+        self.NoFreeValue = false;
+        self.NoUnwindValue = false;
+        self.WillReturnValue = false;
+        self.MustProgressValue = false;
+        self.UsesFastCallingConventionValue = false;
+        self.IsFfiValue = false;
+        self.IsHotValue = false;
+        self.IsColdValue = false;
+        self.IsStrictFpValue = false;
+        self.IsVarargsValue = false;
+        self.IsTailCallableValue = false;
+        self.HasFfiAbiValue = false;
+        self.HasBackendOptimizationModeValue = false;
+        self.NoRecurseValue = false;
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] FunctionEffectOrdinal(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.FunctionEffectOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] QualifiedResolvedNameTextRow(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.QualifiedResolvedNameTextRowValue;
+    }
+
+    public inline finite law u32[0 max] KindTextRow(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.KindTextRowValue;
+    }
+
+    public inline finite law u32[0 max] InlinePreferenceTextRow(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.InlinePreferenceTextRowValue;
+    }
+
+    public inline finite law u32[0 max] FfiAbiTextRow(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.FfiAbiTextRowValue;
+    }
+
+    public inline finite law u32[0 max] BackendOptimizationModeTextRow(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.BackendOptimizationModeTextRowValue;
+    }
+
+    public inline finite law bool ReadsArgumentMemory(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.ReadsArgumentMemoryValue;
+    }
+
+    public inline finite law bool IsPure(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsPureValue;
+    }
+
+    public inline finite law bool NoSync(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.NoSyncValue;
+    }
+
+    public inline finite law bool NoFree(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.NoFreeValue;
+    }
+
+    public inline finite law bool NoUnwind(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.NoUnwindValue;
+    }
+
+    public inline finite law bool WillReturn(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.WillReturnValue;
+    }
+
+    public inline finite law bool MustProgress(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.MustProgressValue;
+    }
+
+    public inline finite law bool UsesFastCallingConvention(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.UsesFastCallingConventionValue;
+    }
+
+    public inline finite law bool IsFfi(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsFfiValue;
+    }
+
+    public inline finite law bool IsHot(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsHotValue;
+    }
+
+    public inline finite law bool IsCold(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsColdValue;
+    }
+
+    public inline finite law bool IsStrictFp(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsStrictFpValue;
+    }
+
+    public inline finite law bool IsVarargs(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsVarargsValue;
+    }
+
+    public inline finite law bool IsTailCallable(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.IsTailCallableValue;
+    }
+
+    public inline finite law bool HasFfiAbi(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.HasFfiAbiValue;
+    }
+
+    public inline finite law bool HasBackendOptimizationMode(
+        borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.HasBackendOptimizationModeValue;
+    }
+
+    public inline finite law bool NoRecurse(borrow LogicalPackageFunctionEffectRow self)
+    {
+        return self.NoRecurseValue;
+    }
+}
+
+public struct LogicalPackageFunctionEffectFactGraph
+{
+    internal dynamic i8[min max] TextBytes;
+    internal IrTable<LogicalPackageFunctionEffectFactTextRow> TextRows;
+    internal IrTable<LogicalPackageFunctionEffectRow> FunctionEffectRows;
+
+    LogicalPackageFunctionEffectFactGraph()
+    {
+        self.TextBytes = new();
+        self.TextRows = new();
+        self.FunctionEffectRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(
+        borrow LogicalPackageFunctionEffectFactGraph self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextRowCount(
+        borrow LogicalPackageFunctionEffectFactGraph self)
+    {
+        return self.TextRows.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionEffectRowCount(
+        borrow LogicalPackageFunctionEffectFactGraph self)
+    {
+        return self.FunctionEffectRows.Count();
+    }
+
+    public finite law retborrow LogicalPackageFunctionEffectFactTextRow TextRowAt(
+        borrow LogicalPackageFunctionEffectFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TextRows.Get(row);
+    }
+
+    public finite law retborrow LogicalPackageFunctionEffectRow FunctionEffectRowAt(
+        borrow LogicalPackageFunctionEffectFactGraph self,
+        u32[0 max] row)
+    {
+        return self.FunctionEffectRows.Get(row);
+    }
+}

@@ -1,0 +1,237 @@
+# Stark Compiler Test Harness Reference
+
+Use the host compiler test protocol when Stark tests need to target the current
+C# compiler and inspect structured compiler results without scraping CLI text.
+
+## Commands
+
+```bash
+compiler --host-test-inspect request.json
+compiler --host-test-inspect
+compiler --host-test-server
+```
+
+`--host-test-inspect` reads a single JSON document from a file or stdin and
+writes one indented JSON response. `--host-test-server` reads newline-delimited
+JSON documents from stdin and writes one compact JSON response per input line.
+End a server session with:
+
+```json
+{"protocolVersion":1,"shutdown":true}
+```
+
+Prefer the server mode for large ported test batches. It keeps one host process
+and compiler pipeline alive, while rebuilding module resolution for each request
+so generated fixtures and package images remain visible.
+
+From Stark tests, use `System.Process.RunCaptureWithInputTimeout` to send one
+compact JSON document per line plus the shutdown document to
+`--host-test-server`, then assert the captured exit code, stdout JSON lines,
+stderr text, and non-timeout status.
+
+## Request Example
+
+```json
+{
+  "protocolVersion": 1,
+  "request": {
+    "id": "llvm-smoke",
+    "sourceText": "module Demo\n\nfn i32[min max] Run()\n{\n    return 7;\n}\n",
+    "filePath": "Demo.stark",
+    "stopAfterPassId": "emit-llvm",
+    "optimizationLevel": "O0",
+    "artifacts": ["llvm", "mir", "optimized-ssa"],
+    "includeArtifactTexts": false,
+    "artifactOutputDirectory": "build/dev/x86_64/stage0/artifacts/Demo",
+    "diagnosticsOutputPath": "build/dev/x86_64/stage0/diagnostics/Demo.json",
+    "includeExecutions": true
+  }
+}
+```
+
+Use `requests` for a batch document. Valid protocol documents return process
+exit code `0`; compiler errors are response data.
+
+## Source And Resolution
+
+- Use `sourceText` for inline tests and `sourcePath` for file fixtures.
+- `sourceText` takes precedence over `sourcePath`, and an empty string is a real
+  source input.
+- `filePath` controls diagnostic file paths and seeds import search. If omitted
+  with `sourcePath`, the source path is used.
+- Search order is source/file directory, request `searchDirectories`, then
+  `STARK_PATH` only when `useStarkPath` is `true`.
+- Keep `useStarkPath` false for deterministic tests unless the test is
+  explicitly covering that escape hatch.
+
+## Artifacts
+
+Common aliases:
+
+| Request | Artifact |
+|---|---|
+| `llvm`, `llvm-text`, `llvm-ir` | `llvm-ir-module` |
+| `mir`, `mir-text` | `mid-level-ir` |
+| `ssa`, `ssa-text` | `ssa-ir` |
+| `optimized-ssa`, `optimized-ssa-text`, `opt-ssa`, `opt-ssa-text` | `optimized-ssa-ir` |
+
+Responses include `availableArtifacts`, `artifactTexts`, `artifactFiles`,
+`missingArtifacts`, and `unsupportedArtifacts`. Request only the artifact text a
+test actually asserts; short parser/type-check tests should usually inspect
+diagnostics and pass executions only.
+
+For large golden tests, set `includeArtifactTexts` to `false` and pass
+`artifactOutputDirectory`. The runner writes stable names:
+`llvm-ir-module.ll`, `mid-level-ir.mir`, `ssa-ir.ssa`, and
+`optimized-ssa-ir.ssa`. Use `diagnosticsOutputPath`, `logsOutputPath`, and
+`executionsOutputPath` for file-backed structured output when Stark tests should
+snapshot files instead of carrying large JSON response payloads.
+
+## Result Fields
+
+Each compile response includes `id`, `succeeded`, optional `protocolError`,
+`durationMicroseconds`, diagnostic summary/detail, optional logs, pass
+executions, root module name, loaded modules, requested artifact text/files,
+output paths, and output write errors.
+
+Adapt response diagnostics into `System.Testing.Diagnostic` when asserting from
+Stark tests. The finite-law `Diagnostic*` and `Diagnostics*` predicates cover
+code, severity, stage, message substring/equality, location, end location, and
+severity counts without allocating or scraping rendered text.
+
+Set `includeLogs` only when testing log behavior. `includeExecutions` defaults
+to included; set it to `false` for very large batches that only need
+diagnostics/artifacts.
+
+## Stark Test Function Kinds
+
+Prefer `finite law` for pure local test predicates and pure `[Fact]` / `[Theory]`
+bodies. Generated runners call tests directly through `System.Testing.RunFact`,
+so the stronger kind flows into the ordinary optimizer without a wrapper. Keep
+helpers that perform fixture IO, process execution, console output, snapshot
+writes, or owned result consumption as plain `fn` until their full callees and
+ownership effects justify a stronger declaration.
+
+Use `[Theory]` with one or more data rows. `[InlineData(...)]` is best for small
+constant cases; it supports strings, booleans, signed integers, and qualified
+names, and filters match generated row display names such as `Adds(1, 2, 3)`.
+
+Use typed indexed `[MemberData(provider, rowType, count, ...fields)]` for larger
+or computed/shared tables. The provider is called once per selected row with the
+zero-based row index and returns `rowType`; `count` is a positive integer
+literal. Optional field names map row fields to theory parameters by order. The
+generated runner materializes one stack row local and calls the theory directly,
+so filters such as `--filter AddRows:1` do not construct unselected rows. Prefer
+`finite law` providers when the table is pure.
+
+Use `[Platform(...)]` and `[SkipPlatform(...)]` on facts, theories, structs, or
+records when a ported test depends on a target OS, architecture, or exact target
+triple. The generated runner resolves gates at build time from
+`stark test --target`, calls `System.Testing.SkipFact` for gated-out tests, and
+emits no call to the test body.
+
+Use `[Collection(name, ...)]` to tag tests into one or more named collections
+for cross-cutting selection. The attribute is variadic (at least one name; each
+name is a string literal or qualified identifier) and can sit on the `module`
+declaration (tagging every fact in the file), on a `struct`/`record`, or on an
+individual fact — a fact's effective set is the union of all three levels.
+`[Serial]` is shorthand for the reserved `Serial` collection. The generated
+runner groups tests by the first listed name with source order preserved inside
+each group, then filters at runtime: `stark test --collection NAME` (repeatable,
+comma-splitting inside each value, union semantics) runs only the tagged subset,
+`stark test --list-collections` prints the known names, an unknown name errors
+with the known list, and a zero-selection run fails. Tagging the root `module`
+with `[Collection("lexing")]` and a few facts with member tags
+(`[Collection("diagnostics")]`) is the discipline `tests-stark/selfhost.Lexing`
+uses; `tests-stark/stdlib.Toml` adds a multi-name member tag,
+`[Collection("manifests", "acceptance")]`.
+
+For LLVM, MIR, SSA, and diagnostic text ports, use `System.Testing.Contains`,
+`DoesNotContain`, `StartsWith`, `EndsWith`, `CountOccurrences`, and
+`Occurrences` before writing local scan helpers. These helpers are finite-law and
+allocation-free; `CountOccurrences` counts non-overlapping matches and returns
+`0` for an empty needle.
+For captured process output, use `ProcessStdoutOccurrences` /
+`ProcessStderrOccurrences` or their count-returning companions to stay on
+borrowed stdout/stderr byte slices.
+
+For function-definition-scoped LLVM assertions, `System.Testing` provides
+`LlvmDefinitionHeader(llvm, symbolName)` (the `define ...` line whose symbol
+spells `@name(`), `LlvmDefinitionBody(llvm, symbolName)` (header through the
+closing `}` line), and `AnyLineContainsBoth(text, first, second)` (one-line
+regex approximation). These are the Stark ports of the C# feature-test
+`ExtractDefinitionHeader`/`ExtractDefinitionBody` helpers. `System/Testing.stark`
+must stay raw-pointer-free (enforced by
+`StdLibTestingModuleStaysRawPointerFreeAndExplicit`); new helpers there scan via
+ascii slicing (`value[(i64[min max])index, 1] == "\n"`), not `AsciiData`.
+
+## Stark-Side Wrapper: `System.Testing.HostCompiler`
+
+Ported tests drive the server through `System.Testing.HostCompiler` instead of
+hand-writing protocol JSON:
+
+- `CompilerPathFromEnvironment()` reads `STARK_HOST_COMPILER` →
+  `HostResult<OwnedAscii>`.
+- `CompileOnce(compilerPath, id, sourceText, stopAfterPassId, includeLlvm,
+  timeoutMs)` runs one compile (empty `stopAfterPassId` = full pipeline).
+- `CompileOnceIn(..., searchDirectory, ...)` additionally exposes one module
+  search directory (server-side `FileSystemModuleResolver`), which is how
+  C# `InMemoryModuleResolver` tests port: write the module source under a temp
+  directory (`System.FileSystem.CreateTempDirectory` + `System.IO.File.WriteAllText`,
+  dotted modules in subdirectories: `System.Threading` → `System/Threading.stark`)
+  and pass the temp root.
+- `CompileOnceArtifactIn(compilerPath, id, sourceText, stopAfterPassId,
+  artifactName, searchDirectory, maximumComptimeLoopIterations, timeoutMs)` is
+  the general entry: one named text artifact (`"llvm"`, `"mir"`, or empty),
+  optional search directory, and an optional compile-time loop iteration cap
+  (`0` keeps the compiler default; the cap maps to the request's
+  `maximumCompileTimeLoopIterations`).
+- `HostCompileOutcome` exposes `CompileSucceeded()`, `CompileErrorCount()`,
+  `HadProtocolError()`, `DiagnosticCount()`, `DiagnosticCodeAt/MessageAt/
+  SeverityAt/StageAt(index)`, `HasDiagnosticCode(code)`, and
+  `ArtifactText(requestedName)` (matched against the request alias, e.g.
+  `"mir"`). Text accessors take `mut borrow` because views borrow the outcome's
+  decoded buffer.
+- `HostError` funnels `ProcessError` and `JsonError`; consumers must import
+  `System.Process` and `System.Json` for the funnel payload types.
+
+`tests-stark/compiler.FeatureTests/FeatureTestSupport.stark` layers fact-shaped
+helpers over this wrapper (`CompileLlvm`/`CompileMir` with success-implying
+`Ok`, `CompileTypeCheck`/`CompileFull` with transport-only `Ok` for
+`FailsWithDiagnostic*` assertions, `*WithModule` temp-directory variants,
+`CountDiagnosticsWithCodeAndMessage`). The generated `stark test` runner
+collects `[Fact]`s from the ROOT file only, so ported facts live in the root
+file and shared helpers in an imported support module. MIR text assertions read
+the `ArtifactTextRenderer` forms (e.g. `$tmp5_dyn_vtable: temp
+rawptr<Speaker.Vtable>`, `= dynview<Speaker>(context,table)`); probe the
+rendering with a one-off server request before asserting fragments.
+
+## Test Run Progress And Timeouts
+
+`stark test` streams runner output live. Add `--test-progress` to print a
+`run <name>` marker before each fact, `(k/N)` counters on results, and
+`[elapsed]` prefixes — a timed-out run's last `run` line names the hung fact.
+`--test-timeout <seconds>` kills the run at a deadline instead of hanging.
+
+## Fast Verification Outside The Harness
+
+For compiler-development changes (host or selfhost), two workflows are cheaper
+than harness suites and are the standing convention — full details in
+`docs/Internals/CompilerDevelopmentVerification.md`:
+
+- The widened `--check` gate: `./stark <root>.stark --check -I selfhost
+  -I stdlib/src --no-stark-path --target <triple>` runs the full front end
+  through ownership-validate over the root AND every source-backed dependency
+  module (parallel, batched failures). Zero `error STK` lines is a pass;
+  ~2–3 minutes over the selfhost graph. It proves acceptance, not behavior.
+  If a gate reports errors contradicting the source you just read, look for
+  a stale `*.starkpkg` under the search roots (including the root file's own
+  project `build/` directory — it joins the search implicitly and a stale
+  image silently shadows fresh source); delete it, it is build output.
+- Package-backed probes: build the selfhost library once (`stark build` in
+  `selfhost/`), relocate `stage0/pkg` + `stage0/bin` out of the source tree,
+  then compile a standalone probe executable against the package image with
+  `-I <dir>/stage0/pkg -I stdlib/src` and the image's `--target-data-layout`
+  (from `--inspect-pkg`). ~15 s per probe compile instead of ~12 min from
+  source. Probes print one `ok/FAIL` line per check and encode known-broken
+  shapes as `expectOk=false` so fixes flip them loudly.

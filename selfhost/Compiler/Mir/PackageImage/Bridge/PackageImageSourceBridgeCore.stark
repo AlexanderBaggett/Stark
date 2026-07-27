@@ -1,0 +1,1234 @@
+import Compiler.Parsing
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridgeCore
+
+// Loaded-source ownership, manifest/template lookup, overload identity, and
+// typed-body requirement analysis shared by the compatibility bridge.
+
+// Compatibility document owned by Stage1 after source-surface reconstruction.
+// The source bytes stay alive beside the token/span tables. Structured package
+// facts remain authoritative for typing, specialization, ABI, and LLVM; this
+// document exists for parser/binder paths that still require source syntax.
+public struct LogicalPackageLoadedSourceDocument
+{
+    internal u32[0 max] ModuleOrdinalValue;
+    internal OwnedAscii SourceTextValue;
+    internal CompilationUnitSyntax SyntaxValue;
+
+    LogicalPackageLoadedSourceDocument()
+    {
+        self.ModuleOrdinalValue = 0;
+        self.SourceTextValue = new();
+        self.SyntaxValue = new();
+    }
+
+    public inline finite law u32[0 max] ModuleOrdinal(
+        borrow LogicalPackageLoadedSourceDocument self)
+    {
+        return self.ModuleOrdinalValue;
+    }
+
+    public finite law bool SourceTextEquals(
+        borrow LogicalPackageLoadedSourceDocument self,
+        ascii expected)
+    {
+        return System.Text.OwnedAsciiEqualsAscii(self.SourceTextValue, expected);
+    }
+
+    public finite law retborrow CompilationUnitSyntax Syntax(
+        borrow LogicalPackageLoadedSourceDocument self)
+    {
+        return self.SyntaxValue;
+    }
+}
+
+internal fn bool PackageImageSourceBridgeAppend(
+    mut borrow OwnedAscii sink,
+    ascii text)
+    where overlap(sink, text)
+{
+    switch (sink.AppendAscii(text))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool PackageImageSourceBridgeAppendConst(
+    mut borrow OwnedAscii sink,
+    const ascii text)
+{
+    switch (sink.AppendConstAscii(text))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool PackageImageSourceBridgeAppendU32(
+    mut borrow OwnedAscii sink,
+    u32[0 max] value)
+{
+    switch (sink.AppendU64((u64[0 max])value))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool PackageImageSourceBridgeAppendRequiredTextMember(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+    return document.TryFindMember(objectNode, memberName, memberNode)
+        && document.KindAt(memberNode) == JsonKind.Text
+        && AsciiLength(document.TextAt(memberNode)) != 0
+        && PackageImageSourceBridgeAppend(sink, document.TextAt(memberNode));
+}
+
+internal fn bool PackageImageSourceBridgeOptionalTextMemberNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    out u64[0 2 ** 63 - 1] memberNode,
+    out bool present)
+{
+    memberNode = 0;
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryFindMember(objectNode, memberName, found)
+        || document.KindAt(found) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(found) != JsonKind.Text
+        || AsciiLength(document.TextAt(found)) == 0)
+    {
+        return false;
+    }
+
+    memberNode = found;
+    present = true;
+    return true;
+}
+internal struct PackageImageSourceBridgeTemplateContext
+{
+    u64[0 2 ** 63 - 1] TemplateFunctionsNode;
+    u32[0 max] TemplateFunctionCount;
+    u64[0 2 ** 63 - 1] TypedInterfaceNode;
+    bool HasTypedInterface;
+
+    PackageImageSourceBridgeTemplateContext()
+    {
+        self.TemplateFunctionsNode = 0;
+        self.TemplateFunctionCount = 0;
+        self.TypedInterfaceNode = 0;
+        self.HasTypedInterface = false;
+    }
+}
+
+internal struct PackageImageSourceBridgeTemplateBodyMatch
+{
+    u64[0 2 ** 63 - 1] TemplateNode;
+    u64[0 2 ** 63 - 1] TypedBodyNode;
+    u64[0 2 ** 63 - 1] LegacyBodyTextNode;
+    bool HasTypedBody;
+    bool HasLegacyBodyText;
+
+    PackageImageSourceBridgeTemplateBodyMatch()
+    {
+        self.TemplateNode = 0;
+        self.TypedBodyNode = 0;
+        self.LegacyBodyTextNode = 0;
+        self.HasTypedBody = false;
+        self.HasLegacyBodyText = false;
+    }
+}
+
+internal fn bool PackageImageSourceBridgeEffectiveOptionalCompilerSectionNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    ascii sectionName,
+    out u64[0 2 ** 63 - 1] sectionNode,
+    out bool present)
+{
+    sectionNode = 0;
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] directNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionNode = 0;
+    stack mut bool hasDirect = false;
+    stack mut bool hasCompilerSections = false;
+    stack mut bool hasCompilerSection = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            moduleNode,
+            sectionName,
+            directNode,
+            hasDirect)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            moduleNode,
+            "CompilerSections",
+            compilerSectionsNode,
+            hasCompilerSections))
+    {
+        return false;
+    }
+
+    if (hasCompilerSections
+        && !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            compilerSectionsNode,
+            sectionName,
+            compilerSectionNode,
+            hasCompilerSection))
+    {
+        return false;
+    }
+
+    if (hasCompilerSection)
+    {
+        sectionNode = compilerSectionNode;
+        present = true;
+    }
+    else if (hasDirect)
+    {
+        sectionNode = directNode;
+        present = true;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeBuildTemplateContext(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out PackageImageSourceBridgeTemplateContext context)
+{
+    context = new();
+    stack mut u64[0 2 ** 63 - 1] genericTemplatesNode = 0;
+    stack mut bool hasGenericTemplates = false;
+    if (!PackageImageSourceBridgeEffectiveOptionalCompilerSectionNode(
+            document,
+            moduleNode,
+            "GenericTemplates",
+            genericTemplatesNode,
+            hasGenericTemplates)
+        || !PackageImageSourceBridgeEffectiveOptionalCompilerSectionNode(
+            document,
+            moduleNode,
+            "TypedInterface",
+            context.TypedInterfaceNode,
+            context.HasTypedInterface))
+    {
+        return false;
+    }
+
+    if (!hasGenericTemplates)
+    {
+        return true;
+    }
+
+    return LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        genericTemplatesNode,
+        "Functions",
+        context.TemplateFunctionsNode,
+        context.TemplateFunctionCount);
+}
+
+internal inline finite law bool PackageImageSourceBridgeAsciiIsWhitespace(ascii unit)
+{
+    return unit == " " || unit == "\t" || unit == "\r" || unit == "\n";
+}
+
+internal inline finite law bool PackageImageSourceBridgeAsciiIsTypeQualifier(ascii word)
+{
+    return word == "mut"
+        || word == "borrow"
+        || word == "retborrow"
+        || word == "storeborrow"
+        || word == "shared"
+        || word == "frozen"
+        || word == "out"
+        || word == "init";
+}
+
+internal fn bool PackageImageSourceBridgeAppendCanonicalOverloadType(
+    ascii typeText,
+    mut borrow OwnedAscii sink)
+    where overlap(typeText, sink)
+{
+    stack i64[min max] signedLength = AsciiLength(typeText);
+    if (signedLength <= 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+    stack mut u64[0 2 ** 63 - 1] cursor = 0;
+    stack mut bool hasMut = false;
+    stack mut bool hasBorrow = false;
+    stack mut bool hasRetBorrow = false;
+    stack mut bool hasStoreBorrow = false;
+    stack mut bool hasShared = false;
+    stack mut bool hasFrozen = false;
+    stack mut bool hasOut = false;
+    stack mut bool hasInit = false;
+    while willexit (cursor < length)
+    {
+        while willexit (cursor < length
+            && PackageImageSourceBridgeAsciiIsWhitespace(typeText[cursor, 1]))
+        {
+            cursor = cursor + 1;
+        }
+
+        stack u64[0 2 ** 63 - 1] wordStart = cursor;
+        while willexit (cursor < length
+            && !PackageImageSourceBridgeAsciiIsWhitespace(typeText[cursor, 1]))
+        {
+            cursor = cursor + 1;
+        }
+
+        if (wordStart == cursor)
+        {
+            break;
+        }
+
+        stack ascii word = typeText[wordStart, cursor - wordStart];
+        if (!PackageImageSourceBridgeAsciiIsTypeQualifier(word))
+        {
+            cursor = wordStart;
+            break;
+        }
+
+        if (word == "mut") { hasMut = true; }
+        else if (word == "borrow") { hasBorrow = true; }
+        else if (word == "retborrow") { hasRetBorrow = true; }
+        else if (word == "storeborrow") { hasStoreBorrow = true; }
+        else if (word == "shared") { hasShared = true; }
+        else if (word == "frozen") { hasFrozen = true; }
+        else if (word == "out") { hasOut = true; }
+        else if (word == "init") { hasInit = true; }
+    }
+
+    if ((hasMut && !PackageImageSourceBridgeAppendConst(sink, "mut"))
+        || (hasBorrow && !PackageImageSourceBridgeAppendConst(sink, "borrow"))
+        || (hasRetBorrow && !PackageImageSourceBridgeAppendConst(sink, "retborrow"))
+        || (hasStoreBorrow && !PackageImageSourceBridgeAppendConst(sink, "storeborrow"))
+        || (hasShared && !PackageImageSourceBridgeAppendConst(sink, "shared"))
+        || (hasFrozen && !PackageImageSourceBridgeAppendConst(sink, "frozen"))
+        || (hasOut && !PackageImageSourceBridgeAppendConst(sink, "out"))
+        || (hasInit && !PackageImageSourceBridgeAppendConst(sink, "init")))
+    {
+        return false;
+    }
+
+    while willexit (cursor < length)
+    {
+        stack ascii unit = typeText[cursor, 1];
+        if (!PackageImageSourceBridgeAsciiIsWhitespace(unit)
+            && !PackageImageSourceBridgeAppend(sink, unit))
+        {
+            return false;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeBuildCallableOverloadKey(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    mut borrow OwnedAscii scratch)
+{
+    scratch.Clear();
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            callableNode,
+            "Parameters",
+            parametersNode,
+            parameterCount)
+        || !PackageImageSourceBridgeAppendConst(scratch, "("))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        if (!document.TryChildAt(
+                parametersNode,
+                (u64[0 2 ** 63 - 1])parameterIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !document.TryFindMember(parameterNode, "Type", typeNode)
+            || document.KindAt(typeNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(typeNode)) == 0
+            || (parameterIndex != 0
+                && !PackageImageSourceBridgeAppendConst(scratch, ","))
+            || !PackageImageSourceBridgeAppendCanonicalOverloadType(
+                document.TextAt(typeNode),
+                scratch))
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return PackageImageSourceBridgeAppendConst(scratch, ")");
+}
+
+internal fn bool PackageImageSourceBridgeFindPublishedOverloadKeyInCallableArray(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callablesNode,
+    u32[0 max] callableCount,
+    ascii symbolName,
+    out u64[0 2 ** 63 - 1] overloadKeyNode,
+    out bool present)
+    where overlap(document, symbolName)
+{
+    overloadKeyNode = 0;
+    present = false;
+    stack mut u32[0 max] callableIndex = 0;
+    while willexit (callableIndex < callableCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] callableNode = 0;
+        stack mut u64[0 2 ** 63 - 1] symbolNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] candidateKeyNode = 0;
+        stack mut bool hasCandidateKey = false;
+        if (!document.TryChildAt(
+                callablesNode,
+                (u64[0 2 ** 63 - 1])callableIndex,
+                callableNode)
+            || document.KindAt(callableNode) != JsonKind.Object
+            || !document.TryFindMember(callableNode, "SymbolName", symbolNameNode)
+            || document.KindAt(symbolNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(symbolNameNode)) == 0
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                callableNode,
+                "PublishedOverloadKey",
+                candidateKeyNode,
+                hasCandidateKey))
+        {
+            return false;
+        }
+
+        if (document.TextAt(symbolNameNode) == symbolName && hasCandidateKey)
+        {
+            if (present)
+            {
+                return false;
+            }
+
+            overloadKeyNode = candidateKeyNode;
+            present = true;
+        }
+
+        callableIndex = callableIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeResolvePublishedOverloadKey(
+    borrow JsonDocument document,
+    borrow PackageImageSourceBridgeTemplateContext context,
+    u64[0 2 ** 63 - 1] callableNode,
+    out u64[0 2 ** 63 - 1] overloadKeyNode,
+    out bool present)
+{
+    overloadKeyNode = 0;
+    present = false;
+    if (!context.HasTypedInterface)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] symbolNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] functionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typesNode = 0;
+    stack mut u32[0 max] functionCount = 0;
+    stack mut u32[0 max] typeCount = 0;
+    if (!document.TryFindMember(callableNode, "SymbolName", symbolNameNode)
+        || document.KindAt(symbolNameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(symbolNameNode)) == 0
+        || !LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            context.TypedInterfaceNode,
+            "Functions",
+            functionsNode,
+            functionCount)
+        || !LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            context.TypedInterfaceNode,
+            "Types",
+            typesNode,
+            typeCount))
+    {
+        return false;
+    }
+
+    stack ascii symbolName = document.TextAt(symbolNameNode);
+    if (!PackageImageSourceBridgeFindPublishedOverloadKeyInCallableArray(
+            document,
+            functionsNode,
+            functionCount,
+            symbolName,
+            overloadKeyNode,
+            present))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeIndex = 0;
+    while willexit (typeIndex < typeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] methodsNode = 0;
+        stack mut u32[0 max] methodCount = 0;
+        stack mut u64[0 2 ** 63 - 1] methodKeyNode = 0;
+        stack mut bool hasMethodKey = false;
+        if (!document.TryChildAt(
+                typesNode,
+                (u64[0 2 ** 63 - 1])typeIndex,
+                typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "Methods",
+                methodsNode,
+                methodCount)
+            || !PackageImageSourceBridgeFindPublishedOverloadKeyInCallableArray(
+                document,
+                methodsNode,
+                methodCount,
+                symbolName,
+                methodKeyNode,
+                hasMethodKey))
+        {
+            return false;
+        }
+
+        if (hasMethodKey)
+        {
+            if (present)
+            {
+                return false;
+            }
+
+            overloadKeyNode = methodKeyNode;
+            present = true;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeFindTemplateBody(
+    borrow JsonDocument document,
+    borrow PackageImageSourceBridgeTemplateContext context,
+    u64[0 2 ** 63 - 1] callableNode,
+    mut borrow OwnedAscii overloadKeyScratch,
+    out PackageImageSourceBridgeTemplateBodyMatch result)
+{
+    result = new();
+    if (context.TemplateFunctionCount == 0)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] qualifiedNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] publishedOverloadKeyNode = 0;
+    stack mut bool hasPublishedOverloadKey = false;
+    if (!document.TryFindMember(callableNode, "QualifiedName", qualifiedNameNode)
+        || document.KindAt(qualifiedNameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(qualifiedNameNode)) == 0
+        || !PackageImageSourceBridgeResolvePublishedOverloadKey(
+            document,
+            context,
+            callableNode,
+            publishedOverloadKeyNode,
+            hasPublishedOverloadKey)
+        || (!hasPublishedOverloadKey
+            && !PackageImageSourceBridgeBuildCallableOverloadKey(
+                document,
+                callableNode,
+                overloadKeyScratch)))
+    {
+        return false;
+    }
+
+    stack ascii qualifiedName = document.TextAt(qualifiedNameNode);
+    stack mut bool matched = false;
+    stack mut u32[0 max] templateIndex = 0;
+    while willexit (templateIndex < context.TemplateFunctionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] templateNode = 0;
+        stack mut u64[0 2 ** 63 - 1] templateQualifiedNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] templateOverloadKeyNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typedBodyNode = 0;
+        stack mut u64[0 2 ** 63 - 1] candidateBodyTextNode = 0;
+        stack mut bool hasTypedBody = false;
+        stack mut bool hasCandidateBodyText = false;
+        if (!document.TryChildAt(
+                context.TemplateFunctionsNode,
+                (u64[0 2 ** 63 - 1])templateIndex,
+                templateNode)
+            || document.KindAt(templateNode) != JsonKind.Object
+            || !document.TryFindMember(
+                templateNode,
+                "QualifiedName",
+                templateQualifiedNameNode)
+            || document.KindAt(templateQualifiedNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(templateQualifiedNameNode)) == 0
+            || !document.TryFindMember(
+                templateNode,
+                "OverloadKey",
+                templateOverloadKeyNode)
+            || document.KindAt(templateOverloadKeyNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(templateOverloadKeyNode)) == 0
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                templateNode,
+                "TypedBody",
+                typedBodyNode,
+                hasTypedBody)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                templateNode,
+                "BodyText",
+                candidateBodyTextNode,
+                hasCandidateBodyText))
+        {
+            return false;
+        }
+
+        stack bool overloadMatches = hasPublishedOverloadKey
+            ? document.TextAt(templateOverloadKeyNode)
+                == document.TextAt(publishedOverloadKeyNode)
+            : document.TextAt(templateOverloadKeyNode) == overloadKeyScratch.View();
+        if (document.TextAt(templateQualifiedNameNode) == qualifiedName
+            && overloadMatches)
+        {
+            if (matched)
+            {
+                return false;
+            }
+
+            matched = true;
+            result.TemplateNode = templateNode;
+            result.TypedBodyNode = typedBodyNode;
+            result.HasTypedBody = hasTypedBody;
+            if (!hasTypedBody && hasCandidateBodyText)
+            {
+                result.LegacyBodyTextNode = candidateBodyTextNode;
+                result.HasLegacyBodyText = true;
+            }
+        }
+
+        templateIndex = templateIndex + 1;
+    }
+
+    return true;
+}
+
+internal inline finite law bool PackageImageSourceBridgeExpressionKindRequiresBody(ascii kind)
+{
+    return kind == "object-initializer"
+        || kind == "object-creation"
+        || kind == "enum-constructor"
+        || kind == "enum-call"
+        || kind == "enum-value"
+        || kind == "direct-call"
+        || kind == "field-access"
+        || kind == "member-call";
+}
+
+internal fn bool PackageImageSourceBridgeTypedExpressionRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] expressionNode,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    if (depth == 64)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u64[0 2 ** 63 - 1] targetNode = 0;
+    stack mut u64[0 2 ** 63 - 1] argumentsNode = 0;
+    stack mut bool hasTarget = false;
+    stack mut u32[0 max] argumentCount = 0;
+    if (!document.TryFindMember(expressionNode, "Kind", kindNode)
+        || document.KindAt(kindNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(kindNode)) == 0
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            expressionNode,
+            "TargetExpression",
+            targetNode,
+            hasTarget)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            expressionNode,
+            "Arguments",
+            argumentsNode,
+            argumentCount))
+    {
+        return false;
+    }
+
+    if (PackageImageSourceBridgeExpressionKindRequiresBody(document.TextAt(kindNode)))
+    {
+        requiresBody = true;
+        return true;
+    }
+
+    stack mut bool childRequiresBody = false;
+    if (hasTarget
+        && (!PackageImageSourceBridgeTypedExpressionRequiresBody(
+                document,
+                targetNode,
+                depth + 1,
+                childRequiresBody)
+            || childRequiresBody))
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    stack mut u32[0 max] argumentIndex = 0;
+    while willexit (argumentIndex < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        if (!document.TryChildAt(
+                argumentsNode,
+                (u64[0 2 ** 63 - 1])argumentIndex,
+                argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !PackageImageSourceBridgeTypedExpressionRequiresBody(
+                document,
+                argumentNode,
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        argumentIndex = argumentIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeTypedPatternRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] patternNode,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    if (depth == 64)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] expressionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] endExpressionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+    stack mut bool hasExpression = false;
+    stack mut bool hasEndExpression = false;
+    stack mut u32[0 max] memberCount = 0;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            patternNode,
+            "Expression",
+            expressionNode,
+            hasExpression)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            patternNode,
+            "EndExpression",
+            endExpressionNode,
+            hasEndExpression)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            patternNode,
+            "Members",
+            membersNode,
+            memberCount))
+    {
+        return false;
+    }
+
+    stack mut bool childRequiresBody = false;
+    if (hasExpression)
+    {
+        if (!PackageImageSourceBridgeTypedExpressionRequiresBody(
+                document,
+                expressionNode,
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+    }
+
+    if (hasEndExpression)
+    {
+        if (!PackageImageSourceBridgeTypedExpressionRequiresBody(
+                document,
+                endExpressionNode,
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+    }
+
+    stack mut u32[0 max] memberIndex = 0;
+    while willexit (memberIndex < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        if (!document.TryChildAt(
+                membersNode,
+                (u64[0 2 ** 63 - 1])memberIndex,
+                memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !PackageImageSourceBridgeTypedPatternRequiresBody(
+                document,
+                memberNode,
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        memberIndex = memberIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    ascii memberName,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    stack mut u64[0 2 ** 63 - 1] expressionNode = 0;
+    stack mut bool hasExpression = false;
+    return LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            ownerNode,
+            memberName,
+            expressionNode,
+            hasExpression)
+        && (!hasExpression
+            || PackageImageSourceBridgeTypedExpressionRequiresBody(
+                document,
+                expressionNode,
+                depth,
+                requiresBody));
+}
+
+internal fn bool PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    ascii memberName,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    stack mut u64[0 2 ** 63 - 1] statementsNode = 0;
+    stack mut u32[0 max] statementCount = 0;
+    return LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            memberName,
+            statementsNode,
+            statementCount)
+        && PackageImageSourceBridgeTypedStatementArrayRequiresBody(
+            document,
+            statementsNode,
+            statementCount,
+            depth,
+            requiresBody);
+}
+
+internal fn bool PackageImageSourceBridgeTypedOptionalPatternArrayRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    ascii memberName,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    stack mut u64[0 2 ** 63 - 1] patternsNode = 0;
+    stack mut u32[0 max] patternCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            memberName,
+            patternsNode,
+            patternCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] patternIndex = 0;
+    while willexit (patternIndex < patternCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] patternNode = 0;
+        stack mut bool patternRequiresBody = false;
+        if (!document.TryChildAt(
+                patternsNode,
+                (u64[0 2 ** 63 - 1])patternIndex,
+                patternNode)
+            || document.KindAt(patternNode) != JsonKind.Object
+            || !PackageImageSourceBridgeTypedPatternRequiresBody(
+                document,
+                patternNode,
+                depth,
+                patternRequiresBody))
+        {
+            return false;
+        }
+
+        if (patternRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        patternIndex = patternIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeTypedStatementRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] statementNode,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    if (depth == 64)
+    {
+        return false;
+    }
+
+    stack mut bool childRequiresBody = false;
+    if (!PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+            document,
+            statementNode,
+            "Expression",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+            document,
+            statementNode,
+            "TargetExpression",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+            document,
+            statementNode,
+            "TraversalSource",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] conditionPatternNode = 0;
+    stack mut bool hasConditionPattern = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            statementNode,
+            "ConditionPattern",
+            conditionPatternNode,
+            hasConditionPattern)
+        || (hasConditionPattern
+            && (!PackageImageSourceBridgeTypedPatternRequiresBody(
+                    document,
+                    conditionPatternNode,
+                    depth + 1,
+                    childRequiresBody)
+                || childRequiresBody)))
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+            document,
+            statementNode,
+            "BodyStatements",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+            document,
+            statementNode,
+            "InitializerStatements",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+            document,
+            statementNode,
+            "IteratorStatements",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+            document,
+            statementNode,
+            "ThenStatements",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    if (!PackageImageSourceBridgeTypedOptionalStatementArrayRequiresBody(
+            document,
+            statementNode,
+            "ElseStatements",
+            depth + 1,
+            childRequiresBody)
+        || childRequiresBody)
+    {
+        requiresBody = childRequiresBody;
+        return childRequiresBody;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] switchCasesNode = 0;
+    stack mut u32[0 max] switchCaseCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            statementNode,
+            "SwitchCases",
+            switchCasesNode,
+            switchCaseCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] switchCaseIndex = 0;
+    while willexit (switchCaseIndex < switchCaseCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] switchCaseNode = 0;
+        stack mut u64[0 2 ** 63 - 1] switchStatementsNode = 0;
+        stack mut u32[0 max] switchStatementCount = 0;
+        if (!document.TryChildAt(
+                switchCasesNode,
+                (u64[0 2 ** 63 - 1])switchCaseIndex,
+                switchCaseNode)
+            || document.KindAt(switchCaseNode) != JsonKind.Object
+            || !PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+                document,
+                switchCaseNode,
+                "Expression",
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        if (!PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+                document,
+                switchCaseNode,
+                "GuardExpression",
+                depth + 1,
+                childRequiresBody)
+            || childRequiresBody)
+        {
+            requiresBody = childRequiresBody;
+            return childRequiresBody;
+        }
+
+        if (!PackageImageSourceBridgeTypedOptionalExpressionRequiresBody(
+                document,
+                switchCaseNode,
+                "EndExpression",
+                depth + 1,
+                childRequiresBody)
+            || childRequiresBody)
+        {
+            requiresBody = childRequiresBody;
+            return childRequiresBody;
+        }
+
+        if (!PackageImageSourceBridgeTypedOptionalPatternArrayRequiresBody(
+                document,
+                switchCaseNode,
+                "Members",
+                depth + 1,
+                childRequiresBody)
+            || childRequiresBody)
+        {
+            requiresBody = childRequiresBody;
+            return childRequiresBody;
+        }
+
+        if (!LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                switchCaseNode,
+                "Statements",
+                switchStatementsNode,
+                switchStatementCount)
+            || !PackageImageSourceBridgeTypedStatementArrayRequiresBody(
+                document,
+                switchStatementsNode,
+                switchStatementCount,
+                depth + 1,
+                childRequiresBody))
+        {
+            return false;
+        }
+
+        if (childRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        switchCaseIndex = switchCaseIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeTypedStatementArrayRequiresBody(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] statementsNode,
+    u32[0 max] statementCount,
+    u8[0 64] depth,
+    out bool requiresBody)
+{
+    requiresBody = false;
+    stack mut u32[0 max] statementIndex = 0;
+    while willexit (statementIndex < statementCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementNode = 0;
+        stack mut bool statementRequiresBody = false;
+        if (!document.TryChildAt(
+                statementsNode,
+                (u64[0 2 ** 63 - 1])statementIndex,
+                statementNode)
+            || document.KindAt(statementNode) != JsonKind.Object
+            || !PackageImageSourceBridgeTypedStatementRequiresBody(
+                document,
+                statementNode,
+                depth,
+                statementRequiresBody))
+        {
+            return false;
+        }
+
+        if (statementRequiresBody)
+        {
+            requiresBody = true;
+            return true;
+        }
+
+        statementIndex = statementIndex + 1;
+    }
+
+    return true;
+}

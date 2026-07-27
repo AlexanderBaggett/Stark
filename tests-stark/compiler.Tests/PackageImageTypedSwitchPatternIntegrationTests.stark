@@ -1,0 +1,204 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedSwitchPatternIntegrationTests
+
+// Ported from PackageImageTypedSwitchPatternIntegrationTests.ManifestBackedTypedNestedAndLiteralSwitchPatternsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedNestedAndLiteralSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed nested/literal switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkgimg-typed-nested-literal-switch",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    stack Facade.Wrapped<i32[min max]> wrapped =
+        Facade.Wrapped<i32[min max]>.Value
+        {
+            Data: new Facade.Counter(7, 11), Marker: 1
+        };
+    return Facade.ReadNestedCount(wrapped, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public record Counter(i32[min max] Value, i32[min max] Count)
+{
+}
+
+public enum Wrapped<T>
+{
+    Value
+    {
+        Data: Counter, Marker: i32[min max]
+    },
+}
+
+public fn i32[min max] ReadNestedCount<T>(Wrapped<T> wrapped, T tag)
+{
+    switch (wrapped)
+    {
+        case Wrapped<T>.Value
+        {
+            Data: Counter(7, var count), Marker: 1
+        }:
+            return count;
+        default:
+            return -1;
+    }
+}
+""",
+            "Facade.ReadNestedCount",
+            "",
+            11);
+    }
+}
+
+// Ported from PackageImageTypedSwitchPatternIntegrationTests.ManifestBackedTypedRangeSwitchPatternsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedRangeSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed range switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkgimg-typed-range-switch",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    stack Facade.Token<i32[min max]> token =
+        Facade.Token<i32[min max]>.Number(5);
+    return Facade.Classify(token, 12, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public enum Token<T>
+{
+    Number(i32[min max]),
+    Other(T),
+}
+
+public fn i32[min max] Classify<T>(Token<T> token, u8[0 20] code, T tag)
+{
+    stack mut i32[min max] baseValue = 0;
+    switch (code)
+    {
+        case 0..9:
+            baseValue = 10;
+        case 10..20:
+            baseValue = 20;
+    }
+
+    switch (token)
+    {
+        case Token<T>.Number(0..9):
+            return baseValue + 7;
+        case Token<T>.Number(_):
+            return baseValue + 8;
+        case Token<T>.Other(_):
+            return baseValue - 1;
+    }
+}
+""",
+            "Facade.Classify",
+            "",
+            27);
+    }
+}
+
+// Ported from PackageImageTypedSwitchPatternIntegrationTests.ManifestBackedTypedAggregateWholeCapturePatternsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedAggregateWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed aggregate whole-capture switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkgimg-typed-aggregate-whole-capture",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.ReadWhole(new Facade.Counter(7, 11), tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public record Counter(i32[min max] Value, i32[min max] Count)
+{
+}
+
+public fn i32[min max] ReadWhole<T>(Counter counter, T tag)
+{
+    switch (counter)
+    {
+        case Counter capture:
+            return capture.Count + 1;
+    }
+}
+""",
+            "Facade.ReadWhole",
+            "",
+            12);
+    }
+}
+
+// Ported from PackageImageTypedSwitchPatternIntegrationTests.ManifestBackedTypedEnumWholeCapturePatternsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedEnumWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed enum whole-capture switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "pkgimg-typed-enum-whole-capture",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack Facade.Wrapped<i32[min max]> wrapped =
+        Facade.Wrapped<i32[min max]>.Pair(2, 3);
+    stack i32[min max] tag = 0;
+    return Facade.ReadEnumWhole(wrapped, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public enum Wrapped<T>
+{
+    None,
+    Pair(i32[min max], i32[min max]),
+}
+
+public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag)
+{
+    switch (wrapped)
+    {
+        case Wrapped<T>.Pair capture:
+            return 5;
+        default:
+            return -2;
+    }
+}
+""",
+            "Facade.ReadEnumWhole",
+            "",
+            5);
+    }
+}

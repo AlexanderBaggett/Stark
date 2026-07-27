@@ -1,0 +1,1024 @@
+import System.C
+module Vendor.GLFW
+
+public const GlfwVersionMajor = 3;
+public const GlfwVersionMinor = 4;
+public const GlfwVersionRevision = 0;
+
+public const KeySpace = 32;
+public const KeyA = 65;
+public const KeyD = 68;
+public const KeyS = 83;
+public const KeyW = 87;
+public const KeyEscape = 256;
+public const KeyEnter = 257;
+public const KeyLeft = 263;
+public const KeyRight = 262;
+public const KeyDown = 264;
+public const KeyUp = 265;
+
+public const MouseButtonLeft = 0;
+public const MouseButtonRight = 1;
+public const MouseButtonMiddle = 2;
+
+internal const GLFW_TRUE = 1;
+internal const GLFW_FALSE = 0;
+internal const GLFW_RELEASE = 0;
+internal const GLFW_PRESS = 1;
+internal const GLFW_REPEAT = 2;
+
+internal const GLFW_NO_ERROR = 0;
+internal const GLFW_NOT_INITIALIZED = 65537;
+internal const GLFW_NO_CURRENT_CONTEXT = 65538;
+internal const GLFW_INVALID_ENUM = 65539;
+internal const GLFW_INVALID_VALUE = 65540;
+internal const GLFW_OUT_OF_MEMORY = 65541;
+internal const GLFW_API_UNAVAILABLE = 65542;
+internal const GLFW_VERSION_UNAVAILABLE = 65543;
+internal const GLFW_PLATFORM_ERROR = 65544;
+internal const GLFW_FORMAT_UNAVAILABLE = 65545;
+internal const GLFW_NO_WINDOW_CONTEXT = 65546;
+internal const GLFW_CURSOR_UNAVAILABLE = 65547;
+internal const GLFW_FEATURE_UNAVAILABLE = 65548;
+internal const GLFW_FEATURE_UNIMPLEMENTED = 65549;
+internal const GLFW_PLATFORM_UNAVAILABLE = 65550;
+
+internal const GLFW_FOCUSED = 131073;
+internal const GLFW_RESIZABLE = 131075;
+internal const GLFW_VISIBLE = 131076;
+internal const GLFW_DECORATED = 131077;
+internal const GLFW_AUTO_ICONIFY = 131078;
+internal const GLFW_FLOATING = 131079;
+internal const GLFW_MAXIMIZED = 131080;
+internal const GLFW_CENTER_CURSOR = 131081;
+internal const GLFW_TRANSPARENT_FRAMEBUFFER = 131082;
+internal const GLFW_FOCUS_ON_SHOW = 131084;
+internal const GLFW_SCALE_TO_MONITOR = 131085;
+internal const GLFW_CLIENT_API = 139265;
+internal const GLFW_CONTEXT_VERSION_MAJOR = 139266;
+internal const GLFW_CONTEXT_VERSION_MINOR = 139267;
+internal const GLFW_OPENGL_PROFILE = 139272;
+internal const GLFW_OPENGL_FORWARD_COMPAT = 139270;
+internal const GLFW_NO_API = 0;
+internal const GLFW_OPENGL_API = 196609;
+internal const GLFW_OPENGL_ES_API = 196610;
+internal const GLFW_OPENGL_ANY_PROFILE = 0;
+internal const GLFW_OPENGL_CORE_PROFILE = 204801;
+internal const GLFW_OPENGL_COMPAT_PROFILE = 204802;
+
+internal const STARK_GLFW_EVENT_CLOSE = 1;
+internal const STARK_GLFW_EVENT_WINDOW_SIZE = 2;
+internal const STARK_GLFW_EVENT_FRAMEBUFFER_SIZE = 3;
+internal const STARK_GLFW_EVENT_KEY = 4;
+internal const STARK_GLFW_EVENT_MOUSE_BUTTON = 5;
+internal const STARK_GLFW_EVENT_CURSOR_POSITION = 6;
+internal const STARK_GLFW_EVENT_SCROLL = 7;
+internal const STARK_GLFW_EVENT_FOCUS = 8;
+
+internal struct GLFWwindowNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct GLFWmonitorNative
+{
+    i8[min max] Opaque;
+}
+
+public enum GlfwError
+{
+    CString(System.C.CStringError),
+    InvalidArgument,
+    InitFailed,
+    WindowCreationFailed,
+    NoError,
+    NotInitialized,
+    NoCurrentContext,
+    InvalidEnum,
+    InvalidValue,
+    OutOfMemory,
+    ApiUnavailable,
+    VersionUnavailable,
+    PlatformError,
+    FormatUnavailable,
+    NoWindowContext,
+    CursorUnavailable,
+    FeatureUnavailable,
+    FeatureUnimplemented,
+    PlatformUnavailable,
+    VulkanUnavailable,
+    VulkanSurfaceCreationFailed,
+    Native(i32[min max]),
+}
+
+public enum GlfwStatus
+{
+    [Ok] Ok,
+    [Err] Err(GlfwError),
+}
+
+public enum LibraryResult
+{
+    [Ok] Ok(Library),
+    [Err] Err(GlfwError),
+}
+
+public enum WindowResult
+{
+    [Ok] Ok(Window),
+    [Err] Err(GlfwError),
+}
+
+public enum VulkanInstanceExtensionsResult
+{
+    [Ok] Ok(VulkanInstanceExtensions),
+    [Err] Err(GlfwError),
+}
+
+public enum VulkanSurfaceResult
+{
+    [Ok] Ok(u64[0 max]),
+    [Err] Err(GlfwError),
+}
+
+public enum EventPollResult
+{
+    [Ok] Some(GlfwEvent),
+    [Err] None,
+}
+
+public enum InputAction
+{
+    Release,
+    Press,
+    Repeat,
+    Unknown(i32[min max]),
+}
+
+public enum ClientApi
+{
+    None,
+    OpenGL,
+    OpenGLES,
+}
+
+public enum OpenGLProfile
+{
+    Any,
+    Core,
+    Compatibility,
+}
+
+public enum WindowHint
+{
+    Focused,
+    Resizable,
+    Visible,
+    Decorated,
+    AutoIconify,
+    Floating,
+    Maximized,
+    CenterCursor,
+    TransparentFramebuffer,
+    FocusOnShow,
+    ScaleToMonitor,
+    ClientApi,
+    ContextVersionMajor,
+    ContextVersionMinor,
+    OpenGLProfile,
+    OpenGLForwardCompat,
+}
+
+public enum GlfwEventKind
+{
+    Close,
+    WindowSize,
+    FramebufferSize,
+    Key,
+    MouseButton,
+    CursorPosition,
+    Scroll,
+    Focus,
+    Unknown(i32[min max]),
+}
+
+public struct Library
+{
+    bool IsInitialized;
+
+    Library()
+    {
+        self.IsInitialized = false;
+    }
+
+    public inline finite law bool IsEmpty(borrow Library self)
+    {
+        return !self.IsInitialized;
+    }
+
+    mut drop
+    {
+        if (self.IsInitialized)
+        {
+            unsafe
+            {
+                glfwTerminate();
+            }
+
+            self.IsInitialized = false;
+        }
+    }
+}
+
+public struct Window
+{
+    internal rawmutptr<GLFWwindowNative> Handle;
+
+    Window()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Window self)
+    {
+        return self.Handle == null;
+    }
+
+    public fn u64[0 max] Token(borrow Window self)
+    {
+        unsafe
+        {
+            return (u64[0 max])self.Handle;
+        }
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_glfw_uninstall_event_bridge(self.Handle);
+                glfwDestroyWindow(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct VulkanInstanceExtensions
+{
+    public u32[0 max] Count;
+    internal u64[0 max] NamesToken;
+
+    VulkanInstanceExtensions()
+    {
+        self.Count = 0;
+        self.NamesToken = 0;
+    }
+
+    public inline finite law bool IsEmpty(borrow VulkanInstanceExtensions self)
+    {
+        return self.Count == 0 || self.NamesToken == 0;
+    }
+
+    public inline finite law u64[0 max] Token(borrow VulkanInstanceExtensions self)
+    {
+        return self.NamesToken;
+    }
+}
+
+[Platform, StructLayout(C)]
+internal struct VulkanInstanceExtensionsNative
+{
+    rawmutptr<rawptr<System.C.c_char>> Names;
+}
+
+public struct Version
+{
+    public i32[min max] Major;
+    public i32[min max] Minor;
+    public i32[min max] Revision;
+}
+
+public struct Size
+{
+    public i32[min max] Width;
+    public i32[min max] Height;
+}
+
+public struct CursorPosition
+{
+    public f64 X;
+    public f64 Y;
+}
+
+public struct GlfwEvent
+{
+    public u64[0 max] WindowToken;
+    public GlfwEventKind Kind;
+    public i32[min max] A;
+    public i32[min max] B;
+    public i32[min max] C;
+    public i32[min max] D;
+    public f64 X;
+    public f64 Y;
+}
+
+[StructLayout(C)]
+internal struct NativeEvent
+{
+    u64[0 max] WindowToken;
+    i32[min max] Kind;
+    i32[min max] A;
+    i32[min max] B;
+    i32[min max] C;
+    i32[min max] D;
+    f64 X;
+    f64 Y;
+}
+
+internal unsafe ffi(c) fn System.C.c_int glfwInit();
+internal unsafe ffi(c) fn void glfwTerminate();
+internal unsafe ffi(c) fn void glfwGetVersion(rawmutptr<System.C.c_int> major, rawmutptr<System.C.c_int> minor, rawmutptr<System.C.c_int> revision);
+internal unsafe ffi(c) fn System.C.c_int glfwGetError(rawmutptr<rawptr<System.C.c_char>> description);
+internal unsafe ffi(c) fn System.C.c_int glfwVulkanSupported();
+internal unsafe ffi(c) fn rawmutptr<rawptr<System.C.c_char>> glfwGetRequiredInstanceExtensions(rawmutptr<u32[0 max]> count);
+internal unsafe ffi(c) fn void glfwDefaultWindowHints();
+internal unsafe ffi(c) fn void glfwWindowHint(System.C.c_int hint, System.C.c_int value);
+internal unsafe ffi(c) fn rawmutptr<GLFWwindowNative> glfwCreateWindow(
+    System.C.c_int width,
+    System.C.c_int height,
+    rawptr<System.C.c_char> title,
+    rawmutptr<GLFWmonitorNative> monitor,
+    rawmutptr<GLFWwindowNative> share);
+internal unsafe ffi(c) fn void glfwDestroyWindow(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn System.C.c_int glfwWindowShouldClose(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn void glfwSetWindowShouldClose(rawmutptr<GLFWwindowNative> window, System.C.c_int value);
+internal unsafe ffi(c) fn void glfwSetWindowSize(rawmutptr<GLFWwindowNative> window, System.C.c_int width, System.C.c_int height);
+internal unsafe ffi(c) fn void glfwGetWindowSize(rawmutptr<GLFWwindowNative> window, rawmutptr<System.C.c_int> width, rawmutptr<System.C.c_int> height);
+internal unsafe ffi(c) fn void glfwGetFramebufferSize(rawmutptr<GLFWwindowNative> window, rawmutptr<System.C.c_int> width, rawmutptr<System.C.c_int> height);
+internal unsafe ffi(c) fn void glfwPollEvents();
+internal unsafe ffi(c) fn void glfwWaitEvents();
+internal unsafe ffi(c) fn void glfwWaitEventsTimeout(f64 timeout);
+internal unsafe ffi(c) fn void glfwPostEmptyEvent();
+internal unsafe ffi(c) fn void glfwSwapBuffers(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn void glfwSwapInterval(System.C.c_int interval);
+internal unsafe ffi(c) fn void glfwMakeContextCurrent(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn rawmutptr<GLFWwindowNative> glfwGetCurrentContext();
+internal unsafe ffi(c) fn f64 glfwGetTime();
+internal unsafe ffi(c) fn void glfwSetTime(f64 time);
+internal unsafe ffi(c) fn System.C.c_int glfwGetKey(rawmutptr<GLFWwindowNative> window, System.C.c_int key);
+internal unsafe ffi(c) fn System.C.c_int glfwGetMouseButton(rawmutptr<GLFWwindowNative> window, System.C.c_int button);
+internal unsafe ffi(c) fn void glfwGetCursorPos(rawmutptr<GLFWwindowNative> window, rawmutptr<f64> x, rawmutptr<f64> y);
+internal unsafe ffi(c) fn i32[min max] glfwCreateWindowSurface(
+    rawmutptr<System.C.c_void> instance,
+    rawmutptr<GLFWwindowNative> window,
+    rawptr<System.C.c_void> allocator,
+    rawmutptr<u64[0 max]> surface);
+
+internal unsafe ffi(c) fn System.C.c_int stark_glfw_install_event_bridge(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn void stark_glfw_uninstall_event_bridge(rawmutptr<GLFWwindowNative> window);
+internal unsafe ffi(c) fn System.C.c_int stark_glfw_poll_event(rawmutptr<NativeEvent> event);
+internal unsafe ffi(c) fn void stark_glfw_clear_events();
+internal unsafe ffi(c) fn u64[0 max] stark_glfw_dropped_event_count();
+
+internal finite law System.C.c_int BoolToNative(bool value)
+{
+    if (value)
+    {
+        return GLFW_TRUE;
+    }
+
+    return GLFW_FALSE;
+}
+
+internal finite law bool NativeBool(System.C.c_int value)
+{
+    return value != GLFW_FALSE;
+}
+
+internal finite law GlfwError ErrorFromNative(i32[min max] code)
+{
+    switch (code)
+    {
+        case 0:
+            return GlfwError.NoError;
+        case 65537:
+            return GlfwError.NotInitialized;
+        case 65538:
+            return GlfwError.NoCurrentContext;
+        case 65539:
+            return GlfwError.InvalidEnum;
+        case 65540:
+            return GlfwError.InvalidValue;
+        case 65541:
+            return GlfwError.OutOfMemory;
+        case 65542:
+            return GlfwError.ApiUnavailable;
+        case 65543:
+            return GlfwError.VersionUnavailable;
+        case 65544:
+            return GlfwError.PlatformError;
+        case 65545:
+            return GlfwError.FormatUnavailable;
+        case 65546:
+            return GlfwError.NoWindowContext;
+        case 65547:
+            return GlfwError.CursorUnavailable;
+        case 65548:
+            return GlfwError.FeatureUnavailable;
+        case 65549:
+            return GlfwError.FeatureUnimplemented;
+        case 65550:
+            return GlfwError.PlatformUnavailable;
+        default:
+            return GlfwError.Native(code);
+    }
+}
+
+internal fn GlfwError LastErrorOr(GlfwError fallback)
+{
+    unsafe
+    {
+        stack System.C.c_int code = glfwGetError(null);
+        if (code == GLFW_NO_ERROR)
+        {
+            return fallback;
+        }
+
+        return ErrorFromNative((i32[min max])code);
+    }
+}
+
+internal finite law InputAction ActionFromNative(System.C.c_int action)
+{
+    switch (action)
+    {
+        case 0:
+            return InputAction.Release;
+        case 1:
+            return InputAction.Press;
+        case 2:
+            return InputAction.Repeat;
+        default:
+            return InputAction.Unknown((i32[min max])action);
+    }
+}
+
+internal finite law System.C.c_int ClientApiToNative(ClientApi api)
+{
+    switch (api)
+    {
+        case ClientApi.None:
+            return GLFW_NO_API;
+        case ClientApi.OpenGL:
+            return GLFW_OPENGL_API;
+        case ClientApi.OpenGLES:
+            return GLFW_OPENGL_ES_API;
+    }
+}
+
+internal finite law System.C.c_int OpenGLProfileToNative(OpenGLProfile profile)
+{
+    switch (profile)
+    {
+        case OpenGLProfile.Any:
+            return GLFW_OPENGL_ANY_PROFILE;
+        case OpenGLProfile.Core:
+            return GLFW_OPENGL_CORE_PROFILE;
+        case OpenGLProfile.Compatibility:
+            return GLFW_OPENGL_COMPAT_PROFILE;
+    }
+}
+
+internal finite law System.C.c_int HintToNative(WindowHint hint)
+{
+    switch (hint)
+    {
+        case WindowHint.Focused:
+            return GLFW_FOCUSED;
+        case WindowHint.Resizable:
+            return GLFW_RESIZABLE;
+        case WindowHint.Visible:
+            return GLFW_VISIBLE;
+        case WindowHint.Decorated:
+            return GLFW_DECORATED;
+        case WindowHint.AutoIconify:
+            return GLFW_AUTO_ICONIFY;
+        case WindowHint.Floating:
+            return GLFW_FLOATING;
+        case WindowHint.Maximized:
+            return GLFW_MAXIMIZED;
+        case WindowHint.CenterCursor:
+            return GLFW_CENTER_CURSOR;
+        case WindowHint.TransparentFramebuffer:
+            return GLFW_TRANSPARENT_FRAMEBUFFER;
+        case WindowHint.FocusOnShow:
+            return GLFW_FOCUS_ON_SHOW;
+        case WindowHint.ScaleToMonitor:
+            return GLFW_SCALE_TO_MONITOR;
+        case WindowHint.ClientApi:
+            return GLFW_CLIENT_API;
+        case WindowHint.ContextVersionMajor:
+            return GLFW_CONTEXT_VERSION_MAJOR;
+        case WindowHint.ContextVersionMinor:
+            return GLFW_CONTEXT_VERSION_MINOR;
+        case WindowHint.OpenGLProfile:
+            return GLFW_OPENGL_PROFILE;
+        case WindowHint.OpenGLForwardCompat:
+            return GLFW_OPENGL_FORWARD_COMPAT;
+    }
+}
+
+internal finite law GlfwEventKind EventKindFromNative(i32[min max] kind)
+{
+    switch (kind)
+    {
+        case 1:
+            return GlfwEventKind.Close;
+        case 2:
+            return GlfwEventKind.WindowSize;
+        case 3:
+            return GlfwEventKind.FramebufferSize;
+        case 4:
+            return GlfwEventKind.Key;
+        case 5:
+            return GlfwEventKind.MouseButton;
+        case 6:
+            return GlfwEventKind.CursorPosition;
+        case 7:
+            return GlfwEventKind.Scroll;
+        case 8:
+            return GlfwEventKind.Focus;
+        default:
+            return GlfwEventKind.Unknown(kind);
+    }
+}
+
+internal finite law GlfwEvent EventFromNative(NativeEvent event)
+{
+    return new GlfwEvent()
+    {
+        WindowToken = event.WindowToken,
+        Kind = EventKindFromNative(event.Kind),
+        A = event.A,
+        B = event.B,
+        C = event.C,
+        D = event.D,
+        X = event.X,
+        Y = event.Y
+    };
+}
+
+public fn Version GetVersion()
+{
+    unsafe
+    {
+        stack mut System.C.c_int major = 0;
+        stack mut System.C.c_int minor = 0;
+        stack mut System.C.c_int revision = 0;
+        glfwGetVersion(&major, &minor, &revision);
+        return new Version()
+        {
+            Major = (i32[min max])major,
+            Minor = (i32[min max])minor,
+            Revision = (i32[min max])revision
+        };
+    }
+}
+
+public fn GlfwError GetLastError()
+{
+    return LastErrorOr(GlfwError.NoError);
+}
+
+public fn LibraryResult Initialize()
+{
+    unsafe
+    {
+        if (glfwInit() == GLFW_FALSE)
+        {
+            return LibraryResult.Err(LastErrorOr(GlfwError.InitFailed));
+        }
+
+        stack mut Library library = new();
+        library.IsInitialized = true;
+        return LibraryResult.Ok(library);
+    }
+}
+
+public fn void DefaultWindowHints()
+{
+    unsafe
+    {
+        glfwDefaultWindowHints();
+    }
+}
+
+public fn void SetWindowHint(WindowHint hint, i32[min max] value)
+{
+    unsafe
+    {
+        stack System.C.c_int nativeValue = value;
+        glfwWindowHint(HintToNative(hint), nativeValue);
+    }
+}
+
+public fn void SetWindowHintBool(WindowHint hint, bool value)
+{
+    unsafe
+    {
+        glfwWindowHint(HintToNative(hint), BoolToNative(value));
+    }
+}
+
+public fn void SetClientApiHint(ClientApi api)
+{
+    unsafe
+    {
+        glfwWindowHint(GLFW_CLIENT_API, ClientApiToNative(api));
+    }
+}
+
+public fn void SetOpenGLProfileHint(OpenGLProfile profile)
+{
+    unsafe
+    {
+        glfwWindowHint(GLFW_OPENGL_PROFILE, OpenGLProfileToNative(profile));
+    }
+}
+
+public fn WindowResult CreateWindow(u16[1 32767] width, u16[1 32767] height, ascii title)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> titleResult = System.C.FromAscii(title);
+    switch (titleResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return WindowResult.Err(GlfwError.CString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cTitle):
+            unsafe
+            {
+                stack System.C.c_int nativeWidth = width;
+                stack System.C.c_int nativeHeight = height;
+                stack rawmutptr<GLFWwindowNative> handle = glfwCreateWindow(
+                    nativeWidth,
+                    nativeHeight,
+                    cTitle.Data(),
+                    null,
+                    null);
+                if (handle == null)
+                {
+                    return WindowResult.Err(LastErrorOr(GlfwError.WindowCreationFailed));
+                }
+
+                stack mut Window window = new();
+                window.Handle = handle;
+                return WindowResult.Ok(window);
+            }
+    }
+}
+
+public fn WindowResult CreateHiddenWindow(u16[1 32767] width, u16[1 32767] height, ascii title)
+{
+    SetWindowHintBool(WindowHint.Visible, false);
+    return CreateWindow(width, height, title);
+}
+
+public fn GlfwStatus VulkanSupported()
+{
+    unsafe
+    {
+        if (glfwVulkanSupported() == GLFW_FALSE)
+        {
+            return GlfwStatus.Err(GlfwError.VulkanUnavailable);
+        }
+    }
+
+    return GlfwStatus.Ok;
+}
+
+public fn VulkanInstanceExtensionsResult RequiredVulkanInstanceExtensions()
+{
+    unsafe
+    {
+        stack mut u32[0 max] count = 0;
+        stack mut VulkanInstanceExtensionsNative native = new VulkanInstanceExtensionsNative();
+        native.Names = glfwGetRequiredInstanceExtensions(&count);
+        if (native.Names == null || count == 0)
+        {
+            return VulkanInstanceExtensionsResult.Err(GlfwError.VulkanUnavailable);
+        }
+
+        return VulkanInstanceExtensionsResult.Ok(new VulkanInstanceExtensions()
+        {
+            Count = count,
+            NamesToken = (u64[0 max])native.Names
+        });
+    }
+}
+
+public fn VulkanSurfaceResult CreateVulkanSurface(borrow Window window, u64[0 max] instanceToken)
+{
+    if (window.Handle == null || instanceToken == 0)
+    {
+        return VulkanSurfaceResult.Err(GlfwError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut u64[0 max] surface = 0;
+        stack i32[min max] result = glfwCreateWindowSurface(
+            (rawmutptr<System.C.c_void>)instanceToken,
+            window.Handle,
+            null,
+            &surface);
+        if (result != 0)
+        {
+            return VulkanSurfaceResult.Err(GlfwError.Native(result));
+        }
+
+        if (surface == 0)
+        {
+            return VulkanSurfaceResult.Err(GlfwError.VulkanSurfaceCreationFailed);
+        }
+
+        return VulkanSurfaceResult.Ok(surface);
+    }
+}
+
+public fn GlfwStatus EnableEventBridge(mut borrow Window window)
+{
+    if (window.IsEmpty())
+    {
+        return GlfwStatus.Err(GlfwError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        if (stark_glfw_install_event_bridge(window.Handle) == GLFW_FALSE)
+        {
+            return GlfwStatus.Err(GlfwError.InvalidArgument);
+        }
+    }
+
+    return GlfwStatus.Ok;
+}
+
+public fn void DisableEventBridge(mut borrow Window window)
+{
+    unsafe
+    {
+        if (window.Handle != null)
+        {
+            stark_glfw_uninstall_event_bridge(window.Handle);
+        }
+    }
+}
+
+public fn EventPollResult PollEvent()
+{
+    unsafe
+    {
+        stack mut NativeEvent nativeEvent = new();
+        if (stark_glfw_poll_event(&nativeEvent) == GLFW_FALSE)
+        {
+            return EventPollResult.None;
+        }
+
+        return EventPollResult.Some(EventFromNative(nativeEvent));
+    }
+}
+
+public fn void ClearEvents()
+{
+    unsafe
+    {
+        stark_glfw_clear_events();
+    }
+}
+
+public fn u64[0 max] DroppedEventCount()
+{
+    unsafe
+    {
+        return stark_glfw_dropped_event_count();
+    }
+}
+
+public fn void PollEvents()
+{
+    unsafe
+    {
+        glfwPollEvents();
+    }
+}
+
+public fn void WaitEvents()
+{
+    unsafe
+    {
+        glfwWaitEvents();
+    }
+}
+
+public fn void WaitEventsTimeout(f64 timeout)
+{
+    unsafe
+    {
+        glfwWaitEventsTimeout(timeout);
+    }
+}
+
+public fn void PostEmptyEvent()
+{
+    unsafe
+    {
+        glfwPostEmptyEvent();
+    }
+}
+
+public fn bool WindowShouldClose(borrow Window window)
+{
+    unsafe
+    {
+        if (window.Handle == null)
+        {
+            return true;
+        }
+
+        return NativeBool(glfwWindowShouldClose(window.Handle));
+    }
+}
+
+public fn void SetWindowShouldClose(mut borrow Window window, bool shouldClose)
+{
+    unsafe
+    {
+        if (window.Handle != null)
+        {
+            glfwSetWindowShouldClose(window.Handle, BoolToNative(shouldClose));
+        }
+    }
+}
+
+public fn void SetWindowSize(mut borrow Window window, u16[1 32767] width, u16[1 32767] height)
+{
+    unsafe
+    {
+        if (window.Handle != null)
+        {
+            stack System.C.c_int nativeWidth = width;
+            stack System.C.c_int nativeHeight = height;
+            glfwSetWindowSize(window.Handle, nativeWidth, nativeHeight);
+        }
+    }
+}
+
+public fn Size GetWindowSize(borrow Window window)
+{
+    unsafe
+    {
+        stack mut System.C.c_int width = 0;
+        stack mut System.C.c_int height = 0;
+        if (window.Handle != null)
+        {
+            glfwGetWindowSize(window.Handle, &width, &height);
+        }
+
+        return new Size()
+        {
+            Width = (i32[min max])width,
+            Height = (i32[min max])height
+        };
+    }
+}
+
+public fn Size GetFramebufferSize(borrow Window window)
+{
+    unsafe
+    {
+        stack mut System.C.c_int width = 0;
+        stack mut System.C.c_int height = 0;
+        if (window.Handle != null)
+        {
+            glfwGetFramebufferSize(window.Handle, &width, &height);
+        }
+
+        return new Size()
+        {
+            Width = (i32[min max])width,
+            Height = (i32[min max])height
+        };
+    }
+}
+
+public fn void MakeContextCurrent(borrow Window window)
+{
+    unsafe
+    {
+        if (window.Handle != null)
+        {
+            glfwMakeContextCurrent(window.Handle);
+        }
+    }
+}
+
+public fn void DetachCurrentContext()
+{
+    unsafe
+    {
+        glfwMakeContextCurrent(null);
+    }
+}
+
+public fn bool HasCurrentContext()
+{
+    unsafe
+    {
+        return glfwGetCurrentContext() != null;
+    }
+}
+
+public fn void SwapBuffers(borrow Window window)
+{
+    unsafe
+    {
+        if (window.Handle != null)
+        {
+            glfwSwapBuffers(window.Handle);
+        }
+    }
+}
+
+public fn void SwapInterval(i32[min max] interval)
+{
+    unsafe
+    {
+        stack System.C.c_int nativeInterval = interval;
+        glfwSwapInterval(nativeInterval);
+    }
+}
+
+public fn f64 GetTime()
+{
+    unsafe
+    {
+        return glfwGetTime();
+    }
+}
+
+public fn void SetTime(f64 time)
+{
+    unsafe
+    {
+        glfwSetTime(time);
+    }
+}
+
+public fn InputAction GetKey(borrow Window window, i32[min max] key)
+{
+    unsafe
+    {
+        if (window.Handle == null)
+        {
+            return InputAction.Release;
+        }
+
+        stack System.C.c_int nativeKey = key;
+        return ActionFromNative(glfwGetKey(window.Handle, nativeKey));
+    }
+}
+
+public fn InputAction GetMouseButton(borrow Window window, i32[min max] button)
+{
+    unsafe
+    {
+        if (window.Handle == null)
+        {
+            return InputAction.Release;
+        }
+
+        stack System.C.c_int nativeButton = button;
+        return ActionFromNative(glfwGetMouseButton(window.Handle, nativeButton));
+    }
+}
+
+public fn CursorPosition GetCursorPosition(borrow Window window)
+{
+    unsafe
+    {
+        stack mut f64 x = 0.0;
+        stack mut f64 y = 0.0;
+        if (window.Handle != null)
+        {
+            glfwGetCursorPos(window.Handle, &x, &y);
+        }
+
+        return new CursorPosition()
+        {
+            X = x,
+            Y = y
+        };
+    }
+}

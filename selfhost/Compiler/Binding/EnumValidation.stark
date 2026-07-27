@@ -1,0 +1,39 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import System.Text
+import System.Memory
+module Compiler.Binding.EnumValidation
+
+// Emits a `DuplicateEnumVariant` diagnostic (anchored at the later variant name)
+// for every enum variant whose name repeats an earlier one in the same enum —
+// matching the host's STK3006 "declares variant 'V' more than once".
+internal fn System.Memory.MemoryStatus CollectDuplicateEnumVariants(borrow VariantList variants, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = variants.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] later = 0; later < count; later += 1)
+    {
+        stack ascii laterName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])variants.NameTokenAt(later));
+        stack mut bool repeats = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] earlier = 0; earlier < later; earlier += 1)
+        {
+            stack ascii earlierName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])variants.NameTokenAt(earlier));
+            if (System.Text.Equals(earlierName, laterName))
+            {
+                repeats = true;
+            }
+        }
+
+        if (repeats)
+        {
+            switch (diags.Append(BindDiagnosticCode.DuplicateEnumVariant, variants.NameTokenAt(later)))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

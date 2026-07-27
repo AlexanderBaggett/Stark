@@ -1,0 +1,42 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.DeclarationPrelude
+import Compiler.Binding.TokenHelpers
+module Compiler.Binding.FfiAbiHelpers
+
+internal finite law bool FfiAbiNameIsCFamily(ascii source, borrow TokenStream stream, u32[0 max] token)
+    where overlap(source, stream)
+{
+    return TokenTextEquals(source, stream, token, "c")
+        || TokenTextEquals(source, stream, token, "cdecl")
+        || TokenTextEquals(source, stream, token, "sysv")
+        || TokenTextEquals(source, stream, token, "win64");
+}
+
+internal finite law bool IsCAbiFfiFunction(ascii source, borrow TokenStream stream, DeclItem item)
+    where overlap(source, stream)
+{
+    if (item.Kind != DeclarationKind.Function || DeclarationPreludeHasToken(stream, item, TokenKind.Asm))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Ffi)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+            {
+                return stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+                    && FfiAbiNameIsCFamily(source, stream, (u32[0 max])(scan + 2));
+            }
+
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}

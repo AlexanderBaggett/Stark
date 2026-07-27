@@ -1,0 +1,192 @@
+import System.Console
+import System.Memory
+import System.Text
+import Vendor.Raylib
+import Vendor.Raymath
+import Vendor.Rlgl
+module VendorRaylibSafeApis
+
+unsafe ffi(c) fn void FillSilence(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+{
+    return;
+}
+
+fn void InstallAudioCallback(AudioStream stream)
+{
+    SetAudioStreamCallback(stream, FillSilence);
+    return;
+}
+
+fn void DrawImmediateTriangle()
+{
+    rlBegin(RL_TRIANGLES);
+    rlVertex2f(0.0f, 0.5f);
+    rlVertex2f(-0.5f, -0.5f);
+    rlVertex2f(0.5f, -0.5f);
+    rlEnd();
+    return;
+}
+
+fn bool HashSmallPayload()
+{
+    stack u8[0 max][4] payload =
+    {
+        1, 2, 3, 4
+    };
+    stack mut u32[0 max][8] sha256 =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+
+    return ComputeSHA256(payload, sha256);
+}
+
+fn RaylibStatus ReadOwnedBytes()
+{
+    stack u8[0 max][4] payload =
+    {
+        1, 2, 3, 4
+    };
+    stack RaylibBytesResult compressed = CompressData(payload);
+    switch (compressed)
+    {
+        case RaylibBytesResult.Err(var status):
+            return status;
+        case RaylibBytesResult.Ok(var bytes):
+            stack mut RaylibOwnedBytes owned = bytes;
+            if (owned.Length() == 0)
+            {
+                owned.Close();
+                return RaylibStatus.InvalidArgument;
+            }
+
+            owned.Close();
+            return RaylibStatus.Ok;
+    }
+}
+
+fn RaylibStatus ReadBorrowedTextOutput()
+{
+    stack MemoryResult<OwnedAscii> result = GetFileName("assets/player.png");
+    switch (result)
+    {
+        case MemoryResult<OwnedAscii>.Err(var error):
+            return RaylibStatus.InvalidArgument;
+        case MemoryResult<OwnedAscii>.Ok(var text):
+            stack mut OwnedAscii owned = text;
+            if (owned.Length() == 0)
+            {
+                return RaylibStatus.InvalidArgument;
+            }
+
+            return RaylibStatus.Ok;
+    }
+}
+
+fn RaylibStatus ReadRaylibOwnedText()
+{
+    stack RaylibTextResult result = TextReplace("hello raylib", "raylib", "vendor");
+    switch (result)
+    {
+        case RaylibTextResult.Err(var status):
+            return status;
+        case RaylibTextResult.Ok(var text):
+            stack mut RaylibOwnedText owned = text;
+            stack mut i8[min max][32] scratch =
+            {
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0
+            };
+            stack mut u64[0 2 ** 63 - 1] written = 0;
+            stack RaylibStatus copied = owned.CopyTo(scratch, written);
+            if (copied != RaylibStatus.Ok)
+            {
+                return copied;
+            }
+
+            if (written == 0)
+            {
+                return RaylibStatus.InvalidArgument;
+            }
+
+            return RaylibStatus.Ok;
+    }
+}
+
+fn RaylibStatus UseTypedTextureOptions()
+{
+    stack Texture2D texture = DefaultTexture();
+    SetTextureFilter(texture, TextureFilterBilinear());
+    SetTextureWrap(texture, TextureWrapClamp());
+    return RaylibStatus.Ok;
+}
+
+fn bool UseRaymathValues()
+{
+    stack Vector2 left = Vec2(1.0f, 2.0f);
+    stack Vector2 right = Vec2(3.0f, 4.0f);
+    stack Vector2 sum = Vector2Add(left, right);
+    stack Matrix transform = MatrixMultiply(MatrixTranslate(1.0f, 2.0f, 3.0f), MatrixIdentity());
+
+    return sum.X == 4.0f && transform.M12 == 1.0f;
+}
+
+fn bool LoadMissingMaterialsAsEmptyOwner()
+{
+    stack mut OwnedMaterials materials = LoadOwnedMaterials("missing.obj");
+    stack bool empty = materials.IsEmpty();
+    materials.Close();
+    return empty;
+}
+
+export fn i32[min max] main()
+{
+    SetTraceLogLevel(TraceLogWarning());
+
+    if (!HashSmallPayload())
+    {
+        WriteLine("raylib hash failed");
+        return 1;
+    }
+
+    if (ReadOwnedBytes() != RaylibStatus.Ok)
+    {
+        WriteLine("raylib byte owner failed");
+        return 2;
+    }
+
+    if (ReadBorrowedTextOutput() != RaylibStatus.Ok)
+    {
+        WriteLine("raylib borrowed text output failed");
+        return 3;
+    }
+
+    if (ReadRaylibOwnedText() != RaylibStatus.Ok)
+    {
+        WriteLine("raylib owned text failed");
+        return 4;
+    }
+
+    if (UseTypedTextureOptions() != RaylibStatus.Ok)
+    {
+        WriteLine("raylib typed texture options failed");
+        return 5;
+    }
+
+    if (!UseRaymathValues())
+    {
+        WriteLine("raymath values failed");
+        return 6;
+    }
+
+    if (!LoadMissingMaterialsAsEmptyOwner())
+    {
+        WriteLine("raylib material owner failed");
+        return 7;
+    }
+
+    WriteLine("Vendor.Raylib safe API example complete");
+    return 0;
+}

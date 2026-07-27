@@ -1,0 +1,69 @@
+import System.Process
+module Benchmarks.Allocator.ArenaAllocator
+
+const Rounds = 1200;
+const ItemsPerRound = 256;
+const SelfTestRounds = 7;
+const SelfTestSeed = 19;
+const SelfTestExpected = 2928019188430704367;
+
+struct Pair
+{
+    u64[0 max] Left;
+    u64[0 max] Right;
+}
+
+noinline unsafe fn u64[0 max] RunRound(u64[0 max] seed)
+{
+    stack mut dynamic u64[0 max] values = new(arena, ItemsPerRound);
+    stack mut u64[0 max] checksum = seed +% 1469598103934665603;
+
+    for willexit (stack mut u16[0 256] index = 0; index < ItemsPerRound; index += 1)
+    {
+        stack u64[0 max] wideIndex = (u64[0 max])index;
+        arena Pair pair = new Pair()
+        {
+            Left = checksum +% ((wideIndex +% 1) *% 1099511628211),
+            Right = (checksum ^ (wideIndex *% 780291637)) +% 1442695040888963407
+        };
+        stack u64[0 max] mixed = ((pair.Left *% 6364136223846793005) ^ pair.Right) +% wideIndex;
+        init values[values.Length] = mixed;
+        checksum = (checksum ^ mixed) *% 1099511628211;
+    }
+
+    for willexit (stack mut u16[0 256] index = 0; index < ItemsPerRound; index += 1)
+    {
+        checksum = (checksum +% values[(u64[0 2 ** 63 - 1])index]) ^ ((u64[0 max])index *% 11400714819323198485);
+    }
+
+    return checksum;
+}
+
+noinline unsafe fn u64[0 max] Run(u16[0 1200] rounds, u64[0 max] seed)
+{
+    stack mut u64[0 max] checksum = seed;
+
+    for willexit (stack mut u16[0 1200] round = 0; round < rounds; round += 1)
+    {
+        checksum = RunRound(checksum +% ((u64[0 max])round *% 7046029254386353131));
+    }
+
+    return checksum;
+}
+
+export unsafe ffi fn i32[min max] main()
+{
+    if (Run(SelfTestRounds, SelfTestSeed) != SelfTestExpected)
+    {
+        return 1;
+    }
+
+    stack u64[0 max] seed = ((u64[0 max])System.Process.CurrentId()) +% SelfTestSeed;
+    stack u64[0 max] result = Run(Rounds, seed);
+    if (result == 0 || result == seed)
+    {
+        return 2;
+    }
+
+    return 0;
+}

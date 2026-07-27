@@ -1,0 +1,1685 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceTryPropagation
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Mir.SourceSwitchAggregatePatterns
+import Compiler.Mir.SourceSwitchStoragePatterns
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchCaseParsing
+
+internal fn bool TryBuildSourceSwitchListPatternDecisionPreflightRows(
+    borrow IrTable<ExprNode> exprNodes,
+    mut borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    mut borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors,
+    borrow IrTable<u32[0 max]> caseListDescriptorRows,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    borrow IrTable<u32[0 max]> caseNestedStarts,
+    borrow IrTable<u32[0 max]> caseNestedCounts,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    borrow IrTable<u32[0 max]> elementCaptureIndices,
+    borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> nestedElementIndices,
+    borrow IrTable<u32[0 max]> nestedKinds,
+    borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    mut borrow IrTable<SourceSwitchPatternDecisionNode> decisionNodes,
+    mut borrow IrTable<SourceSwitchPatternDecisionMember> decisionMembers,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberStarts,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberCounts)
+{
+    stack u64[0 2 ** 63 - 1] count = caseListDescriptorRows.Count();
+    if (caseElementCaptureStarts.Count() != count
+        || caseElementCaptureCounts.Count() != count
+        || (caseGuardNodes.Count() != 0 && caseGuardNodes.Count() != count)
+        || (caseNestedStarts.Count() != 0 && caseNestedStarts.Count() != count)
+        || (caseNestedCounts.Count() != 0 && caseNestedCounts.Count() != count))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> preflightCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> preflightGuardNodes = new();
+
+    stack mut u64[0 2 ** 63 - 1] captureIndex = 0;
+    while willexit (captureIndex < elementCaptureTypeCodes.Count())
+    {
+        if (preflightCaptureNameTokens.Add(1) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(index + 1);
+        stack u32[0 max] descriptorRow = caseListDescriptorRows.Get(caseSlot);
+        if (!listDescriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchListPatternDescriptor descriptor = listDescriptors.Get(descriptorRow);
+        stack u32[0 max] captureStart = caseElementCaptureStarts.Get(caseSlot);
+        stack u32[0 max] captureCount = caseElementCaptureCounts.Get(caseSlot);
+        stack mut u32[0 max] nestedStart = 0;
+        stack mut u32[0 max] nestedCount = 0;
+        if (caseNestedStarts.Count() != 0)
+        {
+            nestedStart = caseNestedStarts.Get(caseSlot);
+        }
+
+        if (caseNestedCounts.Count() != 0)
+        {
+            nestedCount = caseNestedCounts.Get(caseSlot);
+        }
+
+        stack mut u32[0 max] memberStart = 0;
+        stack mut u32[0 max] memberCount = 0;
+        if (!TryTranslateSourceSwitchListElementDecisionRowsToPatternDecisionMembers(
+                descriptor,
+                captureStart,
+                captureCount,
+                nestedStart,
+                nestedCount,
+                elementPatternIndices,
+                elementPatternTypeCodes,
+                elementPatternKinds,
+                elementPatternMinValues,
+                elementPatternMaxValues,
+                elementCaptureIndices,
+                elementCaptureTypeCodes,
+                preflightCaptureNameTokens,
+                nestedElementIndices,
+                nestedKinds,
+                nestedAggregateDescriptorRows,
+                nestedListDescriptorRows,
+                aggregateDescriptors,
+                listDescriptors,
+                decisionNodes,
+                decisionMembers,
+                memberStart,
+                memberCount))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        if (caseGuardNodes.Count() != 0)
+        {
+            guardNode = caseGuardNodes.Get(caseSlot);
+        }
+
+        if (SourceSwitchPatternDecisionCaseOverlapsPreviousUnguardedCase(
+                exprNodes,
+                caseDecisionMemberStarts,
+                caseDecisionMemberCounts,
+                preflightGuardNodes,
+                decisionNodes,
+                decisionMembers,
+                aggregateDescriptors,
+                listDescriptors,
+                memberStart,
+                memberCount)
+            || caseDecisionMemberStarts.Add(memberStart) == 0
+            || caseDecisionMemberCounts.Add(memberCount) == 0
+            || preflightGuardNodes.Add(guardNode) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+internal fn bool TryBuildSourceSwitchEnumPayloadPatternDecisionPreflightRows(
+    borrow IrTable<ExprNode> exprNodes,
+    mut borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    mut borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors,
+    borrow IrTable<u32[0 max]> caseAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> casePayloadCaptureStarts,
+    borrow IrTable<u32[0 max]> casePayloadCaptureCounts,
+    borrow IrTable<u32[0 max]> caseNestedStarts,
+    borrow IrTable<u32[0 max]> caseNestedCounts,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    borrow IrTable<u32[0 max]> nestedKinds,
+    borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    mut borrow IrTable<SourceSwitchPatternDecisionNode> decisionNodes,
+    mut borrow IrTable<SourceSwitchPatternDecisionMember> decisionMembers,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberStarts,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberCounts)
+{
+    stack u64[0 2 ** 63 - 1] count = caseAggregateDescriptorRows.Count();
+    if (casePayloadCaptureStarts.Count() != count
+        || casePayloadCaptureCounts.Count() != count
+        || (caseGuardNodes.Count() != 0 && caseGuardNodes.Count() != count)
+        || (caseNestedStarts.Count() != 0 && caseNestedStarts.Count() != count)
+        || (caseNestedCounts.Count() != 0 && caseNestedCounts.Count() != count))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> preflightCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> preflightGuardNodes = new();
+
+    stack mut u64[0 2 ** 63 - 1] captureIndex = 0;
+    while willexit (captureIndex < payloadCaptureTypeCodes.Count())
+    {
+        if (preflightCaptureNameTokens.Add(1) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(index + 1);
+        stack u32[0 max] descriptorRow = caseAggregateDescriptorRows.Get(caseSlot);
+        if (!aggregateDescriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = aggregateDescriptors.Get(descriptorRow);
+        if (!SourceSwitchAggregatePatternHasEnumVariant(descriptor))
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberStart = (u32[0 max])decisionMembers.Count() + 1;
+        stack mut u32[0 max] variantNodeRow = 0;
+        stack mut u32[0 max] variantMemberRow = 0;
+        if (!TryAppendSourceSwitchAggregatePatternDecisionNode(
+                true,
+                descriptorRow,
+                aggregateDescriptors,
+                decisionNodes,
+                variantNodeRow)
+            || !TryAppendSourceSwitchPatternDecisionMember(
+                4294967295,
+                variantNodeRow,
+                decisionNodes,
+                decisionMembers,
+                variantMemberRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureStart = casePayloadCaptureStarts.Get(caseSlot);
+        stack u32[0 max] captureCount = casePayloadCaptureCounts.Get(caseSlot);
+        stack mut u32[0 max] nestedStart = 0;
+        stack mut u32[0 max] nestedCount = 0;
+        if (caseNestedStarts.Count() != 0)
+        {
+            nestedStart = caseNestedStarts.Get(caseSlot);
+        }
+
+        if (caseNestedCounts.Count() != 0)
+        {
+            nestedCount = caseNestedCounts.Get(caseSlot);
+        }
+
+        stack mut u32[0 max] payloadMemberStart = 0;
+        stack mut u32[0 max] payloadMemberCount = 0;
+        if (!TryTranslateSourceSwitchEnumPayloadDecisionRowsToPatternDecisionMembers(
+                descriptor,
+                captureStart,
+                captureCount,
+                nestedStart,
+                nestedCount,
+                payloadPatternVariantOrdinals,
+                payloadPatternOrdinals,
+                payloadPatternTypeCodes,
+                payloadPatternKinds,
+                payloadPatternMinValues,
+                payloadPatternMaxValues,
+                payloadCaptureVariantOrdinals,
+                payloadCaptureOrdinals,
+                payloadCaptureTypeCodes,
+                preflightCaptureNameTokens,
+                nestedVariantOrdinals,
+                nestedPayloadOrdinals,
+                nestedKinds,
+                nestedAggregateDescriptorRows,
+                nestedListDescriptorRows,
+                aggregateDescriptors,
+                listDescriptors,
+                decisionNodes,
+                decisionMembers,
+                payloadMemberStart,
+                payloadMemberCount)
+            || payloadMemberStart != memberStart + 1
+            || payloadMemberCount == 4294967295)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberCount = payloadMemberCount + 1;
+        stack mut u32[0 max] guardNode = 0;
+        if (caseGuardNodes.Count() != 0)
+        {
+            guardNode = caseGuardNodes.Get(caseSlot);
+        }
+
+        if (SourceSwitchPatternDecisionCaseOverlapsPreviousUnguardedCase(
+                exprNodes,
+                caseDecisionMemberStarts,
+                caseDecisionMemberCounts,
+                preflightGuardNodes,
+                decisionNodes,
+                decisionMembers,
+                aggregateDescriptors,
+                listDescriptors,
+                memberStart,
+                memberCount)
+            || caseDecisionMemberStarts.Add(memberStart) == 0
+            || caseDecisionMemberCounts.Add(memberCount) == 0
+            || preflightGuardNodes.Add(guardNode) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryBuildSourceSwitchStructAggregatePatternDecisionPreflightRows(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ExprNode> exprNodes,
+    mut borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    mut borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors,
+    borrow IrTable<u32[0 max]> caseAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> caseFieldCaptureStarts,
+    borrow IrTable<u32[0 max]> caseFieldCaptureCounts,
+    borrow IrTable<u32[0 max]> caseNestedStarts,
+    borrow IrTable<u32[0 max]> caseNestedCounts,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> nestedFieldIndices,
+    borrow IrTable<u32[0 max]> nestedKinds,
+    borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    mut borrow IrTable<SourceSwitchPatternDecisionNode> decisionNodes,
+    mut borrow IrTable<SourceSwitchPatternDecisionMember> decisionMembers,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberStarts,
+    mut borrow IrTable<u32[0 max]> caseDecisionMemberCounts)
+{
+    stack u64[0 2 ** 63 - 1] count = caseAggregateDescriptorRows.Count();
+    if (caseFieldCaptureStarts.Count() != count
+        || caseFieldCaptureCounts.Count() != count
+        || (caseGuardNodes.Count() != 0 && caseGuardNodes.Count() != count)
+        || (caseNestedStarts.Count() != 0 && caseNestedStarts.Count() != count)
+        || (caseNestedCounts.Count() != 0 && caseNestedCounts.Count() != count))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> preflightCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> preflightGuardNodes = new();
+
+    stack mut u64[0 2 ** 63 - 1] captureIndex = 0;
+    while willexit (captureIndex < fieldCaptureTypeCodes.Count())
+    {
+        if (preflightCaptureNameTokens.Add(1) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(index + 1);
+        stack u32[0 max] descriptorRow = caseAggregateDescriptorRows.Get(caseSlot);
+        if (!aggregateDescriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = aggregateDescriptors.Get(descriptorRow);
+        stack u32[0 max] captureStart = caseFieldCaptureStarts.Get(caseSlot);
+        stack u32[0 max] captureCount = caseFieldCaptureCounts.Get(caseSlot);
+        stack mut u32[0 max] nestedStart = 0;
+        stack mut u32[0 max] nestedCount = 0;
+        if (caseNestedStarts.Count() != 0)
+        {
+            nestedStart = caseNestedStarts.Get(caseSlot);
+        }
+
+        if (caseNestedCounts.Count() != 0)
+        {
+            nestedCount = caseNestedCounts.Get(caseSlot);
+        }
+
+        stack mut u32[0 max] memberStart = 0;
+        stack mut u32[0 max] memberCount = 0;
+        if (!TryTranslateSourceSwitchStructFieldDecisionRowsToPatternDecisionMembers(
+                stream,
+                source,
+                moduleFacts,
+                descriptor,
+                captureStart,
+                captureCount,
+                nestedStart,
+                nestedCount,
+                fieldPatternIndices,
+                fieldPatternTypeCodes,
+                fieldPatternKinds,
+                fieldPatternMinValues,
+                fieldPatternMaxValues,
+                fieldCaptureIndices,
+                fieldCaptureTypeCodes,
+                preflightCaptureNameTokens,
+                nestedFieldIndices,
+                nestedKinds,
+                nestedAggregateDescriptorRows,
+                nestedListDescriptorRows,
+                aggregateDescriptors,
+                listDescriptors,
+                decisionNodes,
+                decisionMembers,
+                memberStart,
+                memberCount))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        if (caseGuardNodes.Count() != 0)
+        {
+            guardNode = caseGuardNodes.Get(caseSlot);
+        }
+
+        if (SourceSwitchPatternDecisionCaseOverlapsPreviousUnguardedCase(
+                exprNodes,
+                caseDecisionMemberStarts,
+                caseDecisionMemberCounts,
+                preflightGuardNodes,
+                decisionNodes,
+                decisionMembers,
+                aggregateDescriptors,
+                listDescriptors,
+                memberStart,
+                memberCount)
+            || caseDecisionMemberStarts.Add(memberStart) == 0
+            || caseDecisionMemberCounts.Add(memberCount) == 0
+            || preflightGuardNodes.Add(guardNode) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryBuildSourceSwitchListPatternCaseDescriptors(
+    ParamAbiFacts fixedArrayFacts,
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<SourceSwitchListPatternDescriptor> descriptors,
+    mut borrow IrTable<u32[0 max]> caseDescriptorRows)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count
+        || !fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] row = (u32[0 max])(index + 1);
+        stack u32[0 max] patternStart = casePatternStarts.Get(row);
+        stack u32[0 max] patternCount = casePatternCounts.Get(row);
+        stack SourceSwitchListPatternDescriptor descriptor = MakeSourceSwitchListPatternDescriptor(
+            fixedArrayFacts.FixedArrayFieldTypeCode,
+            fixedArrayFacts.FixedArrayLength,
+            patternStart,
+            patternCount);
+        stack u32[0 max] descriptorRow = descriptors.Add(descriptor);
+        if (descriptorRow == 0 || caseDescriptorRows.Add(descriptorRow) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryBuildSourceSwitchAggregatePatternCaseDescriptors(
+    u32[0 max] ownerTypeToken,
+    u32[0 max] enumVariantOrdinalPlusOne,
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    mut borrow IrTable<u32[0 max]> caseDescriptorRows)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count || ownerTypeToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] row = (u32[0 max])(index + 1);
+        stack u32[0 max] patternStart = casePatternStarts.Get(row);
+        stack u32[0 max] patternCount = casePatternCounts.Get(row);
+        stack SourceSwitchAggregatePatternDescriptor descriptor =
+            MakeSourceSwitchAggregatePatternDescriptor(
+                ownerTypeToken,
+                enumVariantOrdinalPlusOne,
+                patternStart,
+                patternCount);
+        stack u32[0 max] descriptorRow = descriptors.Add(descriptor);
+        if (descriptorRow == 0 || caseDescriptorRows.Add(descriptorRow) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryGetSourceSwitchEnumVariantOrdinalForTag(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    i64[min max] tagValue,
+    out u32[0 max] variantOrdinal)
+{
+    variantOrdinal = 0;
+    if (tagValue < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.EnumLayouts.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (moduleFacts.EnumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && moduleFacts.EnumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant
+            && (i64[min max])moduleFacts.EnumLayouts.VariantTagAt(index) == tagValue)
+        {
+            variantOrdinal = moduleFacts.EnumLayouts.VariantOrdinalAt(index);
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchEnumPayloadPatternRowsMatchVariant(
+    u32[0 max] variantOrdinal,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals)
+{
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < patternCount)
+    {
+        stack u32[0 max] row = patternStart + offset;
+        if (!payloadPatternVariantOrdinals.Contains(row)
+            || payloadPatternVariantOrdinals.Get(row) != variantOrdinal)
+        {
+            return false;
+        }
+
+        offset = offset + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryBuildSourceSwitchEnumAggregatePatternCaseDescriptors(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    mut borrow IrTable<u32[0 max]> caseDescriptorRows)
+{
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    if (casePatternStarts.Count() != count || casePatternCounts.Count() != count)
+    {
+        return false;
+    }
+
+    stack u32[0 max] ownerTypeToken = ownerDeclarationIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] row = (u32[0 max])(index + 1);
+        stack i64[min max] tagValue = caseValues.Get(row);
+        stack u32[0 max] patternStart = casePatternStarts.Get(row);
+        stack u32[0 max] patternCount = casePatternCounts.Get(row);
+        stack mut u32[0 max] variantOrdinal = 0;
+        if (patternCount != 0)
+        {
+            if (!payloadPatternVariantOrdinals.Contains(patternStart))
+            {
+                return false;
+            }
+
+            variantOrdinal = payloadPatternVariantOrdinals.Get(patternStart);
+            stack mut u64[0 max] patternVariantTag = 0;
+            if (!moduleFacts.EnumLayouts.TryGetEnumVariantTag(
+                    ownerDeclarationIndex,
+                    variantOrdinal,
+                    patternVariantTag)
+                || (i64[min max])patternVariantTag != tagValue)
+            {
+                return false;
+            }
+        }
+        else if (!TryGetSourceSwitchEnumVariantOrdinalForTag(
+                moduleFacts,
+                ownerDeclarationIndex,
+                tagValue,
+                variantOrdinal))
+        {
+            return false;
+        }
+
+        if (!SourceSwitchEnumPayloadPatternRowsMatchVariant(
+                variantOrdinal,
+                patternStart,
+                patternCount,
+                payloadPatternVariantOrdinals))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor =
+            MakeSourceSwitchAggregatePatternDescriptor(
+                ownerTypeToken,
+                variantOrdinal + 1,
+                patternStart,
+                patternCount);
+        stack u32[0 max] descriptorRow = descriptors.Add(descriptor);
+        if (descriptorRow == 0 || caseDescriptorRows.Add(descriptorRow) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchListPatternDescriptorRowsAreValid(
+    borrow IrTable<SourceSwitchListPatternDescriptor> descriptors,
+    borrow IrTable<u32[0 max]> caseDescriptorRows,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues)
+{
+    stack u64[0 2 ** 63 - 1] count = caseDescriptorRows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] descriptorRow = caseDescriptorRows.Get((u32[0 max])(index + 1));
+        if (!descriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchListPatternDescriptor descriptor = descriptors.Get(descriptorRow);
+        if (!SourceSwitchResolvedFieldTypeCodeSupportsScalarInterval(descriptor.ElementTypeCode)
+            || descriptor.FixedLength == 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < descriptor.ElementPatternCount)
+        {
+            if (descriptor.ElementPatternStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] row = descriptor.ElementPatternStart + offset;
+            stack mut u32[0 max] patternTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!elementPatternIndices.Contains(row)
+                || !SourceSwitchScalarIntervalPatternRowIsValid(
+                    row,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternTypeCode)
+                || patternTypeCode != descriptor.ElementTypeCode
+                || elementPatternIndices.Get(row) >= descriptor.FixedLength)
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchStructValuePatternDescriptorRowsAreValid(
+    u32[0 max] structTypeToken,
+    ParamAbiFacts structValueFacts,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    borrow IrTable<u32[0 max]> caseDescriptorRows,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues)
+{
+    if (!structValueFacts.IsStructValue
+        || structValueFacts.StructValueFieldCount == 0
+        || structValueFacts.StructValueFieldCount > StructValueShapeMaxFields())
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = caseDescriptorRows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] descriptorRow = caseDescriptorRows.Get((u32[0 max])(index + 1));
+        if (!descriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = descriptors.Get(descriptorRow);
+        if (descriptor.OwnerTypeToken != structTypeToken
+            || SourceSwitchAggregatePatternHasEnumVariant(descriptor))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < descriptor.FieldPatternCount)
+        {
+            if (descriptor.FieldPatternStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] row = descriptor.FieldPatternStart + offset;
+            stack mut u32[0 max] patternTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!fieldPatternIndices.Contains(row)
+                || !fieldPatternMemberFactRows.Contains(row)
+                || !SourceSwitchScalarIntervalPatternRowIsValid(
+                    row,
+                    fieldPatternTypeCodes,
+                    fieldPatternKinds,
+                    fieldPatternMinValues,
+                    fieldPatternMaxValues,
+                    patternTypeCode))
+            {
+                return false;
+            }
+
+            stack u32[0 max] fieldIndex = fieldPatternIndices.Get(row);
+            stack MirType fieldType = MirTypeForResolvedFieldTypeCode(patternTypeCode);
+            if (fieldIndex >= structValueFacts.StructValueFieldCount
+                || !StructValueShapeTypeIsSupported(fieldType)
+                || StructValueShapeFieldStorageCodeAt(structValueFacts, fieldIndex) != StructValueShapeTypeCode(fieldType))
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchStructValuePatternDescriptorRowsAreValidForSource(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] structTypeToken,
+    ParamAbiFacts structValueFacts,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    borrow IrTable<u32[0 max]> caseDescriptorRows,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues)
+{
+    if (!structValueFacts.IsStructValue
+        || structValueFacts.StructValueFieldCount == 0
+        || structValueFacts.StructValueFieldCount > StructValueShapeMaxFields())
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = caseDescriptorRows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] descriptorRow = caseDescriptorRows.Get((u32[0 max])(index + 1));
+        if (!descriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = descriptors.Get(descriptorRow);
+        if (descriptor.OwnerTypeToken != structTypeToken
+            || SourceSwitchAggregatePatternHasEnumVariant(descriptor))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < descriptor.FieldPatternCount)
+        {
+            if (descriptor.FieldPatternStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] row = descriptor.FieldPatternStart + offset;
+            stack mut u32[0 max] patternTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!fieldPatternIndices.Contains(row)
+                || !fieldPatternMemberFactRows.Contains(row)
+                || !SourceSwitchScalarIntervalPatternRowIsValid(
+                    row,
+                    fieldPatternTypeCodes,
+                    fieldPatternKinds,
+                    fieldPatternMinValues,
+                    fieldPatternMaxValues,
+                    patternTypeCode))
+            {
+                return false;
+            }
+
+            stack u32[0 max] fieldIndex = fieldPatternIndices.Get(row);
+            stack MirType fieldType = MirTypeForResolvedFieldTypeCode(patternTypeCode);
+            stack mut u32[0 max] ignoredFieldTypeToken = 0;
+            stack mut u32[0 max] flatFieldIndex = 0;
+            stack mut u32[0 max] flatFieldCount = 0;
+            stack mut u32[0 max] ignoredFlatShapeCode = 0;
+            if (!TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                    stream,
+                    source,
+                    structTypeToken,
+                    fieldIndex,
+                    ignoredFieldTypeToken,
+                    flatFieldIndex,
+                    flatFieldCount,
+                    ignoredFlatShapeCode)
+                || flatFieldCount != 1
+                || flatFieldIndex >= structValueFacts.StructValueFieldCount
+                || !StructValueShapeTypeIsSupported(fieldType)
+                || StructValueShapeFieldStorageCodeAt(structValueFacts, flatFieldIndex) != StructValueShapeTypeCode(fieldType))
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchStructStoragePatternDescriptorRowsAreValid(
+    u32[0 max] structTypeToken,
+    u32[0 max] structBaseByteOffset,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    borrow IrTable<u32[0 max]> caseDescriptorRows,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues)
+{
+    stack u64[0 2 ** 63 - 1] count = caseDescriptorRows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] descriptorRow = caseDescriptorRows.Get((u32[0 max])(index + 1));
+        if (!descriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = descriptors.Get(descriptorRow);
+        if (descriptor.OwnerTypeToken != structTypeToken
+            || SourceSwitchAggregatePatternHasEnumVariant(descriptor))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < descriptor.FieldPatternCount)
+        {
+            if (descriptor.FieldPatternStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] row = descriptor.FieldPatternStart + offset;
+            stack mut u32[0 max] patternTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!fieldPatternIndices.Contains(row)
+                || !fieldPatternOffsets.Contains(row)
+                || !fieldPatternAlignments.Contains(row)
+                || !fieldPatternMemberFactRows.Contains(row)
+                || !SourceSwitchScalarIntervalPatternRowIsValid(
+                    row,
+                    fieldPatternTypeCodes,
+                    fieldPatternKinds,
+                    fieldPatternMinValues,
+                    fieldPatternMaxValues,
+                    patternTypeCode))
+            {
+                return false;
+            }
+
+            stack u32[0 max] fieldOffset = fieldPatternOffsets.Get(row);
+            stack u32[0 max] fieldAlignment = fieldPatternAlignments.Get(row);
+            if (fieldAlignment == 0 || fieldOffset > 4294967295 - structBaseByteOffset)
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchEnumPayloadPatternDescriptorRowsAreValid(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> descriptors,
+    borrow IrTable<u32[0 max]> caseDescriptorRows,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues)
+{
+    stack u64[0 2 ** 63 - 1] count = caseDescriptorRows.Count();
+    if (caseValues.Count() != count)
+    {
+        return false;
+    }
+
+    stack u32[0 max] ownerTypeToken = ownerDeclarationIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(index + 1);
+        stack u32[0 max] descriptorRow = caseDescriptorRows.Get(caseSlot);
+        if (!descriptors.Contains(descriptorRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchAggregatePatternDescriptor descriptor = descriptors.Get(descriptorRow);
+        if (descriptor.OwnerTypeToken != ownerTypeToken
+            || !SourceSwitchAggregatePatternHasEnumVariant(descriptor))
+        {
+            return false;
+        }
+
+        stack u32[0 max] variantOrdinal = SourceSwitchAggregatePatternEnumVariantOrdinal(descriptor);
+        stack mut u64[0 max] variantTag = 0;
+        if (!moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, variantTag)
+            || (i64[min max])variantTag != caseValues.Get(caseSlot)
+            || !SourceSwitchEnumPayloadPatternRowsMatchVariant(
+                variantOrdinal,
+                descriptor.FieldPatternStart,
+                descriptor.FieldPatternCount,
+                payloadPatternVariantOrdinals))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < descriptor.FieldPatternCount)
+        {
+            if (descriptor.FieldPatternStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] row = descriptor.FieldPatternStart + offset;
+            stack mut u32[0 max] patternTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!payloadPatternOrdinals.Contains(row)
+                || !SourceSwitchScalarIntervalPatternRowIsValid(
+                    row,
+                    payloadPatternTypeCodes,
+                    payloadPatternKinds,
+                    payloadPatternMinValues,
+                    payloadPatternMaxValues,
+                    patternTypeCode))
+            {
+                return false;
+            }
+
+            stack u32[0 max] payloadOrdinal = payloadPatternOrdinals.Get(row);
+            stack mut u64[0 max] payloadOffset = 0;
+            stack mut u64[0 max] payloadSize = 0;
+            stack mut u64[0 max] payloadAlignment = 0;
+            stack mut bool payloadMisaligned = false;
+            if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadLayout(
+                    ownerDeclarationIndex,
+                    variantOrdinal,
+                    payloadOrdinal,
+                    payloadOffset,
+                    payloadSize,
+                    payloadAlignment,
+                    payloadMisaligned))
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+
+internal fn bool TryAppendSourceSwitchEnumAggregateCaseLabelFromTypedRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    u64[0 max] payloadCount,
+    TokenKind suffixKind,
+    u32[0 max] valueStartToken,
+    u32[0 max] typedRow,
+    bool allowPayloadPatterns,
+    bool allowPayloadCaptures,
+    mut borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadPatternKinds,
+    mut borrow IrTable<i64[min max]> payloadPatternMinValues,
+    mut borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadCaptureNameTokens,
+    mut borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedKinds,
+    mut borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    mut borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    out u32[0 max] payloadPatternStart,
+    out u32[0 max] payloadPatternCount,
+    out u32[0 max] payloadCaptureStart,
+    out u32[0 max] payloadCaptureCount,
+    out u32[0 max] nestedStart,
+    out u32[0 max] nestedCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    payloadPatternStart = (u32[0 max])payloadPatternOrdinals.Count() + 1;
+    payloadPatternCount = 0;
+    payloadCaptureStart = (u32[0 max])payloadCaptureNameTokens.Count() + 1;
+    payloadCaptureCount = 0;
+    nestedStart = (u32[0 max])nestedPayloadOrdinals.Count() + 1;
+    nestedCount = 0;
+    nextToken = valueStartToken;
+    if ((suffixKind != TokenKind.LParen && suffixKind != TokenKind.LBrace)
+        || payloadCount > 4294967295
+        || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedRow - 1);
+    stack u32[0 max] typedEndToken = moduleFacts.SwitchPatterns.AggregatePatterns.PatternEndTokenAt(typedIndex);
+    stack u32[0 max] typedMemberStart = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(typedIndex);
+    stack u32[0 max] typedMemberCount = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(typedIndex);
+    if (!SourceSwitchTypedEnumAggregatePatternRowMatchesParsedLabel(
+            moduleFacts,
+            valueStartToken,
+            typedEndToken,
+            variantOrdinal,
+            payloadCount)
+        || typedMemberCount != (u32[0 max])payloadCount
+        || (typedMemberCount != 0 && typedMemberStart == 0))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> seenPayloadOrdinals = new();
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < typedMemberCount)
+    {
+        if (offset > 4294967295 - typedMemberStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = typedMemberStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack u32[0 max] payloadOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+        if ((u64[0 max])payloadOrdinal >= payloadCount)
+        {
+            return false;
+        }
+
+        if (suffixKind == TokenKind.LParen)
+        {
+            if (payloadOrdinal != offset)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (SourceSwitchEnumPayloadOrdinalListContains(seenPayloadOrdinals, payloadOrdinal)
+                || seenPayloadOrdinals.Add(payloadOrdinal) == 0)
+            {
+                return false;
+            }
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Discard)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryGetSourceEnumPayloadTypeCode(
+                stream,
+                source,
+                moduleFacts,
+                ownerDeclarationIndex,
+                variantOrdinal,
+                payloadOrdinal,
+                payloadTypeCode)
+            || payloadTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return false;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Capture)
+        {
+            stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(memberIndex);
+            if (!allowPayloadCaptures
+                || captureNameToken == 0
+                || payloadCaptureVariantOrdinals.Add(variantOrdinal) == 0
+                || payloadCaptureOrdinals.Add(payloadOrdinal) == 0
+                || payloadCaptureTypeCodes.Add(payloadTypeCode) == 0
+                || payloadCaptureNameTokens.Add(captureNameToken) == 0)
+            {
+                return false;
+            }
+
+            payloadCaptureCount = payloadCaptureCount + 1;
+        }
+        else if (memberKind == TypedSwitchPatternKind.Literal
+            || memberKind == TypedSwitchPatternKind.Range)
+        {
+            stack u32[0 max] memberPatternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+            stack u32[0 max] memberPatternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+            stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+            stack mut i64[min max] minValue = 0;
+            stack mut i64[min max] maxValue = 0;
+            stack mut u64[0 2 ** 63 - 1] afterPattern = memberPatternStart;
+            if (!allowPayloadPatterns
+                || memberPatternStart == 0
+                || memberPatternEnd <= memberPatternStart
+                || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                    stream,
+                    source,
+                    payloadTypeCode,
+                    memberPatternStart,
+                    patternKind,
+                    minValue,
+                    maxValue,
+                    afterPattern)
+                || afterPattern != (u64[0 2 ** 63 - 1])memberPatternEnd
+                || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval()
+                || payloadPatternVariantOrdinals.Add(variantOrdinal) == 0
+                || payloadPatternOrdinals.Add(payloadOrdinal) == 0
+                || payloadPatternTypeCodes.Add(payloadTypeCode) == 0
+                || payloadPatternKinds.Add(patternKind) == 0
+                || payloadPatternMinValues.Add(minValue) == 0
+                || payloadPatternMaxValues.Add(maxValue) == 0)
+            {
+                return false;
+            }
+
+            payloadPatternCount = payloadPatternCount + 1;
+        }
+        else if (memberKind == TypedSwitchPatternKind.EnumAggregate)
+        {
+            stack u32[0 max] nestedAggregateRow = moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(memberIndex);
+            stack u32[0 max] nestedListRow = moduleFacts.SwitchPatterns.Members.NestedListPatternRowAt(memberIndex);
+            stack mut u32[0 max] nestedOwnerTypeToken = 0;
+            stack mut u32[0 max] nestedOwnerDeclarationIndex = 0;
+            stack mut Compiler.Parsing.DeclItem nestedEnumItem = new();
+            if (!allowPayloadPatterns
+                || !SourceResolvedFieldTypeCodeIsEnum(payloadTypeCode)
+                || nestedAggregateRow == 0
+                || nestedListRow != 0
+                || !TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                    moduleFacts,
+                    nestedAggregateRow,
+                    nestedOwnerTypeToken)
+                || !TryGetSourceEnumOwnerDeclarationForToken(
+                    stream,
+                    source,
+                    moduleFacts,
+                    nestedOwnerTypeToken,
+                    nestedOwnerDeclarationIndex,
+                    nestedEnumItem)
+                || nestedOwnerDeclarationIndex != SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(payloadTypeCode)
+                || nestedVariantOrdinals.Add(variantOrdinal) == 0
+                || nestedPayloadOrdinals.Add(payloadOrdinal) == 0
+                || nestedKinds.Add(SourceSwitchPatternDecisionKindEnumAggregate()) == 0
+                || nestedAggregateDescriptorRows.Add(nestedAggregateRow) == 0
+                || nestedListDescriptorRows.Add(0) == 0)
+            {
+                return false;
+            }
+
+            nestedCount = nestedCount + 1;
+        }
+        else
+        {
+            return false;
+        }
+
+        offset = offset + 1;
+    }
+
+    nextToken = typedEndToken;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchEnumCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= moduleFacts.Declarations.Count())
+    {
+        return false;
+    }
+
+    stack DeclItem enumItem = moduleFacts.Declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    if (enumItem.Kind != DeclarationKind.Enum
+        || enumItem.NameToken == 0
+        || stream.KindAt(valueStart) != TokenKind.Identifier
+        || stream.KindAt(valueStart + 1) != TokenKind.Dot
+        || stream.KindAt(valueStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsToken(stream, source, (u32[0 max])valueStart, enumItem.NameToken))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TryGetEnumVariantOrdinalForToken(stream, source, enumItem, (u32[0 max])(valueStart + 2), variantOrdinal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] payloadCount = 0;
+    stack mut u64[0 max] tagValue = 0;
+    if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
+        || !moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+    {
+        return false;
+    }
+
+    if (payloadCount == 0)
+    {
+        value = (i64[min max])tagValue;
+        nextToken = valueStart + 3;
+        return true;
+    }
+
+    stack TokenKind suffixKind = stream.KindAt(valueStart + 3);
+    if (suffixKind != TokenKind.LBrace && suffixKind != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    if (valueStart > 4294967295)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> ignoredPayloadPatternVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadPatternOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadPatternKinds = new();
+    stack mut IrTable<i64[min max]> ignoredPayloadPatternMinValues = new();
+    stack mut IrTable<i64[min max]> ignoredPayloadPatternMaxValues = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureTypeCodes = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedPayloadOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedKinds = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedAggregateDescriptorRows = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedListDescriptorRows = new();
+    stack mut u32[0 max] ignoredPayloadPatternStart = 0;
+    stack mut u32[0 max] ignoredPayloadPatternCount = 0;
+    stack mut u32[0 max] ignoredPayloadCaptureStart = 0;
+    stack mut u32[0 max] ignoredPayloadCaptureCount = 0;
+    stack mut u32[0 max] ignoredNestedStart = 0;
+    stack mut u32[0 max] ignoredNestedCount = 0;
+    stack u32[0 max] typedRow = SourceSwitchAggregatePatternRowForStartToken(moduleFacts, (u32[0 max])valueStart);
+    if (!TryAppendSourceSwitchEnumAggregateCaseLabelFromTypedRow(
+            stream,
+            source,
+            moduleFacts,
+            ownerDeclarationIndex,
+            variantOrdinal,
+            payloadCount,
+            suffixKind,
+            (u32[0 max])valueStart,
+            typedRow,
+            false,
+            false,
+            ignoredPayloadPatternVariantOrdinals,
+            ignoredPayloadPatternOrdinals,
+            ignoredPayloadPatternTypeCodes,
+            ignoredPayloadPatternKinds,
+            ignoredPayloadPatternMinValues,
+            ignoredPayloadPatternMaxValues,
+            ignoredPayloadCaptureVariantOrdinals,
+            ignoredPayloadCaptureOrdinals,
+            ignoredPayloadCaptureTypeCodes,
+            ignoredPayloadCaptureNameTokens,
+            ignoredNestedVariantOrdinals,
+            ignoredNestedPayloadOrdinals,
+            ignoredNestedKinds,
+            ignoredNestedAggregateDescriptorRows,
+            ignoredNestedListDescriptorRows,
+            ignoredPayloadPatternStart,
+            ignoredPayloadPatternCount,
+            ignoredPayloadCaptureStart,
+            ignoredPayloadCaptureCount,
+            ignoredNestedStart,
+            ignoredNestedCount,
+            nextToken)
+        || ignoredPayloadPatternCount != 0
+        || ignoredPayloadCaptureCount != 0
+        || ignoredNestedCount != 0)
+    {
+        return false;
+    }
+
+    value = (i64[min max])tagValue;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchEnumCaseLabelWithPayloadPatterns(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadPatternKinds,
+    mut borrow IrTable<i64[min max]> payloadPatternMinValues,
+    mut borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    out i64[min max] value,
+    out u32[0 max] payloadPatternStart,
+    out u32[0 max] payloadPatternCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    payloadPatternStart = (u32[0 max])payloadPatternOrdinals.Count() + 1;
+    payloadPatternCount = 0;
+    nextToken = valueStart;
+    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= moduleFacts.Declarations.Count())
+    {
+        return false;
+    }
+
+    stack DeclItem enumItem = moduleFacts.Declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    if (enumItem.Kind != DeclarationKind.Enum
+        || enumItem.NameToken == 0
+        || stream.KindAt(valueStart) != TokenKind.Identifier
+        || stream.KindAt(valueStart + 1) != TokenKind.Dot
+        || stream.KindAt(valueStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsToken(stream, source, (u32[0 max])valueStart, enumItem.NameToken))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TryGetEnumVariantOrdinalForToken(stream, source, enumItem, (u32[0 max])(valueStart + 2), variantOrdinal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] payloadCount = 0;
+    stack mut u64[0 max] tagValue = 0;
+    if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
+        || !moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+    {
+        return false;
+    }
+
+    if (payloadCount == 0)
+    {
+        value = (i64[min max])tagValue;
+        nextToken = valueStart + 3;
+        return true;
+    }
+
+    stack TokenKind suffixKind = stream.KindAt(valueStart + 3);
+    if (suffixKind != TokenKind.LBrace && suffixKind != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    if (valueStart > 4294967295)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureTypeCodes = new();
+    stack mut IrTable<u32[0 max]> ignoredPayloadCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedPayloadOrdinals = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedKinds = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedAggregateDescriptorRows = new();
+    stack mut IrTable<u32[0 max]> ignoredNestedListDescriptorRows = new();
+    stack mut u32[0 max] ignoredPayloadCaptureStart = 0;
+    stack mut u32[0 max] ignoredPayloadCaptureCount = 0;
+    stack mut u32[0 max] ignoredNestedStart = 0;
+    stack mut u32[0 max] ignoredNestedCount = 0;
+    stack u32[0 max] typedRow = SourceSwitchAggregatePatternRowForStartToken(moduleFacts, (u32[0 max])valueStart);
+    if (!TryAppendSourceSwitchEnumAggregateCaseLabelFromTypedRow(
+            stream,
+            source,
+            moduleFacts,
+            ownerDeclarationIndex,
+            variantOrdinal,
+            payloadCount,
+            suffixKind,
+            (u32[0 max])valueStart,
+            typedRow,
+            true,
+            false,
+            payloadPatternVariantOrdinals,
+            payloadPatternOrdinals,
+            payloadPatternTypeCodes,
+            payloadPatternKinds,
+            payloadPatternMinValues,
+            payloadPatternMaxValues,
+            ignoredPayloadCaptureVariantOrdinals,
+            ignoredPayloadCaptureOrdinals,
+            ignoredPayloadCaptureTypeCodes,
+            ignoredPayloadCaptureNameTokens,
+            ignoredNestedVariantOrdinals,
+            ignoredNestedPayloadOrdinals,
+            ignoredNestedKinds,
+            ignoredNestedAggregateDescriptorRows,
+            ignoredNestedListDescriptorRows,
+            payloadPatternStart,
+            payloadPatternCount,
+            ignoredPayloadCaptureStart,
+            ignoredPayloadCaptureCount,
+            ignoredNestedStart,
+            ignoredNestedCount,
+            nextToken)
+        || ignoredPayloadCaptureCount != 0
+        || ignoredNestedCount != 0)
+    {
+        return false;
+    }
+
+    value = (i64[min max])tagValue;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchEnumCaseLabelWithPayloadPatternsAndCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadPatternKinds,
+    mut borrow IrTable<i64[min max]> payloadPatternMinValues,
+    mut borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadCaptureNameTokens,
+    mut borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedKinds,
+    mut borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    mut borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    out i64[min max] value,
+    out u32[0 max] payloadPatternStart,
+    out u32[0 max] payloadPatternCount,
+    out u32[0 max] payloadCaptureStart,
+    out u32[0 max] payloadCaptureCount,
+    out u32[0 max] nestedStart,
+    out u32[0 max] nestedCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    payloadPatternStart = (u32[0 max])payloadPatternOrdinals.Count() + 1;
+    payloadPatternCount = 0;
+    payloadCaptureStart = (u32[0 max])payloadCaptureNameTokens.Count() + 1;
+    payloadCaptureCount = 0;
+    nestedStart = (u32[0 max])nestedPayloadOrdinals.Count() + 1;
+    nestedCount = 0;
+    nextToken = valueStart;
+    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= moduleFacts.Declarations.Count())
+    {
+        return false;
+    }
+
+    stack DeclItem enumItem = moduleFacts.Declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    if (enumItem.Kind != DeclarationKind.Enum
+        || enumItem.NameToken == 0
+        || stream.KindAt(valueStart) != TokenKind.Identifier
+        || stream.KindAt(valueStart + 1) != TokenKind.Dot
+        || stream.KindAt(valueStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsToken(stream, source, (u32[0 max])valueStart, enumItem.NameToken))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TryGetEnumVariantOrdinalForToken(stream, source, enumItem, (u32[0 max])(valueStart + 2), variantOrdinal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] payloadCount = 0;
+    stack mut u64[0 max] tagValue = 0;
+    if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
+        || !moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+    {
+        return false;
+    }
+
+    if (payloadCount == 0)
+    {
+        value = (i64[min max])tagValue;
+        nextToken = valueStart + 3;
+        return true;
+    }
+
+    stack TokenKind suffixKind = stream.KindAt(valueStart + 3);
+    if (suffixKind != TokenKind.LBrace && suffixKind != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    if (valueStart > 4294967295)
+    {
+        return false;
+    }
+
+    stack u32[0 max] typedRow = SourceSwitchAggregatePatternRowForStartToken(moduleFacts, (u32[0 max])valueStart);
+    if (!TryAppendSourceSwitchEnumAggregateCaseLabelFromTypedRow(
+            stream,
+            source,
+            moduleFacts,
+            ownerDeclarationIndex,
+            variantOrdinal,
+            payloadCount,
+            suffixKind,
+            (u32[0 max])valueStart,
+            typedRow,
+            true,
+            true,
+            payloadPatternVariantOrdinals,
+            payloadPatternOrdinals,
+            payloadPatternTypeCodes,
+            payloadPatternKinds,
+            payloadPatternMinValues,
+            payloadPatternMaxValues,
+            payloadCaptureVariantOrdinals,
+            payloadCaptureOrdinals,
+            payloadCaptureTypeCodes,
+            payloadCaptureNameTokens,
+            nestedVariantOrdinals,
+            nestedPayloadOrdinals,
+            nestedKinds,
+            nestedAggregateDescriptorRows,
+            nestedListDescriptorRows,
+            payloadPatternStart,
+            payloadPatternCount,
+            payloadCaptureStart,
+            payloadCaptureCount,
+            nestedStart,
+            nestedCount,
+            nextToken))
+    {
+        return false;
+    }
+
+    value = (i64[min max])tagValue;
+    return true;
+}

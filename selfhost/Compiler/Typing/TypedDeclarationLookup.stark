@@ -1,0 +1,27 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedDeclarationLookup
+
+internal fn u32[0 max] TypedIdentifierDeclarationIndexByNameToken(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    u32[0 max] nameToken)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack DeclItem item = declarations.ItemAt(index);
+            if (item.NameToken != 0 && TypedSignatureTokenTextEqualsToken(source, stream, item.NameToken, nameToken))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}

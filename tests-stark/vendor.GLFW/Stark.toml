@@ -1,0 +1,18 @@
+[project]
+name = "vendor-glfw-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "GlfwTests.stark"
+output = "vendor-glfw-tests"
+
+[native]
+sources = ["../../vendor/GlfwEventBridge.c"]
+pkg-config = ["glfw3"]
+
+[native.fallback.macos]
+include-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/glfw"]
+library-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/glfw"]
+libraries = ["glfw3"]
+link-args = ["-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreFoundation"]

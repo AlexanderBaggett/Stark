@@ -1,0 +1,2291 @@
+import Compiler.Parsing
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+import System.Json
+import System.Memory
+import System.Text
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridgeCore
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceExpressionRenderer
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceStatementRenderer
+module Compiler.Mir.PackageImage.Bridge.PackageImageSourceDeclarationRenderer
+
+// Source-surface globals, type members, constructors, destructors, methods,
+// and functions reconstructed from authoritative package fact rows.
+
+internal fn bool PackageImageSourceBridgeEffectiveCompilerFactsNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] compilerFactsNode,
+    out bool present)
+{
+    compilerFactsNode = 0;
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] directNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] sectionsNode = 0;
+    stack mut bool hasDirect = false;
+    stack mut bool hasCompilerSections = false;
+    stack mut bool hasSectionsNode = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            moduleNode,
+            "CompilerFacts",
+            directNode,
+            hasDirect)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            moduleNode,
+            "CompilerSections",
+            compilerSectionsNode,
+            hasCompilerSections))
+    {
+        return false;
+    }
+
+    if (hasCompilerSections
+        && !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            compilerSectionsNode,
+            "CompilerFacts",
+            sectionsNode,
+            hasSectionsNode))
+    {
+        return false;
+    }
+
+    if (hasSectionsNode)
+    {
+        compilerFactsNode = sectionsNode;
+        present = true;
+    }
+    else if (hasDirect)
+    {
+        compilerFactsNode = directNode;
+        present = true;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderGenericParameters(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] genericParametersNode = 0;
+    stack mut u32[0 max] genericParameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] comptimeParametersNode = 0;
+    stack mut u32[0 max] comptimeParameterCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "GenericParameters",
+            genericParametersNode,
+            genericParameterCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "ComptimeGenericParameters",
+            comptimeParametersNode,
+            comptimeParameterCount)
+        || comptimeParameterCount > (u32[0 max])(2 ** 32 - 1) - genericParameterCount)
+    {
+        return false;
+    }
+
+    stack u32[0 max] totalParameterCount = genericParameterCount + comptimeParameterCount;
+    if (totalParameterCount != 0
+        && !PackageImageSourceBridgeAppendConst(sink, "<"))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] genericIndex = 0;
+    while willexit (genericIndex < genericParameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(
+                genericParametersNode,
+                (u64[0 2 ** 63 - 1])genericIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(parameterNode)) == 0
+            || (genericIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNode)))
+        {
+            return false;
+        }
+
+        genericIndex = genericIndex + 1;
+    }
+
+    stack mut u32[0 max] comptimeIndex = 0;
+    while willexit (comptimeIndex < comptimeParameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterTypeKindNode = 0;
+        if (!document.TryChildAt(
+                comptimeParametersNode,
+                (u64[0 2 ** 63 - 1])comptimeIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !document.TryFindMember(parameterNode, "Name", parameterNameNode)
+            || document.KindAt(parameterNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(parameterNameNode)) == 0
+            || !document.TryFindMember(parameterNode, "Type", parameterTypeNode)
+            || document.KindAt(parameterTypeNode) != JsonKind.Object
+            || !document.TryFindMember(parameterTypeNode, "Kind", parameterTypeKindNode)
+            || document.KindAt(parameterTypeKindNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(parameterTypeKindNode)) == 0
+            || ((genericParameterCount != 0 || comptimeIndex != 0)
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeAppendConst(sink, "comptime ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterTypeKindNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNameNode)))
+        {
+            return false;
+        }
+
+        comptimeIndex = comptimeIndex + 1;
+    }
+
+    return totalParameterCount == 0
+        || PackageImageSourceBridgeAppendConst(sink, ">");
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypeParameterConstraints(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] constraintsNode = 0;
+    stack mut u32[0 max] constraintCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "TypeParameterConstraints",
+            constraintsNode,
+            constraintCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] constraintIndex = 0;
+    while willexit (constraintIndex < constraintCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] constraintNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] boundTraitsNode = 0;
+        stack mut u32[0 max] boundTraitCount = 0;
+        if (!document.TryChildAt(
+                constraintsNode,
+                (u64[0 2 ** 63 - 1])constraintIndex,
+                constraintNode)
+            || document.KindAt(constraintNode) != JsonKind.Object
+            || !document.TryFindMember(constraintNode, "ParameterName", parameterNameNode)
+            || document.KindAt(parameterNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(parameterNameNode)) == 0
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                constraintNode,
+                "BoundTraits",
+                boundTraitsNode,
+                boundTraitCount))
+        {
+            return false;
+        }
+
+        if (boundTraitCount != 0
+            && (!PackageImageSourceBridgeAppendConst(sink, " where ")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] boundTraitIndex = 0;
+        while willexit (boundTraitIndex < boundTraitCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] boundTraitNode = 0;
+            if (!document.TryChildAt(
+                    boundTraitsNode,
+                    (u64[0 2 ** 63 - 1])boundTraitIndex,
+                    boundTraitNode)
+                || document.KindAt(boundTraitNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(boundTraitNode)) == 0
+                || (boundTraitIndex != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(boundTraitNode)))
+            {
+                return false;
+            }
+
+            boundTraitIndex = boundTraitIndex + 1;
+        }
+
+        constraintIndex = constraintIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderThreadSafetyLawPredicates(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] predicatesNode = 0;
+    stack mut u32[0 max] predicateCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "ThreadSafetyLawPredicates",
+            predicatesNode,
+            predicateCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] predicateIndex = 0;
+    while willexit (predicateIndex < predicateCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] predicateNode = 0;
+        stack mut u64[0 2 ** 63 - 1] lawNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        if (!document.TryChildAt(
+                predicatesNode,
+                (u64[0 2 ** 63 - 1])predicateIndex,
+                predicateNode)
+            || document.KindAt(predicateNode) != JsonKind.Object
+            || !document.TryFindMember(predicateNode, "LawName", lawNameNode)
+            || document.KindAt(lawNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(lawNameNode)) == 0
+            || !document.TryFindMember(predicateNode, "Type", typeNode)
+            || document.KindAt(typeNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(typeNode)) == 0
+            || !PackageImageSourceBridgeAppendConst(sink, " where ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(lawNameNode))
+            || !PackageImageSourceBridgeAppendConst(sink, "(")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(typeNode))
+            || !PackageImageSourceBridgeAppendConst(sink, ")"))
+        {
+            return false;
+        }
+
+        predicateIndex = predicateIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderValueContracts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] contractsNode = 0;
+    stack mut u32[0 max] contractCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "ValueContracts",
+            contractsNode,
+            contractCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] contractIndex = 0;
+    while willexit (contractIndex < contractCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] contractNode = 0;
+        stack mut u64[0 2 ** 63 - 1] leftNode = 0;
+        stack mut u64[0 2 ** 63 - 1] operatorNode = 0;
+        stack mut u64[0 2 ** 63 - 1] rightNode = 0;
+        if (!document.TryChildAt(
+                contractsNode,
+                (u64[0 2 ** 63 - 1])contractIndex,
+                contractNode)
+            || document.KindAt(contractNode) != JsonKind.Object
+            || !document.TryFindMember(contractNode, "Left", leftNode)
+            || document.KindAt(leftNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(leftNode)) == 0
+            || !document.TryFindMember(contractNode, "Operator", operatorNode)
+            || document.KindAt(operatorNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(operatorNode)) == 0
+            || !document.TryFindMember(contractNode, "Right", rightNode)
+            || document.KindAt(rightNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(rightNode)) == 0
+            || !PackageImageSourceBridgeAppendConst(sink, " where ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(leftNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(operatorNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(rightNode)))
+        {
+            return false;
+        }
+
+        contractIndex = contractIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    ascii memberName,
+    ascii relationName,
+    bool isFfi,
+    bool isDisjointRelation,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] groupsNode = 0;
+    stack mut u32[0 max] groupCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            memberName,
+            groupsNode,
+            groupCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] groupIndex = 0;
+    while willexit (groupIndex < groupCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] groupNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterNamesNode = 0;
+        stack mut u32[0 max] parameterNameCount = 0;
+        stack mut u64[0 2 ** 63 - 1] regionsNode = 0;
+        stack mut u32[0 max] regionCount = 0;
+        if (!document.TryChildAt(
+                groupsNode,
+                (u64[0 2 ** 63 - 1])groupIndex,
+                groupNode)
+            || document.KindAt(groupNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                groupNode,
+                "ParameterNames",
+                parameterNamesNode,
+                parameterNameCount)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                groupNode,
+                "Regions",
+                regionsNode,
+                regionCount))
+        {
+            return false;
+        }
+
+        stack bool useRegions = regionCount >= 2;
+        stack u32[0 max] operandCount = useRegions ? regionCount : parameterNameCount;
+        stack bool emitGroup = operandCount >= 2
+            && (!isDisjointRelation || isFfi || useRegions);
+        if (emitGroup
+            && (!PackageImageSourceBridgeAppendConst(sink, " where ")
+                || !PackageImageSourceBridgeAppend(sink, relationName)
+                || !PackageImageSourceBridgeAppendConst(sink, "(")))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] operandIndex = 0;
+        while willexit (operandIndex < operandCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] operandNode = 0;
+            stack mut u64[0 2 ** 63 - 1] parameterNameNode = 0;
+            stack mut u64[0 2 ** 63 - 1] startNode = 0;
+            stack mut u64[0 2 ** 63 - 1] countNode = 0;
+            stack mut bool hasStart = false;
+            stack mut bool hasCount = false;
+            if (!document.TryChildAt(
+                    useRegions ? regionsNode : parameterNamesNode,
+                    (u64[0 2 ** 63 - 1])operandIndex,
+                    operandNode))
+            {
+                return false;
+            }
+
+            if (useRegions)
+            {
+                if (document.KindAt(operandNode) != JsonKind.Object
+                    || !document.TryFindMember(operandNode, "ParameterName", parameterNameNode)
+                    || document.KindAt(parameterNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(parameterNameNode)) == 0
+                    || !PackageImageSourceBridgeOptionalTextMemberNode(
+                        document,
+                        operandNode,
+                        "StartExpression",
+                        startNode,
+                        hasStart)
+                    || !PackageImageSourceBridgeOptionalTextMemberNode(
+                        document,
+                        operandNode,
+                        "CountExpression",
+                        countNode,
+                        hasCount)
+                    || hasStart != hasCount)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (document.KindAt(operandNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(operandNode)) == 0)
+                {
+                    return false;
+                }
+
+                parameterNameNode = operandNode;
+            }
+
+            if (emitGroup
+                && ((operandIndex != 0
+                        && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                    || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNameNode))
+                    || (hasStart
+                        && (!PackageImageSourceBridgeAppendConst(sink, "[")
+                            || !PackageImageSourceBridgeAppend(sink, document.TextAt(startNode))
+                            || !PackageImageSourceBridgeAppendConst(sink, ", ")
+                            || !PackageImageSourceBridgeAppend(sink, document.TextAt(countNode))
+                            || !PackageImageSourceBridgeAppendConst(sink, "]")))))
+            {
+                return false;
+            }
+
+            operandIndex = operandIndex + 1;
+        }
+
+        if (emitGroup && !PackageImageSourceBridgeAppendConst(sink, ")"))
+        {
+            return false;
+        }
+
+        groupIndex = groupIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderFunctionParameter(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    bool emitDisjointPrefix,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] countNode = 0;
+    stack mut bool isDisjoint = false;
+    stack mut bool isConst = false;
+    stack mut bool hasCount = false;
+    if (!document.TryFindMember(parameterNode, "Name", nameNode)
+        || document.KindAt(nameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(nameNode)) == 0
+        || !document.TryFindMember(parameterNode, "Type", typeNode)
+        || document.KindAt(typeNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(typeNode)) == 0
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            parameterNode,
+            "IsDisjoint",
+            isDisjoint)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            parameterNode,
+            "IsConst",
+            isConst)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            parameterNode,
+            "RawPointerElementCountExpression",
+            countNode,
+            hasCount))
+    {
+        return false;
+    }
+
+    if (emitDisjointPrefix && isDisjoint
+        && !PackageImageSourceBridgeAppendConst(sink, "disjoint "))
+    {
+        return false;
+    }
+
+    if (isConst && !PackageImageSourceBridgeAppendConst(sink, "const "))
+    {
+        return false;
+    }
+
+    return PackageImageSourceBridgeAppend(sink, document.TextAt(typeNode))
+        && (!hasCount
+            || (PackageImageSourceBridgeAppendConst(sink, "[")
+                && PackageImageSourceBridgeAppend(sink, document.TextAt(countNode))
+                && PackageImageSourceBridgeAppendConst(sink, "]")))
+        && PackageImageSourceBridgeAppendConst(sink, " ")
+        && PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode));
+}
+
+internal fn bool PackageImageSourceBridgeRenderConstGlobalType(
+    ascii typeText,
+    mut borrow OwnedAscii sink)
+    where overlap(typeText, sink)
+{
+    stack i64[min max] signedLength = AsciiLength(typeText);
+    if (signedLength < 4)
+    {
+        return PackageImageSourceBridgeAppend(sink, typeText);
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+    stack bool integerPrefix = (typeText[0, 1] == "i" || typeText[0, 1] == "u")
+        && typeText[1, 1] >= "0"
+        && typeText[1, 1] <= "9";
+    if (!integerPrefix)
+    {
+        return PackageImageSourceBridgeAppend(sink, typeText);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] rangeStart = length;
+    stack mut u64[0 2 ** 63 - 1] index = 2;
+    while willexit (index < length)
+    {
+        stack ascii unit = typeText[index, 1];
+        if (unit == "[")
+        {
+            rangeStart = index;
+            break;
+        }
+
+        if (unit < "0" || unit > "9")
+        {
+            return PackageImageSourceBridgeAppend(sink, typeText);
+        }
+
+        index = index + 1;
+    }
+
+    if (rangeStart == length || typeText[length - 1, 1] != "]")
+    {
+        return PackageImageSourceBridgeAppend(sink, typeText);
+    }
+
+    stack ascii bareType = typeText[0, rangeStart];
+    return PackageImageSourceBridgeAppend(sink, bareType);
+}
+
+internal fn bool PackageImageSourceBridgeRenderConstantInitializer(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] initializerNode,
+    u8[0 64] depth,
+    mut borrow OwnedAscii sink)
+{
+    if (depth >= 64)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    if (!document.TryFindMember(initializerNode, "Kind", kindNode)
+        || document.KindAt(kindNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(kindNode)) == 0
+        || !document.TryFindMember(initializerNode, "Type", typeNode)
+        || document.KindAt(typeNode) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    stack ascii kind = document.TextAt(kindNode);
+    if (kind == "integer" || kind == "float")
+    {
+        return PackageImageSourceBridgeAppendConst(sink, "0");
+    }
+
+    if (kind == "bool")
+    {
+        return PackageImageSourceBridgeAppendConst(sink, "false");
+    }
+
+    if (kind == "text")
+    {
+        return PackageImageSourceBridgeAppendConst(sink, "\"\"");
+    }
+
+    if (kind == "null")
+    {
+        return PackageImageSourceBridgeAppendConst(sink, "null");
+    }
+
+    if (kind != "fixedarray")
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] elementsNode = 0;
+    stack mut u32[0 max] elementCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            initializerNode,
+            "Elements",
+            elementsNode,
+            elementCount)
+        || !PackageImageSourceBridgeAppendConst(sink, "{ "))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementIndex = 0;
+    while willexit (elementIndex < elementCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] elementNode = 0;
+        if (!document.TryChildAt(
+                elementsNode,
+                (u64[0 2 ** 63 - 1])elementIndex,
+                elementNode)
+            || document.KindAt(elementNode) != JsonKind.Object
+            || (elementIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeRenderConstantInitializer(
+                document,
+                elementNode,
+                depth + 1,
+                sink))
+        {
+            return false;
+        }
+
+        elementIndex = elementIndex + 1;
+    }
+
+    return PackageImageSourceBridgeAppendConst(sink, " }");
+}
+
+internal fn bool PackageImageSourceBridgeRenderGlobals(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] globalsNode = 0;
+    stack mut u32[0 max] globalCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceGlobalNodes(
+            document,
+            moduleNode,
+            globalsNode,
+            globalCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] globalIndex = 0;
+    while willexit (globalIndex < globalCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] globalNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] qualifiedNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] initializerNode = 0;
+        stack mut bool isMutable = false;
+        stack mut bool hasInitializer = false;
+        if (!document.TryChildAt(
+                globalsNode,
+                (u64[0 2 ** 63 - 1])globalIndex,
+                globalNode)
+            || document.KindAt(globalNode) != JsonKind.Object
+            || !document.TryFindMember(globalNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(nameNode)) == 0
+            || !document.TryFindMember(globalNode, "QualifiedName", qualifiedNameNode)
+            || document.KindAt(qualifiedNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(qualifiedNameNode)) == 0
+            || !document.TryFindMember(globalNode, "Visibility", visibilityNode)
+            || document.KindAt(visibilityNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(visibilityNode)) == 0
+            || !document.TryFindMember(globalNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || !document.TryFindMember(globalNode, "Type", typeNode)
+            || document.KindAt(typeNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(typeNode)) == 0
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                globalNode,
+                "IsMutable",
+                isMutable)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                globalNode,
+                "ConstantInitializer",
+                initializerNode,
+                hasInitializer)
+            || (document.TextAt(kindNode) != "static"
+                && document.TextAt(kindNode) != "static mut"
+                && document.TextAt(kindNode) != "globalconstant")
+            || (document.TextAt(kindNode) == "globalconstant"
+                && (isMutable || !hasInitializer))
+            || (document.TextAt(kindNode) != "globalconstant" && hasInitializer)
+            || (isMutable && document.TextAt(kindNode) != "static mut")
+            || (!isMutable
+                && document.TextAt(kindNode) != "static"
+                && document.TextAt(kindNode) != "globalconstant"))
+        {
+            return false;
+        }
+
+        if (globalIndex == 0
+            && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+        {
+            return false;
+        }
+
+        if (!PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+            || (document.TextAt(kindNode) == "globalconstant"
+                ? !PackageImageSourceBridgeAppendConst(sink, " const ")
+                : (!PackageImageSourceBridgeAppendConst(sink, " static ")
+                    || (isMutable && !PackageImageSourceBridgeAppendConst(sink, "mut "))))
+            || (document.TextAt(kindNode) == "globalconstant"
+                ? !PackageImageSourceBridgeRenderConstGlobalType(
+                    document.TextAt(typeNode),
+                    sink)
+                : !PackageImageSourceBridgeAppend(sink, document.TextAt(typeNode)))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+            || (document.TextAt(kindNode) == "globalconstant"
+                && (!PackageImageSourceBridgeAppendConst(sink, " = ")
+                    || !PackageImageSourceBridgeRenderConstantInitializer(
+                        document,
+                        initializerNode,
+                        0,
+                        sink)))
+            || !PackageImageSourceBridgeAppendConst(sink, ";\n"))
+        {
+            return false;
+        }
+
+        globalIndex = globalIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderThreadSafetyLawAttributes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownerNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] attributesNode = 0;
+    stack mut u32[0 max] attributeCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            ownerNode,
+            "ThreadSafetyLawAttributes",
+            attributesNode,
+            attributeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] attributeIndex = 0;
+    while willexit (attributeIndex < attributeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] attributeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] lawNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] conditionNode = 0;
+        stack mut bool hasCondition = false;
+        if (!document.TryChildAt(
+                attributesNode,
+                (u64[0 2 ** 63 - 1])attributeIndex,
+                attributeNode)
+            || document.KindAt(attributeNode) != JsonKind.Object
+            || !document.TryFindMember(attributeNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || (document.TextAt(kindNode) != "grant"
+                && document.TextAt(kindNode) != "deny")
+            || !document.TryFindMember(attributeNode, "LawName", lawNameNode)
+            || document.KindAt(lawNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(lawNameNode)) == 0
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                attributeNode,
+                "Condition",
+                conditionNode,
+                hasCondition)
+            || !PackageImageSourceBridgeAppendConst(
+                sink,
+                document.TextAt(kindNode) == "deny" ? "[Deny(" : "[Grant(")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(lawNameNode))
+            || !PackageImageSourceBridgeAppendConst(sink, ")"))
+        {
+            return false;
+        }
+
+        if (hasCondition)
+        {
+            stack mut u64[0 2 ** 63 - 1] conditionLawNode = 0;
+            stack mut u64[0 2 ** 63 - 1] conditionTypeNode = 0;
+            if (!document.TryFindMember(conditionNode, "LawName", conditionLawNode)
+                || document.KindAt(conditionLawNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(conditionLawNode)) == 0
+                || !document.TryFindMember(conditionNode, "Type", conditionTypeNode)
+                || document.KindAt(conditionTypeNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(conditionTypeNode)) == 0
+                || !PackageImageSourceBridgeAppendConst(sink, " where ")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(conditionLawNode))
+                || !PackageImageSourceBridgeAppendConst(sink, "(")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(conditionTypeNode))
+                || !PackageImageSourceBridgeAppendConst(sink, ")"))
+            {
+                return false;
+            }
+        }
+
+        if (!PackageImageSourceBridgeAppendConst(sink, "] "))
+        {
+            return false;
+        }
+
+        attributeIndex = attributeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypeField(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] fieldNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+    stack mut bool hasVisibility = false;
+    stack mut bool hasOffset = false;
+    stack mut u32[0 max] offsetBytes = 0;
+    if (!document.TryFindMember(fieldNode, "Name", nameNode)
+        || document.KindAt(nameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(nameNode)) == 0
+        || !document.TryFindMember(fieldNode, "Type", typeNode)
+        || document.KindAt(typeNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(typeNode)) == 0
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            fieldNode,
+            "Visibility",
+            visibilityNode,
+            hasVisibility)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(
+            document,
+            fieldNode,
+            "ExplicitOffsetBytes",
+            hasOffset,
+            offsetBytes))
+    {
+        return false;
+    }
+
+    if (!PackageImageSourceBridgeAppendConst(sink, "    "))
+    {
+        return false;
+    }
+
+    if (hasOffset
+        && (!PackageImageSourceBridgeAppendConst(sink, "[FieldOffset(")
+            || !PackageImageSourceBridgeAppendU32(sink, offsetBytes)
+            || !PackageImageSourceBridgeAppendConst(sink, ")] ")))
+    {
+        return false;
+    }
+
+    if (!PackageImageSourceBridgeRenderThreadSafetyLawAttributes(document, fieldNode, sink))
+    {
+        return false;
+    }
+
+    if (hasVisibility
+        && document.TextAt(visibilityNode) != "public"
+        && (!PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")))
+    {
+        return false;
+    }
+
+    return PackageImageSourceBridgeAppend(sink, document.TextAt(typeNode))
+        && PackageImageSourceBridgeAppendConst(sink, " ")
+        && PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+        && PackageImageSourceBridgeAppendConst(sink, ";\n");
+}
+
+internal fn bool PackageImageSourceBridgeRenderPrimaryConstructorParameters(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    mut borrow OwnedAscii sink)
+{
+    if (!PackageImageSourceBridgeAppendConst(sink, "("))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(
+                parametersNode,
+                (u64[0 2 ** 63 - 1])parameterIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || (parameterIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeRenderFunctionParameter(
+                document,
+                parameterNode,
+                false,
+                sink))
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return PackageImageSourceBridgeAppendConst(sink, ")");
+}
+
+internal fn bool PackageImageSourceBridgePrimaryConstructorContainsName(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    ascii name,
+    out bool contains)
+    where overlap(document, name)
+{
+    contains = false;
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterNameNode = 0;
+        if (!document.TryChildAt(
+                parametersNode,
+                (u64[0 2 ** 63 - 1])parameterIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !document.TryFindMember(parameterNode, "Name", parameterNameNode)
+            || document.KindAt(parameterNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(parameterNameNode)) == 0)
+        {
+            return false;
+        }
+
+        if (document.TextAt(parameterNameNode) == name)
+        {
+            contains = true;
+            return true;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderImplementedTraits(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] traitsNode,
+    u32[0 max] traitCount,
+    mut borrow OwnedAscii sink)
+{
+    if (traitCount != 0
+        && !PackageImageSourceBridgeAppendConst(sink, " : "))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] traitIndex = 0;
+    while willexit (traitIndex < traitCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] traitNode = 0;
+        if (!document.TryChildAt(
+                traitsNode,
+                (u64[0 2 ** 63 - 1])traitIndex,
+                traitNode)
+            || document.KindAt(traitNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(traitNode)) == 0
+            || (traitIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(traitNode)))
+        {
+            return false;
+        }
+
+        traitIndex = traitIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderAssociatedTypes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] associatedTypesNode,
+    u32[0 max] associatedTypeCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] associatedTypeIndex = 0;
+    while willexit (associatedTypeIndex < associatedTypeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] associatedTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+        stack mut bool hasTargetType = false;
+        if (!document.TryChildAt(
+                associatedTypesNode,
+                (u64[0 2 ** 63 - 1])associatedTypeIndex,
+                associatedTypeNode)
+            || document.KindAt(associatedTypeNode) != JsonKind.Object
+            || !document.TryFindMember(associatedTypeNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(nameNode)) == 0
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                associatedTypeNode,
+                "TargetType",
+                targetTypeNode,
+                hasTargetType)
+            || !PackageImageSourceBridgeAppendConst(sink, "    alias ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+            || (hasTargetType
+                && (!PackageImageSourceBridgeAppendConst(sink, " = ")
+                    || !PackageImageSourceBridgeAppend(sink, document.TextAt(targetTypeNode))))
+            || !PackageImageSourceBridgeAppendConst(sink, ";\n"))
+        {
+            return false;
+        }
+
+        associatedTypeIndex = associatedTypeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderEnumVariant(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] variantNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadsNode = 0;
+    stack mut u32[0 max] payloadCount = 0;
+    stack mut u64[0 2 ** 63 - 1] roleNode = 0;
+    stack mut u64[0 2 ** 63 - 1] absorbsErrorTypeNode = 0;
+    stack mut bool usesNamedFields = false;
+    stack mut bool hasRole = false;
+    stack mut bool hasAbsorbsErrorType = false;
+    if (!document.TryFindMember(variantNode, "Name", nameNode)
+        || document.KindAt(nameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(nameNode)) == 0
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            variantNode,
+            "UsesNamedFields",
+            usesNamedFields)
+        || !LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            variantNode,
+            "Fields",
+            payloadsNode,
+            payloadCount)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            variantNode,
+            "Role",
+            roleNode,
+            hasRole)
+        || (hasRole
+            && document.TextAt(roleNode) != "ok"
+            && document.TextAt(roleNode) != "err")
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            variantNode,
+            "AbsorbsErrorType",
+            absorbsErrorTypeNode,
+            hasAbsorbsErrorType)
+        || (hasAbsorbsErrorType && (usesNamedFields || payloadCount != 1)))
+    {
+        return false;
+    }
+
+    if (!PackageImageSourceBridgeAppendConst(sink, "    ")
+        || (hasRole
+            && ((!PackageImageSourceBridgeAppendConst(
+                    sink,
+                    document.TextAt(roleNode) == "ok" ? "[Ok] " : "[Err] "))))
+        || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode)))
+    {
+        return false;
+    }
+
+    if (hasAbsorbsErrorType)
+    {
+        stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+        stack mut u64[0 2 ** 63 - 1] payloadTypeNode = 0;
+        if (!document.TryChildAt(payloadsNode, 0, payloadNode)
+            || document.KindAt(payloadNode) != JsonKind.Object
+            || !document.TryFindMember(payloadNode, "Type", payloadTypeNode)
+            || document.KindAt(payloadTypeNode) != JsonKind.Text
+            || document.TextAt(payloadTypeNode) != document.TextAt(absorbsErrorTypeNode)
+            || !PackageImageSourceBridgeAppendConst(sink, " from ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(absorbsErrorTypeNode)))
+        {
+            return false;
+        }
+    }
+    else if (payloadCount != 0)
+    {
+        if (!PackageImageSourceBridgeAppendConst(sink, usesNamedFields ? " { " : "("))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] payloadIndex = 0;
+        while willexit (payloadIndex < payloadCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+            stack mut u64[0 2 ** 63 - 1] payloadNameNode = 0;
+            stack mut u64[0 2 ** 63 - 1] payloadTypeNode = 0;
+            if (!document.TryChildAt(
+                    payloadsNode,
+                    (u64[0 2 ** 63 - 1])payloadIndex,
+                    payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object
+                || !document.TryFindMember(payloadNode, "Type", payloadTypeNode)
+                || document.KindAt(payloadTypeNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(payloadTypeNode)) == 0
+                || (usesNamedFields
+                    && (!document.TryFindMember(payloadNode, "Name", payloadNameNode)
+                        || document.KindAt(payloadNameNode) != JsonKind.Text
+                        || AsciiLength(document.TextAt(payloadNameNode)) == 0))
+                || (payloadIndex != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                || (usesNamedFields
+                    && (!PackageImageSourceBridgeAppend(sink, document.TextAt(payloadNameNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ": ")))
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(payloadTypeNode)))
+            {
+                return false;
+            }
+
+            payloadIndex = payloadIndex + 1;
+        }
+
+        if (!PackageImageSourceBridgeAppendConst(sink, usesNamedFields ? " }" : ")"))
+        {
+            return false;
+        }
+    }
+
+    return PackageImageSourceBridgeAppendConst(sink, ",\n");
+}
+
+internal fn bool PackageImageSourceBridgeRenderConstructor(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] constructorNode,
+    ascii typeName,
+    mut borrow OwnedAscii sink)
+    where overlap(document, typeName)
+{
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] bodyNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            constructorNode,
+            "Parameters",
+            parametersNode,
+            parameterCount)
+        || !document.TryFindMember(constructorNode, "BodyText", bodyNode)
+        || document.KindAt(bodyNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(bodyNode)) == 0
+        || !PackageImageSourceBridgeAppendConst(sink, "    ")
+        || !PackageImageSourceBridgeAppend(sink, typeName)
+        || !PackageImageSourceBridgeAppendConst(sink, "("))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(
+                parametersNode,
+                (u64[0 2 ** 63 - 1])parameterIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || (parameterIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeRenderFunctionParameter(
+                document,
+                parameterNode,
+                false,
+                sink))
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return PackageImageSourceBridgeAppendConst(sink, ") ")
+        && PackageImageSourceBridgeAppend(sink, document.TextAt(bodyNode))
+        && PackageImageSourceBridgeAppendConst(sink, "\n");
+}
+
+internal fn bool PackageImageSourceBridgeRenderDestructor(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] destructorNode,
+    mut borrow OwnedAscii sink)
+{
+    stack mut bool isMutable = false;
+    stack mut u64[0 2 ** 63 - 1] bodyNode = 0;
+    return LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            destructorNode,
+            "IsMutable",
+            isMutable)
+        && document.TryFindMember(destructorNode, "BodyText", bodyNode)
+        && document.KindAt(bodyNode) == JsonKind.Text
+        && AsciiLength(document.TextAt(bodyNode)) != 0
+        && PackageImageSourceBridgeAppendConst(sink, "    ")
+        && (!isMutable || PackageImageSourceBridgeAppendConst(sink, "mut "))
+        && PackageImageSourceBridgeAppendConst(sink, "drop ")
+        && PackageImageSourceBridgeAppend(sink, document.TextAt(bodyNode))
+        && PackageImageSourceBridgeAppendConst(sink, "\n");
+}
+
+internal fn bool PackageImageSourceBridgeRenderMethod(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] methodNode,
+    bool supportsVisibility,
+    borrow PackageImageSourceBridgeTemplateContext templateContext,
+    mut borrow OwnedAscii overloadKeyScratch,
+    mut borrow OwnedAscii typedBodyScratch,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] qualifiedNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] symbolNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+    stack mut u64[0 2 ** 63 - 1] inlineNode = 0;
+    stack mut u64[0 2 ** 63 - 1] ffiAbiNode = 0;
+    stack mut u64[0 2 ** 63 - 1] backendNode = 0;
+    stack mut u64[0 2 ** 63 - 1] deadNamesNode = 0;
+    stack mut u32[0 max] deadNameCount = 0;
+    stack mut bool hasVisibility = false;
+    stack mut bool hasInline = false;
+    stack mut bool hasFfiAbi = false;
+    stack mut bool hasBackend = false;
+    stack mut bool isFfi = false;
+    stack mut bool isStrictFp = false;
+    stack mut bool useFastCallingConvention = false;
+    stack mut bool isHot = false;
+    stack mut bool isCold = false;
+    stack mut bool hasExplicitInlinePreference = false;
+    stack mut bool isStatic = false;
+    stack mut bool isUnsafe = false;
+    stack mut bool isVarargs = false;
+    stack mut bool isTailCallable = false;
+    if (!document.TryFindMember(methodNode, "Name", nameNode)
+        || document.KindAt(nameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(nameNode)) == 0
+        || !document.TryFindMember(methodNode, "QualifiedName", qualifiedNameNode)
+        || document.KindAt(qualifiedNameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(qualifiedNameNode)) == 0
+        || !document.TryFindMember(methodNode, "SymbolName", symbolNameNode)
+        || document.KindAt(symbolNameNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(symbolNameNode)) == 0
+        || !document.TryFindMember(methodNode, "Kind", kindNode)
+        || document.KindAt(kindNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(kindNode)) == 0
+        || !document.TryFindMember(methodNode, "ReturnType", returnTypeNode)
+        || document.KindAt(returnTypeNode) != JsonKind.Text
+        || AsciiLength(document.TextAt(returnTypeNode)) == 0
+        || !LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            methodNode,
+            "Parameters",
+            parametersNode,
+            parameterCount)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            methodNode,
+            "Visibility",
+            visibilityNode,
+            hasVisibility)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            methodNode,
+            "InlinePreference",
+            inlineNode,
+            hasInline)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            methodNode,
+            "FfiAbi",
+            ffiAbiNode,
+            hasFfiAbi)
+        || !PackageImageSourceBridgeOptionalTextMemberNode(
+            document,
+            methodNode,
+            "BackendOptimizationMode",
+            backendNode,
+            hasBackend)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            methodNode,
+            "PointeeDeadOnReturnParameterNames",
+            deadNamesNode,
+            deadNameCount)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(document, methodNode, "IsFfi", isFfi)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            methodNode,
+            "IsStrictFp",
+            isStrictFp)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            methodNode,
+            "UseFastCallingConvention",
+            useFastCallingConvention)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, methodNode, "IsHot", isHot)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, methodNode, "IsCold", isCold)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            methodNode,
+            "HasExplicitInlinePreference",
+            hasExplicitInlinePreference)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, methodNode, "IsStatic", isStatic)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, methodNode, "IsUnsafe", isUnsafe)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, methodNode, "IsVarargs", isVarargs)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            methodNode,
+            "IsTailCallable",
+            isTailCallable)
+        || useFastCallingConvention
+        || (isHot && isCold)
+        || (hasExplicitInlinePreference && !hasInline)
+        || (hasInline
+            && document.TextAt(inlineNode) != "inline"
+            && document.TextAt(inlineNode) != "noinline"
+            && document.TextAt(inlineNode) != "inlinehint")
+        || (hasFfiAbi && !isFfi)
+        || (isVarargs && !isFfi)
+        || (hasBackend && document.TextAt(backendNode) != "opaque"))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] bodyTextNode = 0;
+    stack mut bool hasBodyText = false;
+    stack mut bool hasTypedBodyText = false;
+    if (!PackageImageSourceBridgePrepareTemplateBody(
+            document,
+            templateContext,
+            methodNode,
+            overloadKeyScratch,
+            typedBodyScratch,
+            bodyTextNode,
+            hasBodyText,
+            hasTypedBodyText)
+        || ((hasBodyText || hasTypedBodyText) && isFfi))
+    {
+        return false;
+    }
+
+    if (hasBackend
+        && (!PackageImageSourceBridgeAppendConst(sink, "    [Backend(Opaque)]\n")))
+    {
+        return false;
+    }
+
+    if (!PackageImageSourceBridgeAppendConst(sink, "    ")
+        || (supportsVisibility && hasVisibility
+            && (!PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+                || !PackageImageSourceBridgeAppendConst(sink, " ")))
+        || (isStatic && !PackageImageSourceBridgeAppendConst(sink, "static "))
+        || (isStrictFp && !PackageImageSourceBridgeAppendConst(sink, "strictfp "))
+        || (isHot && !PackageImageSourceBridgeAppendConst(sink, "hot "))
+        || (isCold && !PackageImageSourceBridgeAppendConst(sink, "cold "))
+        || (hasExplicitInlinePreference
+            && (!PackageImageSourceBridgeAppend(sink, document.TextAt(inlineNode))
+                || !PackageImageSourceBridgeAppendConst(sink, " ")))
+        || (isUnsafe && !PackageImageSourceBridgeAppendConst(sink, "unsafe "))
+        || (isFfi
+            && (!PackageImageSourceBridgeAppendConst(sink, "ffi")
+                || (hasFfiAbi
+                    && (!PackageImageSourceBridgeAppendConst(sink, "(")
+                        || !PackageImageSourceBridgeAppend(sink, document.TextAt(ffiAbiNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, ")")))
+                || !PackageImageSourceBridgeAppendConst(sink, " ")))
+        || (isVarargs && !PackageImageSourceBridgeAppendConst(sink, "varargs "))
+        || (isTailCallable && !PackageImageSourceBridgeAppendConst(sink, "tail "))
+        || !PackageImageSourceBridgeAppend(sink, document.TextAt(kindNode))
+        || !PackageImageSourceBridgeAppendConst(sink, " ")
+        || !PackageImageSourceBridgeAppend(sink, document.TextAt(returnTypeNode))
+        || !PackageImageSourceBridgeAppendConst(sink, " ")
+        || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+        || !PackageImageSourceBridgeRenderGenericParameters(document, methodNode, sink)
+        || !PackageImageSourceBridgeAppendConst(sink, "("))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(
+                parametersNode,
+                (u64[0 2 ** 63 - 1])parameterIndex,
+                parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || (parameterIndex != 0
+                && !PackageImageSourceBridgeAppendConst(sink, ", "))
+            || !PackageImageSourceBridgeRenderFunctionParameter(
+                document,
+                parameterNode,
+                isFfi,
+                sink))
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    if (!PackageImageSourceBridgeAppendConst(sink, ")")
+        || !PackageImageSourceBridgeRenderTypeParameterConstraints(document, methodNode, sink)
+        || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+            document,
+            methodNode,
+            "DisjointParameterGroups",
+            "disjoint",
+            isFfi,
+            true,
+            sink)
+        || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+            document,
+            methodNode,
+            "OverlapParameterGroups",
+            "overlap",
+            isFfi,
+            false,
+            sink)
+        || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+            document,
+            methodNode,
+            "SameParameterGroups",
+            "same",
+            isFfi,
+            false,
+            sink))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] deadNameIndex = 0;
+    while willexit (deadNameIndex < deadNameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] deadNameNode = 0;
+        if (!document.TryChildAt(
+                deadNamesNode,
+                (u64[0 2 ** 63 - 1])deadNameIndex,
+                deadNameNode)
+            || document.KindAt(deadNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(deadNameNode)) == 0
+            || !PackageImageSourceBridgeAppendConst(sink, " where dead_on_return(")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(deadNameNode))
+            || !PackageImageSourceBridgeAppendConst(sink, ")"))
+        {
+            return false;
+        }
+
+        deadNameIndex = deadNameIndex + 1;
+    }
+
+    if (!PackageImageSourceBridgeRenderThreadSafetyLawPredicates(document, methodNode, sink)
+        || !PackageImageSourceBridgeRenderValueContracts(document, methodNode, sink))
+    {
+        return false;
+    }
+
+    if (hasTypedBodyText)
+    {
+        return PackageImageSourceBridgeAppendConst(sink, " ")
+            && PackageImageSourceBridgeAppend(sink, typedBodyScratch.View())
+            && PackageImageSourceBridgeAppendConst(sink, "\n");
+    }
+
+    if (hasBodyText)
+    {
+        return PackageImageSourceBridgeAppendConst(sink, " ")
+            && PackageImageSourceBridgeAppend(sink, document.TextAt(bodyTextNode))
+            && PackageImageSourceBridgeAppendConst(sink, "\n");
+    }
+
+    return PackageImageSourceBridgeAppendConst(sink, ";\n");
+}
+
+internal fn bool PackageImageSourceBridgeRenderTypes(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    borrow PackageImageSourceBridgeTemplateContext templateContext,
+    mut borrow OwnedAscii overloadKeyScratch,
+    mut borrow OwnedAscii typedBodyScratch,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] typesNode = 0;
+    stack mut u32[0 max] typeCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceTypeNodes(
+            document,
+            moduleNode,
+            typesNode,
+            typeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeIndex = 0;
+    while willexit (typeIndex < typeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] qualifiedNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+        stack mut u32[0 max] fieldCount = 0;
+        stack mut u64[0 2 ** 63 - 1] primaryConstructorParametersNode = 0;
+        stack mut u32[0 max] primaryConstructorParameterCount = 0;
+        stack mut u64[0 2 ** 63 - 1] variantsNode = 0;
+        stack mut u32[0 max] variantCount = 0;
+        stack mut u64[0 2 ** 63 - 1] associatedTypesNode = 0;
+        stack mut u32[0 max] associatedTypeCount = 0;
+        stack mut u64[0 2 ** 63 - 1] implementedTraitsNode = 0;
+        stack mut u32[0 max] implementedTraitCount = 0;
+        stack mut u64[0 2 ** 63 - 1] methodsNode = 0;
+        stack mut u32[0 max] methodCount = 0;
+        stack mut u64[0 2 ** 63 - 1] constructorsNode = 0;
+        stack mut u32[0 max] constructorCount = 0;
+        stack mut u64[0 2 ** 63 - 1] backendNode = 0;
+        stack mut u64[0 2 ** 63 - 1] layoutNode = 0;
+        stack mut bool hasBackend = false;
+        stack mut bool hasLayout = false;
+        stack mut bool hasPack = false;
+        stack mut bool hasAlign = false;
+        stack mut u32[0 max] packBytes = 0;
+        stack mut u32[0 max] alignBytes = 0;
+        stack mut u64[0 2 ** 63 - 1] destructorNode = 0;
+        stack mut bool hasDestructor = false;
+        stack mut bool isDynTrait = false;
+        if (!document.TryChildAt(
+                typesNode,
+                (u64[0 2 ** 63 - 1])typeIndex,
+                typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !document.TryFindMember(typeNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(nameNode)) == 0
+            || !document.TryFindMember(typeNode, "QualifiedName", qualifiedNameNode)
+            || document.KindAt(qualifiedNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(qualifiedNameNode)) == 0
+            || !document.TryFindMember(typeNode, "Visibility", visibilityNode)
+            || document.KindAt(visibilityNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(visibilityNode)) == 0
+            || !document.TryFindMember(typeNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || (document.TextAt(kindNode) != "struct"
+                && document.TextAt(kindNode) != "record"
+                && document.TextAt(kindNode) != "enum"
+                && document.TextAt(kindNode) != "trait"
+                && document.TextAt(kindNode) != "doctrine")
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                typeNode,
+                "Fields",
+                fieldsNode,
+                fieldCount)
+            || (document.TextAt(kindNode) == "trait" && fieldCount != 0)
+            || (document.TextAt(kindNode) == "doctrine" && fieldCount != 0)
+            || (document.TextAt(kindNode) == "enum" && fieldCount != 0)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                typeNode,
+                "BackendOptimizationMode",
+                backendNode,
+                hasBackend)
+            || (hasBackend && document.TextAt(backendNode) != "opaque")
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                typeNode,
+                "StructLayout",
+                layoutNode,
+                hasLayout)
+            || (hasLayout
+                && document.TextAt(layoutNode) != "Auto"
+                && document.TextAt(layoutNode) != "C"
+                && document.TextAt(layoutNode) != "Explicit")
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                typeNode,
+                "PackBytes",
+                hasPack,
+                packBytes)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                typeNode,
+                "AlignBytes",
+                hasAlign,
+                alignBytes)
+            || ((hasPack || hasAlign) && !hasLayout)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                typeNode,
+                "Destructor",
+                destructorNode,
+                hasDestructor)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                typeNode,
+                "IsDynTrait",
+                isDynTrait)
+            || (isDynTrait && document.TextAt(kindNode) != "trait")
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "PrimaryConstructorParameters",
+                primaryConstructorParametersNode,
+                primaryConstructorParameterCount)
+            || (primaryConstructorParameterCount != 0
+                && document.TextAt(kindNode) != "record")
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "Variants",
+                variantsNode,
+                variantCount)
+            || (document.TextAt(kindNode) == "enum" && variantCount == 0)
+            || (document.TextAt(kindNode) != "enum" && variantCount != 0)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "Methods",
+                methodsNode,
+                methodCount)
+            || (methodCount != 0 && document.TextAt(kindNode) == "enum")
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "Constructors",
+                constructorsNode,
+                constructorCount)
+            || (constructorCount != 0
+                && document.TextAt(kindNode) != "struct"
+                && document.TextAt(kindNode) != "record")
+            || (hasDestructor
+                && document.TextAt(kindNode) != "struct"
+                && document.TextAt(kindNode) != "record")
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "AssociatedTypes",
+                associatedTypesNode,
+                associatedTypeCount)
+            || (associatedTypeCount != 0 && document.TextAt(kindNode) == "enum")
+            || (isDynTrait && associatedTypeCount != 0)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "ImplementedTraits",
+                implementedTraitsNode,
+                implementedTraitCount)
+            || (implementedTraitCount != 0
+                && document.TextAt(kindNode) != "struct"
+                && document.TextAt(kindNode) != "record"))
+        {
+            return false;
+        }
+
+        if (typeIndex == 0
+            && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+        {
+            return false;
+        }
+
+        if (hasBackend
+            && !PackageImageSourceBridgeAppendConst(sink, "[Backend(Opaque)]\n"))
+        {
+            return false;
+        }
+
+        if (hasLayout)
+        {
+            if (!PackageImageSourceBridgeAppendConst(sink, "[StructLayout(")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(layoutNode))
+                || (hasPack
+                    && (!PackageImageSourceBridgeAppendConst(sink, "), Pack(")
+                        || !PackageImageSourceBridgeAppendU32(sink, packBytes)))
+                || (hasAlign
+                    && (!PackageImageSourceBridgeAppendConst(sink, "), Align(")
+                        || !PackageImageSourceBridgeAppendU32(sink, alignBytes)))
+                || !PackageImageSourceBridgeAppendConst(sink, ")]\n"))
+            {
+                return false;
+            }
+        }
+
+        if (!PackageImageSourceBridgeRenderThreadSafetyLawAttributes(document, typeNode, sink)
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || (isDynTrait
+                && !PackageImageSourceBridgeAppendConst(sink, "dyn "))
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(kindNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+            || !PackageImageSourceBridgeRenderGenericParameters(document, typeNode, sink)
+            || (primaryConstructorParameterCount != 0
+                && !PackageImageSourceBridgeRenderPrimaryConstructorParameters(
+                    document,
+                    primaryConstructorParametersNode,
+                    primaryConstructorParameterCount,
+                    sink))
+            || !PackageImageSourceBridgeRenderImplementedTraits(
+                document,
+                implementedTraitsNode,
+                implementedTraitCount,
+                sink)
+            || !PackageImageSourceBridgeAppendConst(sink, "\n{\n"))
+        {
+            return false;
+        }
+
+        if (document.TextAt(kindNode) == "enum")
+        {
+            stack mut u32[0 max] variantIndex = 0;
+            while willexit (variantIndex < variantCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+                if (!document.TryChildAt(
+                        variantsNode,
+                        (u64[0 2 ** 63 - 1])variantIndex,
+                        variantNode)
+                    || document.KindAt(variantNode) != JsonKind.Object
+                    || !PackageImageSourceBridgeRenderEnumVariant(document, variantNode, sink))
+                {
+                    return false;
+                }
+
+                variantIndex = variantIndex + 1;
+            }
+        }
+        else
+        {
+            if (!PackageImageSourceBridgeRenderAssociatedTypes(
+                    document,
+                    associatedTypesNode,
+                    associatedTypeCount,
+                    sink)
+                || (associatedTypeCount != 0
+                    && fieldCount != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, "\n")))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] fieldIndex = 0;
+            while willexit (fieldIndex < fieldCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+                stack mut u64[0 2 ** 63 - 1] fieldNameNode = 0;
+                stack mut bool isPrimaryConstructorField = false;
+                if (!document.TryChildAt(
+                        fieldsNode,
+                        (u64[0 2 ** 63 - 1])fieldIndex,
+                        fieldNode)
+                    || document.KindAt(fieldNode) != JsonKind.Object
+                    || !document.TryFindMember(fieldNode, "Name", fieldNameNode)
+                    || document.KindAt(fieldNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(fieldNameNode)) == 0)
+                {
+                    return false;
+                }
+
+                stack ascii fieldName = document.TextAt(fieldNameNode);
+                if (!PackageImageSourceBridgePrimaryConstructorContainsName(
+                        document,
+                        primaryConstructorParametersNode,
+                        primaryConstructorParameterCount,
+                        fieldName,
+                        isPrimaryConstructorField)
+                    || (!isPrimaryConstructorField
+                        && !PackageImageSourceBridgeRenderTypeField(document, fieldNode, sink)))
+                {
+                    return false;
+                }
+
+                fieldIndex = fieldIndex + 1;
+            }
+
+            if (constructorCount != 0
+                && (fieldCount != 0 || associatedTypeCount != 0)
+                && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            {
+                return false;
+            }
+
+            stack ascii renderedTypeName = document.TextAt(nameNode);
+            stack mut u32[0 max] constructorIndex = 0;
+            while willexit (constructorIndex < constructorCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] constructorNode = 0;
+                if (!document.TryChildAt(
+                        constructorsNode,
+                        (u64[0 2 ** 63 - 1])constructorIndex,
+                        constructorNode)
+                    || document.KindAt(constructorNode) != JsonKind.Object
+                    || !PackageImageSourceBridgeRenderConstructor(
+                        document,
+                        constructorNode,
+                        renderedTypeName,
+                        sink))
+                {
+                    return false;
+                }
+
+                constructorIndex = constructorIndex + 1;
+            }
+
+            if (hasDestructor
+                && ((constructorCount != 0 || fieldCount != 0 || associatedTypeCount != 0)
+                    && !PackageImageSourceBridgeAppendConst(sink, "\n")))
+            {
+                return false;
+            }
+
+            if (hasDestructor
+                && !PackageImageSourceBridgeRenderDestructor(document, destructorNode, sink))
+            {
+                return false;
+            }
+
+            if (methodCount != 0
+                && (hasDestructor
+                    || constructorCount != 0
+                    || fieldCount != 0
+                    || associatedTypeCount != 0)
+                && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            {
+                return false;
+            }
+
+            stack bool supportsMemberVisibility = document.TextAt(kindNode) == "struct"
+                || document.TextAt(kindNode) == "record";
+            stack mut u32[0 max] methodIndex = 0;
+            while willexit (methodIndex < methodCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] methodNode = 0;
+                if (!document.TryChildAt(
+                        methodsNode,
+                        (u64[0 2 ** 63 - 1])methodIndex,
+                        methodNode)
+                    || document.KindAt(methodNode) != JsonKind.Object
+                    || !PackageImageSourceBridgeRenderMethod(
+                        document,
+                        methodNode,
+                        supportsMemberVisibility,
+                        templateContext,
+                        overloadKeyScratch,
+                        typedBodyScratch,
+                        sink))
+                {
+                    return false;
+                }
+
+                methodIndex = methodIndex + 1;
+            }
+        }
+
+        if (!PackageImageSourceBridgeAppendConst(sink, "}\n"))
+        {
+            return false;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool PackageImageSourceBridgeRenderFunctions(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    borrow PackageImageSourceBridgeTemplateContext templateContext,
+    mut borrow OwnedAscii overloadKeyScratch,
+    mut borrow OwnedAscii typedBodyScratch,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u64[0 2 ** 63 - 1] functionsNode = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceFunctionNodes(
+            document,
+            moduleNode,
+            functionsNode,
+            functionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] functionIndex = 0;
+    while willexit (functionIndex < functionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] functionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] qualifiedNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+        stack mut u64[0 2 ** 63 - 1] symbolNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+        stack mut u32[0 max] parameterCount = 0;
+        stack mut u64[0 2 ** 63 - 1] inlineNode = 0;
+        stack mut u64[0 2 ** 63 - 1] ffiAbiNode = 0;
+        stack mut u64[0 2 ** 63 - 1] backendNode = 0;
+        stack mut u64[0 2 ** 63 - 1] linkNameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] deadNamesNode = 0;
+        stack mut u32[0 max] deadNameCount = 0;
+        stack mut bool hasInline = false;
+        stack mut bool hasFfiAbi = false;
+        stack mut bool hasBackend = false;
+        stack mut bool hasLinkName = false;
+        stack mut bool isFfi = false;
+        stack mut bool isStrictFp = false;
+        stack mut bool useFastCallingConvention = false;
+        stack mut bool isHot = false;
+        stack mut bool isCold = false;
+        stack mut bool hasExplicitInlinePreference = false;
+        stack mut bool isUnsafe = false;
+        stack mut bool isVarargs = false;
+        stack mut bool isTailCallable = false;
+        stack mut u64[0 2 ** 63 - 1] asmNode = 0;
+        stack mut bool hasAsm = false;
+        if (!document.TryChildAt(
+                functionsNode,
+                (u64[0 2 ** 63 - 1])functionIndex,
+                functionNode)
+            || document.KindAt(functionNode) != JsonKind.Object
+            || !document.TryFindMember(functionNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(nameNode)) == 0
+            || !document.TryFindMember(functionNode, "QualifiedName", qualifiedNameNode)
+            || document.KindAt(qualifiedNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(qualifiedNameNode)) == 0
+            || !document.TryFindMember(functionNode, "Visibility", visibilityNode)
+            || document.KindAt(visibilityNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(visibilityNode)) == 0
+            || !document.TryFindMember(functionNode, "SymbolName", symbolNameNode)
+            || document.KindAt(symbolNameNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(symbolNameNode)) == 0
+            || !document.TryFindMember(functionNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(kindNode)) == 0
+            || !document.TryFindMember(functionNode, "ReturnType", returnTypeNode)
+            || document.KindAt(returnTypeNode) != JsonKind.Text
+            || AsciiLength(document.TextAt(returnTypeNode)) == 0
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                functionNode,
+                "Parameters",
+                parametersNode,
+                parameterCount)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                functionNode,
+                "InlinePreference",
+                inlineNode,
+                hasInline)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                functionNode,
+                "FfiAbi",
+                ffiAbiNode,
+                hasFfiAbi)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                functionNode,
+                "BackendOptimizationMode",
+                backendNode,
+                hasBackend)
+            || !PackageImageSourceBridgeOptionalTextMemberNode(
+                document,
+                functionNode,
+                "LinkName",
+                linkNameNode,
+                hasLinkName)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, functionNode, "IsFfi", isFfi)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                functionNode,
+                "IsStrictFp",
+                isStrictFp)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                functionNode,
+                "UseFastCallingConvention",
+                useFastCallingConvention)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsHot", isHot)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsCold", isCold)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                functionNode,
+                "HasExplicitInlinePreference",
+                hasExplicitInlinePreference)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                functionNode,
+                "IsUnsafe",
+                isUnsafe)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                functionNode,
+                "IsVarargs",
+                isVarargs)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                functionNode,
+                "IsTailCallable",
+                isTailCallable)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                functionNode,
+                "Asm",
+                asmNode,
+                hasAsm)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                functionNode,
+                "PointeeDeadOnReturnParameterNames",
+                deadNamesNode,
+                deadNameCount)
+            || hasAsm
+            || useFastCallingConvention
+            || (isHot && isCold)
+            || (hasExplicitInlinePreference && !hasInline)
+            || (hasInline
+                && document.TextAt(inlineNode) != "inline"
+                && document.TextAt(inlineNode) != "noinline"
+                && document.TextAt(inlineNode) != "inlinehint")
+            || (hasFfiAbi && !isFfi)
+            || (hasLinkName && !isFfi)
+            || (isVarargs && !isFfi)
+            || (hasBackend && document.TextAt(backendNode) != "opaque"))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] bodyTextNode = 0;
+        stack mut bool hasBodyText = false;
+        stack mut bool hasTypedBodyText = false;
+        if (!PackageImageSourceBridgePrepareTemplateBody(
+                document,
+                templateContext,
+                functionNode,
+                overloadKeyScratch,
+                typedBodyScratch,
+                bodyTextNode,
+                hasBodyText,
+                hasTypedBodyText)
+            || ((hasBodyText || hasTypedBodyText) && isFfi))
+        {
+            return false;
+        }
+
+        if (functionIndex == 0
+            && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+        {
+            return false;
+        }
+
+        if (hasLinkName
+            && (!PackageImageSourceBridgeAppendConst(sink, "[LinkName(\"")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(linkNameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, "\")]\n")))
+        {
+            return false;
+        }
+
+        if (hasBackend
+            && !PackageImageSourceBridgeAppendConst(sink, "[Backend(Opaque)]\n"))
+        {
+            return false;
+        }
+
+        if (!PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || (isStrictFp && !PackageImageSourceBridgeAppendConst(sink, "strictfp "))
+            || (isHot && !PackageImageSourceBridgeAppendConst(sink, "hot "))
+            || (isCold && !PackageImageSourceBridgeAppendConst(sink, "cold "))
+            || (hasExplicitInlinePreference
+                && (!PackageImageSourceBridgeAppend(sink, document.TextAt(inlineNode))
+                    || !PackageImageSourceBridgeAppendConst(sink, " ")))
+            || (isUnsafe && !PackageImageSourceBridgeAppendConst(sink, "unsafe "))
+            || (isFfi
+                && (!PackageImageSourceBridgeAppendConst(sink, "ffi")
+                    || (hasFfiAbi
+                        && (!PackageImageSourceBridgeAppendConst(sink, "(")
+                            || !PackageImageSourceBridgeAppend(sink, document.TextAt(ffiAbiNode))
+                            || !PackageImageSourceBridgeAppendConst(sink, ")")))
+                    || !PackageImageSourceBridgeAppendConst(sink, " ")))
+            || (isVarargs && !PackageImageSourceBridgeAppendConst(sink, "varargs "))
+            || (isTailCallable && !PackageImageSourceBridgeAppendConst(sink, "tail "))
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(kindNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(returnTypeNode))
+            || !PackageImageSourceBridgeAppendConst(sink, " ")
+            || !PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode))
+            || !PackageImageSourceBridgeRenderGenericParameters(document, functionNode, sink)
+            || !PackageImageSourceBridgeAppendConst(sink, "("))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] parameterIndex = 0;
+        while willexit (parameterIndex < parameterCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+            if (!document.TryChildAt(
+                    parametersNode,
+                    (u64[0 2 ** 63 - 1])parameterIndex,
+                    parameterNode)
+                || document.KindAt(parameterNode) != JsonKind.Object
+                || (parameterIndex != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                || !PackageImageSourceBridgeRenderFunctionParameter(
+                    document,
+                    parameterNode,
+                    isFfi,
+                    sink))
+            {
+                return false;
+            }
+
+            parameterIndex = parameterIndex + 1;
+        }
+
+        if (!PackageImageSourceBridgeAppendConst(sink, ")"))
+        {
+            return false;
+        }
+
+        if (!PackageImageSourceBridgeRenderTypeParameterConstraints(
+                document,
+                functionNode,
+                sink)
+            || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+                document,
+                functionNode,
+                "DisjointParameterGroups",
+                "disjoint",
+                isFfi,
+                true,
+                sink)
+            || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+                document,
+                functionNode,
+                "OverlapParameterGroups",
+                "overlap",
+                isFfi,
+                false,
+                sink)
+            || !PackageImageSourceBridgeRenderParameterMemoryContractGroups(
+                document,
+                functionNode,
+                "SameParameterGroups",
+                "same",
+                isFfi,
+                false,
+                sink))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] deadNameIndex = 0;
+        while willexit (deadNameIndex < deadNameCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] deadNameNode = 0;
+            if (!document.TryChildAt(
+                    deadNamesNode,
+                    (u64[0 2 ** 63 - 1])deadNameIndex,
+                    deadNameNode)
+                || document.KindAt(deadNameNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(deadNameNode)) == 0
+                || !PackageImageSourceBridgeAppendConst(sink, " where dead_on_return(")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(deadNameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, ")"))
+            {
+                return false;
+            }
+
+            deadNameIndex = deadNameIndex + 1;
+        }
+
+        if (!PackageImageSourceBridgeRenderThreadSafetyLawPredicates(
+                document,
+                functionNode,
+                sink)
+            || !PackageImageSourceBridgeRenderValueContracts(
+                document,
+                functionNode,
+                sink))
+        {
+            return false;
+        }
+
+        if (hasTypedBodyText
+            ? (!PackageImageSourceBridgeAppendConst(sink, " ")
+                || !PackageImageSourceBridgeAppend(sink, typedBodyScratch.View())
+                || !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            : hasBodyText
+                ? (!PackageImageSourceBridgeAppendConst(sink, " ")
+                    || !PackageImageSourceBridgeAppend(sink, document.TextAt(bodyTextNode))
+                    || !PackageImageSourceBridgeAppendConst(sink, "\n"))
+                : !PackageImageSourceBridgeAppendConst(sink, ";\n"))
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
+}
+
+// Renders the source bridge prefix without reparsing MANF for every import.
+// Remaining member/constant/body reconstruction is layered after this
+// boundary. Unsupported source-only payloads are rejected so this compatibility
+// bridge never silently drops layout, backend, ownership, or aliasing facts.

@@ -1,0 +1,1809 @@
+import System.Memory
+import System.Text
+import System.Text.Interning
+module Compiler.Artifacts
+
+public enum ArtifactError
+{
+    UnknownArtifactKind,
+    MissingArtifact,
+    ArtifactKeyMismatch,
+    InvalidArtifactStorage,
+    InvalidCatalog,
+    Interner from System.Text.Interning.TextInternerError,
+}
+
+public enum ArtifactStatus
+{
+    [Ok] Ok,
+    [Err] Err(ArtifactError),
+}
+
+public enum ArtifactResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(ArtifactError),
+}
+
+public enum CompilerArtifactKind
+{
+    Unknown,
+    ParseResult,
+    SyntaxModel,
+    DeclarationIndex,
+    ModuleGraph,
+    SourceModuleParseCache,
+    LoadedModules,
+    SymbolCatalog,
+    FunctionEffects,
+    ClosedWorldOptimization,
+    TypeCheckModel,
+    InstantiationOwnership,
+    MonomorphizationPlan,
+    SpecializationPlan,
+    SpecializationCodegenStrategy,
+    EnumLayoutModel,
+    SemanticValidation,
+    OwnershipValidation,
+    LoweringContractValidation,
+    HighLevelIr,
+    MidLevelIr,
+    SsaIr,
+    OptimizedSsaIr,
+    SsaValueFacts,
+    AbiModel,
+    LlvmIrModule,
+}
+
+public inline finite law u32[0 max] CompilerArtifactKindCount()
+{
+    return 25;
+}
+
+public finite law u32[0 max] CompilerArtifactKindOrdinal(CompilerArtifactKind kind)
+{
+    switch (kind)
+    {
+        case CompilerArtifactKind.Unknown:
+            return CompilerArtifactKindCount();
+        case CompilerArtifactKind.ParseResult:
+            return 0;
+        case CompilerArtifactKind.SyntaxModel:
+            return 1;
+        case CompilerArtifactKind.DeclarationIndex:
+            return 2;
+        case CompilerArtifactKind.ModuleGraph:
+            return 3;
+        case CompilerArtifactKind.SourceModuleParseCache:
+            return 4;
+        case CompilerArtifactKind.LoadedModules:
+            return 5;
+        case CompilerArtifactKind.SymbolCatalog:
+            return 6;
+        case CompilerArtifactKind.FunctionEffects:
+            return 7;
+        case CompilerArtifactKind.ClosedWorldOptimization:
+            return 8;
+        case CompilerArtifactKind.TypeCheckModel:
+            return 9;
+        case CompilerArtifactKind.InstantiationOwnership:
+            return 10;
+        case CompilerArtifactKind.MonomorphizationPlan:
+            return 11;
+        case CompilerArtifactKind.SpecializationPlan:
+            return 12;
+        case CompilerArtifactKind.SpecializationCodegenStrategy:
+            return 13;
+        case CompilerArtifactKind.EnumLayoutModel:
+            return 14;
+        case CompilerArtifactKind.SemanticValidation:
+            return 15;
+        case CompilerArtifactKind.OwnershipValidation:
+            return 16;
+        case CompilerArtifactKind.LoweringContractValidation:
+            return 17;
+        case CompilerArtifactKind.HighLevelIr:
+            return 18;
+        case CompilerArtifactKind.MidLevelIr:
+            return 19;
+        case CompilerArtifactKind.SsaIr:
+            return 20;
+        case CompilerArtifactKind.OptimizedSsaIr:
+            return 21;
+        case CompilerArtifactKind.SsaValueFacts:
+            return 22;
+        case CompilerArtifactKind.AbiModel:
+            return 23;
+        case CompilerArtifactKind.LlvmIrModule:
+            return 24;
+    }
+}
+
+public finite law CompilerArtifactKind CompilerArtifactKindAtOrdinal(u32[0 max] ordinal)
+{
+    switch (ordinal)
+    {
+        case 0:
+            return CompilerArtifactKind.ParseResult;
+        case 1:
+            return CompilerArtifactKind.SyntaxModel;
+        case 2:
+            return CompilerArtifactKind.DeclarationIndex;
+        case 3:
+            return CompilerArtifactKind.ModuleGraph;
+        case 4:
+            return CompilerArtifactKind.SourceModuleParseCache;
+        case 5:
+            return CompilerArtifactKind.LoadedModules;
+        case 6:
+            return CompilerArtifactKind.SymbolCatalog;
+        case 7:
+            return CompilerArtifactKind.FunctionEffects;
+        case 8:
+            return CompilerArtifactKind.ClosedWorldOptimization;
+        case 9:
+            return CompilerArtifactKind.TypeCheckModel;
+        case 10:
+            return CompilerArtifactKind.InstantiationOwnership;
+        case 11:
+            return CompilerArtifactKind.MonomorphizationPlan;
+        case 12:
+            return CompilerArtifactKind.SpecializationPlan;
+        case 13:
+            return CompilerArtifactKind.SpecializationCodegenStrategy;
+        case 14:
+            return CompilerArtifactKind.EnumLayoutModel;
+        case 15:
+            return CompilerArtifactKind.SemanticValidation;
+        case 16:
+            return CompilerArtifactKind.OwnershipValidation;
+        case 17:
+            return CompilerArtifactKind.LoweringContractValidation;
+        case 18:
+            return CompilerArtifactKind.HighLevelIr;
+        case 19:
+            return CompilerArtifactKind.MidLevelIr;
+        case 20:
+            return CompilerArtifactKind.SsaIr;
+        case 21:
+            return CompilerArtifactKind.OptimizedSsaIr;
+        case 22:
+            return CompilerArtifactKind.SsaValueFacts;
+        case 23:
+            return CompilerArtifactKind.AbiModel;
+        case 24:
+            return CompilerArtifactKind.LlvmIrModule;
+        default:
+            return CompilerArtifactKind.Unknown;
+    }
+}
+
+public finite law ascii CompilerArtifactKindName(CompilerArtifactKind kind)
+{
+    switch (kind)
+    {
+        case CompilerArtifactKind.Unknown:
+            return "";
+        case CompilerArtifactKind.ParseResult:
+            return "parse.result";
+        case CompilerArtifactKind.SyntaxModel:
+            return "syntax.model";
+        case CompilerArtifactKind.DeclarationIndex:
+            return "declarations.index";
+        case CompilerArtifactKind.ModuleGraph:
+            return "modules.graph";
+        case CompilerArtifactKind.SourceModuleParseCache:
+            return "modules.source-parse-cache";
+        case CompilerArtifactKind.LoadedModules:
+            return "modules.loaded";
+        case CompilerArtifactKind.SymbolCatalog:
+            return "symbols.catalog";
+        case CompilerArtifactKind.FunctionEffects:
+            return "semantics.function-effects";
+        case CompilerArtifactKind.ClosedWorldOptimization:
+            return "semantics.closed-world-optimization";
+        case CompilerArtifactKind.TypeCheckModel:
+            return "typing.model";
+        case CompilerArtifactKind.InstantiationOwnership:
+            return "typing.instantiation-ownership";
+        case CompilerArtifactKind.MonomorphizationPlan:
+            return "typing.monomorphization-plan";
+        case CompilerArtifactKind.SpecializationPlan:
+            return "semantics.specialization-plan";
+        case CompilerArtifactKind.SpecializationCodegenStrategy:
+            return "codegen.specialization-strategy";
+        case CompilerArtifactKind.EnumLayoutModel:
+            return "typing.enum-layout";
+        case CompilerArtifactKind.SemanticValidation:
+            return "semantics.validation";
+        case CompilerArtifactKind.OwnershipValidation:
+            return "semantics.ownership";
+        case CompilerArtifactKind.LoweringContractValidation:
+            return "lowering.contract-validation";
+        case CompilerArtifactKind.HighLevelIr:
+            return "lowering.hir";
+        case CompilerArtifactKind.MidLevelIr:
+            return "lowering.mir";
+        case CompilerArtifactKind.SsaIr:
+            return "lowering.ssa";
+        case CompilerArtifactKind.OptimizedSsaIr:
+            return "lowering.ssa.optimized";
+        case CompilerArtifactKind.SsaValueFacts:
+            return "optimization.ssa.value-facts";
+        case CompilerArtifactKind.AbiModel:
+            return "lowering.abi";
+        case CompilerArtifactKind.LlvmIrModule:
+            return "codegen.llvm-ir";
+    }
+}
+
+public fn bool TryParseCompilerArtifactKindName(ascii name, out CompilerArtifactKind kind)
+    where overlap(name, kind)
+{
+    if (System.Text.Equals(name, "parse.result"))
+    {
+        kind = CompilerArtifactKind.ParseResult;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "syntax.model"))
+    {
+        kind = CompilerArtifactKind.SyntaxModel;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "declarations.index"))
+    {
+        kind = CompilerArtifactKind.DeclarationIndex;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "modules.graph"))
+    {
+        kind = CompilerArtifactKind.ModuleGraph;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "modules.source-parse-cache"))
+    {
+        kind = CompilerArtifactKind.SourceModuleParseCache;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "modules.loaded"))
+    {
+        kind = CompilerArtifactKind.LoadedModules;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "symbols.catalog"))
+    {
+        kind = CompilerArtifactKind.SymbolCatalog;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "semantics.function-effects"))
+    {
+        kind = CompilerArtifactKind.FunctionEffects;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "semantics.closed-world-optimization"))
+    {
+        kind = CompilerArtifactKind.ClosedWorldOptimization;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "typing.model"))
+    {
+        kind = CompilerArtifactKind.TypeCheckModel;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "typing.instantiation-ownership"))
+    {
+        kind = CompilerArtifactKind.InstantiationOwnership;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "typing.monomorphization-plan"))
+    {
+        kind = CompilerArtifactKind.MonomorphizationPlan;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "semantics.specialization-plan"))
+    {
+        kind = CompilerArtifactKind.SpecializationPlan;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "codegen.specialization-strategy"))
+    {
+        kind = CompilerArtifactKind.SpecializationCodegenStrategy;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "typing.enum-layout"))
+    {
+        kind = CompilerArtifactKind.EnumLayoutModel;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "semantics.validation"))
+    {
+        kind = CompilerArtifactKind.SemanticValidation;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "semantics.ownership"))
+    {
+        kind = CompilerArtifactKind.OwnershipValidation;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.contract-validation"))
+    {
+        kind = CompilerArtifactKind.LoweringContractValidation;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.hir"))
+    {
+        kind = CompilerArtifactKind.HighLevelIr;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.mir"))
+    {
+        kind = CompilerArtifactKind.MidLevelIr;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.ssa"))
+    {
+        kind = CompilerArtifactKind.SsaIr;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.ssa.optimized"))
+    {
+        kind = CompilerArtifactKind.OptimizedSsaIr;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "optimization.ssa.value-facts"))
+    {
+        kind = CompilerArtifactKind.SsaValueFacts;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "lowering.abi"))
+    {
+        kind = CompilerArtifactKind.AbiModel;
+        return true;
+    }
+
+    if (System.Text.Equals(name, "codegen.llvm-ir"))
+    {
+        kind = CompilerArtifactKind.LlvmIrModule;
+        return true;
+    }
+
+    kind = CompilerArtifactKind.Unknown;
+    return false;
+}
+
+public struct AnyArtifactKey
+{
+    internal bool HasValue;
+    internal CompilerArtifactKind KindValue;
+    internal System.Text.Interning.ArtifactKeyId IdValue;
+
+    AnyArtifactKey()
+    {
+        self.HasValue = false;
+        self.KindValue = CompilerArtifactKind.Unknown;
+        self.IdValue = new();
+    }
+
+    public inline finite law bool IsValid(borrow AnyArtifactKey self)
+    {
+        return self.HasValue;
+    }
+
+    public inline finite law CompilerArtifactKind Kind(borrow AnyArtifactKey self)
+    {
+        if (!self.HasValue)
+        {
+            return CompilerArtifactKind.Unknown;
+        }
+
+        return self.KindValue;
+    }
+
+    public inline finite law System.Text.Interning.ArtifactKeyId Id(borrow AnyArtifactKey self)
+    {
+        return self.IdValue;
+    }
+
+    public inline finite law ascii Name(borrow AnyArtifactKey self)
+    {
+        if (!self.HasValue)
+        {
+            return "";
+        }
+
+        return CompilerArtifactKindName(self.KindValue);
+    }
+
+    public inline finite law bool Equals(borrow AnyArtifactKey self, AnyArtifactKey other)
+    {
+        return self.HasValue
+            && other.HasValue
+            && self.KindValue == other.KindValue
+            && self.IdValue.Index() == other.IdValue.Index();
+    }
+}
+
+public inline finite law bool AnyArtifactKeyEquals(AnyArtifactKey left, AnyArtifactKey right)
+{
+    return left.HasValue
+        && right.HasValue
+        && left.KindValue == right.KindValue
+        && left.IdValue.Index() == right.IdValue.Index();
+}
+
+public struct ArtifactKey<T>
+{
+    internal bool HasValue;
+    internal CompilerArtifactKind KindValue;
+    internal System.Text.Interning.ArtifactKeyId IdValue;
+
+    ArtifactKey()
+    {
+        self.HasValue = false;
+        self.KindValue = CompilerArtifactKind.Unknown;
+        self.IdValue = new();
+    }
+
+    public inline finite law bool IsValid(borrow ArtifactKey<T> self)
+    {
+        return self.HasValue;
+    }
+
+    public inline finite law CompilerArtifactKind Kind(borrow ArtifactKey<T> self)
+    {
+        if (!self.HasValue)
+        {
+            return CompilerArtifactKind.Unknown;
+        }
+
+        return self.KindValue;
+    }
+
+    public inline finite law System.Text.Interning.ArtifactKeyId Id(borrow ArtifactKey<T> self)
+    {
+        return self.IdValue;
+    }
+
+    public inline finite law ascii Name(borrow ArtifactKey<T> self)
+    {
+        if (!self.HasValue)
+        {
+            return "";
+        }
+
+        return CompilerArtifactKindName(self.KindValue);
+    }
+
+    public inline finite law bool Equals(borrow ArtifactKey<T> self, ArtifactKey<T> other)
+    {
+        return self.HasValue
+            && other.HasValue
+            && self.KindValue == other.KindValue
+            && self.IdValue.Index() == other.IdValue.Index();
+    }
+
+    public inline finite law AnyArtifactKey Untyped(borrow ArtifactKey<T> self)
+    {
+        return AnyArtifactKeyOf(self.KindValue, self.IdValue, self.HasValue);
+    }
+}
+
+public inline finite law bool ArtifactKeyIsValid<T>(ArtifactKey<T> key)
+{
+    return key.HasValue;
+}
+
+public inline finite law CompilerArtifactKind ArtifactKeyKind<T>(ArtifactKey<T> key)
+{
+    if (!key.HasValue)
+    {
+        return CompilerArtifactKind.Unknown;
+    }
+
+    return key.KindValue;
+}
+
+public inline finite law System.Text.Interning.ArtifactKeyId ArtifactKeyIdValue<T>(ArtifactKey<T> key)
+{
+    return key.IdValue;
+}
+
+public inline finite law ascii ArtifactKeyName<T>(ArtifactKey<T> key)
+{
+    if (!key.HasValue)
+    {
+        return "";
+    }
+
+    return CompilerArtifactKindName(key.KindValue);
+}
+
+public inline finite law bool ArtifactKeyEquals<T>(ArtifactKey<T> left, ArtifactKey<T> right)
+{
+    return left.HasValue
+        && right.HasValue
+        && left.KindValue == right.KindValue
+        && left.IdValue.Index() == right.IdValue.Index();
+}
+
+public inline finite law AnyArtifactKey UntypeArtifactKey<T>(ArtifactKey<T> key)
+{
+    return AnyArtifactKeyOf(key.KindValue, key.IdValue, key.HasValue);
+}
+
+internal inline finite law AnyArtifactKey AnyArtifactKeyOf(
+    CompilerArtifactKind kind,
+    System.Text.Interning.ArtifactKeyId id,
+    bool hasValue)
+{
+    return new AnyArtifactKey()
+    {
+        HasValue = hasValue,
+        KindValue = kind,
+        IdValue = id,
+    };
+}
+
+internal inline finite law ArtifactKey<T> ArtifactKeyOf<T>(
+    CompilerArtifactKind kind,
+    System.Text.Interning.ArtifactKeyId id,
+    bool hasValue)
+{
+    return new ArtifactKey<T>()
+    {
+        HasValue = hasValue,
+        KindValue = kind,
+        IdValue = id,
+    };
+}
+
+public inline finite law bool ArtifactKeysShareSlot<T, U>(ArtifactKey<T> left, ArtifactKey<U> right)
+{
+    return left.IsValid()
+        && right.IsValid()
+        && left.KindValue == right.KindValue
+        && left.IdValue.Index() == right.IdValue.Index();
+}
+
+public struct ArtifactKeyCatalog
+{
+    internal bool HasStandardKeysValue;
+    internal System.Text.Interning.ArtifactKeyInterner Interner;
+    internal dynamic System.Text.Interning.ArtifactKeyId StandardKeyIds;
+
+    ArtifactKeyCatalog()
+    {
+        self.HasStandardKeysValue = false;
+        self.Interner = new();
+        self.StandardKeyIds = new();
+    }
+
+    public inline finite law bool HasStandardKeys(borrow ArtifactKeyCatalog self)
+    {
+        return self.HasStandardKeysValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StandardKeyCount(borrow ArtifactKeyCatalog self)
+    {
+        return self.StandardKeyIds.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] InternedKeyCount(borrow ArtifactKeyCatalog self)
+    {
+        return self.Interner.Count();
+    }
+
+    public inline fn bool TryGetStandardId(
+        borrow ArtifactKeyCatalog self,
+        CompilerArtifactKind kind,
+        out System.Text.Interning.ArtifactKeyId id)
+        where overlap(self, id)
+    {
+        stack u32[0 max] ordinal = CompilerArtifactKindOrdinal(kind);
+        if (ordinal >= CompilerArtifactKindCount())
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])ordinal;
+        if (index >= self.StandardKeyIds.Length)
+        {
+            return false;
+        }
+
+        id = self.StandardKeyIds[index];
+        return true;
+    }
+}
+
+public struct ArtifactSlot<T>
+{
+    internal ArtifactKey<T> KeyValue;
+    internal bool HasValueValue;
+    internal dynamic T Values;
+
+    ArtifactSlot()
+    {
+        self.KeyValue = new();
+        self.HasValueValue = false;
+        self.Values = new();
+    }
+}
+
+public fn ArtifactSlot<T> ArtifactSlotOf<T>(ArtifactKey<T> key)
+{
+    return new ArtifactSlot<T>()
+    {
+        KeyValue = key,
+        HasValueValue = false,
+        Values = new(),
+    };
+}
+
+public inline finite law ArtifactKey<T> ArtifactSlotKey<T>(borrow ArtifactSlot<T> slot)
+{
+    return slot.KeyValue;
+}
+
+public inline finite law bool ArtifactSlotHasValue<T>(borrow ArtifactSlot<T> slot, ArtifactKey<T> key)
+{
+    return slot.HasValueValue
+        && ArtifactKeyEquals<T>(slot.KeyValue, key)
+        && slot.Values.Length == 1;
+}
+
+public inline finite law u64[0 2 ** 63 - 1] ArtifactSlotStoredValueCount<T>(borrow ArtifactSlot<T> slot)
+{
+    return slot.Values.Length;
+}
+
+public fn ArtifactStatus StoreArtifactValue<T>(
+    mut borrow ArtifactSlot<T> slot,
+    ArtifactKey<T> key,
+    T value)
+{
+    if (!ArtifactKeyIsValid<T>(key) || !ArtifactKeyEquals<T>(slot.KeyValue, key))
+    {
+        return ArtifactStatus.Err(ArtifactError.ArtifactKeyMismatch);
+    }
+
+    if (slot.Values.Length > 1)
+    {
+        return ArtifactStatus.Err(ArtifactError.InvalidArtifactStorage);
+    }
+
+    if (slot.Values.Length == 0)
+    {
+        if (!slot.Values.TryReserve(1))
+        {
+            return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+        }
+
+        init slot.Values[slot.Values.Length] = value;
+    }
+    else
+    {
+        stack u64[0 2 ** 63 - 1] index = 0;
+        slot.Values[index] = value;
+    }
+
+    slot.HasValueValue = true;
+    return ArtifactStatus.Ok;
+}
+
+public fn bool TryCopyArtifactValue<T>(
+    borrow ArtifactSlot<T> slot,
+    ArtifactKey<T> key,
+    out T value)
+    where Copyable(T)
+{
+    switch (ValidateArtifactAccess<T>(slot, key))
+    {
+        case ArtifactStatus.Err(var error):
+            return false;
+        case ArtifactStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = 0;
+    value = slot.Values[index];
+    return true;
+}
+
+public fn ArtifactStatus ValidateArtifactAccess<T>(
+    borrow ArtifactSlot<T> slot,
+    ArtifactKey<T> key)
+{
+    if (!ArtifactKeyIsValid<T>(key) || !ArtifactKeyEquals<T>(slot.KeyValue, key))
+    {
+        return ArtifactStatus.Err(ArtifactError.ArtifactKeyMismatch);
+    }
+
+    if (slot.Values.Length > 1)
+    {
+        return ArtifactStatus.Err(ArtifactError.InvalidArtifactStorage);
+    }
+
+    if (!slot.HasValueValue || slot.Values.Length == 0)
+    {
+        return ArtifactStatus.Err(ArtifactError.MissingArtifact);
+    }
+
+    if (slot.Values.Length != 1)
+    {
+        return ArtifactStatus.Err(ArtifactError.InvalidArtifactStorage);
+    }
+
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactResult<T> CopyArtifactValue<T>(
+    borrow ArtifactSlot<T> slot,
+    ArtifactKey<T> key)
+    where Copyable(T)
+{
+    switch (ValidateArtifactAccess<T>(slot, key))
+    {
+        case ArtifactStatus.Err(var error):
+            return ArtifactResult<T>.Err(error);
+        case ArtifactStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = 0;
+    return ArtifactResult<T>.Ok(slot.Values[index]);
+}
+
+public fn ArtifactResult<T> MoveArtifactValue<T>(
+    mut borrow ArtifactSlot<T> slot,
+    ArtifactKey<T> key)
+{
+    switch (ValidateArtifactAccess<T>(slot, key))
+    {
+        case ArtifactStatus.Err(var error):
+            return ArtifactResult<T>.Err(error);
+        case ArtifactStatus.Ok:
+    }
+
+    stack T value = slot.Values.MoveLast();
+    slot.HasValueValue = false;
+    return ArtifactResult<T>.Ok(value);
+}
+
+// Borrows the stored value after `ValidateArtifactAccess` has returned Ok.
+internal law retborrow T BorrowStoredArtifactValue<T>(borrow ArtifactSlot<T> slot)
+{
+    stack u64[0 2 ** 63 - 1] index = 0;
+    return slot.Values[index];
+}
+
+// Mutably borrows the stored value after `ValidateArtifactAccess` has returned Ok.
+internal fn retborrow mut T BorrowStoredArtifactValueMut<T>(mut borrow ArtifactSlot<T> slot)
+{
+    stack u64[0 2 ** 63 - 1] index = 0;
+    return slot.Values[index];
+}
+
+public struct ArtifactInventory
+{
+    internal bool HasTableValue;
+    internal dynamic bool Present;
+
+    ArtifactInventory()
+    {
+        self.HasTableValue = false;
+        self.Present = new();
+    }
+
+    public inline finite law bool IsInitialized(borrow ArtifactInventory self)
+    {
+        return self.HasTableValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SlotCount(borrow ArtifactInventory self)
+    {
+        return self.Present.Length;
+    }
+}
+
+public fn ArtifactStatus EnsureArtifactInventory(mut borrow ArtifactInventory inventory)
+{
+    if (inventory.HasTableValue)
+    {
+        return ArtifactStatus.Ok;
+    }
+
+    if (inventory.Present.Length != 0)
+    {
+        return ArtifactStatus.Err(ArtifactError.InvalidArtifactStorage);
+    }
+
+    if (!inventory.Present.TryReserve((u64[0 2 ** 63 - 1])CompilerArtifactKindCount()))
+    {
+        return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+    }
+
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerArtifactKindCount())
+    {
+        init inventory.Present[inventory.Present.Length] = false;
+        ordinal += 1;
+    }
+
+    inventory.HasTableValue = true;
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactStatus MarkArtifactPresent(mut borrow ArtifactInventory inventory, CompilerArtifactKind kind)
+{
+    if (kind == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    switch (EnsureArtifactInventory(inventory))
+    {
+        case ArtifactStatus.Err(var error):
+            return ArtifactStatus.Err(error);
+        case ArtifactStatus.Ok:
+    }
+
+    stack u32[0 max] ordinal = CompilerArtifactKindOrdinal(kind);
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])ordinal;
+    if (index >= inventory.Present.Length)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    inventory.Present[index] = true;
+    return ArtifactStatus.Ok;
+}
+
+public fn bool ArtifactIsPresent(borrow ArtifactInventory inventory, CompilerArtifactKind kind)
+{
+    if (!inventory.HasTableValue)
+    {
+        return false;
+    }
+
+    stack u32[0 max] ordinal = CompilerArtifactKindOrdinal(kind);
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])ordinal;
+    if (index >= inventory.Present.Length)
+    {
+        return false;
+    }
+
+    return inventory.Present[index];
+}
+
+public fn u32[0 max] ArtifactPresentCount(borrow ArtifactInventory inventory)
+{
+    if (!inventory.HasTableValue)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] count = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < inventory.Present.Length)
+    {
+        if (inventory.Present[index])
+        {
+            count += 1;
+        }
+
+        index += 1;
+    }
+
+    return count;
+}
+
+public enum ArtifactInspectionState
+{
+    Missing,
+    Present,
+    Invalid,
+}
+
+public finite law ascii ArtifactInspectionStateName(ArtifactInspectionState state)
+{
+    switch (state)
+    {
+        case ArtifactInspectionState.Missing:
+            return "missing";
+        case ArtifactInspectionState.Present:
+            return "present";
+        case ArtifactInspectionState.Invalid:
+            return "invalid";
+    }
+}
+
+public struct ArtifactInspectionRow
+{
+    internal CompilerArtifactKind KindValue;
+    internal ArtifactInspectionState StateValue;
+    internal bool HasKeyValue;
+    internal System.Text.Interning.ArtifactKeyId KeyIdValue;
+    internal u64[0 2 ** 63 - 1] StoredValueCountValue;
+
+    ArtifactInspectionRow()
+    {
+        self.KindValue = CompilerArtifactKind.Unknown;
+        self.StateValue = ArtifactInspectionState.Invalid;
+        self.HasKeyValue = false;
+        self.KeyIdValue = new();
+        self.StoredValueCountValue = 0;
+    }
+
+    public inline finite law CompilerArtifactKind Kind(borrow ArtifactInspectionRow self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law ArtifactInspectionState State(borrow ArtifactInspectionRow self)
+    {
+        return self.StateValue;
+    }
+
+    public inline finite law bool HasKey(borrow ArtifactInspectionRow self)
+    {
+        return self.HasKeyValue;
+    }
+
+    public inline finite law u32[0 max] KeyIdIndex(borrow ArtifactInspectionRow self)
+    {
+        return self.KeyIdValue.Index();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StoredValueCount(borrow ArtifactInspectionRow self)
+    {
+        return self.StoredValueCountValue;
+    }
+}
+
+public struct ArtifactInspectionTable
+{
+    internal dynamic CompilerArtifactKind Kinds;
+    internal dynamic ArtifactInspectionState States;
+    internal dynamic bool HasKeys;
+    internal dynamic System.Text.Interning.ArtifactKeyId KeyIds;
+    internal dynamic u64[0 2 ** 63 - 1] StoredValueCounts;
+
+    ArtifactInspectionTable()
+    {
+        self.Kinds = new();
+        self.States = new();
+        self.HasKeys = new();
+        self.KeyIds = new();
+        self.StoredValueCounts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ArtifactInspectionTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law CompilerArtifactKind KindAt(borrow ArtifactInspectionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Kinds.Length)
+        {
+            return self.Kinds[index];
+        }
+
+        return CompilerArtifactKind.Unknown;
+    }
+
+    public law ArtifactInspectionState StateAt(borrow ArtifactInspectionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.States.Length)
+        {
+            return self.States[index];
+        }
+
+        return ArtifactInspectionState.Invalid;
+    }
+
+    public law bool HasKeyAt(borrow ArtifactInspectionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.HasKeys.Length)
+        {
+            return self.HasKeys[index];
+        }
+
+        return false;
+    }
+
+    public law u32[0 max] KeyIdIndexAt(borrow ArtifactInspectionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.KeyIds.Length)
+        {
+            return self.KeyIds[index].Index();
+        }
+
+        return 0;
+    }
+
+    public law System.Text.Interning.ArtifactKeyId KeyIdAt(
+        borrow ArtifactInspectionTable self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.KeyIds.Length)
+        {
+            return self.KeyIds[index];
+        }
+
+        return new System.Text.Interning.ArtifactKeyId();
+    }
+
+    public law u64[0 2 ** 63 - 1] StoredValueCountAt(
+        borrow ArtifactInspectionTable self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.StoredValueCounts.Length)
+        {
+            return self.StoredValueCounts[index];
+        }
+
+        return 0;
+    }
+}
+
+public inline finite law ArtifactInspectionRow ArtifactInspectionRowOf(
+    CompilerArtifactKind kind,
+    ArtifactInspectionState state,
+    bool hasKey,
+    System.Text.Interning.ArtifactKeyId keyId,
+    u64[0 2 ** 63 - 1] storedValueCount)
+{
+    return new ArtifactInspectionRow()
+    {
+        KindValue = kind,
+        StateValue = state,
+        HasKeyValue = hasKey,
+        KeyIdValue = keyId,
+        StoredValueCountValue = storedValueCount,
+    };
+}
+
+public fn ArtifactStatus AppendArtifactInspectionRow(
+    mut borrow ArtifactInspectionTable table,
+    ArtifactInspectionRow row)
+{
+    if (row.KindValue == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    if (!table.Kinds.TryReserve(1)
+        || !table.States.TryReserve(1)
+        || !table.HasKeys.TryReserve(1)
+        || !table.KeyIds.TryReserve(1)
+        || !table.StoredValueCounts.TryReserve(1))
+    {
+        return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+    }
+
+    init table.Kinds[table.Kinds.Length] = row.KindValue;
+    init table.States[table.States.Length] = row.StateValue;
+    init table.HasKeys[table.HasKeys.Length] = row.HasKeyValue;
+    init table.KeyIds[table.KeyIds.Length] = row.KeyIdValue;
+    init table.StoredValueCounts[table.StoredValueCounts.Length] = row.StoredValueCountValue;
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactInspectionRow ArtifactInspectionRowAt(
+    borrow ArtifactInspectionTable table,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= table.Count())
+    {
+        return new ArtifactInspectionRow();
+    }
+
+    return ArtifactInspectionRowOf(
+        table.KindAt(index),
+        table.StateAt(index),
+        table.HasKeyAt(index),
+        table.KeyIdAt(index),
+        table.StoredValueCountAt(index));
+}
+
+public fn bool TryFindArtifactInspectionRow(
+    borrow ArtifactInspectionTable table,
+    CompilerArtifactKind kind,
+    out ArtifactInspectionRow row)
+    where overlap(table, row)
+{
+    row = new ArtifactInspectionRow();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < table.Kinds.Length)
+    {
+        if (table.Kinds[index] == kind)
+        {
+            row = ArtifactInspectionRowAt(table, index);
+            return row.Kind() == kind;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public fn ArtifactInspectionState ArtifactInspectionStateForKind(
+    borrow ArtifactInspectionTable table,
+    CompilerArtifactKind kind)
+{
+    stack mut ArtifactInspectionRow row = new();
+    if (TryFindArtifactInspectionRow(table, kind, row))
+    {
+        return row.State();
+    }
+
+    return ArtifactInspectionState.Missing;
+}
+
+public fn bool ArtifactInspectionHasPresentKind(
+    borrow ArtifactInspectionTable table,
+    CompilerArtifactKind kind)
+{
+    return ArtifactInspectionStateForKind(table, kind) == ArtifactInspectionState.Present;
+}
+
+public fn ArtifactStatus AppendArtifactInventoryInspection(
+    mut borrow ArtifactInspectionTable table,
+    borrow ArtifactInventory inventory)
+{
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerArtifactKindCount())
+    {
+        stack CompilerArtifactKind kind = CompilerArtifactKindAtOrdinal(ordinal);
+        stack mut ArtifactInspectionState state = ArtifactInspectionState.Missing;
+        if (ArtifactIsPresent(inventory, kind))
+        {
+            state = ArtifactInspectionState.Present;
+        }
+
+        switch (AppendArtifactInspectionRow(
+            table,
+            ArtifactInspectionRowOf(
+                kind,
+                state,
+                false,
+                new System.Text.Interning.ArtifactKeyId(),
+                0)))
+        {
+            case ArtifactStatus.Err(var error):
+                return ArtifactStatus.Err(error);
+            case ArtifactStatus.Ok:
+        }
+
+        ordinal += 1;
+    }
+
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactInspectionState ArtifactSlotInspectionState<T>(borrow ArtifactSlot<T> slot)
+{
+    if (!ArtifactKeyIsValid<T>(slot.KeyValue))
+    {
+        return ArtifactInspectionState.Invalid;
+    }
+
+    if (slot.Values.Length > 1)
+    {
+        return ArtifactInspectionState.Invalid;
+    }
+
+    if (!slot.HasValueValue || slot.Values.Length == 0)
+    {
+        return ArtifactInspectionState.Missing;
+    }
+
+    if (slot.Values.Length == 1)
+    {
+        return ArtifactInspectionState.Present;
+    }
+
+    return ArtifactInspectionState.Invalid;
+}
+
+public fn ArtifactStatus AppendArtifactSlotInspection<T>(
+    mut borrow ArtifactInspectionTable table,
+    borrow ArtifactSlot<T> slot)
+{
+    if (!ArtifactKeyIsValid<T>(slot.KeyValue))
+    {
+        return ArtifactStatus.Err(ArtifactError.ArtifactKeyMismatch);
+    }
+
+    return AppendArtifactInspectionRow(
+        table,
+        ArtifactInspectionRowOf(
+            slot.KeyValue.KindValue,
+            ArtifactSlotInspectionState<T>(slot),
+            true,
+            slot.KeyValue.IdValue,
+            slot.Values.Length));
+}
+
+public enum ArtifactStageDifference
+{
+    Match,
+    Added,
+    Removed,
+    StateChanged,
+    KeyChanged,
+    ValueCountChanged,
+}
+
+public finite law ascii ArtifactStageDifferenceName(ArtifactStageDifference difference)
+{
+    switch (difference)
+    {
+        case ArtifactStageDifference.Match:
+            return "match";
+        case ArtifactStageDifference.Added:
+            return "added";
+        case ArtifactStageDifference.Removed:
+            return "removed";
+        case ArtifactStageDifference.StateChanged:
+            return "state-changed";
+        case ArtifactStageDifference.KeyChanged:
+            return "key-changed";
+        case ArtifactStageDifference.ValueCountChanged:
+            return "value-count-changed";
+    }
+}
+
+public struct ArtifactStageComparison
+{
+    internal dynamic CompilerArtifactKind Kinds;
+    internal dynamic ArtifactInspectionState LeftStates;
+    internal dynamic ArtifactInspectionState RightStates;
+    internal dynamic ArtifactStageDifference Differences;
+
+    ArtifactStageComparison()
+    {
+        self.Kinds = new();
+        self.LeftStates = new();
+        self.RightStates = new();
+        self.Differences = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ArtifactStageComparison self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law CompilerArtifactKind KindAt(borrow ArtifactStageComparison self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Kinds.Length)
+        {
+            return self.Kinds[index];
+        }
+
+        return CompilerArtifactKind.Unknown;
+    }
+
+    public law ArtifactInspectionState LeftStateAt(
+        borrow ArtifactStageComparison self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.LeftStates.Length)
+        {
+            return self.LeftStates[index];
+        }
+
+        return ArtifactInspectionState.Invalid;
+    }
+
+    public law ArtifactInspectionState RightStateAt(
+        borrow ArtifactStageComparison self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.RightStates.Length)
+        {
+            return self.RightStates[index];
+        }
+
+        return ArtifactInspectionState.Invalid;
+    }
+
+    public law ArtifactStageDifference DifferenceAt(
+        borrow ArtifactStageComparison self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Differences.Length)
+        {
+            return self.Differences[index];
+        }
+
+        return ArtifactStageDifference.StateChanged;
+    }
+}
+
+internal fn ArtifactStatus AppendArtifactStageComparisonRow(
+    mut borrow ArtifactStageComparison comparison,
+    CompilerArtifactKind kind,
+    ArtifactInspectionState leftState,
+    ArtifactInspectionState rightState,
+    ArtifactStageDifference difference)
+{
+    if (kind == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    if (!comparison.Kinds.TryReserve(1)
+        || !comparison.LeftStates.TryReserve(1)
+        || !comparison.RightStates.TryReserve(1)
+        || !comparison.Differences.TryReserve(1))
+    {
+        return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+    }
+
+    init comparison.Kinds[comparison.Kinds.Length] = kind;
+    init comparison.LeftStates[comparison.LeftStates.Length] = leftState;
+    init comparison.RightStates[comparison.RightStates.Length] = rightState;
+    init comparison.Differences[comparison.Differences.Length] = difference;
+    return ArtifactStatus.Ok;
+}
+
+internal fn bool ArtifactInspectionRowsHaveSameKey(
+    borrow ArtifactInspectionRow left,
+    borrow ArtifactInspectionRow right)
+    where overlap(left, right)
+{
+    if (left.HasKey() != right.HasKey())
+    {
+        return false;
+    }
+
+    if (!left.HasKey())
+    {
+        return true;
+    }
+
+    return left.KeyIdIndex() == right.KeyIdIndex();
+}
+
+internal fn ArtifactStageDifference ArtifactStageDifferenceForRows(
+    borrow ArtifactInspectionRow left,
+    borrow ArtifactInspectionRow right)
+    where overlap(left, right)
+{
+    if (left.State() != right.State())
+    {
+        if (left.State() == ArtifactInspectionState.Missing
+            && right.State() == ArtifactInspectionState.Present)
+        {
+            return ArtifactStageDifference.Added;
+        }
+
+        if (left.State() == ArtifactInspectionState.Present
+            && right.State() == ArtifactInspectionState.Missing)
+        {
+            return ArtifactStageDifference.Removed;
+        }
+
+        return ArtifactStageDifference.StateChanged;
+    }
+
+    if (!ArtifactInspectionRowsHaveSameKey(left, right))
+    {
+        return ArtifactStageDifference.KeyChanged;
+    }
+
+    if (left.StoredValueCount() != right.StoredValueCount())
+    {
+        return ArtifactStageDifference.ValueCountChanged;
+    }
+
+    return ArtifactStageDifference.Match;
+}
+
+public fn ArtifactResult<ArtifactStageComparison> CompareArtifactInspectionTables(
+    borrow ArtifactInspectionTable left,
+    borrow ArtifactInspectionTable right)
+    where overlap(left, right)
+{
+    stack mut ArtifactStageComparison comparison = new();
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerArtifactKindCount())
+    {
+        stack CompilerArtifactKind kind = CompilerArtifactKindAtOrdinal(ordinal);
+        stack mut ArtifactInspectionRow leftRow = ArtifactInspectionRowOf(
+            kind,
+            ArtifactInspectionState.Missing,
+            false,
+            new System.Text.Interning.ArtifactKeyId(),
+            0);
+        stack mut ArtifactInspectionRow rightRow = ArtifactInspectionRowOf(
+            kind,
+            ArtifactInspectionState.Missing,
+            false,
+            new System.Text.Interning.ArtifactKeyId(),
+            0);
+        stack bool hasLeft = TryFindArtifactInspectionRow(left, kind, leftRow);
+        stack bool hasRight = TryFindArtifactInspectionRow(right, kind, rightRow);
+        stack mut ArtifactStageDifference difference = ArtifactStageDifferenceForRows(leftRow, rightRow);
+
+        if (!hasLeft && !hasRight)
+        {
+            difference = ArtifactStageDifference.Match;
+        }
+
+        switch (AppendArtifactStageComparisonRow(
+            comparison,
+            kind,
+            leftRow.State(),
+            rightRow.State(),
+            difference))
+        {
+            case ArtifactStatus.Err(var error):
+                return ArtifactResult<ArtifactStageComparison>.Err(error);
+            case ArtifactStatus.Ok:
+        }
+
+        ordinal += 1;
+    }
+
+    return ArtifactResult<ArtifactStageComparison>.Ok(comparison);
+}
+
+public law u64[0 2 ** 63 - 1] ArtifactStageDifferenceCount(
+    borrow ArtifactStageComparison comparison,
+    ArtifactStageDifference difference)
+{
+    stack mut u64[0 2 ** 63 - 1] count = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < comparison.Differences.Length)
+    {
+        if (comparison.Differences[index] == difference)
+        {
+            count += 1;
+        }
+
+        index += 1;
+    }
+
+    return count;
+}
+
+public fn bool TryFindArtifactStageDifference(
+    borrow ArtifactStageComparison comparison,
+    CompilerArtifactKind kind,
+    out ArtifactStageDifference difference)
+    where overlap(comparison, difference)
+{
+    difference = ArtifactStageDifference.StateChanged;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < comparison.Kinds.Length)
+    {
+        if (comparison.Kinds[index] == kind)
+        {
+            difference = comparison.DifferenceAt(index);
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public struct ArtifactDependencySet
+{
+    internal dynamic CompilerArtifactKind Required;
+
+    ArtifactDependencySet()
+    {
+        self.Required = new();
+    }
+}
+
+public struct ArtifactDependencyReport
+{
+    internal dynamic CompilerArtifactKind Missing;
+
+    ArtifactDependencyReport()
+    {
+        self.Missing = new();
+    }
+}
+
+public inline finite law u64[0 2 ** 63 - 1] ArtifactDependencyRequiredCount(
+    borrow ArtifactDependencySet dependencies)
+{
+    return dependencies.Required.Length;
+}
+
+public inline finite law u64[0 2 ** 63 - 1] ArtifactDependencyMissingCount(
+    borrow ArtifactDependencyReport report)
+{
+    return report.Missing.Length;
+}
+
+public inline finite law bool ArtifactDependenciesSatisfied(borrow ArtifactDependencyReport report)
+{
+    return report.Missing.Length == 0;
+}
+
+public fn bool ArtifactDependencySetContains(
+    borrow ArtifactDependencySet dependencies,
+    CompilerArtifactKind kind)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < dependencies.Required.Length)
+    {
+        if (dependencies.Required[index] == kind)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public fn bool ArtifactDependencyReportContains(
+    borrow ArtifactDependencyReport report,
+    CompilerArtifactKind kind)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < report.Missing.Length)
+    {
+        if (report.Missing[index] == kind)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public fn CompilerArtifactKind ArtifactDependencyRequiredAt(
+    borrow ArtifactDependencySet dependencies,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= dependencies.Required.Length)
+    {
+        return CompilerArtifactKind.Unknown;
+    }
+
+    return dependencies.Required[index];
+}
+
+public fn CompilerArtifactKind ArtifactDependencyMissingAt(
+    borrow ArtifactDependencyReport report,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= report.Missing.Length)
+    {
+        return CompilerArtifactKind.Unknown;
+    }
+
+    return report.Missing[index];
+}
+
+public fn ArtifactStatus AddRequiredArtifact(
+    mut borrow ArtifactDependencySet dependencies,
+    CompilerArtifactKind kind)
+{
+    if (kind == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    if (ArtifactDependencySetContains(dependencies, kind))
+    {
+        return ArtifactStatus.Ok;
+    }
+
+    if (!dependencies.Required.TryReserve(1))
+    {
+        return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+    }
+
+    init dependencies.Required[dependencies.Required.Length] = kind;
+    return ArtifactStatus.Ok;
+}
+
+internal fn ArtifactStatus AddMissingArtifact(
+    mut borrow ArtifactDependencyReport report,
+    CompilerArtifactKind kind)
+{
+    if (kind == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    if (ArtifactDependencyReportContains(report, kind))
+    {
+        return ArtifactStatus.Ok;
+    }
+
+    if (!report.Missing.TryReserve(1))
+    {
+        return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+    }
+
+    init report.Missing[report.Missing.Length] = kind;
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactResult<ArtifactDependencyReport> ValidateArtifactDependencies(
+    borrow ArtifactInventory inventory,
+    borrow ArtifactDependencySet dependencies)
+{
+    stack mut ArtifactDependencyReport report = new();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < dependencies.Required.Length)
+    {
+        stack CompilerArtifactKind kind = dependencies.Required[index];
+        if (!ArtifactIsPresent(inventory, kind))
+        {
+            switch (AddMissingArtifact(report, kind))
+            {
+                case ArtifactStatus.Err(var error):
+                    return ArtifactResult<ArtifactDependencyReport>.Err(error);
+                case ArtifactStatus.Ok:
+            }
+        }
+
+        index += 1;
+    }
+
+    return ArtifactResult<ArtifactDependencyReport>.Ok(report);
+}
+
+internal inline finite law ArtifactError ArtifactOutOfMemoryError()
+{
+    return ArtifactError.Interner(
+        System.Text.Interning.TextInternerError.Memory(System.Memory.MemoryError.OutOfMemory));
+}
+
+internal fn ArtifactStatus AppendStandardCompilerArtifactKey(
+    mut borrow ArtifactKeyCatalog catalog,
+    CompilerArtifactKind kind)
+{
+    stack ascii name = CompilerArtifactKindName(kind);
+    stack System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId> result =
+        catalog.Interner.Intern(name);
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Err(var error):
+            return ArtifactStatus.Err(ArtifactError.Interner(error));
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Ok(var id):
+            if (!catalog.StandardKeyIds.TryReserve(1))
+            {
+                return ArtifactStatus.Err(ArtifactOutOfMemoryError());
+            }
+
+            init catalog.StandardKeyIds[catalog.StandardKeyIds.Length] = id;
+            return ArtifactStatus.Ok;
+    }
+}
+
+public fn ArtifactStatus EnsureStandardCompilerArtifactKeys(mut borrow ArtifactKeyCatalog catalog)
+{
+    if (catalog.HasStandardKeysValue)
+    {
+        return ArtifactStatus.Ok;
+    }
+
+    if (catalog.StandardKeyIds.Length != 0)
+    {
+        return ArtifactStatus.Err(ArtifactError.InvalidCatalog);
+    }
+
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerArtifactKindCount())
+    {
+        stack CompilerArtifactKind kind = CompilerArtifactKindAtOrdinal(ordinal);
+        switch (AppendStandardCompilerArtifactKey(catalog, kind))
+        {
+            case ArtifactStatus.Err(var error):
+                return ArtifactStatus.Err(error);
+            case ArtifactStatus.Ok:
+        }
+
+        ordinal += 1;
+    }
+
+    catalog.HasStandardKeysValue = true;
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactResult<ArtifactKey<T>> GetCompilerArtifactKey<T>(
+    mut borrow ArtifactKeyCatalog catalog,
+    CompilerArtifactKind kind)
+{
+    if (kind == CompilerArtifactKind.Unknown)
+    {
+        return ArtifactResult<ArtifactKey<T>>.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    switch (EnsureStandardCompilerArtifactKeys(catalog))
+    {
+        case ArtifactStatus.Err(var error):
+            return ArtifactResult<ArtifactKey<T>>.Err(error);
+        case ArtifactStatus.Ok:
+    }
+
+    stack mut System.Text.Interning.ArtifactKeyId id = new();
+    if (!catalog.TryGetStandardId(kind, id))
+    {
+        return ArtifactResult<ArtifactKey<T>>.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    return ArtifactResult<ArtifactKey<T>>.Ok(ArtifactKeyOf<T>(kind, id, true));
+}
+
+public fn bool TryGetCompilerArtifactKeyId(
+    borrow ArtifactKeyCatalog catalog,
+    CompilerArtifactKind kind,
+    out System.Text.Interning.ArtifactKeyId id)
+    where overlap(catalog, id)
+{
+    if (!catalog.HasStandardKeys())
+    {
+        return false;
+    }
+
+    return catalog.TryGetStandardId(kind, id);
+}
+
+public fn bool TryGetCompilerArtifactKindById(
+    borrow ArtifactKeyCatalog catalog,
+    System.Text.Interning.ArtifactKeyId id,
+    out CompilerArtifactKind kind)
+    where overlap(catalog, kind)
+{
+    kind = CompilerArtifactKind.Unknown;
+    if (!catalog.HasStandardKeys())
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ordinal = 0;
+    while willexit (ordinal < catalog.StandardKeyIds.Length)
+    {
+        if (catalog.StandardKeyIds[ordinal].Index() == id.Index())
+        {
+            stack CompilerArtifactKind resolved = CompilerArtifactKindAtOrdinal((u32[0 max])ordinal);
+            kind = resolved;
+            return resolved != CompilerArtifactKind.Unknown;
+        }
+
+        ordinal += 1;
+    }
+
+    return false;
+}

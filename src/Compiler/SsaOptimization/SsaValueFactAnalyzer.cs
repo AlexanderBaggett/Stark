@@ -1752,10 +1752,14 @@ internal sealed class SsaValueFactAnalyzer
             };
         }
 
+        var allocatorProvenance = allocation.AllocationKind == DynamicStorageAllocationKind.Arena
+            ? SsaDynamicStorageAllocatorProvenanceKind.ArenaFrame
+            : SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault;
+
         return WithDynamicStorageAllocationIdentity(
             NormalizeDynamicStorageFacts(facts),
             valueName,
-            SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault);
+            allocatorProvenance);
     }
 
     private sealed record DynamicStorageLocalMutation(
@@ -1787,7 +1791,15 @@ internal sealed class SsaValueFactAnalyzer
         entryStates[function.EntryBlockId] = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         initializedEntries.Add(function.EntryBlockId);
 
-        var changedFacts = false;
+        // Run the entry-state fixpoint against a scratch copy of the value
+        // facts: recording refined per-value facts DURING iteration is
+        // order-dependent — a loop body's first pass records ranges from the
+        // not-yet-joined entry state (e.g. a dynamic's zero-init length before
+        // the mutating back edge merges in) and nothing retracts them once the
+        // states converge. Facts are recorded once, after convergence, from
+        // the joined entry states.
+        var scratchValues = new Dictionary<string, SsaValueFacts>(values, StringComparer.Ordinal);
+        var scratchChangedFacts = false;
         var changedStates = true;
         var iterationLimit = Math.Max(4, reachableBlocks.Length * 4);
         for (var iteration = 0; changedStates && iteration < iterationLimit; iteration++)
@@ -1805,9 +1817,9 @@ internal sealed class SsaValueFactAnalyzer
                     block,
                     entryState,
                     definitions,
-                    values,
+                    scratchValues,
                     directCallParameterEffects,
-                    ref changedFacts);
+                    ref scratchChangedFacts);
                 foreach (var target in EnumerateTerminatorTargets(block.Terminator))
                 {
                     if (!reachableBlockIds.Contains(target))
@@ -1821,7 +1833,7 @@ internal sealed class SsaValueFactAnalyzer
                         transfer.ExitState,
                         transfer.ConditionalMutations,
                         definitions,
-                        values,
+                        scratchValues,
                         out var edgeState))
                     {
                         continue;
@@ -1833,6 +1845,24 @@ internal sealed class SsaValueFactAnalyzer
                     }
                 }
             }
+        }
+
+        var changedFacts = false;
+        foreach (var block in reachableBlocks)
+        {
+            if (!initializedEntries.Contains(block.Id)
+                || !entryStates.TryGetValue(block.Id, out var entryState))
+            {
+                continue;
+            }
+
+            AnalyzeDynamicStorageBlockTransfer(
+                block,
+                entryState,
+                definitions,
+                values,
+                directCallParameterEffects,
+                ref changedFacts);
         }
 
         return changedFacts;
@@ -3263,7 +3293,8 @@ internal sealed class SsaValueFactAnalyzer
         var backingKind = InferDynamicStorageBackingAllocationKind(
             existingRegion?.BackingAllocationKind ?? SsaDynamicStorageBackingAllocationKind.Unknown,
             capacityRange);
-        var backingAllocationId = backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+        var backingAllocationId = backingKind is SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                or SsaDynamicStorageBackingAllocationKind.ArenaAllocation
             ? existingRegion?.BackingAllocationId
             : null;
 
@@ -3333,7 +3364,14 @@ internal sealed class SsaValueFactAnalyzer
         var backingKind = InferDynamicStorageBackingAllocationKind(
             region?.BackingAllocationKind ?? SsaDynamicStorageBackingAllocationKind.Unknown,
             normalized.CapacityKind == SsaFactLatticeKind.Known ? normalized.CapacityRange : region?.CapacityRange);
-        var backingId = backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+        if (backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+            && allocatorProvenance == SsaDynamicStorageAllocatorProvenanceKind.ArenaFrame)
+        {
+            backingKind = SsaDynamicStorageBackingAllocationKind.ArenaAllocation;
+        }
+
+        var backingId = backingKind is SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                or SsaDynamicStorageBackingAllocationKind.ArenaAllocation
             ? allocationId
             : null;
 
@@ -3433,7 +3471,8 @@ internal sealed class SsaValueFactAnalyzer
             DynamicStorageRegion = new SsaDynamicStorageRegionFact(
                 ownerRootNames.Length == 1 ? ownerRootNames[0] : null,
                 backingKind,
-                sameBackingIdentity && backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                sameBackingIdentity && backingKind is SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                    or SsaDynamicStorageBackingAllocationKind.ArenaAllocation
                     ? backingIds[0]
                     : null,
                 elementType,
@@ -3492,9 +3531,14 @@ internal sealed class SsaValueFactAnalyzer
             return SsaDynamicStorageBackingAllocationKind.None;
         }
 
-        return capacityRange.Min > BigInteger.Zero
-            ? SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
-            : SsaDynamicStorageBackingAllocationKind.Unknown;
+        if (capacityRange.Min <= BigInteger.Zero)
+        {
+            return SsaDynamicStorageBackingAllocationKind.Unknown;
+        }
+
+        return existingKind == SsaDynamicStorageBackingAllocationKind.ArenaAllocation
+            ? SsaDynamicStorageBackingAllocationKind.ArenaAllocation
+            : SsaDynamicStorageBackingAllocationKind.RuntimeAllocation;
     }
 
     private static SsaIntegerRangeFact? TryCreateDynamicStorageSpareCapacityRange(

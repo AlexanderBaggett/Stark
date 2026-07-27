@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/compiler.csproj" />
+    <ProjectReference Include="../../eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

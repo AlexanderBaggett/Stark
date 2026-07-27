@@ -1,0 +1,77 @@
+module ProgressConformance
+
+// Conformance fixture for the test-progress streaming protocol
+// (docs/Internals/TestProgressProtocol.md §3).
+// The goldens/ transcripts next to this project are normative: a passing
+// fact, a failing fact, a platform-skipped fact, a three-row theory, two
+// collections, and exactly ten generated entries so the final counter is
+// double-digit ((10/10), T30.6). Do not add or reorder entries without
+// regenerating the goldens.
+
+record CaseRow(i32[min max] Left, i32[min max] Right, i32[min max] Expected) { }
+
+fn CaseRow AddCases(u8[0 2] index)
+{
+    switch (index)
+    {
+        case 0:
+            return new CaseRow(1, 2, 3);
+        case 1:
+            return new CaseRow(2, 2, 4);
+        default:
+            return new CaseRow(10, 5, 15);
+    }
+}
+
+[Fact]
+fn bool FirstPasses()
+{
+    return 2 + 2 == 4;
+}
+
+[Fact]
+fn bool SecondFailsByDesign()
+{
+    return 1 == 2;
+}
+
+[Fact]
+[Platform(windows)]
+fn bool SkippedOffPlatform()
+{
+    return true;
+}
+
+[Theory]
+[MemberData(AddCases, CaseRow, 3, Left, Right, Expected)]
+fn bool Adds(i32[min max] left, i32[min max] right, i32[min max] expected)
+{
+    return left + right == expected;
+}
+
+[Collection(Alpha)]
+[Fact]
+fn bool AlphaOne()
+{
+    return true;
+}
+
+[Collection(Alpha)]
+[Fact]
+fn bool AlphaTwo()
+{
+    return true;
+}
+
+[Collection(Beta)]
+[Fact]
+fn bool BetaOne()
+{
+    return true;
+}
+
+[Fact]
+fn bool TenthPasses()
+{
+    return 3 * 3 == 9;
+}

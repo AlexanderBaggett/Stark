@@ -1,0 +1,3419 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedTypeResolution
+import System.Text
+import Compiler.Mir.SourceLocalLowering
+module Compiler.Mir.SourceLocalStorageLayout
+
+internal fn u32[0 max] TypeKnownByteExtentForLocal(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return builtinSize;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteExtent(stream, source, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn bool TryGetSourceEnumStorageLayoutForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    out u32[0 max] ownerDeclarationIndex,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    ownerDeclarationIndex = 0;
+    sizeBytes = 0;
+    alignBytes = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] resolvedOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumItem = new();
+    if (!TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, typeToken, resolvedOwnerDeclarationIndex, enumItem))
+    {
+        return false;
+    }
+
+    if (!TryGetSourceEnumStorageLayout(moduleFacts, resolvedOwnerDeclarationIndex, sizeBytes, alignBytes))
+    {
+        return false;
+    }
+
+    ownerDeclarationIndex = resolvedOwnerDeclarationIndex;
+    return true;
+}
+
+internal fn bool TryGetKnownSourceStorageLayoutWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    return TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0, sizeBytes, alignBytes);
+}
+
+// Field layout for one type token: builtin scalars and fixed arrays, enum
+// storage, then named aggregates by recursive struct layout. The depth cap
+// bounds mutual recursion through aggregate-typed fields: the mini-Stark
+// dialect has no front-end validation, so a cyclic aggregate (struct A holds
+// B, B holds A) would otherwise recurse forever instead of rejecting.
+internal fn bool TryGetKnownSourceStorageLayoutWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    stack mut u32[0 max] fixedArrayLength = 0;
+    stack bool hasFixedArrayLength = TryReadFixedArrayLengthSuffix(stream, source, typeToken, fixedArrayLength);
+
+    sizeBytes = TypeKnownByteExtent(stream, source, typeToken);
+    alignBytes = BuiltinTypeKnownByteAlignment(stream, source, typeToken);
+    if (sizeBytes != 0 && alignBytes != 0)
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    if (TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, ownerDeclarationIndex, sizeBytes, alignBytes))
+    {
+        if (hasFixedArrayLength)
+        {
+            if (fixedArrayLength == 0 || fixedArrayLength > 4294967295 / sizeBytes)
+            {
+                sizeBytes = 0;
+                alignBytes = 0;
+                return false;
+            }
+
+            sizeBytes = fixedArrayLength * sizeBytes;
+        }
+
+        return true;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Identifier
+        || aggregateDepth >= 16)
+    {
+        sizeBytes = 0;
+        alignBytes = 0;
+        return false;
+    }
+
+    sizeBytes = StructKnownByteExtentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, aggregateDepth + 1);
+    alignBytes = StructKnownByteAlignmentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, aggregateDepth + 1);
+    if (sizeBytes == 0 || alignBytes == 0)
+    {
+        return false;
+    }
+
+    if (hasFixedArrayLength)
+    {
+        if (fixedArrayLength == 0 || fixedArrayLength > 4294967295 / sizeBytes)
+        {
+            sizeBytes = 0;
+            alignBytes = 0;
+            return false;
+        }
+
+        sizeBytes = fixedArrayLength * sizeBytes;
+    }
+
+    return true;
+}
+
+internal fn bool TryGetSourceValueTypeCodeWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    out MirType fieldType,
+    out u32[0 max] fieldTypeCode)
+{
+    fieldType = MirType.I64;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut MirType resolvedFieldType = MirType.I64;
+    if (MirTypeForKnownSourceScalarType(stream, source, typeToken, resolvedFieldType))
+    {
+        fieldType = resolvedFieldType;
+        fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(resolvedFieldType);
+        return fieldTypeCode != SourceResolvedFieldTypeCodeInvalid();
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    stack mut u32[0 max] sizeBytes = 0;
+    stack mut u32[0 max] alignBytes = 0;
+    if (!TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, ownerDeclarationIndex, sizeBytes, alignBytes))
+    {
+        return false;
+    }
+
+    fieldTypeCode = SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(ownerDeclarationIndex);
+    return true;
+}
+
+internal fn u32[0 max] StructKnownByteAlignmentWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken)
+{
+    return StructKnownByteAlignmentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0);
+}
+
+internal fn u32[0 max] StructKnownByteAlignmentWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] maxAlign = 1;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack mut u32[0 max] fieldSize = 0;
+                            stack mut u32[0 max] fieldAlign = 0;
+                            if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])segmentStart, aggregateDepth, fieldSize, fieldAlign))
+                            {
+                                return 0;
+                            }
+
+                            if (fieldAlign > maxAlign)
+                            {
+                                maxAlign = fieldAlign;
+                            }
+
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack mut u32[0 max] fieldSize = 0;
+                    stack mut u32[0 max] fieldAlign = 0;
+                    if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])field, aggregateDepth, fieldSize, fieldAlign))
+                    {
+                        return 0;
+                    }
+
+                    if (fieldAlign > maxAlign)
+                    {
+                        maxAlign = fieldAlign;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return maxAlign;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] StructKnownByteExtentWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken)
+{
+    return StructKnownByteExtentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0);
+}
+
+internal fn u32[0 max] StructKnownByteExtentWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] offset = 0;
+            stack mut u32[0 max] maxAlign = 1;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack mut u32[0 max] fieldSize = 0;
+                            stack mut u32[0 max] fieldAlign = 0;
+                            if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])segmentStart, aggregateDepth, fieldSize, fieldAlign))
+                            {
+                                return 0;
+                            }
+
+                            offset = AlignUpU32(offset, fieldAlign);
+                            offset = offset + fieldSize;
+                            if (fieldAlign > maxAlign)
+                            {
+                                maxAlign = fieldAlign;
+                            }
+
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack mut u32[0 max] fieldSize = 0;
+                    stack mut u32[0 max] fieldAlign = 0;
+                    if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])field, aggregateDepth, fieldSize, fieldAlign))
+                    {
+                        return 0;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    offset = offset + fieldSize;
+                    if (fieldAlign > maxAlign)
+                    {
+                        maxAlign = fieldAlign;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return AlignUpU32(offset, maxAlign);
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteAlignmentWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken)
+{
+    stack mut u32[0 max] enumOwner = 0;
+    stack mut u32[0 max] enumSize = 0;
+    stack mut u32[0 max] enumAlign = 0;
+    if (TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, enumOwner, enumSize, enumAlign))
+    {
+        return enumAlign;
+    }
+
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return NaturalAlignmentForByteExtent(builtinSize);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteAlignmentWithEnums(stream, source, moduleFacts, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteExtentForLocalWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken)
+{
+    stack mut u32[0 max] fixedArrayLength = 0;
+    if (TryReadFixedArrayLengthSuffix(stream, source, typeToken, fixedArrayLength))
+    {
+        stack mut u32[0 max] fixedArraySize = 0;
+        stack mut u32[0 max] fixedArrayAlign = 0;
+        if (TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, typeToken, fixedArraySize, fixedArrayAlign))
+        {
+            return fixedArraySize;
+        }
+
+        return 0;
+    }
+
+    stack mut u32[0 max] enumOwner = 0;
+    stack mut u32[0 max] enumSize = 0;
+    stack mut u32[0 max] enumAlign = 0;
+    if (TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, enumOwner, enumSize, enumAlign))
+    {
+        return enumSize;
+    }
+
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return builtinSize;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteExtentWithEnums(stream, source, moduleFacts, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn u64[0 2 ** 63 - 1] FindSelfHostedFieldEnd(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] limit)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < limit)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if ((kind == TokenKind.Semi || kind == TokenKind.RBrace) && depth == 0)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return limit;
+}
+
+internal fn u32[0 max] FindSelfHostedFieldNameToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut u32[0 max] nameToken = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start + 1;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Identifier && depth == 0)
+        {
+            nameToken = (u32[0 max])scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return nameToken;
+}
+
+internal fn bool TryFindStructFieldLayout(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out MirType fieldType,
+    out u32[0 max] fieldTypeCode)
+{
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldType = MirType.I64;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] offset = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack mut u32[0 max] fieldSize = 0;
+                            stack mut u32[0 max] fieldAlign = 0;
+                            if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart, fieldSize, fieldAlign))
+                            {
+                                return false;
+                            }
+
+                            offset = AlignUpU32(offset, fieldAlign);
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                            {
+                                stack mut MirType resolvedType = MirType.I64;
+                                stack mut u32[0 max] resolvedTypeCode = SourceResolvedFieldTypeCodeInvalid();
+                                if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart, resolvedType, resolvedTypeCode))
+                                {
+                                    return false;
+                                }
+
+                                byteOffset = offset;
+                                alignBytes = fieldAlign;
+                                fieldType = resolvedType;
+                                fieldTypeCode = resolvedTypeCode;
+                                return true;
+                            }
+
+                            offset = offset + fieldSize;
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack mut u32[0 max] fieldSize = 0;
+                    stack mut u32[0 max] fieldAlign = 0;
+                    if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])field, fieldSize, fieldAlign))
+                    {
+                        return false;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                    {
+                        stack mut MirType resolvedType = MirType.I64;
+                        stack mut u32[0 max] resolvedTypeCode = SourceResolvedFieldTypeCodeInvalid();
+                        if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, (u32[0 max])field, resolvedType, resolvedTypeCode))
+                        {
+                            return false;
+                        }
+
+                        byteOffset = offset;
+                        alignBytes = fieldAlign;
+                        fieldType = resolvedType;
+                        fieldTypeCode = resolvedTypeCode;
+                        return true;
+                    }
+
+                    offset = offset + fieldSize;
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindStructStorageFieldLayoutWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out u32[0 max] fieldTypeToken)
+{
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldTypeToken = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] offset = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack u32[0 max] fieldSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart);
+                            stack u32[0 max] fieldAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart);
+                            if (fieldSize == 0 || fieldAlign == 0)
+                            {
+                                return false;
+                            }
+
+                            offset = AlignUpU32(offset, fieldAlign);
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                            {
+                                byteOffset = offset;
+                                alignBytes = fieldAlign;
+                                fieldTypeToken = (u32[0 max])segmentStart;
+                                return true;
+                            }
+
+                            offset = offset + fieldSize;
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack u32[0 max] fieldSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, (u32[0 max])field);
+                    stack u32[0 max] fieldAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, (u32[0 max])field);
+                    if (fieldSize == 0 || fieldAlign == 0)
+                    {
+                        return false;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                    {
+                        byteOffset = offset;
+                        alignBytes = fieldAlign;
+                        fieldTypeToken = (u32[0 max])field;
+                        return true;
+                    }
+
+                    offset = offset + fieldSize;
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceFieldTypeTokenIsAggregateStorage(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut MirType ignoredType = MirType.I64;
+    stack mut u32[0 max] ignoredTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    if (TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, typeToken, ignoredType, ignoredTypeCode))
+    {
+        return false;
+    }
+
+    return TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, typeToken) != 0
+        && TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, typeToken) != 0;
+}
+
+internal fn bool TryResolveConstructedObjectMemberChainStorageField(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] rootTypeToken,
+    u64[0 2 ** 63 - 1] firstFieldToken,
+    out u64[0 2 ** 63 - 1] nextToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out u32[0 max] fieldTypeToken,
+    out u32[0 max] leafMemberFactRow)
+{
+    nextToken = firstFieldToken;
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldTypeToken = 0;
+    leafMemberFactRow = 0;
+
+    stack mut u32[0 max] currentTypeToken = rootTypeToken;
+    stack mut u64[0 2 ** 63 - 1] fieldToken = firstFieldToken;
+    stack mut u32[0 max] accumulatedOffset = 0;
+    while willexit (stream.KindAt(fieldToken) == TokenKind.Identifier)
+    {
+        stack mut u32[0 max] stepFactRow = 0;
+        if (!SourceMemberPathFactMatchesFieldStep(
+            stream,
+            source,
+            moduleFacts.MemberFactRowsByToken,
+            moduleFacts.MemberPathFacts,
+            currentTypeToken,
+            (u32[0 max])fieldToken,
+            stepFactRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut u32[0 max] resolvedFieldTypeToken = 0;
+        if (!TryFindStructStorageFieldLayoutWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            currentTypeToken,
+            (u32[0 max])fieldToken,
+            fieldOffset,
+            fieldAlignment,
+            resolvedFieldTypeToken))
+        {
+            return false;
+        }
+
+        if (fieldOffset > 4294967295 - accumulatedOffset)
+        {
+            return false;
+        }
+
+        accumulatedOffset = accumulatedOffset + fieldOffset;
+        stack u64[0 2 ** 63 - 1] afterField = fieldToken + 1;
+        if (stream.KindAt(afterField) == TokenKind.Dot)
+        {
+            if (!SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, resolvedFieldTypeToken))
+            {
+                return false;
+            }
+
+            currentTypeToken = resolvedFieldTypeToken;
+            fieldToken = afterField + 1;
+            continue;
+        }
+
+        nextToken = afterField;
+        byteOffset = accumulatedOffset;
+        alignBytes = fieldAlignment;
+        fieldTypeToken = resolvedFieldTypeToken;
+        leafMemberFactRow = stepFactRow;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryResolveConstructedObjectMemberChainStorageFieldFromDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] rootTypeToken,
+    u64[0 2 ** 63 - 1] firstFieldToken,
+    out u64[0 2 ** 63 - 1] nextToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out u32[0 max] fieldTypeToken)
+{
+    nextToken = firstFieldToken;
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldTypeToken = 0;
+
+    stack mut u32[0 max] currentTypeToken = rootTypeToken;
+    stack mut u64[0 2 ** 63 - 1] fieldToken = firstFieldToken;
+    stack mut u32[0 max] accumulatedOffset = 0;
+    while willexit (stream.KindAt(fieldToken) == TokenKind.Identifier)
+    {
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut u32[0 max] resolvedFieldTypeToken = 0;
+        if (!TryFindStructStorageFieldLayoutWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            currentTypeToken,
+            (u32[0 max])fieldToken,
+            fieldOffset,
+            fieldAlignment,
+            resolvedFieldTypeToken))
+        {
+            return false;
+        }
+
+        if (fieldOffset > 4294967295 - accumulatedOffset)
+        {
+            return false;
+        }
+
+        accumulatedOffset = accumulatedOffset + fieldOffset;
+        stack u64[0 2 ** 63 - 1] afterField = fieldToken + 1;
+        if (stream.KindAt(afterField) == TokenKind.Dot)
+        {
+            if (!SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, resolvedFieldTypeToken))
+            {
+                return false;
+            }
+
+            currentTypeToken = resolvedFieldTypeToken;
+            fieldToken = afterField + 1;
+            continue;
+        }
+
+        nextToken = afterField;
+        byteOffset = accumulatedOffset;
+        alignBytes = fieldAlignment;
+        fieldTypeToken = resolvedFieldTypeToken;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryResolveFixedArrayElementLayoutAtField(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] fieldTypeToken,
+    u32[0 max] elementIndexToken,
+    u32[0 max] fieldOffset,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out MirType elementType)
+{
+    byteOffset = 0;
+    alignBytes = 0;
+    elementType = MirType.I64;
+
+    stack mut u32[0 max] arrayLength = 0;
+    stack mut u32[0 max] baseOffset = 0;
+    stack mut u32[0 max] elementSize = 0;
+    if (!TryResolveFixedArrayFieldLayoutAtField(
+        stream,
+        source,
+        fieldTypeToken,
+        fieldOffset,
+        baseOffset,
+        elementSize,
+        alignBytes,
+        elementType,
+        arrayLength))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementIndex = 0;
+    if (!TryReadNonNegativeIntegerToken(stream, source, (u64[0 2 ** 63 - 1])elementIndexToken, elementIndex))
+    {
+        return false;
+    }
+
+    if (elementIndex >= arrayLength)
+    {
+        return false;
+    }
+
+    if (elementIndex > 4294967295 / elementSize)
+    {
+        return false;
+    }
+
+    stack u32[0 max] elementOffset = elementIndex * elementSize;
+    if (baseOffset > 4294967295 - elementOffset)
+    {
+        return false;
+    }
+
+    byteOffset = baseOffset + elementOffset;
+    return true;
+}
+
+internal fn bool TryResolveFixedArrayFieldLayoutAtField(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] fieldTypeToken,
+    u32[0 max] fieldOffset,
+    out u32[0 max] baseByteOffset,
+    out u32[0 max] elementSizeBytes,
+    out u32[0 max] alignBytes,
+    out MirType elementType,
+    out u32[0 max] arrayLength)
+{
+    baseByteOffset = 0;
+    elementSizeBytes = 0;
+    alignBytes = 0;
+    elementType = MirType.I64;
+    arrayLength = 0;
+
+    if (!TryReadFixedArrayLengthSuffix(stream, source, fieldTypeToken, arrayLength))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] ignoredElementTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    if (!TryResolveScalarFixedArraySuffixLayoutAtDepth(
+        stream,
+        source,
+        fieldTypeToken,
+        0,
+        arrayLength,
+        elementSizeBytes,
+        alignBytes,
+        elementType,
+        ignoredElementTypeCode))
+    {
+        return false;
+    }
+
+    baseByteOffset = fieldOffset;
+    return true;
+}
+
+internal fn bool TryResolveFixedArrayStorageFieldLayoutAtField(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] fieldTypeToken,
+    u32[0 max] fieldOffset,
+    out u32[0 max] baseByteOffset,
+    out u32[0 max] elementSizeBytes,
+    out u32[0 max] alignBytes,
+    out MirType elementType,
+    out u32[0 max] elementTypeCode,
+    out u32[0 max] arrayLength)
+{
+    baseByteOffset = 0;
+    elementSizeBytes = 0;
+    alignBytes = 0;
+    elementType = MirType.I64;
+    elementTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    arrayLength = 0;
+
+    if (!TryReadFixedArrayLengthSuffix(stream, source, fieldTypeToken, arrayLength))
+    {
+        return false;
+    }
+
+    stack u32[0 max] scalarSize = ScalarTypeKnownByteExtent(stream, source, fieldTypeToken);
+    if (scalarSize != 0)
+    {
+        if (!TryResolveScalarFixedArraySuffixLayoutAtDepth(
+            stream,
+            source,
+            fieldTypeToken,
+            0,
+            arrayLength,
+            elementSizeBytes,
+            alignBytes,
+            elementType,
+            elementTypeCode))
+        {
+            return false;
+        }
+
+        baseByteOffset = fieldOffset;
+        return true;
+    }
+
+    stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
+    stack mut u32[0 max] enumSizeBytes = 0;
+    stack mut u32[0 max] enumAlignBytes = 0;
+    if (TryGetSourceEnumStorageLayoutForToken(
+            stream,
+            source,
+            moduleFacts,
+            fieldTypeToken,
+            enumOwnerDeclarationIndex,
+            enumSizeBytes,
+            enumAlignBytes))
+    {
+        stack u32[0 max] enumTypeCode =
+            SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(enumOwnerDeclarationIndex);
+        if (enumSizeBytes == 0
+            || enumAlignBytes == 0
+            || enumTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return false;
+        }
+
+        baseByteOffset = fieldOffset;
+        elementSizeBytes = enumSizeBytes;
+        alignBytes = enumAlignBytes;
+        elementType = MirType.EnumValue;
+        elementTypeCode = enumTypeCode;
+        return true;
+    }
+
+    if (!SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, fieldTypeToken))
+    {
+        return false;
+    }
+
+    stack u32[0 max] aggregateSizeBytes =
+        StructKnownByteExtentWithEnums(stream, source, moduleFacts, fieldTypeToken);
+    stack u32[0 max] aggregateAlignBytes =
+        StructKnownByteAlignmentWithEnums(stream, source, moduleFacts, fieldTypeToken);
+    stack u32[0 max] aggregateTypeCode = SourceResolvedFieldTypeCodeForAggregateTypeToken(fieldTypeToken);
+    if (aggregateSizeBytes == 0
+        || aggregateAlignBytes == 0
+        || aggregateTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    baseByteOffset = fieldOffset;
+    elementSizeBytes = aggregateSizeBytes;
+    alignBytes = aggregateAlignBytes;
+    elementType = MirType.Ptr;
+    elementTypeCode = aggregateTypeCode;
+    return true;
+}
+
+internal fn bool TryResolveSliceDescriptorFromConstructedObjectFixedArray(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    u32[0 max] targetTypeToken,
+    u64[0 2 ** 63 - 1] initializerStart,
+    u64[0 2 ** 63 - 1] initializerEnd,
+    out SourceSliceDescriptorLocal descriptor)
+    where overlap_all(objectLocals)
+{
+    descriptor = new();
+    if (initializerStart + 2 >= initializerEnd
+        || stream.KindAt(initializerStart) != TokenKind.Identifier
+        || stream.KindAt(initializerStart + 1) != TokenKind.Dot
+        || stream.KindAt(initializerStart + 2) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut MirType targetElementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, targetTypeToken, targetElementType))
+    {
+        return false;
+    }
+
+    stack mut ConstructedObjectLocal objectLocal = new();
+    if (!TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(initializerStart), stream.LengthAt(initializerStart), objectLocal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] nextToken = initializerStart;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] leafMemberFactRow = 0;
+    if (!TryResolveConstructedObjectMemberChainStorageField(
+        stream,
+        source,
+        moduleFacts,
+        objectLocal.TypeToken,
+        initializerStart + 2,
+        nextToken,
+        fieldOffset,
+        fieldAlignment,
+        fieldTypeToken,
+        leafMemberFactRow))
+    {
+        return false;
+    }
+
+    if (nextToken != initializerEnd)
+    {
+        return false;
+    }
+
+    if (!SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, leafMemberFactRow))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] baseByteOffset = 0;
+    stack mut u32[0 max] elementSizeBytes = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut MirType elementType = MirType.I64;
+    stack mut u32[0 max] arrayLength = 0;
+    if (!TryResolveFixedArrayFieldLayoutAtField(
+        stream,
+        source,
+        fieldTypeToken,
+        fieldOffset,
+        baseByteOffset,
+        elementSizeBytes,
+        elementAlignment,
+        elementType,
+        arrayLength))
+    {
+        return false;
+    }
+
+    if (elementType != targetElementType)
+    {
+        return false;
+    }
+
+    stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    descriptor.ReceiverParamIndex = objectLocal.ParamIndex;
+    descriptor.BaseByteOffset = baseByteOffset;
+    descriptor.ElementSize = elementSizeBytes;
+    descriptor.Alignment = elementAlignment;
+    descriptor.SliceLength = arrayLength;
+    descriptor.ElementType = elementType;
+    descriptor.FieldTypeCode = fieldTypeCode;
+    return true;
+}
+
+internal fn bool TryResolveSliceDescriptorFromFixedArrayStorageLocal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayLocals,
+    u32[0 max] targetTypeToken,
+    u64[0 2 ** 63 - 1] initializerStart,
+    u64[0 2 ** 63 - 1] initializerEnd,
+    out SourceSliceDescriptorLocal descriptor)
+    where overlap(source, fixedArrayLocals)
+{
+    descriptor = new();
+    if (initializerStart + 1 != initializerEnd
+        || stream.KindAt(initializerStart) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut MirType targetElementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, targetTypeToken, targetElementType))
+    {
+        return false;
+    }
+
+    stack mut FixedArrayStorageLocal fixedArrayLocal = new();
+    if (!TryFindFixedArrayStorageLocal(fixedArrayLocals, source, stream.StartAt(initializerStart), stream.LengthAt(initializerStart), fixedArrayLocal)
+        || fixedArrayLocal.ElementType != targetElementType)
+    {
+        return false;
+    }
+
+    descriptor.ReceiverParamIndex = fixedArrayLocal.ParamIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = fixedArrayLocal.ElementSize;
+    descriptor.Alignment = fixedArrayLocal.Alignment;
+    descriptor.SliceLength = fixedArrayLocal.ArrayLength;
+    descriptor.ElementType = fixedArrayLocal.ElementType;
+    descriptor.FieldTypeCode = fixedArrayLocal.FieldTypeCode;
+    return true;
+}
+
+internal fn SourceSliceDescriptorLocal SourceSliceDescriptorFromFixedArrayStorageLocal(FixedArrayStorageLocal fixedArrayLocal)
+{
+    stack mut SourceSliceDescriptorLocal descriptor = new();
+    descriptor.Start = fixedArrayLocal.Start;
+    descriptor.Length = fixedArrayLocal.Length;
+    descriptor.Mutable = fixedArrayLocal.Mutable;
+    descriptor.ParamIndex = fixedArrayLocal.ParamIndex;
+    descriptor.ReceiverParamIndex = fixedArrayLocal.ParamIndex;
+    descriptor.BaseByteOffset = fixedArrayLocal.BaseByteOffset;
+    descriptor.ElementSize = fixedArrayLocal.ElementSize;
+    descriptor.Alignment = fixedArrayLocal.Alignment;
+    descriptor.SliceLength = fixedArrayLocal.ArrayLength;
+    descriptor.ElementType = fixedArrayLocal.ElementType;
+    descriptor.FieldTypeCode = fixedArrayLocal.FieldTypeCode;
+    return descriptor;
+}
+
+internal fn bool TryResolveSliceDescriptorFromSourceSliceDescriptorLocal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u32[0 max] targetTypeToken,
+    u64[0 2 ** 63 - 1] initializerStart,
+    u64[0 2 ** 63 - 1] initializerEnd,
+    out SourceSliceDescriptorLocal descriptor)
+    where overlap(source, sliceDescriptorLocals)
+{
+    descriptor = new();
+    if (initializerStart + 1 != initializerEnd
+        || stream.KindAt(initializerStart) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut MirType targetElementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, targetTypeToken, targetElementType))
+    {
+        return false;
+    }
+
+    stack u32[0 max] targetElementSize = ScalarTypeKnownByteExtent(stream, source, targetTypeToken);
+    stack u32[0 max] targetElementAlignment = BuiltinTypeKnownByteAlignment(stream, source, targetTypeToken);
+    stack u32[0 max] targetFieldTypeCode = SourceResolvedFieldTypeCodeForMirType(targetElementType);
+    stack mut SourceSliceDescriptorLocal existing = new();
+    if (!TryFindSourceSliceDescriptorLocal(
+            sliceDescriptorLocals,
+            source,
+            stream.StartAt(initializerStart),
+            stream.LengthAt(initializerStart),
+            existing)
+        || existing.SliceLength == 0
+        || existing.ElementType != targetElementType
+        || existing.ElementSize != targetElementSize
+        || existing.Alignment != targetElementAlignment
+        || existing.FieldTypeCode != targetFieldTypeCode)
+    {
+        return false;
+    }
+
+    descriptor = existing;
+    return true;
+}
+
+internal fn bool TryFindStructFixedArrayElementLayout(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] fieldNameToken,
+    u32[0 max] elementIndexToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out MirType elementType)
+{
+    byteOffset = 0;
+    alignBytes = 0;
+    elementType = MirType.I64;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] offset = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])segmentStart);
+                            stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])segmentStart);
+                            if (fieldSize == 0 || fieldAlign == 0)
+                            {
+                                return false;
+                            }
+
+                            offset = AlignUpU32(offset, fieldAlign);
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                            {
+                                return TryResolveFixedArrayElementLayoutAtField(
+                                    stream,
+                                    source,
+                                    (u32[0 max])segmentStart,
+                                    elementIndexToken,
+                                    offset,
+                                    byteOffset,
+                                    alignBytes,
+                                    elementType);
+                            }
+
+                            offset = offset + fieldSize;
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])field);
+                    stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (fieldSize == 0 || fieldAlign == 0)
+                    {
+                        return false;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                    {
+                        return TryResolveFixedArrayElementLayoutAtField(
+                            stream,
+                            source,
+                            (u32[0 max])field,
+                            elementIndexToken,
+                            offset,
+                            byteOffset,
+                            alignBytes,
+                            elementType);
+                    }
+
+                    offset = offset + fieldSize;
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindStructFixedArrayFieldLayout(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] baseByteOffset,
+    out u32[0 max] elementSizeBytes,
+    out u32[0 max] alignBytes,
+    out MirType elementType,
+    out u32[0 max] arrayLength)
+{
+    baseByteOffset = 0;
+    elementSizeBytes = 0;
+    alignBytes = 0;
+    elementType = MirType.I64;
+    arrayLength = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] offset = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])segmentStart);
+                            stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])segmentStart);
+                            if (fieldSize == 0 || fieldAlign == 0)
+                            {
+                                return false;
+                            }
+
+                            offset = AlignUpU32(offset, fieldAlign);
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                            {
+                                return TryResolveFixedArrayFieldLayoutAtField(
+                                    stream,
+                                    source,
+                                    (u32[0 max])segmentStart,
+                                    offset,
+                                    baseByteOffset,
+                                    elementSizeBytes,
+                                    alignBytes,
+                                    elementType,
+                                    arrayLength);
+                            }
+
+                            offset = offset + fieldSize;
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])field);
+                    stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (fieldSize == 0 || fieldAlign == 0)
+                    {
+                        return false;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0 && TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                    {
+                        return TryResolveFixedArrayFieldLayoutAtField(
+                            stream,
+                            source,
+                            (u32[0 max])field,
+                            offset,
+                            baseByteOffset,
+                            elementSizeBytes,
+                            alignBytes,
+                            elementType,
+                            arrayLength);
+                    }
+
+                    offset = offset + fieldSize;
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u64[0 2 ** 63 - 1] FindObjectInitializerEntryEnd(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] close)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < close)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Comma && depth == 0)
+        {
+            return scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return close;
+}
+
+internal struct RecordHeaderFieldLayoutCursor
+{
+    u64[0 2 ** 63 - 1] HeaderClose;
+    u64[0 2 ** 63 - 1] SegmentStart;
+    u64[0 2 ** 63 - 1] HeaderScan;
+    u32[0 max] Depth;
+    u32[0 max] Offset;
+
+    RecordHeaderFieldLayoutCursor()
+    {
+        self.HeaderClose = 0;
+        self.SegmentStart = 0;
+        self.HeaderScan = 0;
+        self.Depth = 0;
+        self.Offset = 0;
+    }
+}
+
+internal fn bool TryStartRecordHeaderFieldLayoutCursor(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out RecordHeaderFieldLayoutCursor cursor)
+{
+    cursor = new();
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (stream.KindAt(scan) == TokenKind.Record
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+            if (headerOpen == 0)
+            {
+                return false;
+            }
+
+            stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+            cursor.HeaderClose = (u64[0 2 ** 63 - 1])headerClose;
+            cursor.SegmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+            cursor.HeaderScan = cursor.SegmentStart;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadNextRecordHeaderFieldLayout(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow RecordHeaderFieldLayoutCursor cursor,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out MirType fieldType,
+    out u32[0 max] fieldTypeCode)
+{
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldType = MirType.I64;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    while willexit (cursor.HeaderScan <= cursor.HeaderClose)
+    {
+        stack TokenKind headerKind = stream.KindAt(cursor.HeaderScan);
+        stack mut bool boundary = cursor.HeaderScan == cursor.HeaderClose;
+        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+        {
+            cursor.Depth = cursor.Depth + 1;
+        }
+        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+        {
+            if (cursor.Depth > 0)
+            {
+                cursor.Depth = cursor.Depth - 1;
+            }
+        }
+
+        if (cursor.Depth == 0 && headerKind == TokenKind.Comma)
+        {
+            boundary = true;
+        }
+
+        if (boundary && cursor.SegmentStart < cursor.HeaderScan)
+        {
+            stack mut u32[0 max] fieldSize = 0;
+            stack mut u32[0 max] fieldAlign = 0;
+            if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])cursor.SegmentStart, fieldSize, fieldAlign))
+            {
+                return false;
+            }
+
+            stack mut MirType resolvedType = MirType.I64;
+            stack mut u32[0 max] resolvedTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, (u32[0 max])cursor.SegmentStart, resolvedType, resolvedTypeCode))
+            {
+                return false;
+            }
+
+            cursor.Offset = AlignUpU32(cursor.Offset, fieldAlign);
+            byteOffset = cursor.Offset;
+            alignBytes = fieldAlign;
+            fieldType = resolvedType;
+            fieldTypeCode = resolvedTypeCode;
+            cursor.Offset = cursor.Offset + fieldSize;
+            cursor.SegmentStart = cursor.HeaderScan + 1;
+            cursor.HeaderScan = cursor.HeaderScan + 1;
+            return true;
+        }
+
+        cursor.HeaderScan = cursor.HeaderScan + 1;
+    }
+
+    return false;
+}
+
+internal struct StackObjectFieldInitializer
+{
+    u32[0 max] LocalOrdinal;
+    u32[0 max] ParamIndex;
+    u32[0 max] ObjectPointerValue;
+    u32[0 max] FieldOffset;
+    u32[0 max] FieldAlignment;
+    MirType FieldType;
+    u32[0 max] FieldTypeCode;
+    u32[0 max] ExprRoot;
+
+    StackObjectFieldInitializer()
+    {
+        self.LocalOrdinal = 0;
+        self.ParamIndex = 0;
+        self.ObjectPointerValue = 0;
+        self.FieldOffset = 0;
+        self.FieldAlignment = 0;
+        self.FieldType = MirType.I64;
+        self.FieldTypeCode = SourceResolvedFieldTypeCodeI64();
+        self.ExprRoot = 0;
+    }
+}
+
+internal struct ConstructedObjectFieldAssignment
+{
+    u32[0 max] ReceiverParamIndex;
+    u32[0 max] FieldOffset;
+    u32[0 max] IndexRoot;
+    u32[0 max] ElementSize;
+    u32[0 max] FieldAlignment;
+    MirType FieldType;
+    u32[0 max] FieldTypeCode;
+    u32[0 max] ExprRoot;
+    bool IndexHasKnownBounds;
+    bool TargetHasDeclaredRange;
+    i64[min max] TargetDeclaredRangeLower;
+    i64[min max] TargetDeclaredRangeUpperExclusive;
+
+    ConstructedObjectFieldAssignment()
+    {
+        self.ReceiverParamIndex = 0;
+        self.FieldOffset = 0;
+        self.IndexRoot = 0;
+        self.ElementSize = 0;
+        self.FieldAlignment = 0;
+        self.FieldType = MirType.I64;
+        self.FieldTypeCode = SourceResolvedFieldTypeCodeI64();
+        self.ExprRoot = 0;
+        self.IndexHasKnownBounds = false;
+        self.TargetHasDeclaredRange = false;
+        self.TargetDeclaredRangeLower = 0;
+        self.TargetDeclaredRangeUpperExclusive = 0;
+    }
+}
+
+internal struct ScalarStorageLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] ParamIndex;
+    u32[0 max] StorageValue;
+    u32[0 max] FieldAlignment;
+    MirType FieldType;
+    bool Mutable;
+
+    ScalarStorageLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.ParamIndex = 0;
+        self.StorageValue = 0;
+        self.FieldAlignment = 0;
+        self.FieldType = MirType.I64;
+        self.Mutable = false;
+    }
+}
+
+internal struct ScalarStorageInitializer
+{
+    u32[0 max] LocalOrdinal;
+    u32[0 max] ParamIndex;
+    u32[0 max] FieldAlignment;
+    MirType FieldType;
+    u32[0 max] ExprRoot;
+
+    ScalarStorageInitializer()
+    {
+        self.LocalOrdinal = 0;
+        self.ParamIndex = 0;
+        self.FieldAlignment = 0;
+        self.FieldType = MirType.I64;
+        self.ExprRoot = 0;
+    }
+}
+
+internal struct ScalarStorageAssignment
+{
+    u32[0 max] ParamIndex;
+    u32[0 max] FieldAlignment;
+    MirType FieldType;
+    u32[0 max] ExprRoot;
+    bool RawPointerTarget;
+    u32[0 max] RawPointerRoot;
+
+    ScalarStorageAssignment()
+    {
+        self.ParamIndex = 0;
+        self.FieldAlignment = 0;
+        self.FieldType = MirType.I64;
+        self.ExprRoot = 0;
+        self.RawPointerTarget = false;
+        self.RawPointerRoot = 0;
+    }
+}
+
+internal struct EnumStorageLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] ParamIndex;
+    u32[0 max] StorageValue;
+    u32[0 max] FieldAlignment;
+    u32[0 max] OwnerTypeIndex;
+    bool Mutable;
+
+    EnumStorageLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.ParamIndex = 0;
+        self.StorageValue = 0;
+        self.FieldAlignment = 0;
+        self.OwnerTypeIndex = 0;
+        self.Mutable = false;
+    }
+}
+
+internal struct EnumStorageInitializer
+{
+    u32[0 max] LocalOrdinal;
+    u32[0 max] ParamIndex;
+    u32[0 max] FieldAlignment;
+    u32[0 max] OwnerTypeIndex;
+    u32[0 max] ExprRoot;
+
+    EnumStorageInitializer()
+    {
+        self.LocalOrdinal = 0;
+        self.ParamIndex = 0;
+        self.FieldAlignment = 0;
+        self.OwnerTypeIndex = 0;
+        self.ExprRoot = 0;
+    }
+}
+
+internal struct EnumStorageAssignment
+{
+    u32[0 max] ParamIndex;
+    u32[0 max] FieldAlignment;
+    u32[0 max] OwnerTypeIndex;
+    u32[0 max] ExprRoot;
+
+    EnumStorageAssignment()
+    {
+        self.ParamIndex = 0;
+        self.FieldAlignment = 0;
+        self.OwnerTypeIndex = 0;
+        self.ExprRoot = 0;
+    }
+}
+
+internal inline finite law u32[0 max] SourceStorageMutationKindScalar()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] SourceStorageMutationKindConstructedObjectField()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] SourceStorageMutationKindEnum()
+{
+    return 3;
+}
+
+// A local declaration's position in the ordered statement timeline. The
+// function driver lowers the local's override value and its initializers at
+// this point during replay, so a storage-reading initializer (a `var` bound
+// from a field read, or a stored scalar initialized from one) observes every
+// mutation that precedes it in source order.
+internal inline finite law u32[0 max] SourceStorageMutationKindLocalDecl()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] SourceStorageMutationKindArenaDynamicReserve()
+{
+    return 5;
+}
+
+internal struct SourceStorageMutationStatement
+{
+    u32[0 max] Kind;
+    u32[0 max] AssignmentIndex;
+
+    SourceStorageMutationStatement()
+    {
+        self.Kind = 0;
+        self.AssignmentIndex = 0;
+    }
+}
+
+// Copies the `index` row of `statements` into `destination`, binding the read
+// row to a local first. Returns the appended 1-based row, or 0 when `index`
+// is absent or the append fails.
+internal fn u32[0 max] AppendStorageMutationStatementRow(
+    mut borrow IrTable<SourceStorageMutationStatement> destination,
+    borrow IrTable<SourceStorageMutationStatement> statements,
+    u32[0 max] index)
+{
+    if (!statements.Contains(index))
+    {
+        return 0;
+    }
+
+    stack SourceStorageMutationStatement row = statements.Get(index);
+    return destination.Add(row);
+}
+
+internal fn bool FieldInitializerTypeMatches(MirType fieldType, ExprType exprType)
+{
+    if (fieldType == MirType.I1)
+    {
+        return exprType == ExprType.BoolType;
+    }
+
+    if (fieldType == MirType.Ptr)
+    {
+        return exprType == ExprType.PtrType;
+    }
+
+    return exprType == ExprType.IntType;
+}
+
+internal finite law bool FieldInitializerTypeCodeMatches(u32[0 max] fieldTypeCode, ExprType exprType)
+{
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeBool())
+    {
+        return exprType == ExprType.BoolType;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodePointer())
+    {
+        return exprType == ExprType.PtrType;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeI8()
+        || fieldTypeCode == SourceResolvedFieldTypeCodeI16()
+        || fieldTypeCode == SourceResolvedFieldTypeCodeI32()
+        || fieldTypeCode == SourceResolvedFieldTypeCodeI64())
+    {
+        return exprType == ExprType.IntType;
+    }
+
+    if (SourceResolvedFieldTypeCodeIsEnum(fieldTypeCode))
+    {
+        return exprType == ExprType.EnumType;
+    }
+
+    return false;
+}
+
+internal fn bool FieldInitializerExpressionMatchesTypeCode(
+    u32[0 max] fieldTypeCode,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] exprRoot,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    stack ExprType exprType = TypeOfNodeWithLocals(nodes, exprRoot, localTypes);
+    if (!FieldInitializerTypeCodeMatches(fieldTypeCode, exprType))
+    {
+        return false;
+    }
+
+    if (!SourceResolvedFieldTypeCodeIsEnum(fieldTypeCode))
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] exprOwnerTypeIndex = 0;
+    return TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, exprRoot, localTypes, exprOwnerTypeIndex)
+        && exprOwnerTypeIndex == SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(fieldTypeCode) + 1;
+}
+
+internal fn bool TryGetSourceEnumStorageLayout(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignmentBytes)
+{
+    sizeBytes = 0;
+    alignmentBytes = 1;
+    stack mut bool seen = false;
+    stack mut u64[0 max] maxEnd = 0;
+    stack mut u64[0 max] maxAlignment = 1;
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.EnumLayouts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (moduleFacts.EnumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex)
+        {
+            if (!moduleFacts.EnumLayouts.HasConcreteLayoutAt(index))
+            {
+                return false;
+            }
+
+            stack u64[0 max] rowOffset = moduleFacts.EnumLayouts.OffsetBytesAt(index);
+            stack u64[0 max] rowSize = moduleFacts.EnumLayouts.SizeBytesAt(index);
+            stack u64[0 max] rowAlignment = moduleFacts.EnumLayouts.AlignmentBytesAt(index);
+            if (rowAlignment == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 max] rowEnd = rowOffset + rowSize;
+            if (rowEnd > maxEnd)
+            {
+                maxEnd = rowEnd;
+            }
+
+            if (rowAlignment > maxAlignment)
+            {
+                maxAlignment = rowAlignment;
+            }
+
+            seen = true;
+        }
+    }
+
+    stack u64[0 max] alignedSize = SourceEnumStorageAlignTo(maxEnd, maxAlignment);
+    if (!seen
+        || alignedSize == 0
+        || alignedSize > 4294967295
+        || maxAlignment > 4294967295)
+    {
+        return false;
+    }
+
+    sizeBytes = (u32[0 max])alignedSize;
+    alignmentBytes = (u32[0 max])maxAlignment;
+    return true;
+}
+
+internal fn bool TryBuildSourceValueFactsForNode(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] nodeId,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    out ValueFacts facts)
+    where overlap(nodes, sourceValueFacts)
+{
+    facts = new();
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
+            stack mut ValueFacts literalFacts = new();
+            if (!TrySetSingleValueIntegerRange(literalFacts, node.Imm))
+            {
+                return false;
+            }
+
+            facts = literalFacts;
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            stack mut ValueFacts boolFacts = new();
+            boolFacts.SetIntegerRange(node.Imm, node.Imm + 1);
+            facts = boolFacts;
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            if (!sourceValueFacts.Contains(node.Left + 1))
+            {
+                return false;
+            }
+
+            facts = sourceValueFacts.Get(node.Left + 1);
+            return facts.HasIntegerRange();
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            stack mut ValueFacts leftFacts = new();
+            stack mut ValueFacts rightFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, node.Left, sourceValueFacts, leftFacts)
+                || !TryBuildSourceValueFactsForNode(nodes, node.Right, sourceValueFacts, rightFacts))
+            {
+                return false;
+            }
+
+            if (node.Op == TokenKind.Minus)
+            {
+                stack mut ValueFacts subFacts = new();
+                if (!TryBuildSubRangeFacts(leftFacts, rightFacts, subFacts))
+                {
+                    return false;
+                }
+
+                facts = subFacts;
+                return true;
+            }
+
+            if (node.Op == TokenKind.Star)
+            {
+                stack mut ValueFacts mulFacts = new();
+                if (!TryBuildMulRangeFacts(leftFacts, rightFacts, mulFacts))
+                {
+                    return false;
+                }
+
+                facts = mulFacts;
+                return true;
+            }
+
+            if (node.Op == TokenKind.Plus)
+            {
+                stack mut ValueFacts addFacts = new();
+                if (!TryBuildAddRangeFacts(leftFacts, rightFacts, addFacts))
+                {
+                    return false;
+                }
+
+                facts = addFacts;
+                return true;
+            }
+
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.ConversionExpr:
+            stack mut ValueFacts operandFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, node.Left, sourceValueFacts, operandFacts)
+                || !operandFacts.HasIntegerRange())
+            {
+                return false;
+            }
+
+            facts = operandFacts;
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            if (!node.HasDeclaredRange)
+            {
+                return false;
+            }
+
+            stack mut ValueFacts declaredFieldFacts = new();
+            declaredFieldFacts.SetIntegerRange(node.DeclaredRangeLower, node.DeclaredRangeUpperExclusive);
+            facts = declaredFieldFacts;
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.FixedArrayParamElementExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
+            return false;
+    }
+}
+
+// Validates a stored value against the target field's declared integer range
+// imported from the typed member path facts: a provable stored range must be
+// a subset of the declared range, and a store whose range cannot be proven is
+// accepted only when the declared range spans the field's full storage width
+// (the pre-existing width-only semantics). Rejecting provable out-of-range
+// stores is what keeps declared-range facts on field READS sound.
+internal fn bool SourceStoredValueSatisfiesDeclaredFieldRange(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] exprRoot,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] factRowPlusOne)
+    where overlap(nodes, sourceValueFacts),
+          overlap(moduleFacts, sourceValueFacts)
+{
+    if (factRowPlusOne == 0 || !moduleFacts.MemberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = moduleFacts.MemberPathFacts.Get(factRowPlusOne);
+    if (!fact.HasDeclaredRange)
+    {
+        return true;
+    }
+
+    stack mut ValueFacts storedFacts = new();
+    if (TryBuildSourceValueFactsForNode(nodes, exprRoot, sourceValueFacts, storedFacts)
+        && storedFacts.HasIntegerRange())
+    {
+        stack i64[min max] storedLower = storedFacts.IntegerRangeLower();
+        stack i64[min max] storedUpperExclusive = storedFacts.IntegerRangeUpperExclusive();
+        if (storedUpperExclusive != I64MinValue()
+            && storedLower >= fact.DeclaredRangeLower
+            && storedUpperExclusive <= fact.DeclaredRangeUpperExclusive)
+        {
+            return true;
+        }
+    }
+
+    // A stored range that is unprovable — or provable but wider, as arithmetic
+    // over full-width operands always is — keeps the pre-existing width-only
+    // semantics; only declared ranges narrower than storage impose the proof.
+    return SourceMemberPathFactDeclaredRangeIsFullWidth(moduleFacts.MemberPathFacts, factRowPlusOne);
+}
+
+internal fn bool SourceDeclaredIntegerFieldTypeRangeIsFullWidth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] fieldTypeToken,
+    ValueFacts declaredFacts)
+{
+    if (!declaredFacts.HasIntegerRange())
+    {
+        return true;
+    }
+
+    stack mut i64[min max] fullLower = 0;
+    stack mut i64[min max] fullUpperInclusive = 0;
+    stack mut i64[min max] fullUpperExclusive = 0;
+    if (!IntegerTypeSignedMinValue(stream, source, fieldTypeToken, fullLower)
+        || !IntegerTypeMaxValue(stream, source, fieldTypeToken, fullUpperInclusive)
+        || !UpperInclusiveToExclusive(fullUpperInclusive, fullUpperExclusive))
+    {
+        return false;
+    }
+
+    return declaredFacts.IntegerRangeLower() == fullLower
+        && declaredFacts.IntegerRangeUpperExclusive() == fullUpperExclusive;
+}
+
+internal fn bool SourceStoredValueSatisfiesDeclaredFieldTypeRange(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] exprRoot,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u32[0 max] fieldTypeToken)
+    where overlap(nodes, sourceValueFacts),
+          overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts)
+{
+    stack mut ValueFacts declaredFacts = new();
+    if (!TryReadIntegerRangeFact(stream, source, fieldTypeToken, declaredFacts)
+        || !declaredFacts.HasIntegerRange())
+    {
+        return true;
+    }
+
+    stack mut ValueFacts storedFacts = new();
+    if (TryBuildSourceValueFactsForNode(nodes, exprRoot, sourceValueFacts, storedFacts)
+        && storedFacts.HasIntegerRange()
+        && IntegerRangeFactsSubsetOf(storedFacts, declaredFacts))
+    {
+        return true;
+    }
+
+    return SourceDeclaredIntegerFieldTypeRangeIsFullWidth(stream, source, fieldTypeToken, declaredFacts);
+}
+
+internal fn bool SourceIndexNodeProvesFixedArrayBounds(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] indexNode,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u32[0 max] arrayLength)
+    where overlap(nodes, sourceValueFacts)
+{
+    stack mut ValueFacts indexFacts = new();
+    if (arrayLength == 0 || !TryBuildSourceValueFactsForNode(nodes, indexNode, sourceValueFacts, indexFacts))
+    {
+        return false;
+    }
+
+    if (!indexFacts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = indexFacts.IntegerRangeLower();
+    stack i64[min max] upperExclusive = indexFacts.IntegerRangeUpperExclusive();
+    return lower >= 0
+        && upperExclusive > 0
+        && upperExclusive <= (i64[min max])arrayLength;
+}
+
+internal fn bool SourceIndexNodeProvesRawPointerBounds(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] indexNode,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    ParamName pointerParam)
+    where overlap(nodes, sourceValueFacts)
+{
+    if (!pointerParam.RawPointerHasElementCountValue())
+    {
+        return false;
+    }
+
+    if (!pointerParam.RawPointerElementCountIsParamValue())
+    {
+        return SourceIndexNodeProvesFixedArrayBounds(
+            nodes,
+            indexNode,
+            sourceValueFacts,
+            pointerParam.RawPointerElementCountLiteralValue());
+    }
+
+    stack u32[0 max] countParamIndex = pointerParam.RawPointerElementCountParamIndexValue();
+    if (!sourceValueFacts.Contains(countParamIndex + 1))
+    {
+        return false;
+    }
+
+    stack mut ValueFacts indexFacts = new();
+    if (!TryBuildSourceValueFactsForNode(nodes, indexNode, sourceValueFacts, indexFacts)
+        || !indexFacts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack ValueFacts countFacts = sourceValueFacts.Get(countParamIndex + 1);
+    if (!countFacts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] indexLower = indexFacts.IntegerRangeLower();
+    stack i64[min max] indexUpperExclusive = indexFacts.IntegerRangeUpperExclusive();
+    stack i64[min max] countLower = countFacts.IntegerRangeLower();
+    return indexLower >= 0
+        && indexUpperExclusive > 0
+        && countLower >= 0
+        && indexUpperExclusive <= countLower;
+}
+
+internal fn bool StatementStartsConstructedObjectFieldAssignment(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    if (start + 4 < end
+        && stream.KindAt(start) == TokenKind.Identifier
+        && stream.KindAt(start + 1) == TokenKind.Dot
+        && stream.KindAt(start + 2) == TokenKind.Identifier
+        && (stream.KindAt(start + 3) == TokenKind.Assign
+            || stream.KindAt(start + 3) == TokenKind.AddAssign
+            || stream.KindAt(start + 3) == TokenKind.SubAssign))
+    {
+        return true;
+    }
+
+    if (start + 6 < end
+        && stream.KindAt(start) == TokenKind.Identifier
+        && stream.KindAt(start + 1) == TokenKind.Dot
+        && stream.KindAt(start + 2) == TokenKind.Identifier
+        && stream.KindAt(start + 3) == TokenKind.LBrack)
+    {
+        stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(start + 3));
+        return closeBracket != (u32[0 max])(start + 3)
+            && (u64[0 2 ** 63 - 1])(closeBracket + 1) < end
+            && stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) == TokenKind.Assign;
+    }
+
+    if (start + 6 < end
+        && stream.KindAt(start) == TokenKind.Identifier
+        && stream.KindAt(start + 1) == TokenKind.Dot
+        && stream.KindAt(start + 2) == TokenKind.Identifier
+        && stream.KindAt(start + 3) == TokenKind.Dot)
+    {
+        stack mut u64[0 2 ** 63 - 1] scan = start + 3;
+        while willexit (stream.KindAt(scan) == TokenKind.Dot
+            && stream.KindAt(scan + 1) == TokenKind.Identifier)
+        {
+            scan = scan + 2;
+        }
+
+        if (scan < end
+            && (stream.KindAt(scan) == TokenKind.Assign
+                || stream.KindAt(scan) == TokenKind.AddAssign
+                || stream.KindAt(scan) == TokenKind.SubAssign))
+        {
+            return true;
+        }
+
+        if (scan < end && stream.KindAt(scan) == TokenKind.LBrack)
+        {
+            stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])scan);
+            return closeBracket != (u32[0 max])scan
+                && (u64[0 2 ** 63 - 1])(closeBracket + 1) < end
+                && stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) == TokenKind.Assign;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+internal fn bool StatementStartsScalarStorageAssignment(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    return start + 2 < end
+        && stream.KindAt(start) == TokenKind.Identifier
+        && stream.KindAt(start + 1) == TokenKind.Assign;
+}
+
+internal fn bool StatementStartsRawPointerDerefAssignment(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    return start + 3 < end
+        && stream.KindAt(start) == TokenKind.Star;
+}
+
+internal fn bool StatementStartsSourceSliceElementAssignment(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    if (start + 4 >= end
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(start + 1));
+    return closeBracket != (u32[0 max])(start + 1)
+        && (u64[0 2 ** 63 - 1])(closeBracket + 1) < end
+        && stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) == TokenKind.Assign;
+}
+
+internal struct ConstructedObjectLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] ParamIndex;
+    u32[0 max] TypeToken;
+
+    ConstructedObjectLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.ParamIndex = 0;
+        self.TypeToken = 0;
+    }
+}
+
+internal struct SourceSliceDescriptorLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    bool Mutable;
+    u32[0 max] ParamIndex;
+    u32[0 max] ReceiverParamIndex;
+    u32[0 max] BaseByteOffset;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+    u32[0 max] SliceLength;
+    MirType ElementType;
+    u32[0 max] FieldTypeCode;
+    bool IsFixedArrayParam;
+    bool IsFixedArrayValueOverride;
+
+    SourceSliceDescriptorLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.Mutable = false;
+        self.ParamIndex = 0;
+        self.ReceiverParamIndex = 0;
+        self.BaseByteOffset = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+        self.SliceLength = 0;
+        self.ElementType = MirType.I64;
+        self.FieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        self.IsFixedArrayParam = false;
+        self.IsFixedArrayValueOverride = false;
+    }
+}
+
+internal struct FixedArrayStorageLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    bool Mutable;
+    u32[0 max] ParamIndex;
+    u32[0 max] StorageValue;
+    u32[0 max] BaseByteOffset;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+    u32[0 max] ArrayLength;
+    MirType ElementType;
+    u32[0 max] FieldTypeCode;
+    bool HasDeclaredElementRange;
+    i64[min max] DeclaredElementRangeLower;
+    i64[min max] DeclaredElementRangeUpperExclusive;
+
+    FixedArrayStorageLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.Mutable = false;
+        self.ParamIndex = 0;
+        self.StorageValue = 0;
+        self.BaseByteOffset = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+        self.ArrayLength = 0;
+        self.ElementType = MirType.I64;
+        self.FieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        self.HasDeclaredElementRange = false;
+        self.DeclaredElementRangeLower = 0;
+        self.DeclaredElementRangeUpperExclusive = 0;
+    }
+}
+
+internal struct FixedArrayStorageInitializer
+{
+    u32[0 max] LocalOrdinal;
+    u32[0 max] ParamIndex;
+    u32[0 max] ElementIndex;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+    MirType ElementType;
+    u32[0 max] ExprRoot;
+
+    FixedArrayStorageInitializer()
+    {
+        self.LocalOrdinal = 0;
+        self.ParamIndex = 0;
+        self.ElementIndex = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+        self.ElementType = MirType.I64;
+        self.ExprRoot = 0;
+    }
+}
+
+internal fn bool TryFindConstructedObjectLocal(
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    out ConstructedObjectLocal found)
+    where overlap(objectLocals, source)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = objectLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack ConstructedObjectLocal local = objectLocals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindFixedArrayStorageLocal(
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayLocals,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    out FixedArrayStorageLocal found)
+    where overlap(fixedArrayLocals, source)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = fixedArrayLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack FixedArrayStorageLocal local = fixedArrayLocals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindFixedArrayStorageLocalByParamIndex(
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayLocals,
+    u32[0 max] paramIndex,
+    out FixedArrayStorageLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = fixedArrayLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack FixedArrayStorageLocal local = fixedArrayLocals.Get(i);
+        if (local.ParamIndex == paramIndex)
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindSourceSliceDescriptorLocal(
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    out SourceSliceDescriptorLocal found)
+    where overlap(sliceDescriptorLocals, source)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = sliceDescriptorLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack SourceSliceDescriptorLocal local = sliceDescriptorLocals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindSourceSliceDescriptorLocalByParamIndex(
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u32[0 max] paramIndex,
+    out SourceSliceDescriptorLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = sliceDescriptorLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack SourceSliceDescriptorLocal local = sliceDescriptorLocals.Get(i);
+        if (local.ParamIndex == paramIndex)
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool BuildSourceSliceArgumentLocals(
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    mut borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+{
+    stack u64[0 2 ** 63 - 1] count = sliceDescriptorLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack SourceSliceDescriptorLocal descriptor = sliceDescriptorLocals.Get(i);
+        stack mut SourceSliceArgumentLocal local = new();
+        local.ParamIndex = descriptor.ParamIndex;
+        local.ReceiverParamIndex = descriptor.ReceiverParamIndex;
+        local.BaseByteOffset = descriptor.BaseByteOffset;
+        local.ElementSize = descriptor.ElementSize;
+        local.Alignment = descriptor.Alignment;
+        local.SliceLength = descriptor.SliceLength;
+        local.ElementType = descriptor.ElementType;
+        local.FieldTypeCode = descriptor.FieldTypeCode;
+        local.IsFixedArrayParam = descriptor.IsFixedArrayParam;
+        local.IsFixedArrayValueOverride = descriptor.IsFixedArrayValueOverride;
+        if (sliceArgumentLocals.Add(local) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryFindScalarStorageLocal(
+    borrow IrTable<ScalarStorageLocal> scalarLocals,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    out ScalarStorageLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = scalarLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack ScalarStorageLocal local = scalarLocals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindEnumStorageLocal(
+    borrow IrTable<EnumStorageLocal> enumLocals,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    out EnumStorageLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = enumLocals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack EnumStorageLocal local = enumLocals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] SourceLocalStoredScalarTypeCodeForMirType(MirType type)
+{
+    if (type == MirType.I1)
+    {
+        return SourceLocalTypeCodeStoredBool();
+    }
+
+    if (type == MirType.I8)
+    {
+        return SourceLocalTypeCodeStoredI8();
+    }
+
+    if (type == MirType.I16)
+    {
+        return SourceLocalTypeCodeStoredI16();
+    }
+
+    if (type == MirType.I32)
+    {
+        return SourceLocalTypeCodeStoredI32();
+    }
+
+    if (type == MirType.I64)
+    {
+        return SourceLocalTypeCodeStoredI64();
+    }
+
+    if (type == MirType.Ptr)
+    {
+        return SourceLocalTypeCodeStoredPointer();
+    }
+
+    return SourceLocalTypeCodeNonValue();
+}
+
+internal inline finite law u32[0 max] SourceRawPointerStorageByteExtent()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] SourceRawPointerStorageByteAlignment()
+{
+    return 8;
+}
+
+internal fn bool SourceLocalRawPointerElementQualifier(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Const:
+            return true;
+        case TokenKind.Frozen:
+            return true;
+        case TokenKind.Shared:
+            return true;
+        case TokenKind.Mut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TryReadSourceLocalRawPointerScalarElementFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out MirType elementType,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out u32[0 max] fieldTypeCode,
+    out bool rawPointerMutable)
+{
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    return TryReadSourceLocalRawPointerElementFacts(
+        stream,
+        source,
+        typeToken,
+        elementType,
+        elementSize,
+        elementAlignment,
+        fieldTypeCode,
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryReadSourceLocalRawPointerElementFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out MirType elementType,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out u32[0 max] fieldTypeCode,
+    out bool rawPointerMutable,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    elementType = MirType.I64;
+    elementSize = 0;
+    elementAlignment = 0;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    rawPointerMutable = false;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind != TokenKind.Rawptr && kind != TokenKind.Rawmutptr)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])(typeToken + 1)) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementToken = typeToken + 2;
+    while willexit (SourceLocalRawPointerElementQualifier(stream.KindAt((u64[0 2 ** 63 - 1])elementToken)))
+    {
+        elementToken = elementToken + 1;
+    }
+
+    stack TokenKind elementKind = stream.KindAt((u64[0 2 ** 63 - 1])elementToken);
+    if (elementKind == TokenKind.Rawptr || elementKind == TokenKind.Rawmutptr)
+    {
+        stack mut MirType innerElementType = MirType.I64;
+        stack mut u32[0 max] innerElementSize = 0;
+        stack mut u32[0 max] innerElementAlignment = 0;
+        stack mut u32[0 max] innerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut bool innerMutable = false;
+        stack mut bool ignoredNestedMutable = false;
+        stack mut u32[0 max] ignoredNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] ignoredNestedElementSize = 0;
+        stack mut u32[0 max] ignoredNestedElementAlignment = 0;
+        if (!TryReadSourceLocalRawPointerElementFacts(
+            stream,
+            source,
+            elementToken,
+            innerElementType,
+            innerElementSize,
+            innerElementAlignment,
+            innerFieldTypeCode,
+            innerMutable,
+            ignoredNestedMutable,
+            ignoredNestedFieldTypeCode,
+            ignoredNestedElementSize,
+            ignoredNestedElementAlignment))
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = SourceRawPointerStorageByteExtent();
+        elementAlignment = SourceRawPointerStorageByteAlignment();
+        fieldTypeCode = SourceResolvedFieldTypeCodePointer();
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        nestedMutable = innerMutable;
+        nestedFieldTypeCode = innerFieldTypeCode;
+        nestedElementSize = innerElementSize;
+        nestedElementAlignment = innerElementAlignment;
+        return true;
+    }
+
+    if (elementKind == TokenKind.Identifier)
+    {
+        stack u32[0 max] aggregateSize = TypeKnownByteExtentForLocal(stream, source, elementToken);
+        stack u32[0 max] aggregateAlignment = TypeKnownByteAlignment(stream, source, elementToken);
+        stack u32[0 max] aggregateTypeCode = SourceResolvedFieldTypeCodeForAggregateTypeToken(elementToken);
+        if (aggregateSize == 0
+            || aggregateAlignment == 0
+            || aggregateTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = aggregateSize;
+        elementAlignment = aggregateAlignment;
+        fieldTypeCode = aggregateTypeCode;
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        return true;
+    }
+
+    stack mut MirType resolvedElementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, elementToken, resolvedElementType))
+    {
+        return false;
+    }
+
+    stack u32[0 max] resolvedElementSize = ScalarTypeKnownByteExtent(stream, source, elementToken);
+    stack u32[0 max] resolvedElementAlignment = BuiltinTypeKnownByteAlignment(stream, source, elementToken);
+    stack u32[0 max] resolvedFieldTypeCode = SourceResolvedFieldTypeCodeForMirType(resolvedElementType);
+    if (resolvedElementSize == 0
+        || resolvedElementAlignment == 0
+        || resolvedFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    elementType = resolvedElementType;
+    elementSize = resolvedElementSize;
+    elementAlignment = resolvedElementAlignment;
+    fieldTypeCode = resolvedFieldTypeCode;
+    rawPointerMutable = kind == TokenKind.Rawmutptr;
+    return true;
+}
+
+internal fn bool RawPointerInitializerFactsMatchDeclaration(
+    bool declaredMutable,
+    u32[0 max] declaredFieldTypeCode,
+    u32[0 max] declaredElementSize,
+    u32[0 max] declaredElementAlignment,
+    bool declaredNestedMutable,
+    u32[0 max] declaredNestedFieldTypeCode,
+    u32[0 max] declaredNestedElementSize,
+    u32[0 max] declaredNestedElementAlignment,
+    bool initializerMutable,
+    u32[0 max] initializerFieldTypeCode,
+    u32[0 max] initializerElementSize,
+    u32[0 max] initializerElementAlignment,
+    bool initializerNestedMutable,
+    u32[0 max] initializerNestedFieldTypeCode,
+    u32[0 max] initializerNestedElementSize,
+    u32[0 max] initializerNestedElementAlignment)
+{
+    if (declaredFieldTypeCode != initializerFieldTypeCode
+        || declaredElementSize != initializerElementSize
+        || declaredElementAlignment != initializerElementAlignment
+        || declaredNestedMutable != initializerNestedMutable
+        || declaredNestedFieldTypeCode != initializerNestedFieldTypeCode
+        || declaredNestedElementSize != initializerNestedElementSize
+        || declaredNestedElementAlignment != initializerNestedElementAlignment)
+    {
+        return false;
+    }
+
+    return !declaredMutable || initializerMutable;
+}
+
+internal fn bool TryDeclareUninitializedRawPointerStorageLocal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    u64[0 2 ** 63 - 1] nameStart,
+    u64[0 2 ** 63 - 1] nameLength,
+    u32[0 max] typeToken,
+    mut borrow IrTable<ParamName> params,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> localRoots,
+    mut borrow IrTable<u32[0 max]> localTypes,
+    mut borrow IrTable<u32[0 max]> localOverrideValues,
+    mut borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<ScalarStorageLocal> scalarStorageLocals)
+{
+    if (!SelfHostedLocalDeclarationHasMut(stream, statementStart, statementEnd))
+    {
+        return false;
+    }
+
+    stack mut MirType elementType = MirType.I64;
+    stack mut u32[0 max] elementSize = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut bool rawPointerMutable = false;
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    if (!TryReadSourceLocalRawPointerElementFacts(
+        stream,
+        source,
+        typeToken,
+        elementType,
+        elementSize,
+        elementAlignment,
+        fieldTypeCode,
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack MirValueId pointerStorage = MirStackAlloc(instrs, SourceRawPointerStorageByteExtent(), SourceRawPointerStorageByteAlignment());
+    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        nameStart,
+        nameLength,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        false,
+        false,
+        0,
+        0,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+    if (localRoots.Add(0) == 0
+        || localTypes.Add(SourceLocalTypeCodeStoredPointer()) == 0
+        || localOverrideValues.Add(pointerStorage.Index()) == 0
+        || sourceValueFacts.Add(new ValueFacts()) == 0)
+    {
+        return false;
+    }
+
+    stack mut ScalarStorageLocal pointerLocal = new();
+    pointerLocal.Start = nameStart;
+    pointerLocal.Length = nameLength;
+    pointerLocal.ParamIndex = pointerLocalIndex;
+    pointerLocal.StorageValue = pointerStorage.Index();
+    pointerLocal.FieldAlignment = SourceRawPointerStorageByteAlignment();
+    pointerLocal.FieldType = MirType.Ptr;
+    pointerLocal.Mutable = true;
+    return scalarStorageLocals.Add(pointerLocal) != 0;
+}
+
+internal fn bool TryDeclareUninitializedScalarStorageLocal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    u64[0 2 ** 63 - 1] nameStart,
+    u64[0 2 ** 63 - 1] nameLength,
+    u32[0 max] scalarTypeToken,
+    MirType scalarFieldType,
+    mut borrow IrTable<ParamName> params,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> localRoots,
+    mut borrow IrTable<u32[0 max]> localTypes,
+    mut borrow IrTable<u32[0 max]> localOverrideValues,
+    mut borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<ScalarStorageLocal> scalarStorageLocals)
+{
+    if (!SelfHostedLocalDeclarationHasMut(stream, statementStart, statementEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] scalarAllocationSize = TypeKnownByteExtentForLocal(stream, source, scalarTypeToken);
+    stack u32[0 max] scalarAllocationAlign = TypeKnownByteAlignment(stream, source, scalarTypeToken);
+    stack u32[0 max] scalarLocalTypeCode = SourceLocalStoredScalarTypeCodeForMirType(scalarFieldType);
+    if (scalarAllocationSize == 0
+        || scalarAllocationAlign == 0
+        || !SourceLocalTypeCodeIsStoredScalar(scalarLocalTypeCode))
+    {
+        return false;
+    }
+
+    stack MirValueId scalarStorage = MirStackAlloc(instrs, scalarAllocationSize, scalarAllocationAlign);
+    stack u32[0 max] scalarLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+    if (localRoots.Add(0) == 0
+        || localTypes.Add(scalarLocalTypeCode) == 0
+        || localOverrideValues.Add(scalarStorage.Index()) == 0
+        || sourceValueFacts.Add(new ValueFacts()) == 0)
+    {
+        return false;
+    }
+
+    stack mut ScalarStorageLocal scalarLocal = new();
+    scalarLocal.Start = nameStart;
+    scalarLocal.Length = nameLength;
+    scalarLocal.ParamIndex = scalarLocalIndex;
+    scalarLocal.StorageValue = scalarStorage.Index();
+    scalarLocal.FieldAlignment = scalarAllocationAlign;
+    scalarLocal.FieldType = scalarFieldType;
+    scalarLocal.Mutable = true;
+    return scalarStorageLocals.Add(scalarLocal) != 0;
+}
+
+internal fn bool TryGetSourceEnumOwnerDeclarationForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerToken,
+    out u32[0 max] ownerDeclarationIndex,
+    out Compiler.Parsing.DeclItem enumItem)
+{
+    ownerDeclarationIndex = 0;
+    enumItem = new();
+
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.Declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack Compiler.Parsing.DeclItem item = moduleFacts.Declarations.ItemAt(index);
+        if (item.Kind == Compiler.Parsing.DeclarationKind.Enum
+            && item.NameToken != 0
+            && SourceLocalTokenTextEqualsToken(stream, source, ownerToken, item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            enumItem = item;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceLocalTokenTextEqualsToken(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] left, u32[0 max] right)
+{
+    stack u64[0 2 ** 63 - 1] leftIndex = (u64[0 2 ** 63 - 1])left;
+    stack u64[0 2 ** 63 - 1] rightIndex = (u64[0 2 ** 63 - 1])right;
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt(leftIndex);
+    if (length != stream.LengthAt(rightIndex))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] leftStart = stream.StartAt(leftIndex);
+    stack u64[0 2 ** 63 - 1] rightStart = stream.StartAt(rightIndex);
+    stack mut u64[0 2 ** 63 - 1] offset = 0;
+    while willexit (offset < length)
+    {
+        if (source[leftStart + offset] != source[rightStart + offset])
+        {
+            return false;
+        }
+
+        offset = offset + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryGetSourceEnumVariantOrdinalForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    Compiler.Parsing.DeclItem enumItem,
+    u32[0 max] variantToken,
+    out u32[0 max] variantOrdinal)
+{
+    variantOrdinal = 0;
+    stack i64[min max] bodyOpenSigned = FirstTokenOfKindAfter(stream, TokenKind.LBrace, (u64[0 2 ** 63 - 1])enumItem.KeywordToken);
+    if (bodyOpenSigned < 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] bodyOpen = (u32[0 max])bodyOpenSigned;
+    stack u32[0 max] bodyClose = MatchingBraceForMirLowering(stream, bodyOpen);
+    if (bodyClose == bodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = (u64[0 2 ** 63 - 1])bodyOpen + 1;
+    while willexit (scan < (u64[0 2 ** 63 - 1])bodyClose)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            if (SourceLocalTokenTextEqualsToken(stream, source, (u32[0 max])scan, variantToken))
+            {
+                return true;
+            }
+
+            variantOrdinal = variantOrdinal + 1;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrace || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrace || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] SourceResolvedFieldTypeCodeForTypedEnumPayload(TypedSignatureTypeKind typeKind, u32[0 max] bitWidth)
+{
+    if (typeKind == TypedSignatureTypeKind.Bool)
+    {
+        return SourceResolvedFieldTypeCodeBool();
+    }
+
+    if (typeKind == TypedSignatureTypeKind.Integer)
+    {
+        if (bitWidth == 8)
+        {
+            return SourceResolvedFieldTypeCodeI8();
+        }
+
+        if (bitWidth == 16)
+        {
+            return SourceResolvedFieldTypeCodeI16();
+        }
+
+        if (bitWidth == 32)
+        {
+            return SourceResolvedFieldTypeCodeI32();
+        }
+
+        if (bitWidth == 64 || bitWidth == 0)
+        {
+            return SourceResolvedFieldTypeCodeI64();
+        }
+    }
+
+    return SourceResolvedFieldTypeCodeInvalid();
+}

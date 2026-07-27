@@ -1,0 +1,72 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallMemberDependencies
+internal fn bool BuildTypedMemberCallDependencyTables(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedFieldDeclarationTable fields,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    out TypedCallExpressionTable calls,
+    out TypedMemberExpressionTable members)
+{
+    calls = new();
+    members = new();
+
+    stack mut TypedMemberExpressionTable emptyMembers = new();
+    stack mut TypedCallExpressionTable builtCallsTable = new();
+    stack mut TypedMemberExpressionTable builtMembersTable = new();
+    switch (BuildTypedCallExpressionsFromDependencies(source, stream, declarations, signatures, literals, identifiers, emptyMembers))
+    {
+        case ParseResult<TypedCallExpressionTable>.Err(var callError):
+            return false;
+        case ParseResult<TypedCallExpressionTable>.Ok(var builtCalls):
+            builtCallsTable = builtCalls;
+    }
+
+    switch (BuildTypedMemberExpressionsFromDependencies(source, stream, declarations, signatures, identifiers, builtCallsTable, fields))
+    {
+        case ParseResult<TypedMemberExpressionTable>.Err(var memberError):
+            return false;
+        case ParseResult<TypedMemberExpressionTable>.Ok(var builtMembers):
+            builtMembersTable = builtMembers;
+    }
+
+    switch (BuildTypedCallExpressionsFromDependencies(source, stream, declarations, signatures, literals, identifiers, builtMembersTable))
+    {
+        case ParseResult<TypedCallExpressionTable>.Err(var callError):
+            return false;
+        case ParseResult<TypedCallExpressionTable>.Ok(var builtCalls):
+            builtCallsTable = builtCalls;
+    }
+
+    switch (BuildTypedMemberExpressionsFromDependencies(source, stream, declarations, signatures, identifiers, builtCallsTable, fields))
+    {
+        case ParseResult<TypedMemberExpressionTable>.Err(var memberError):
+            return false;
+        case ParseResult<TypedMemberExpressionTable>.Ok(var builtMembers):
+            builtMembersTable = builtMembers;
+    }
+
+    switch (BuildTypedCallExpressionsFromDependencies(source, stream, declarations, signatures, literals, identifiers, builtMembersTable))
+    {
+        case ParseResult<TypedCallExpressionTable>.Err(var callError):
+            return false;
+        case ParseResult<TypedCallExpressionTable>.Ok(var builtCalls):
+            builtCallsTable = builtCalls;
+    }
+
+    calls = builtCallsTable;
+    members = builtMembersTable;
+    return true;
+}

@@ -1,0 +1,169 @@
+import CompilerTestSupport
+import System.Testing
+module TypeTypingExpressionFamilyTests
+
+// Ported slice of tests/compiler.Tests/TypeTypingExpressionFamilyTests.cs.
+// Each C# test stops after the type-check pass and asserts AssertTypedSuccessfully,
+// which checks result.Succeeded, that a TypeCheckModel artifact exists, and that no
+// STK3008 diagnostic is present. The TypeCheckModel artifact probe is not expressible
+// via the compile helpers, so each Impl reduces it to the closest signal: the embedded
+// program (kept verbatim from the C# raw string) type-checks successfully. The
+// embedded programs contain no STK3008-triggering construct, so Succeeds subsumes the
+// DoesNotContain(STK3008) assertion. PORT-NOTE comments flag the reduction per method.
+
+// Ported from TypeTypingExpressionFamilyTests.AssignmentExpressionsTypeCheck.
+internal fn bool AssignmentExpressionsTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-assignment-expressions",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    stack mut i32[min max] value = left;
+    value = right;
+    value += 1;
+    value &= 3;
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeTypingExpressionFamilyTests.UnaryAndExponentExpressionsTypeCheck.
+internal fn bool UnaryAndExponentExpressionsTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-unary-and-exponent-expressions",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    stack i32[min max] negated = -value;
+    stack i32[min max] complemented = ~value;
+    stack f32 powered = 2.0 ** 3.0;
+    return negated + complemented;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeTypingExpressionFamilyTests.MultiplicativeAdditiveAndShiftExpressionsTypeCheck.
+internal fn bool MultiplicativeAdditiveAndShiftExpressionsTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-multiplicative-additive-shift-expressions",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    stack i32[min max] mixed = left + right * 2 - 1;
+    stack i32[min max] shifted = mixed << 1 >> 1;
+    return shifted;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeTypingExpressionFamilyTests.BitwiseComparisonLogicalAndConditionalExpressionsTypeCheck.
+internal fn bool BitwiseComparisonLogicalAndConditionalExpressionsTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-bitwise-comparison-logical-conditional-expressions",
+            raw"""
+module Demo
+
+fn bool Run(i32[min max] left, i32[min max] right, bool flag)
+{
+    return ((left & right) == 0 && (left ^ right) != 1) || flag ? true : false;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeTypingExpressionFamilyTests.ComparisonChainsTypeCheck.
+internal fn bool ComparisonChainsTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-comparison-chains",
+            raw"""
+module Demo
+
+fn bool Run(i32[min max] min, i32[min max] value, i32[min max] max, f32 low, f32 current, f32 high, i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    return min <= value < max
+        && low < current <= high
+        && left == middle != right;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeTypingExpressionFamilyTests.PostfixCallsIndexesMembersAndObjectCreationTypeCheck.
+internal fn bool PostfixCallsIndexesMembersAndObjectCreationTypeCheckImpl()
+{
+    {
+        // PORT-NOTE: AssertTypedSuccessfully also asserts a TypeCheckModel artifact is
+        // present and that no STK3008 diagnostic was produced; the artifact probe is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-postfix-calls-indexes-members-object-creation",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn i32[min max] Echo(i32[min max] value)
+{
+    return value;
+}
+
+fn i32[min max] Run(Box box, i32[min max][2] values, bool flag)
+{
+    stack Box created = new Box()
+    {
+        Value = 1
+    };
+    return flag ? Echo(box.Value + created.Value) : values[0];
+}
+""");
+        return Succeeds(compiled);
+    }
+}

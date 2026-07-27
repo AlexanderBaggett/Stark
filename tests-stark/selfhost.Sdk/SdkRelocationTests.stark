@@ -1,0 +1,412 @@
+import Compiler.Sdk
+import System.Cryptography.Sha256
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.IO.Path
+import System.Memory
+import System.Runtime.Buffer
+import System.Testing
+import System.Text
+[Collection("sdk")]
+module SdkRelocationTests
+
+const SharedRelocatableSdkFixtureRoot = "../../tests/fixtures/sdk-cross-stage";
+
+finite law bool RelocationIoSucceeded(IOStatus status)
+{
+    return status == IOStatus.Ok;
+}
+
+fn bool CopySharedRelocationFixtureFile(
+    mut borrow TempDirectory fixture,
+    ascii sourceRelativePath,
+    ascii destinationRelativePath)
+    where overlap_all(fixture),
+          overlap(sourceRelativePath, destinationRelativePath)
+{
+    stack mut OwnedAscii sourcePath = new();
+    if (TryJoin(
+            sourcePath,
+            SharedRelocatableSdkFixtureRoot,
+            sourceRelativePath) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii destinationPath = new();
+    switch (fixture.PathFor(destinationRelativePath))
+    {
+        case IOResult<OwnedAscii>.Err(var pathError):
+            return false;
+        case IOResult<OwnedAscii>.Ok(var path):
+            destinationPath = path;
+    }
+
+    switch (ReadAllBytes(sourcePath.View()))
+    {
+        case IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+        case IOResult<DynamicByteBuffer>.Ok(var contents):
+            stack mut DynamicByteBuffer bytes = contents;
+            return RelocationIoSucceeded(WriteAllBytes(destinationPath.View(), bytes));
+    }
+}
+
+fn bool PrepareSharedRelocatableSdkFixture(mut borrow TempDirectory fixture)
+{
+    if (!RelocationIoSucceeded(fixture.CreateDirectory("sdk-a"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/packages"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/stdlib"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/stdlib/src"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/vendor"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/vendor/include"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/vendor/native"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/vendor/runtime"))
+        || !RelocationIoSucceeded(fixture.CreateDirectory("sdk-a/vendor/src")))
+    {
+        return false;
+    }
+
+    return CopySharedRelocationFixtureFile(
+            fixture,
+            "valid.sdk.json",
+            "sdk-a/sdk.json")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "packages/System.starkpkg",
+            "sdk-a/packages/System.starkpkg")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "packages/libSystem.a",
+            "sdk-a/packages/libSystem.a")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "packages/Vendor.Raylib.starkpkg",
+            "sdk-a/packages/Vendor.Raylib.starkpkg")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "packages/libVendor.Raylib.a",
+            "sdk-a/packages/libVendor.Raylib.a")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "vendor/native/libraylib.a",
+            "sdk-a/vendor/native/libraylib.a")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "vendor/runtime/libraylib.dylib",
+            "sdk-a/vendor/runtime/libraylib.dylib")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "vendor/LICENSE",
+            "sdk-a/vendor/LICENSE")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "vendor/include/raylib.h",
+            "sdk-a/vendor/include/raylib.h")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "stdlib/src/System.Core.stark",
+            "sdk-a/stdlib/src/System.Core.stark")
+        && CopySharedRelocationFixtureFile(
+            fixture,
+            "vendor/src/Vendor.Raylib.stark",
+            "sdk-a/vendor/src/Vendor.Raylib.stark");
+}
+
+fn bool InitializeRelocationTarget(mut borrow SdkTargetDescriptor target)
+{
+    if (InitializeSdkTargetDescriptor(
+            target,
+            "macos-arm64",
+            "arm64-apple-macosx11.0.0",
+            "e-m:o-i64:64-i128:128-n32:64-S128",
+            "arm64",
+            "macos",
+            "darwin",
+            64,
+            SdkTargetEndianness.Little,
+            "apple-m2",
+            "pic",
+            "small",
+            "lp64",
+            "11.0") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return AddSdkTargetBaselineFeature(target, "+aes") == MemoryStatus.Ok
+        && AddSdkTargetBaselineFeature(target, "+neon") == MemoryStatus.Ok;
+}
+
+fn bool SharedRelocationTargetFactsMatch(mut borrow SdkManifest manifest)
+{
+    return manifest.Kind() == SdkDistributionKind.Development
+        && System.Text.Equals(manifest.SdkVersion(), "cross-stage-fixture")
+        && System.Text.Equals(manifest.CompilerCompatibility(), "stark-sdk-v1")
+        && manifest.PackageFormatVersion() == 2
+        && System.Text.Equals(manifest.Target().Id(), "macos-arm64")
+        && System.Text.Equals(
+            manifest.Target().LlvmTriple(),
+            "arm64-apple-macosx11.0.0")
+        && System.Text.Equals(
+            manifest.Target().DataLayout(),
+            "e-m:o-i64:64-i128:128-n32:64-S128")
+        && System.Text.Equals(manifest.Target().Architecture(), "arm64")
+        && System.Text.Equals(manifest.Target().OperatingSystem(), "macos")
+        && System.Text.Equals(manifest.Target().Abi(), "darwin")
+        && manifest.Target().PointerBitWidth() == 64
+        && manifest.Target().Endianness() == SdkTargetEndianness.Little
+        && System.Text.Equals(manifest.Target().BaselineCpu(), "apple-m2")
+        && manifest.Target().BaselineFeatureCount() == 2
+        && System.Text.Equals(manifest.Target().BaselineFeatureAt(0), "+aes")
+        && System.Text.Equals(manifest.Target().BaselineFeatureAt(1), "+neon")
+        && System.Text.Equals(manifest.Target().RelocationModel(), "pic")
+        && System.Text.Equals(manifest.Target().CodeModel(), "small")
+        && System.Text.Equals(manifest.Target().CDataModel(), "lp64")
+        && System.Text.Equals(
+            manifest.Target().MinimumOperatingSystemVersion(),
+            "11.0");
+}
+
+fn bool SharedRelocationPackageFactsMatch(
+    mut borrow SdkManifest manifest,
+    u64[0 2 ** 63 - 1] systemIndex,
+    u64[0 2 ** 63 - 1] vendorIndex)
+{
+    return systemIndex == 0
+        && vendorIndex == 1
+        && System.Text.Equals(manifest.PackageAt(systemIndex).Id(), "System")
+        && System.Text.Equals(
+            manifest.PackageAt(systemIndex).ImagePath(),
+            "packages/System.starkpkg")
+        && System.Text.Equals(
+            manifest.PackageAt(systemIndex).LibraryPath(),
+            "packages/libSystem.a")
+        && System.Text.Equals(
+            manifest.PackageAt(systemIndex).ApiHash(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        && System.Text.Equals(
+            manifest.PackageAt(systemIndex).ContentHash(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        && System.Text.Equals(manifest.PackageAt(vendorIndex).Id(), "Vendor.Raylib")
+        && System.Text.Equals(manifest.PackageAt(vendorIndex).Version(), "6.0.0")
+        && System.Text.Equals(manifest.PackageAt(vendorIndex).Profile(), "release")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).ImagePath(),
+            "packages/Vendor.Raylib.starkpkg")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).LibraryPath(),
+            "packages/libVendor.Raylib.a")
+        && manifest.PackageAt(vendorIndex).DependencyCount() == 1
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).DependencyAt(0).PackageId(),
+            "System")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).DependencyAt(0).ApiHash(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).DependencyAt(0).ContentHash(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().ArtifactAt(0),
+            "vendor/native/libraylib.a")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().IncludeDirectoryAt(0),
+            "vendor/include")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().LibraryDirectoryAt(0),
+            "vendor/native")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().RuntimeFileAt(0),
+            "vendor/runtime/libraylib.dylib")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().LicenseFileAt(0),
+            "vendor/LICENSE")
+        && manifest.PackageAt(vendorIndex).Native().FileChecksumCount() == 3
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().FileChecksumAt(0).Path(),
+            "vendor/LICENSE")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().FileChecksumAt(1).Path(),
+            "vendor/native/libraylib.a")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().FileChecksumAt(2).Path(),
+            "vendor/runtime/libraylib.dylib")
+        && manifest.PackageAt(vendorIndex).Native().LibraryCount() == 1
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().LibraryAt(0),
+            "raylib")
+        && manifest.PackageAt(vendorIndex).Native().LinkArgumentCount() == 2
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().LinkArgumentAt(0),
+            "-framework")
+        && System.Text.Equals(
+            manifest.PackageAt(vendorIndex).Native().LinkArgumentAt(1),
+            "Cocoa")
+        && manifest.DevelopmentSourceRootCount() == 2
+        && System.Text.Equals(manifest.DevelopmentSourceRootAt(0), "stdlib/src")
+        && System.Text.Equals(manifest.DevelopmentSourceRootAt(1), "vendor/src");
+}
+
+unsafe fn bool ObserveSharedRelocatableSdk(
+    ascii sdkRoot,
+    out OwnedAscii cacheIdentity)
+    where overlap(sdkRoot, cacheIdentity)
+{
+    cacheIdentity = new();
+    stack mut SdkTargetDescriptor activeTarget = new();
+    if (!InitializeRelocationTarget(activeTarget))
+    {
+        return false;
+    }
+
+    unsafe
+    {
+        switch (ActivateSdkSession(
+            sdkRoot,
+            "",
+            "",
+            "/ignored/bin/stark",
+            activeTarget,
+            SdkPayloadValidationMode.Deferred))
+        {
+            case SdkActivationResult.Err(var activationError):
+                return false;
+            case SdkActivationResult.Ok(var activated):
+                stack mut SdkActivationSession session = activated;
+                stack mut u64[0 2 ** 63 - 1] systemIndex = 0;
+                stack mut u64[0 2 ** 63 - 1] vendorIndex = 0;
+                if (session.PayloadValidationMode() != SdkPayloadValidationMode.Deferred
+                    || session.Root().Origin() != SdkRootOrigin.CommandLine
+                    || !System.Text.Equals(session.Root().RootPath(), sdkRoot)
+                    || session.PackageIndex().PackageCount() != 2
+                    || session.PackageIndex().ModuleCount() != 2
+                    || !session.TryGetPackageIndexForModule("System.Core", systemIndex)
+                    || !session.TryGetPackageIndexForModule("Vendor.Raylib", vendorIndex)
+                    || !SharedRelocationTargetFactsMatch(session.Manifest())
+                    || !SharedRelocationPackageFactsMatch(
+                        session.Manifest(),
+                        systemIndex,
+                        vendorIndex))
+                {
+                    return false;
+                }
+
+                stack ascii[2] importedModuleStorage =
+                {
+                    "System.Core", "Vendor.Raylib"
+                };
+                stack ascii[] importedModules = importedModuleStorage;
+                stack mut SdkDiagnosticList diagnostics = new();
+                stack mut SdkPackageLinkPlan plan = new();
+                if (BuildSelectedSdkPackageLinkPlan(
+                        plan,
+                        session.Manifest(),
+                        session.PackageIndex(),
+                        importedModules,
+                        diagnostics) != MemoryStatus.Ok
+                    || diagnostics.Count() != 0
+                    || plan.PackageCount() != 2
+                    || plan.PackageIndexAt(0) != vendorIndex
+                    || plan.PackageIndexAt(1) != systemIndex)
+                {
+                    return false;
+                }
+
+                for willexit (
+                    stack mut u64[0 2 ** 63 - 1] selectedIndex = 0;
+                    selectedIndex < plan.PackageCount();
+                    selectedIndex += 1)
+                {
+                    stack mut bool found = false;
+                    if (session.ValidatePackagePayloadAt(
+                            plan.PackageIndexAt(selectedIndex),
+                            diagnostics,
+                            found) != MemoryStatus.Ok
+                        || !found)
+                    {
+                        return false;
+                    }
+                }
+                if (diagnostics.Count() != 0)
+                {
+                    return false;
+                }
+
+                stack mut OwnedAscii manifestPath = new();
+                if (TryJoin(manifestPath, sdkRoot, "sdk.json") != MemoryStatus.Ok)
+                {
+                    return false;
+                }
+                switch (HashSha256File(manifestPath.View()))
+                {
+                    case Sha256FileResult.Err(var hashError):
+                        return false;
+                    case Sha256FileResult.Ok(var manifestDigest):
+                        switch (BuildStage1SdkCacheIdentity(
+                            manifestDigest,
+                            session.Manifest(),
+                            plan))
+                        {
+                            case SdkCacheIdentityResult.Err(var identityError):
+                                return false;
+                            case SdkCacheIdentityResult.Ok(var built):
+                                stack mut SdkCacheIdentity identity = built;
+                                return SdkSha256TextIsCanonical(identity.Sha256())
+                                    && cacheIdentity.AppendAscii(identity.Sha256())
+                                        == MemoryStatus.Ok;
+                        }
+                }
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool SharedSystemRaylibSdkFixturePreservesFactsAndIdentityAfterRelocation()
+{
+    unsafe
+    {
+        stack mut TempDirectory fixture = new();
+        switch (System.Testing.CreateTempDirectory("stark-stage1-sdk-relocation"))
+        {
+            case IOResult<TempDirectory>.Err(var createError):
+                return false;
+            case IOResult<TempDirectory>.Ok(var created):
+                fixture = created;
+        }
+        if (!PrepareSharedRelocatableSdkFixture(fixture))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii initialRoot = new();
+        stack mut OwnedAscii relocatedRoot = new();
+        switch (fixture.PathFor("sdk-a"))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var path):
+                initialRoot = path;
+        }
+        switch (fixture.PathFor("sdk-b"))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var path):
+                relocatedRoot = path;
+        }
+
+        stack mut OwnedAscii beforeIdentity = new();
+        if (!ObserveSharedRelocatableSdk(initialRoot.View(), beforeIdentity)
+            || !RelocationIoSucceeded(
+                System.FileSystem.Move(initialRoot.View(), relocatedRoot.View())))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii afterIdentity = new();
+        return ObserveSharedRelocatableSdk(relocatedRoot.View(), afterIdentity)
+            && System.Text.Equals(beforeIdentity.View(), afterIdentity.View());
+    }
+}

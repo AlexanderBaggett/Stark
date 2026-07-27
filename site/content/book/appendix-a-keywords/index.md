@@ -56,6 +56,7 @@ program.
 - `doctrine`
 - `alias`
 - `drop`
+- `from`
 - `const`
 
 ## Storage And Types
@@ -82,6 +83,7 @@ program.
 
 - `if`
 - `else`
+- `is`
 - `switch`
 - `case`
 - `default`
@@ -92,6 +94,7 @@ program.
 - `non-deterministic`
 - `willexit`
 - `return`
+- `try`
 - `break`
 - `continue`
 - `where`

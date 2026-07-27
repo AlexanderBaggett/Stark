@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-json-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "JsonTests.stark"
+output = "stdlib-json-tests"

@@ -1,0 +1,158 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+module Compiler.Mir.Validation
+
+
+// Shared structural gate for every MIR phase boundary. Keeping this validator in a
+// focused module lets SSA construction reuse it without importing LLVM emission,
+// source lowering, package codecs, or the rest of the Compiler.Mir facade.
+public finite law bool MirFunctionIsDeclaration(borrow MirFunction function)
+{
+    return function.EntryIndex() == 0
+        && function.FirstBlockIndex() == 0
+        && function.OwnedBlockCount() == 0
+        && function.FirstInstrIndex() == 0
+        && function.OwnedInstrCount() == 0;
+}
+
+public fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow MirFunction func)
+{
+    stack u32[0 max] instrTotal = (u32[0 max])instrs.Count();
+    stack u32[0 max] blockTotal = (u32[0 max])blocks.Count();
+
+    // (1) The block range lies within the block table.
+    if (func.OwnedBlockCount() == 0 || func.FirstBlockIndex() == 0 || func.FirstBlockIndex() + func.OwnedBlockCount() - 1 > blockTotal)
+    {
+        return false;
+    }
+
+    // (2) The entry block is one the function owns.
+    if (func.EntryIndex() < func.FirstBlockIndex() || func.EntryIndex() > func.FirstBlockIndex() + func.OwnedBlockCount() - 1)
+    {
+        return false;
+    }
+
+    // (3) The instruction range lies within the value table (a function may own none).
+    if (func.OwnedInstrCount() > 0 && (func.FirstInstrIndex() == 0 || func.FirstInstrIndex() + func.OwnedInstrCount() - 1 > instrTotal))
+    {
+        return false;
+    }
+
+    // (4) Every owned instruction names existing values (operand 0 = unused is fine).
+    stack mut u32[0 max] vi = func.FirstInstrIndex();
+    stack mut u32[0 max] viRemaining = func.OwnedInstrCount();
+    while willexit (viRemaining > 0)
+    {
+        stack MirInstruction instr = instrs.Get(vi);
+        if (instr.Opcode() == MirOp.TextConstantValue)
+        {
+            // Text constant fields name constant-storage rows and payload facts,
+            // not MIR value operands.
+        }
+        else if (instr.Opcode() == MirOp.ArenaAlloc || instr.Opcode() == MirOp.StackAlloc || instr.Opcode() == MirOp.HeapAlloc)
+        {
+            if (instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.PtrIndexOffset)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.PtrOffset || instr.Opcode() == MirOp.LoadPtr)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.StorePtr)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.ArenaDynamicStorageInit)
+        {
+            if (instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.ArenaDynamicStorageReserve
+            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserve
+            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserveCapacity)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.OperandAIndex() > instrTotal || instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+        {
+            return false;
+        }
+
+        vi = vi + 1;
+        viRemaining = viRemaining - 1;
+    }
+
+    // (5) Every owned block is terminated and names in-range values/blocks.
+    stack mut u32[0 max] bi = func.FirstBlockIndex();
+    stack mut u32[0 max] biRemaining = func.OwnedBlockCount();
+    while willexit (biRemaining > 0)
+    {
+        stack MirBlock blk = blocks.Get(bi);
+        if (!MirBlockFlagsAreValid(blk.Terminator(), blk.FlagBits()))
+        {
+            return false;
+        }
+
+        switch (blk.Terminator())
+        {
+            case MirTermKind.Unterminated:
+                return false;
+            case MirTermKind.Return:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal)
+                {
+                    return false;
+                }
+            case MirTermKind.ReturnVoid:
+                if (blk.Slot0Index() != 0 || blk.Slot1Index() != 0 || blk.Slot2Index() != 0)
+                {
+                    return false;
+                }
+            case MirTermKind.Branch:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > blockTotal)
+                {
+                    return false;
+                }
+            case MirTermKind.CondBranch:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal || blk.Slot1Index() == 0 || blk.Slot1Index() > blockTotal || blk.Slot2Index() == 0 || blk.Slot2Index() > blockTotal)
+                {
+                    return false;
+                }
+            case MirTermKind.TailCall:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal)
+                {
+                    return false;
+                }
+
+                stack MirInstruction payload = instrs.Get(blk.Slot0Index());
+                if (!MirOpIsTailCall(payload.Opcode()))
+                {
+                    return false;
+                }
+        }
+
+        bi = bi + 1;
+        biRemaining = biRemaining - 1;
+    }
+
+    return true;
+}

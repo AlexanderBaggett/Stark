@@ -1,0 +1,1274 @@
+import Compiler.Artifacts
+import Compiler.Diagnostics
+import System.Memory
+import System.Text
+module Compiler.Pipeline
+
+public enum CompilerPhase
+{
+    Parsing,
+    SyntaxModel,
+    Declarations,
+    ModuleResolution,
+    Symbols,
+    Semantics,
+    Typing,
+    Lowering,
+    CodeGeneration,
+    Unknown,
+}
+
+public enum PassExecutionMode
+{
+    SkipOnErrors,
+    RunAlways,
+}
+
+public enum PassExecutionStatus
+{
+    Unknown,
+    Executed,
+    Skipped,
+    Failed,
+}
+
+public enum PipelineError
+{
+    UnknownPass,
+    OutOfMemory,
+    Diagnostic from Compiler.Diagnostics.DiagnosticError,
+}
+
+public enum PipelineStatus
+{
+    [Ok] Ok,
+    [Err] Err(PipelineError),
+}
+
+public enum CompilerPassId
+{
+    Unknown,
+    Parse,
+    SyntaxModel,
+    DeclarationIndex,
+    ModuleGraph,
+    LoadModules,
+    SymbolCatalog,
+    FunctionEffects,
+    TypeCheck,
+    InstantiationOwnership,
+    MonomorphizationPlan,
+    EnumLayout,
+    SemanticValidate,
+    RefineFunctionEffects,
+    SpecializationPlan,
+    SpecializationCodegenStrategy,
+    OwnershipValidate,
+    ValidateLoweringContract,
+    LowerHir,
+    LowerMir,
+    BorrowLiveness,
+    LowerSsa,
+    CleanupSsa,
+    ConstProp,
+    DevirtSsa,
+    InlineSsa,
+    CseConstGraphCallsSsa,
+    ConstLookupTablesSsa,
+    ValueFacts,
+    DynamicStorageSsa,
+    DynamicAppendLoopSsa,
+    SpecializeConstStdlibHelpersSsa,
+    SpecializeAsciiToUnicodeLiteralsSsa,
+    SpecializeConstantTextFormattingSsa,
+    PruneBranches,
+    MemoryOptSsa,
+    AggregateConstructionSsa,
+    OwnershipTrafficSsa,
+    SroaSsa,
+    ShapeBranches,
+    ArithmeticFoldSsa,
+    LowerAbi,
+    ValidateSsa,
+    EmitLlvm,
+}
+
+public inline finite law u32[0 max] CompilerPassCount()
+{
+    return 43;
+}
+
+public finite law ascii CompilerPhaseName(CompilerPhase phase)
+{
+    switch (phase)
+    {
+        case CompilerPhase.Parsing:
+            return "Parsing";
+        case CompilerPhase.SyntaxModel:
+            return "SyntaxModel";
+        case CompilerPhase.Declarations:
+            return "Declarations";
+        case CompilerPhase.ModuleResolution:
+            return "ModuleResolution";
+        case CompilerPhase.Symbols:
+            return "Symbols";
+        case CompilerPhase.Semantics:
+            return "Semantics";
+        case CompilerPhase.Typing:
+            return "Typing";
+        case CompilerPhase.Lowering:
+            return "Lowering";
+        case CompilerPhase.CodeGeneration:
+            return "CodeGeneration";
+        case CompilerPhase.Unknown:
+            return "";
+    }
+}
+
+public finite law ascii PassExecutionModeName(PassExecutionMode mode)
+{
+    switch (mode)
+    {
+        case PassExecutionMode.SkipOnErrors:
+            return "SkipOnErrors";
+        case PassExecutionMode.RunAlways:
+            return "RunAlways";
+    }
+}
+
+public finite law ascii PassExecutionStatusName(PassExecutionStatus status)
+{
+    switch (status)
+    {
+        case PassExecutionStatus.Unknown:
+            return "";
+        case PassExecutionStatus.Executed:
+            return "Executed";
+        case PassExecutionStatus.Skipped:
+            return "Skipped";
+        case PassExecutionStatus.Failed:
+            return "Failed";
+    }
+}
+
+public finite law u32[0 max] CompilerPassOrdinal(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Unknown:
+            return CompilerPassCount();
+        case CompilerPassId.Parse:
+            return 0;
+        case CompilerPassId.SyntaxModel:
+            return 1;
+        case CompilerPassId.DeclarationIndex:
+            return 2;
+        case CompilerPassId.ModuleGraph:
+            return 3;
+        case CompilerPassId.LoadModules:
+            return 4;
+        case CompilerPassId.SymbolCatalog:
+            return 5;
+        case CompilerPassId.FunctionEffects:
+            return 6;
+        case CompilerPassId.TypeCheck:
+            return 7;
+        case CompilerPassId.InstantiationOwnership:
+            return 8;
+        case CompilerPassId.MonomorphizationPlan:
+            return 9;
+        case CompilerPassId.EnumLayout:
+            return 10;
+        case CompilerPassId.SemanticValidate:
+            return 11;
+        case CompilerPassId.RefineFunctionEffects:
+            return 12;
+        case CompilerPassId.SpecializationPlan:
+            return 13;
+        case CompilerPassId.SpecializationCodegenStrategy:
+            return 14;
+        case CompilerPassId.OwnershipValidate:
+            return 15;
+        case CompilerPassId.ValidateLoweringContract:
+            return 16;
+        case CompilerPassId.LowerHir:
+            return 17;
+        case CompilerPassId.LowerMir:
+            return 18;
+        case CompilerPassId.BorrowLiveness:
+            return 19;
+        case CompilerPassId.LowerSsa:
+            return 20;
+        case CompilerPassId.CleanupSsa:
+            return 21;
+        case CompilerPassId.ConstProp:
+            return 22;
+        case CompilerPassId.DevirtSsa:
+            return 23;
+        case CompilerPassId.InlineSsa:
+            return 24;
+        case CompilerPassId.CseConstGraphCallsSsa:
+            return 25;
+        case CompilerPassId.ConstLookupTablesSsa:
+            return 26;
+        case CompilerPassId.ValueFacts:
+            return 27;
+        case CompilerPassId.DynamicStorageSsa:
+            return 28;
+        case CompilerPassId.DynamicAppendLoopSsa:
+            return 29;
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+            return 30;
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+            return 31;
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+            return 32;
+        case CompilerPassId.PruneBranches:
+            return 33;
+        case CompilerPassId.MemoryOptSsa:
+            return 34;
+        case CompilerPassId.AggregateConstructionSsa:
+            return 35;
+        case CompilerPassId.OwnershipTrafficSsa:
+            return 36;
+        case CompilerPassId.SroaSsa:
+            return 37;
+        case CompilerPassId.ShapeBranches:
+            return 38;
+        case CompilerPassId.ArithmeticFoldSsa:
+            return 39;
+        case CompilerPassId.LowerAbi:
+            return 40;
+        case CompilerPassId.ValidateSsa:
+            return 41;
+        case CompilerPassId.EmitLlvm:
+            return 42;
+    }
+}
+
+public finite law CompilerPassId CompilerPassAtOrdinal(u32[0 max] ordinal)
+{
+    switch (ordinal)
+    {
+        case 0:
+            return CompilerPassId.Parse;
+        case 1:
+            return CompilerPassId.SyntaxModel;
+        case 2:
+            return CompilerPassId.DeclarationIndex;
+        case 3:
+            return CompilerPassId.ModuleGraph;
+        case 4:
+            return CompilerPassId.LoadModules;
+        case 5:
+            return CompilerPassId.SymbolCatalog;
+        case 6:
+            return CompilerPassId.FunctionEffects;
+        case 7:
+            return CompilerPassId.TypeCheck;
+        case 8:
+            return CompilerPassId.InstantiationOwnership;
+        case 9:
+            return CompilerPassId.MonomorphizationPlan;
+        case 10:
+            return CompilerPassId.EnumLayout;
+        case 11:
+            return CompilerPassId.SemanticValidate;
+        case 12:
+            return CompilerPassId.RefineFunctionEffects;
+        case 13:
+            return CompilerPassId.SpecializationPlan;
+        case 14:
+            return CompilerPassId.SpecializationCodegenStrategy;
+        case 15:
+            return CompilerPassId.OwnershipValidate;
+        case 16:
+            return CompilerPassId.ValidateLoweringContract;
+        case 17:
+            return CompilerPassId.LowerHir;
+        case 18:
+            return CompilerPassId.LowerMir;
+        case 19:
+            return CompilerPassId.BorrowLiveness;
+        case 20:
+            return CompilerPassId.LowerSsa;
+        case 21:
+            return CompilerPassId.CleanupSsa;
+        case 22:
+            return CompilerPassId.ConstProp;
+        case 23:
+            return CompilerPassId.DevirtSsa;
+        case 24:
+            return CompilerPassId.InlineSsa;
+        case 25:
+            return CompilerPassId.CseConstGraphCallsSsa;
+        case 26:
+            return CompilerPassId.ConstLookupTablesSsa;
+        case 27:
+            return CompilerPassId.ValueFacts;
+        case 28:
+            return CompilerPassId.DynamicStorageSsa;
+        case 29:
+            return CompilerPassId.DynamicAppendLoopSsa;
+        case 30:
+            return CompilerPassId.SpecializeConstStdlibHelpersSsa;
+        case 31:
+            return CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa;
+        case 32:
+            return CompilerPassId.SpecializeConstantTextFormattingSsa;
+        case 33:
+            return CompilerPassId.PruneBranches;
+        case 34:
+            return CompilerPassId.MemoryOptSsa;
+        case 35:
+            return CompilerPassId.AggregateConstructionSsa;
+        case 36:
+            return CompilerPassId.OwnershipTrafficSsa;
+        case 37:
+            return CompilerPassId.SroaSsa;
+        case 38:
+            return CompilerPassId.ShapeBranches;
+        case 39:
+            return CompilerPassId.ArithmeticFoldSsa;
+        case 40:
+            return CompilerPassId.LowerAbi;
+        case 41:
+            return CompilerPassId.ValidateSsa;
+        case 42:
+            return CompilerPassId.EmitLlvm;
+        default:
+            return CompilerPassId.Unknown;
+    }
+}
+
+public finite law ascii CompilerPassName(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Unknown:
+            return "";
+        case CompilerPassId.Parse:
+            return "parse";
+        case CompilerPassId.SyntaxModel:
+            return "syntax-model";
+        case CompilerPassId.DeclarationIndex:
+            return "declaration-index";
+        case CompilerPassId.ModuleGraph:
+            return "module-graph";
+        case CompilerPassId.LoadModules:
+            return "load-modules";
+        case CompilerPassId.SymbolCatalog:
+            return "symbol-catalog";
+        case CompilerPassId.FunctionEffects:
+            return "function-effects";
+        case CompilerPassId.TypeCheck:
+            return "type-check";
+        case CompilerPassId.InstantiationOwnership:
+            return "instantiation-ownership";
+        case CompilerPassId.MonomorphizationPlan:
+            return "monomorphization-plan";
+        case CompilerPassId.EnumLayout:
+            return "enum-layout";
+        case CompilerPassId.SemanticValidate:
+            return "semantic-validate";
+        case CompilerPassId.RefineFunctionEffects:
+            return "refine-function-effects";
+        case CompilerPassId.SpecializationPlan:
+            return "specialization-plan";
+        case CompilerPassId.SpecializationCodegenStrategy:
+            return "specialization-codegen-strategy";
+        case CompilerPassId.OwnershipValidate:
+            return "ownership-validate";
+        case CompilerPassId.ValidateLoweringContract:
+            return "validate-lowering-contract";
+        case CompilerPassId.LowerHir:
+            return "lower-hir";
+        case CompilerPassId.LowerMir:
+            return "lower-mir";
+        case CompilerPassId.BorrowLiveness:
+            return "borrow-liveness";
+        case CompilerPassId.LowerSsa:
+            return "lower-ssa";
+        case CompilerPassId.CleanupSsa:
+            return "cleanup-ssa";
+        case CompilerPassId.ConstProp:
+            return "const-prop";
+        case CompilerPassId.DevirtSsa:
+            return "devirt-ssa";
+        case CompilerPassId.InlineSsa:
+            return "inline-ssa";
+        case CompilerPassId.CseConstGraphCallsSsa:
+            return "cse-const-graph-calls-ssa";
+        case CompilerPassId.ConstLookupTablesSsa:
+            return "const-lookup-tables-ssa";
+        case CompilerPassId.ValueFacts:
+            return "value-facts";
+        case CompilerPassId.DynamicStorageSsa:
+            return "dynamic-storage-ssa";
+        case CompilerPassId.DynamicAppendLoopSsa:
+            return "dynamic-append-loop-ssa";
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+            return "specialize-const-stdlib-helpers-ssa";
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+            return "specialize-ascii-to-unicode-literals-ssa";
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+            return "specialize-constant-text-formatting-ssa";
+        case CompilerPassId.PruneBranches:
+            return "prune-branches";
+        case CompilerPassId.MemoryOptSsa:
+            return "memory-opt-ssa";
+        case CompilerPassId.AggregateConstructionSsa:
+            return "aggregate-construction-ssa";
+        case CompilerPassId.OwnershipTrafficSsa:
+            return "ownership-traffic-ssa";
+        case CompilerPassId.SroaSsa:
+            return "sroa-ssa";
+        case CompilerPassId.ShapeBranches:
+            return "shape-branches";
+        case CompilerPassId.ArithmeticFoldSsa:
+            return "arithmetic-fold-ssa";
+        case CompilerPassId.LowerAbi:
+            return "lower-abi";
+        case CompilerPassId.ValidateSsa:
+            return "validate-ssa";
+        case CompilerPassId.EmitLlvm:
+            return "emit-llvm";
+    }
+}
+
+public fn bool TryParseCompilerPassId(ascii name, out CompilerPassId pass)
+{
+    pass = CompilerPassId.Unknown;
+
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerPassCount())
+    {
+        stack CompilerPassId candidate = CompilerPassAtOrdinal(ordinal);
+        if (System.Text.Equals(CompilerPassName(candidate), name))
+        {
+            pass = candidate;
+            return true;
+        }
+
+        ordinal += 1;
+    }
+
+    return false;
+}
+
+public finite law CompilerPhase CompilerPassPhase(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Parse:
+            return CompilerPhase.Parsing;
+        case CompilerPassId.SyntaxModel:
+            return CompilerPhase.SyntaxModel;
+        case CompilerPassId.DeclarationIndex:
+            return CompilerPhase.Declarations;
+        case CompilerPassId.ModuleGraph:
+            return CompilerPhase.ModuleResolution;
+        case CompilerPassId.LoadModules:
+            return CompilerPhase.ModuleResolution;
+        case CompilerPassId.SymbolCatalog:
+            return CompilerPhase.Symbols;
+        case CompilerPassId.FunctionEffects:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.TypeCheck:
+            return CompilerPhase.Typing;
+        case CompilerPassId.InstantiationOwnership:
+            return CompilerPhase.Typing;
+        case CompilerPassId.MonomorphizationPlan:
+            return CompilerPhase.Typing;
+        case CompilerPassId.EnumLayout:
+            return CompilerPhase.Typing;
+        case CompilerPassId.SemanticValidate:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.RefineFunctionEffects:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.SpecializationPlan:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.SpecializationCodegenStrategy:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.OwnershipValidate:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.ValidateLoweringContract:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.BorrowLiveness:
+            return CompilerPhase.Semantics;
+        case CompilerPassId.LowerHir:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.LowerMir:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.LowerSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.CleanupSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ConstProp:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.DevirtSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.InlineSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.CseConstGraphCallsSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ConstLookupTablesSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ValueFacts:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.DynamicStorageSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.DynamicAppendLoopSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.PruneBranches:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.MemoryOptSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.AggregateConstructionSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.OwnershipTrafficSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.SroaSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ShapeBranches:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ArithmeticFoldSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.LowerAbi:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.ValidateSsa:
+            return CompilerPhase.Lowering;
+        case CompilerPassId.EmitLlvm:
+            return CompilerPhase.CodeGeneration;
+        case CompilerPassId.Unknown:
+            return CompilerPhase.Unknown;
+    }
+}
+
+public finite law PassExecutionMode CompilerPassExecutionMode(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Parse:
+            return PassExecutionMode.RunAlways;
+        default:
+            return PassExecutionMode.SkipOnErrors;
+    }
+}
+
+public finite law u8[0 9] CompilerPassDependencyCount(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Parse:
+        case CompilerPassId.Unknown:
+            return 0;
+        case CompilerPassId.SyntaxModel:
+        case CompilerPassId.DeclarationIndex:
+        case CompilerPassId.ModuleGraph:
+        case CompilerPassId.CleanupSsa:
+        case CompilerPassId.ConstProp:
+        case CompilerPassId.DevirtSsa:
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+        case CompilerPassId.PruneBranches:
+        case CompilerPassId.OwnershipTrafficSsa:
+        case CompilerPassId.SroaSsa:
+        case CompilerPassId.ShapeBranches:
+            return 1;
+        case CompilerPassId.SymbolCatalog:
+        case CompilerPassId.InstantiationOwnership:
+        case CompilerPassId.MonomorphizationPlan:
+        case CompilerPassId.EnumLayout:
+        case CompilerPassId.SpecializationCodegenStrategy:
+        case CompilerPassId.AggregateConstructionSsa:
+            return 2;
+        case CompilerPassId.LoadModules:
+        case CompilerPassId.FunctionEffects:
+        case CompilerPassId.SpecializationPlan:
+        case CompilerPassId.OwnershipValidate:
+        case CompilerPassId.BorrowLiveness:
+        case CompilerPassId.LowerAbi:
+            return 3;
+        case CompilerPassId.TypeCheck:
+        case CompilerPassId.ValueFacts:
+        case CompilerPassId.DynamicStorageSsa:
+        case CompilerPassId.DynamicAppendLoopSsa:
+        case CompilerPassId.ArithmeticFoldSsa:
+            return 4;
+        case CompilerPassId.SemanticValidate:
+        case CompilerPassId.ValidateLoweringContract:
+        case CompilerPassId.LowerMir:
+        case CompilerPassId.LowerSsa:
+        case CompilerPassId.ValidateSsa:
+            return 6;
+        case CompilerPassId.RefineFunctionEffects:
+            return 5;
+        case CompilerPassId.InlineSsa:
+            return 7;
+        case CompilerPassId.LowerHir:
+        case CompilerPassId.EmitLlvm:
+            return 9;
+        case CompilerPassId.CseConstGraphCallsSsa:
+            return 4;
+        case CompilerPassId.ConstLookupTablesSsa:
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+        case CompilerPassId.MemoryOptSsa:
+            return 2;
+    }
+}
+
+public finite law CompilerPassId CompilerPassDependencyAt(CompilerPassId pass, u8[0 max] index)
+{
+    switch (pass)
+    {
+        case CompilerPassId.SyntaxModel:
+            if (index == 0) { return CompilerPassId.Parse; }
+        case CompilerPassId.DeclarationIndex:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+        case CompilerPassId.ModuleGraph:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+        case CompilerPassId.LoadModules:
+            if (index == 0) { return CompilerPassId.Parse; }
+            if (index == 1) { return CompilerPassId.SyntaxModel; }
+            if (index == 2) { return CompilerPassId.ModuleGraph; }
+        case CompilerPassId.SymbolCatalog:
+            if (index == 0) { return CompilerPassId.DeclarationIndex; }
+            if (index == 1) { return CompilerPassId.ModuleGraph; }
+        case CompilerPassId.FunctionEffects:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+            if (index == 1) { return CompilerPassId.SymbolCatalog; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+        case CompilerPassId.TypeCheck:
+            if (index == 0) { return CompilerPassId.Parse; }
+            if (index == 1) { return CompilerPassId.SyntaxModel; }
+            if (index == 2) { return CompilerPassId.ModuleGraph; }
+            if (index == 3) { return CompilerPassId.LoadModules; }
+            if (index == 4) { return CompilerPassId.FunctionEffects; }
+        case CompilerPassId.InstantiationOwnership:
+            if (index == 0) { return CompilerPassId.TypeCheck; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+        case CompilerPassId.MonomorphizationPlan:
+            if (index == 0) { return CompilerPassId.InstantiationOwnership; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+        case CompilerPassId.EnumLayout:
+            if (index == 0) { return CompilerPassId.TypeCheck; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+        case CompilerPassId.SemanticValidate:
+            if (index == 0) { return CompilerPassId.Parse; }
+            if (index == 1) { return CompilerPassId.SyntaxModel; }
+            if (index == 2) { return CompilerPassId.ModuleGraph; }
+            if (index == 3) { return CompilerPassId.FunctionEffects; }
+            if (index == 4) { return CompilerPassId.TypeCheck; }
+            if (index == 5) { return CompilerPassId.EnumLayout; }
+        case CompilerPassId.RefineFunctionEffects:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+            if (index == 2) { return CompilerPassId.FunctionEffects; }
+            if (index == 3) { return CompilerPassId.TypeCheck; }
+            if (index == 4) { return CompilerPassId.SemanticValidate; }
+        case CompilerPassId.SpecializationPlan:
+            if (index == 0) { return CompilerPassId.MonomorphizationPlan; }
+            if (index == 1) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+        case CompilerPassId.SpecializationCodegenStrategy:
+            if (index == 0) { return CompilerPassId.MonomorphizationPlan; }
+            if (index == 1) { return CompilerPassId.SpecializationPlan; }
+        case CompilerPassId.OwnershipValidate:
+            if (index == 0) { return CompilerPassId.Parse; }
+            if (index == 1) { return CompilerPassId.SyntaxModel; }
+            if (index == 2) { return CompilerPassId.ModuleGraph; }
+            if (index == 3) { return CompilerPassId.TypeCheck; }
+            if (index == 4) { return CompilerPassId.SemanticValidate; }
+        case CompilerPassId.ValidateLoweringContract:
+            if (index == 0) { return CompilerPassId.Parse; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+            if (index == 2) { return CompilerPassId.TypeCheck; }
+            if (index == 3) { return CompilerPassId.EnumLayout; }
+            if (index == 4) { return CompilerPassId.SemanticValidate; }
+            if (index == 5) { return CompilerPassId.OwnershipValidate; }
+        case CompilerPassId.LowerHir:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+            if (index == 2) { return CompilerPassId.ModuleGraph; }
+            if (index == 3) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 4) { return CompilerPassId.TypeCheck; }
+            if (index == 5) { return CompilerPassId.SemanticValidate; }
+            if (index == 6) { return CompilerPassId.OwnershipValidate; }
+            if (index == 7) { return CompilerPassId.ValidateLoweringContract; }
+            if (index == 8) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.LowerMir:
+            if (index == 0) { return CompilerPassId.LoadModules; }
+            if (index == 1) { return CompilerPassId.ModuleGraph; }
+            if (index == 2) { return CompilerPassId.TypeCheck; }
+            if (index == 3) { return CompilerPassId.EnumLayout; }
+            if (index == 4) { return CompilerPassId.LowerHir; }
+            if (index == 5) { return CompilerPassId.OwnershipValidate; }
+        case CompilerPassId.BorrowLiveness:
+            if (index == 0) { return CompilerPassId.TypeCheck; }
+            if (index == 1) { return CompilerPassId.OwnershipValidate; }
+            if (index == 2) { return CompilerPassId.LowerMir; }
+        case CompilerPassId.LowerSsa:
+            if (index == 0) { return CompilerPassId.TypeCheck; }
+            if (index == 1) { return CompilerPassId.LowerMir; }
+            if (index == 2) { return CompilerPassId.BorrowLiveness; }
+            if (index == 3) { return CompilerPassId.LoadModules; }
+            if (index == 4) { return CompilerPassId.FunctionEffects; }
+            if (index == 5) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.CleanupSsa:
+            if (index == 0) { return CompilerPassId.LowerSsa; }
+        case CompilerPassId.ConstProp:
+            if (index == 0) { return CompilerPassId.CleanupSsa; }
+        case CompilerPassId.DevirtSsa:
+            if (index == 0) { return CompilerPassId.ConstProp; }
+        case CompilerPassId.InlineSsa:
+            if (index == 0) { return CompilerPassId.DevirtSsa; }
+            if (index == 1) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 2) { return CompilerPassId.SyntaxModel; }
+            if (index == 3) { return CompilerPassId.DeclarationIndex; }
+            if (index == 4) { return CompilerPassId.TypeCheck; }
+            if (index == 5) { return CompilerPassId.MonomorphizationPlan; }
+            if (index == 6) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.CseConstGraphCallsSsa:
+            if (index == 0) { return CompilerPassId.InlineSsa; }
+            if (index == 1) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 2) { return CompilerPassId.SemanticValidate; }
+            if (index == 3) { return CompilerPassId.TypeCheck; }
+        case CompilerPassId.ConstLookupTablesSsa:
+            if (index == 0) { return CompilerPassId.CseConstGraphCallsSsa; }
+            if (index == 1) { return CompilerPassId.TypeCheck; }
+        case CompilerPassId.ValueFacts:
+            if (index == 0) { return CompilerPassId.ConstLookupTablesSsa; }
+            if (index == 1) { return CompilerPassId.SemanticValidate; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+            if (index == 3) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.DynamicStorageSsa:
+            if (index == 0) { return CompilerPassId.ValueFacts; }
+            if (index == 1) { return CompilerPassId.SemanticValidate; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+            if (index == 3) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.DynamicAppendLoopSsa:
+            if (index == 0) { return CompilerPassId.DynamicStorageSsa; }
+            if (index == 1) { return CompilerPassId.SemanticValidate; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+            if (index == 3) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+            if (index == 0) { return CompilerPassId.DynamicStorageSsa; }
+            if (index == 1) { return CompilerPassId.TypeCheck; }
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+            if (index == 0) { return CompilerPassId.SpecializeConstStdlibHelpersSsa; }
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+            if (index == 0) { return CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa; }
+        case CompilerPassId.PruneBranches:
+            if (index == 0) { return CompilerPassId.SpecializeConstantTextFormattingSsa; }
+        case CompilerPassId.MemoryOptSsa:
+            if (index == 0) { return CompilerPassId.PruneBranches; }
+            if (index == 1) { return CompilerPassId.RefineFunctionEffects; }
+        case CompilerPassId.AggregateConstructionSsa:
+            if (index == 0) { return CompilerPassId.MemoryOptSsa; }
+            if (index == 1) { return CompilerPassId.TypeCheck; }
+        case CompilerPassId.OwnershipTrafficSsa:
+            if (index == 0) { return CompilerPassId.AggregateConstructionSsa; }
+        case CompilerPassId.SroaSsa:
+            if (index == 0) { return CompilerPassId.OwnershipTrafficSsa; }
+        case CompilerPassId.ShapeBranches:
+            if (index == 0) { return CompilerPassId.SroaSsa; }
+        case CompilerPassId.ArithmeticFoldSsa:
+            if (index == 0) { return CompilerPassId.ShapeBranches; }
+            if (index == 1) { return CompilerPassId.SemanticValidate; }
+            if (index == 2) { return CompilerPassId.LoadModules; }
+            if (index == 3) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.LowerAbi:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+            if (index == 1) { return CompilerPassId.TypeCheck; }
+            if (index == 2) { return CompilerPassId.EnumLayout; }
+            if (index == 3) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 4) { return CompilerPassId.LowerHir; }
+            if (index == 5) { return CompilerPassId.ArithmeticFoldSsa; }
+        case CompilerPassId.ValidateSsa:
+            if (index == 0) { return CompilerPassId.TypeCheck; }
+            if (index == 1) { return CompilerPassId.LoadModules; }
+            if (index == 2) { return CompilerPassId.EnumLayout; }
+            if (index == 3) { return CompilerPassId.ArithmeticFoldSsa; }
+            if (index == 4) { return CompilerPassId.LowerAbi; }
+            if (index == 5) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.EmitLlvm:
+            if (index == 0) { return CompilerPassId.SyntaxModel; }
+            if (index == 1) { return CompilerPassId.RefineFunctionEffects; }
+            if (index == 2) { return CompilerPassId.TypeCheck; }
+            if (index == 3) { return CompilerPassId.EnumLayout; }
+            if (index == 4) { return CompilerPassId.SemanticValidate; }
+            if (index == 5) { return CompilerPassId.MemoryOptSsa; }
+            if (index == 6) { return CompilerPassId.LowerAbi; }
+            if (index == 7) { return CompilerPassId.ValidateSsa; }
+            if (index == 8) { return CompilerPassId.SpecializationCodegenStrategy; }
+        case CompilerPassId.Parse:
+        case CompilerPassId.Unknown:
+    }
+
+    return CompilerPassId.Unknown;
+}
+
+public finite law bool CompilerPassHasDirectDependency(CompilerPassId pass, CompilerPassId dependency)
+{
+    stack mut u8[0 max] index = 0;
+    stack u8[0 9] count = CompilerPassDependencyCount(pass);
+    while willexit (index < count)
+    {
+        if (CompilerPassDependencyAt(pass, index) == dependency)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool CompilerPassDependenciesAreOrdered(CompilerPassId pass)
+{
+    if (pass == CompilerPassId.Unknown)
+    {
+        return false;
+    }
+
+    stack u32[0 max] passOrdinal = CompilerPassOrdinal(pass);
+    stack mut u8[0 max] index = 0;
+    stack u8[0 9] count = CompilerPassDependencyCount(pass);
+    while willexit (index < count)
+    {
+        stack CompilerPassId dependency = CompilerPassDependencyAt(pass, index);
+        if (dependency == CompilerPassId.Unknown || CompilerPassOrdinal(dependency) >= passOrdinal)
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+public finite law bool DefaultCompilerPassGraphIsOrdered()
+{
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < CompilerPassCount())
+    {
+        if (!CompilerPassDependenciesAreOrdered(CompilerPassAtOrdinal(ordinal)))
+        {
+            return false;
+        }
+
+        ordinal += 1;
+    }
+
+    return true;
+}
+
+public finite law u8[0 2] CompilerPassOutputArtifactCount(CompilerPassId pass)
+{
+    switch (pass)
+    {
+        case CompilerPassId.ModuleGraph:
+        case CompilerPassId.RefineFunctionEffects:
+        case CompilerPassId.BorrowLiveness:
+        case CompilerPassId.DynamicStorageSsa:
+        case CompilerPassId.DynamicAppendLoopSsa:
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+        case CompilerPassId.PruneBranches:
+        case CompilerPassId.MemoryOptSsa:
+        case CompilerPassId.AggregateConstructionSsa:
+        case CompilerPassId.OwnershipTrafficSsa:
+        case CompilerPassId.SroaSsa:
+        case CompilerPassId.ShapeBranches:
+        case CompilerPassId.ArithmeticFoldSsa:
+            return 2;
+        case CompilerPassId.ValidateSsa:
+        case CompilerPassId.Unknown:
+            return 0;
+        default:
+            return 1;
+    }
+}
+
+public finite law CompilerArtifactKind CompilerPassOutputArtifactAt(CompilerPassId pass, u8[0 max] index)
+{
+    switch (pass)
+    {
+        case CompilerPassId.Parse:
+            if (index == 0) { return CompilerArtifactKind.ParseResult; }
+        case CompilerPassId.SyntaxModel:
+            if (index == 0) { return CompilerArtifactKind.SyntaxModel; }
+        case CompilerPassId.DeclarationIndex:
+            if (index == 0) { return CompilerArtifactKind.DeclarationIndex; }
+        case CompilerPassId.ModuleGraph:
+            if (index == 0) { return CompilerArtifactKind.ModuleGraph; }
+            if (index == 1) { return CompilerArtifactKind.SourceModuleParseCache; }
+        case CompilerPassId.LoadModules:
+            if (index == 0) { return CompilerArtifactKind.LoadedModules; }
+        case CompilerPassId.SymbolCatalog:
+            if (index == 0) { return CompilerArtifactKind.SymbolCatalog; }
+        case CompilerPassId.FunctionEffects:
+            if (index == 0) { return CompilerArtifactKind.FunctionEffects; }
+        case CompilerPassId.TypeCheck:
+            if (index == 0) { return CompilerArtifactKind.TypeCheckModel; }
+        case CompilerPassId.InstantiationOwnership:
+            if (index == 0) { return CompilerArtifactKind.InstantiationOwnership; }
+        case CompilerPassId.MonomorphizationPlan:
+            if (index == 0) { return CompilerArtifactKind.MonomorphizationPlan; }
+        case CompilerPassId.EnumLayout:
+            if (index == 0) { return CompilerArtifactKind.EnumLayoutModel; }
+        case CompilerPassId.SemanticValidate:
+            if (index == 0) { return CompilerArtifactKind.SemanticValidation; }
+        case CompilerPassId.RefineFunctionEffects:
+            if (index == 0) { return CompilerArtifactKind.FunctionEffects; }
+            if (index == 1) { return CompilerArtifactKind.ClosedWorldOptimization; }
+        case CompilerPassId.SpecializationPlan:
+            if (index == 0) { return CompilerArtifactKind.SpecializationPlan; }
+        case CompilerPassId.SpecializationCodegenStrategy:
+            if (index == 0) { return CompilerArtifactKind.SpecializationCodegenStrategy; }
+        case CompilerPassId.OwnershipValidate:
+            if (index == 0) { return CompilerArtifactKind.OwnershipValidation; }
+        case CompilerPassId.ValidateLoweringContract:
+            if (index == 0) { return CompilerArtifactKind.LoweringContractValidation; }
+        case CompilerPassId.LowerHir:
+            if (index == 0) { return CompilerArtifactKind.HighLevelIr; }
+        case CompilerPassId.LowerMir:
+            if (index == 0) { return CompilerArtifactKind.MidLevelIr; }
+        case CompilerPassId.BorrowLiveness:
+            if (index == 0) { return CompilerArtifactKind.OwnershipValidation; }
+            if (index == 1) { return CompilerArtifactKind.MidLevelIr; }
+        case CompilerPassId.LowerSsa:
+            if (index == 0) { return CompilerArtifactKind.SsaIr; }
+        case CompilerPassId.CleanupSsa:
+        case CompilerPassId.ConstProp:
+        case CompilerPassId.DevirtSsa:
+        case CompilerPassId.InlineSsa:
+        case CompilerPassId.CseConstGraphCallsSsa:
+        case CompilerPassId.ConstLookupTablesSsa:
+            if (index == 0) { return CompilerArtifactKind.OptimizedSsaIr; }
+        case CompilerPassId.ValueFacts:
+            if (index == 0) { return CompilerArtifactKind.SsaValueFacts; }
+        case CompilerPassId.DynamicStorageSsa:
+        case CompilerPassId.DynamicAppendLoopSsa:
+        case CompilerPassId.SpecializeConstStdlibHelpersSsa:
+        case CompilerPassId.SpecializeAsciiToUnicodeLiteralsSsa:
+        case CompilerPassId.SpecializeConstantTextFormattingSsa:
+        case CompilerPassId.PruneBranches:
+        case CompilerPassId.MemoryOptSsa:
+        case CompilerPassId.AggregateConstructionSsa:
+        case CompilerPassId.OwnershipTrafficSsa:
+        case CompilerPassId.SroaSsa:
+        case CompilerPassId.ShapeBranches:
+        case CompilerPassId.ArithmeticFoldSsa:
+            if (index == 0) { return CompilerArtifactKind.OptimizedSsaIr; }
+            if (index == 1) { return CompilerArtifactKind.SsaValueFacts; }
+        case CompilerPassId.LowerAbi:
+            if (index == 0) { return CompilerArtifactKind.AbiModel; }
+        case CompilerPassId.EmitLlvm:
+            if (index == 0) { return CompilerArtifactKind.LlvmIrModule; }
+        case CompilerPassId.ValidateSsa:
+        case CompilerPassId.Unknown:
+    }
+
+    return CompilerArtifactKind.Unknown;
+}
+
+public fn ArtifactStatus AddCompilerPassRequiredArtifacts(
+    mut borrow ArtifactDependencySet dependencies,
+    CompilerPassId pass)
+{
+    if (pass == CompilerPassId.Unknown)
+    {
+        return ArtifactStatus.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    stack mut u8[0 max] dependencyIndex = 0;
+    stack u8[0 9] dependencyCount = CompilerPassDependencyCount(pass);
+    while willexit (dependencyIndex < dependencyCount)
+    {
+        stack CompilerPassId dependency = CompilerPassDependencyAt(pass, dependencyIndex);
+        stack mut u8[0 max] outputIndex = 0;
+        stack u8[0 2] outputCount = CompilerPassOutputArtifactCount(dependency);
+        while willexit (outputIndex < outputCount)
+        {
+            stack CompilerArtifactKind kind = CompilerPassOutputArtifactAt(dependency, outputIndex);
+            if (kind != CompilerArtifactKind.Unknown)
+            {
+                switch (AddRequiredArtifact(dependencies, kind))
+                {
+                    case ArtifactStatus.Err(var error):
+                        return ArtifactStatus.Err(error);
+                    case ArtifactStatus.Ok:
+                }
+            }
+
+            outputIndex += 1;
+        }
+
+        dependencyIndex += 1;
+    }
+
+    return ArtifactStatus.Ok;
+}
+
+public fn bool TryResolveStopAfterPass(ascii passName, out CompilerPassId pass)
+{
+    pass = CompilerPassId.Unknown;
+    if (System.Text.AsciiLength(passName) == 0)
+    {
+        return true;
+    }
+
+    return TryParseCompilerPassId(passName, pass);
+}
+
+public inline finite law bool ShouldStopAfterPass(CompilerPassId stopAfter, CompilerPassId completedPass)
+{
+    return stopAfter != CompilerPassId.Unknown && stopAfter == completedPass;
+}
+
+public struct PassExecutionRecord
+{
+    internal CompilerPassId PassValue;
+    internal CompilerPhase PhaseValue;
+    internal PassExecutionStatus StatusValue;
+    internal u64[0 max] DurationMicrosecondsValue;
+    internal u32[0 max] DiagnosticsAddedValue;
+
+    PassExecutionRecord()
+    {
+        self.PassValue = CompilerPassId.Unknown;
+        self.PhaseValue = CompilerPhase.Unknown;
+        self.StatusValue = PassExecutionStatus.Unknown;
+        self.DurationMicrosecondsValue = 0;
+        self.DiagnosticsAddedValue = 0;
+    }
+
+    public inline finite law CompilerPassId Pass(borrow PassExecutionRecord self)
+    {
+        return self.PassValue;
+    }
+
+    public inline finite law CompilerPhase Phase(borrow PassExecutionRecord self)
+    {
+        return self.PhaseValue;
+    }
+
+    public inline finite law PassExecutionStatus Status(borrow PassExecutionRecord self)
+    {
+        return self.StatusValue;
+    }
+
+    public inline finite law u64[0 max] DurationMicroseconds(borrow PassExecutionRecord self)
+    {
+        return self.DurationMicrosecondsValue;
+    }
+
+    public inline finite law u32[0 max] DiagnosticsAdded(borrow PassExecutionRecord self)
+    {
+        return self.DiagnosticsAddedValue;
+    }
+}
+
+public inline finite law PassExecutionRecord PassExecutionRecordOf(
+    CompilerPassId pass,
+    PassExecutionStatus status,
+    u64[0 max] durationMicroseconds,
+    u32[0 max] diagnosticsAdded)
+{
+    return new PassExecutionRecord()
+    {
+        PassValue = pass,
+        PhaseValue = CompilerPassPhase(pass),
+        StatusValue = status,
+        DurationMicrosecondsValue = durationMicroseconds,
+        DiagnosticsAddedValue = diagnosticsAdded
+    };
+}
+
+public struct PassExecutionLog
+{
+    internal dynamic CompilerPassId Passes;
+    internal dynamic CompilerPhase Phases;
+    internal dynamic PassExecutionStatus Statuses;
+    internal dynamic u64[0 max] Durations;
+    internal dynamic u32[0 max] DiagnosticsAdded;
+
+    PassExecutionLog()
+    {
+        self.Passes = new();
+        self.Phases = new();
+        self.Statuses = new();
+        self.Durations = new();
+        self.DiagnosticsAdded = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow PassExecutionLog self)
+    {
+        return self.Passes.Length;
+    }
+
+    public law CompilerPassId PassAt(borrow PassExecutionLog self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Passes.Length)
+        {
+            return self.Passes[index];
+        }
+
+        return CompilerPassId.Unknown;
+    }
+
+    public law CompilerPhase PhaseAt(borrow PassExecutionLog self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Phases.Length)
+        {
+            return self.Phases[index];
+        }
+
+        return CompilerPhase.Unknown;
+    }
+
+    public law PassExecutionStatus StatusAt(borrow PassExecutionLog self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Statuses.Length)
+        {
+            return self.Statuses[index];
+        }
+
+        return PassExecutionStatus.Unknown;
+    }
+
+    public law u64[0 max] DurationMicrosecondsAt(borrow PassExecutionLog self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Durations.Length)
+        {
+            return self.Durations[index];
+        }
+
+        return 0;
+    }
+
+    public law u32[0 max] DiagnosticsAddedAt(borrow PassExecutionLog self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.DiagnosticsAdded.Length)
+        {
+            return self.DiagnosticsAdded[index];
+        }
+
+        return 0;
+    }
+}
+
+public fn PipelineStatus AppendPassExecutionRecord(
+    mut borrow PassExecutionLog log,
+    PassExecutionRecord execution)
+{
+    if (execution.PassValue == CompilerPassId.Unknown)
+    {
+        return PipelineStatus.Err(PipelineError.UnknownPass);
+    }
+
+    if (!log.Passes.TryReserve(1)
+        || !log.Phases.TryReserve(1)
+        || !log.Statuses.TryReserve(1)
+        || !log.Durations.TryReserve(1)
+        || !log.DiagnosticsAdded.TryReserve(1))
+    {
+        return PipelineStatus.Err(PipelineError.OutOfMemory);
+    }
+
+    init log.Passes[log.Passes.Length] = execution.PassValue;
+    init log.Phases[log.Phases.Length] = execution.PhaseValue;
+    init log.Statuses[log.Statuses.Length] = execution.StatusValue;
+    init log.Durations[log.Durations.Length] = execution.DurationMicrosecondsValue;
+    init log.DiagnosticsAdded[log.DiagnosticsAdded.Length] = execution.DiagnosticsAddedValue;
+    return PipelineStatus.Ok;
+}
+
+public law u64[0 2 ** 63 - 1] PassExecutionLogStatusCount(
+    borrow PassExecutionLog log,
+    PassExecutionStatus status)
+{
+    stack mut u64[0 2 ** 63 - 1] count = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < log.Statuses.Length)
+    {
+        if (log.Statuses[index] == status)
+        {
+            count += 1;
+        }
+
+        index += 1;
+    }
+
+    return count;
+}
+
+internal fn PipelineStatus PipelineAppendMemoryStatus(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return PipelineStatus.Err(PipelineError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+            return PipelineStatus.Ok;
+    }
+}
+
+internal fn PipelineStatus AppendPassCrashMessage(
+    mut borrow OwnedAscii message,
+    CompilerPassId pass,
+    ascii detail)
+{
+    try PipelineAppendMemoryStatus(message.AppendAscii("Pass '"));
+    try PipelineAppendMemoryStatus(message.AppendAscii(CompilerPassName(pass)));
+    try PipelineAppendMemoryStatus(message.AppendAscii("' crashed: "));
+    try PipelineAppendMemoryStatus(message.AppendAscii(detail));
+    return PipelineStatus.Ok;
+}
+
+public fn PipelineStatus AppendPassCrashDiagnostic(
+    mut borrow DiagnosticBag diagnostics,
+    CompilerPassId pass,
+    ascii detail)
+{
+    if (pass == CompilerPassId.Unknown)
+    {
+        return PipelineStatus.Err(PipelineError.UnknownPass);
+    }
+
+    stack mut OwnedAscii message = new();
+    try AppendPassCrashMessage(message, pass, detail);
+    stack mut OwnedAscii stage = new();
+    try PipelineAppendMemoryStatus(stage.AppendAscii(CompilerPassName(pass)));
+
+    switch (diagnostics.Append(
+        DiagnosticSeverity.Error,
+        "STK9999",
+        message.View(),
+        stage.View(),
+        true,
+        "",
+        false,
+        1,
+        1,
+        0,
+        0,
+        false))
+    {
+        case DiagnosticStatus.Err(var error):
+            return PipelineStatus.Err(PipelineError.Diagnostic(error));
+        case DiagnosticStatus.Ok:
+            return PipelineStatus.Ok;
+    }
+}

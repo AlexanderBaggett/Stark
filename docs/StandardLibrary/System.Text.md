@@ -36,6 +36,7 @@ public struct OwnedAscii
 {
     finite ascii View(borrow OwnedAscii self);
     finite law i64 Length(borrow OwnedAscii self);
+    fn void Truncate(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] length);
 }
 
 public struct OwnedUnicode
@@ -47,13 +48,26 @@ public struct OwnedUnicode
 public struct OwnedUtf16
 {
     finite law i64 Length(borrow OwnedUtf16 self);
-    finite i16[] AsSlice(borrow OwnedUtf16 self);
+    finite law i16[] AsSlice(borrow OwnedUtf16 self);
 }
 
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
 public finite law i64 AsciiLength(ascii source);
 public finite law i64 UnicodeLength(unicode source);
+public finite law bool StartsWith(ascii source, ascii prefix) where overlap(source, prefix);
+public finite law bool StartsWith(unicode source, unicode prefix) where overlap(source, prefix);
+public finite law bool EndsWith(ascii source, ascii suffix) where overlap(source, suffix);
+public finite law bool EndsWith(unicode source, unicode suffix) where overlap(source, suffix);
+public finite law bool Contains(ascii source, ascii needle) where overlap(source, needle);
+public finite law bool Contains(unicode source, unicode needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode source, unicode needle) where overlap(source, needle);
+public finite law bool AsciiBytesEqual(borrow i8[min max][] source, ascii expected) where overlap(source, expected);
+public finite law bool AsciiBytesStartsWith(borrow i8[min max][] source, ascii prefix) where overlap(source, prefix);
+public finite law bool AsciiBytesEndsWith(borrow i8[min max][] source, ascii suffix) where overlap(source, suffix);
+public finite law bool AsciiBytesContains(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] AsciiBytesCountOccurrences(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
 public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
@@ -262,6 +276,12 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f64 value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f32 value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(Encoding value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
+
+public fn System.Memory.MemoryStatus SplitAscii(
+    out System.Collections.List<OwnedAscii> segments,
+    ascii source,
+    ascii delimiter)
+    where overlap(source, delimiter);
 ```
 
 ## Behavior
@@ -270,7 +290,16 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
 - `UnicodeView` projects an immutable `unicode` view from an owned `Unicode` buffer.
 - `OwnedAscii` and `OwnedUnicode` are allocation-backed owned text wrappers returned by convenience APIs. Dropping the wrapper releases the backing allocation.
 - `OwnedAscii.View`, `OwnedUnicode.View`, and their `Length` helpers expose read-only text without transferring ownership.
+- `OwnedAscii.Truncate` shortens an owned ASCII buffer in place without allocation; it is useful for reusable path and line buffers.
 - `AsciiLength` and `UnicodeLength` expose immutable view lengths without exposing raw data pointers to user code.
+- `CountOccurrences` counts non-overlapping ASCII or Unicode needle matches without
+  allocation. Empty needles return `0`.
+- `AsciiBytesEqual`, `AsciiBytesStartsWith`, `AsciiBytesEndsWith`,
+  `AsciiBytesContains`, and `AsciiBytesCountOccurrences` compare byte slices
+  directly against ASCII text without allocating an owned text copy.
+- `SplitAscii` splits an `ascii` view on a non-empty substring delimiter into a
+  caller-provided `System.Collections.List<OwnedAscii>` (see
+  [Splitting ASCII text](#splitting-ascii-text)).
 - `ParseBoolAscii` and `ParseBoolUnicode` parse exact lowercase `true` or `false` and return `TextResult<bool>` instead of throwing.
 - `ParseEncodingAscii`, `ParseEncodingUnicode`, `ParseTextErrorAscii`, and `ParseTextErrorUnicode` parse exact enum case names for the `System.Text` enum types.
 - The implemented integer parse APIs for signed and unsigned widths from 8 bits through 1024 bits parse exact base-10 text from `ascii` or `unicode` and return `TextResult<T>` with `TextError.InvalidFormat` or `TextError.Overflow` on failure.
@@ -320,6 +349,37 @@ leading `-` allowed for signed values. They do not accept leading `+`,
 whitespace, separators, prefixes, suffixes, or locale-specific digits. The
 current integer parsing surface covers signed and unsigned widths through 1024
 bits.
+
+## Splitting ASCII text
+
+`SplitAscii(out segments, source, delimiter)` splits an `ascii` view on a
+non-empty substring `delimiter` into the caller-provided
+`System.Collections.List<OwnedAscii>` and returns `System.Memory.MemoryStatus`.
+The `where overlap(source, delimiter)` contract allows the two views to alias.
+
+Ownership and split rules:
+
+- each returned segment is a fresh `OwnedAscii` copy of the source bytes, so the
+  list owns its segments independently of the transient `source` view
+- an empty `source` yields exactly one empty segment
+- an empty `delimiter` is rejected (returns an `Err` status) so the result count
+  is always well defined
+- consecutive delimiters and leading/trailing delimiters produce empty segments,
+  matching the usual split contract
+- multi-character delimiters are matched as whole substrings
+
+```stark
+import System.Text
+module App
+
+fn System.Memory.MemoryStatus SplitFields(
+    out System.Collections.List<System.Text.OwnedAscii> fields,
+    ascii line)
+{
+    // "a,b,c" -> ["a", "b", "c"]; ",x," -> ["", "x", ""]; "" -> [""].
+    return System.Text.SplitAscii(fields, line, ",");
+}
+```
 
 ## Example
 

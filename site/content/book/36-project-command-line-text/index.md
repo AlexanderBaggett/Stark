@@ -286,9 +286,6 @@ kind = "executable"
 [executable]
 root = "App.stark"
 output = "text-tool"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
 The manifest stays boring on purpose. Source code owns parsing and status

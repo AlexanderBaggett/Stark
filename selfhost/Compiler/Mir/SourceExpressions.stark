@@ -1,0 +1,3100 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceExpressions
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeInt()
+{
+    return 0;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeBool()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeNonValue()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodePointer()
+{
+    return 3;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredPointer()
+{
+    return 15;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeSlice()
+{
+    return 13;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeFixedArrayParam()
+{
+    return 14;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredBool()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI8()
+{
+    return 5;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI16()
+{
+    return 6;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI32()
+{
+    return 7;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI64()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeI8()
+{
+    return 9;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeI16()
+{
+    return 10;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeI32()
+{
+    return 11;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeI64()
+{
+    return 12;
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStoredScalar(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStoredBool() && typeCode <= SourceLocalTypeCodeStoredI64();
+}
+
+// Binds the slot's type code before testing it, so callers can keep the
+// stored-scalar test inside a single condition without passing a table `Get`
+// result directly as an argument.
+internal finite law bool SourceLocalTypeCodeIsStoredScalarAt(borrow IrTable<u32[0 max]> localTypes, u32[0 max] slot)
+{
+    if (!localTypes.Contains(slot))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeCode = localTypes.Get(slot);
+    return SourceLocalTypeCodeIsStoredScalar(typeCode);
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsIntegerValue(u32[0 max] typeCode)
+{
+    return typeCode == SourceLocalTypeCodeInt()
+        || typeCode == SourceLocalTypeCodeI8()
+        || typeCode == SourceLocalTypeCodeI16()
+        || typeCode == SourceLocalTypeCodeI32()
+        || typeCode == SourceLocalTypeCodeI64();
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsConcreteIntegerValue(u32[0 max] typeCode)
+{
+    return typeCode == SourceLocalTypeCodeI8()
+        || typeCode == SourceLocalTypeCodeI16()
+        || typeCode == SourceLocalTypeCodeI32()
+        || typeCode == SourceLocalTypeCodeI64();
+}
+
+internal fn bool TrySourceLocalIntegerBinaryResultTypeCode(u32[0 max] leftCode, u32[0 max] rightCode, out u32[0 max] resultCode)
+{
+    resultCode = SourceLocalTypeCodeNonValue();
+    if (!SourceLocalTypeCodeIsIntegerValue(leftCode) || !SourceLocalTypeCodeIsIntegerValue(rightCode))
+    {
+        return false;
+    }
+
+    if (leftCode == rightCode)
+    {
+        resultCode = leftCode;
+        return true;
+    }
+
+    if (leftCode == SourceLocalTypeCodeInt() && SourceLocalTypeCodeIsConcreteIntegerValue(rightCode))
+    {
+        resultCode = rightCode;
+        return true;
+    }
+
+    if (rightCode == SourceLocalTypeCodeInt() && SourceLocalTypeCodeIsConcreteIntegerValue(leftCode))
+    {
+        resultCode = leftCode;
+        return true;
+    }
+
+    return false;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForStoredScalarValue(u32[0 max] typeCode)
+{
+    if (typeCode == SourceLocalTypeCodeStoredBool())
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI8())
+    {
+        return SourceLocalTypeCodeI8();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI16())
+    {
+        return SourceLocalTypeCodeI16();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI32())
+    {
+        return SourceLocalTypeCodeI32();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI64())
+    {
+        return SourceLocalTypeCodeI64();
+    }
+
+    return SourceLocalTypeCodeNonValue();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForResolvedScalarValue(u32[0 max] typeCode)
+{
+    if (typeCode == SourceResolvedFieldTypeCodeBool())
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI8())
+    {
+        return SourceLocalTypeCodeI8();
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI16())
+    {
+        return SourceLocalTypeCodeI16();
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI32())
+    {
+        return SourceLocalTypeCodeI32();
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI64())
+    {
+        return SourceLocalTypeCodeI64();
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodePointer())
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    return SourceLocalTypeCodeNonValue();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeEnumBase()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStructValueParamBase()
+{
+    return 536870912;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumBase()
+{
+    return 1073741824;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceLocalTypeCodeEnumBase() + ownerDeclarationIndex;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForStoredEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceLocalTypeCodeStoredEnumBase() + ownerDeclarationIndex;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForStructValueTypeToken(u32[0 max] typeToken)
+{
+    return SourceLocalTypeCodeStructValueParamBase() + typeToken;
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeEnumBase() && typeCode < SourceLocalTypeCodeStructValueParamBase();
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStoredEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStructValue(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStructValueParamBase() && typeCode < SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStructValueTypeToken(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeStructValueParamBase() || typeCode >= SourceLocalTypeCodeStoredEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeStructValueParamBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeStoredEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeInvalid()
+{
+    return 0;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeBool()
+{
+    return 1;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI8()
+{
+    return 2;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI16()
+{
+    return 3;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI32()
+{
+    return 4;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI64()
+{
+    return 5;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodePointer()
+{
+    return 6;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumBase()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeAggregateBase()
+{
+    return 4194304;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceResolvedFieldTypeCodeEnumBase() + ownerDeclarationIndex;
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceResolvedFieldTypeCodeEnumBase()
+        && typeCode < SourceResolvedFieldTypeCodeAggregateBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (!SourceResolvedFieldTypeCodeIsEnum(typeCode))
+    {
+        return 0;
+    }
+
+    return typeCode - SourceResolvedFieldTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForAggregateTypeToken(u32[0 max] typeToken)
+{
+    if (typeToken > 4194303)
+    {
+        return SourceResolvedFieldTypeCodeInvalid();
+    }
+
+    return SourceResolvedFieldTypeCodeAggregateBase() + typeToken;
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsAggregate(u32[0 max] typeCode)
+{
+    return typeCode >= SourceResolvedFieldTypeCodeAggregateBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeAggregateTypeToken(u32[0 max] typeCode)
+{
+    if (!SourceResolvedFieldTypeCodeIsAggregate(typeCode))
+    {
+        return 0;
+    }
+
+    return typeCode - SourceResolvedFieldTypeCodeAggregateBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForStoredLocalTypeCode(u32[0 max] typeCode)
+{
+    if (typeCode == SourceLocalTypeCodeStoredBool())
+    {
+        return SourceResolvedFieldTypeCodeBool();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI8())
+    {
+        return SourceResolvedFieldTypeCodeI8();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI16())
+    {
+        return SourceResolvedFieldTypeCodeI16();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI32())
+    {
+        return SourceResolvedFieldTypeCodeI32();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI64())
+    {
+        return SourceResolvedFieldTypeCodeI64();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredPointer())
+    {
+        return SourceResolvedFieldTypeCodePointer();
+    }
+
+    return SourceResolvedFieldTypeCodeInvalid();
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsScalarOrPointer(u32[0 max] typeCode)
+{
+    return typeCode == SourceResolvedFieldTypeCodeBool()
+        || typeCode == SourceResolvedFieldTypeCodeI8()
+        || typeCode == SourceResolvedFieldTypeCodeI16()
+        || typeCode == SourceResolvedFieldTypeCodeI32()
+        || typeCode == SourceResolvedFieldTypeCodeI64()
+        || typeCode == SourceResolvedFieldTypeCodePointer();
+}
+
+internal fn u32[0 max] PackRawPointerNestedFacts(
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment)
+{
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || elementSize == 0
+        || elementAlignment == 0
+        || elementSize > 15
+        || elementAlignment > 15
+        || fieldTypeCode > 8388607)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] packed = fieldTypeCode;
+    packed = packed * 16 + elementSize;
+    packed = packed * 16 + elementAlignment;
+    packed = packed * 2;
+    if (rawPointerMutable)
+    {
+        packed = packed + 1;
+    }
+
+    return packed;
+}
+
+internal fn bool TryUnpackRawPointerNestedFacts(
+    u32[0 max] packed,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment)
+{
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    if (packed == 0)
+    {
+        return false;
+    }
+
+    rawPointerMutable = packed % 2 == 1;
+    stack mut u32[0 max] rest = packed / 2;
+    elementAlignment = rest % 16;
+    rest = rest / 16;
+    elementSize = rest % 16;
+    fieldTypeCode = rest / 16;
+    return fieldTypeCode != SourceResolvedFieldTypeCodeInvalid()
+        && elementSize != 0
+        && elementAlignment != 0;
+}
+
+// True when `k` is a `+`/`-` additive operator token.
+internal fn bool IsAddSubToken(TokenKind k)
+{
+    return k == TokenKind.Plus || k == TokenKind.Minus;
+}
+
+// True when `k` is a `*`/`/`/`%` multiplicative operator token.
+internal fn bool IsProductOpToken(TokenKind k)
+{
+    return k == TokenKind.Star || k == TokenKind.Div || k == TokenKind.Mod;
+}
+
+// === Structural expression typer (toward the real typer, #33) ===
+// The token-counting type inference (InferExpressionType) has a structural ceiling — it
+// cannot see expression shape, so it mis-types a comparison inside a call argument, a
+// parenthesized comparison, or a chained comparison. The fix is a real expression AST
+// and a typer that recurses over it. This is that AST: a FLAT node table (free functions
+// over a directly-owned `IrTable<ExprNode>`, per the host-codegen discipline — no wrapper
+// struct, no nested generic field; the single sanctioned exception is the per-module
+// `SourceModuleLoweringFacts` bundle at the source-lowering boundary, see
+// SourceModuleFacts.stark). Each node is one of five kinds; Binary/Compare carry
+// an operator and two child node ids; a Call carries its (single) argument node id;
+// parentheses are a parser concern and produce no node (the inner expression stands in).
+public enum ExprKind
+{
+    IntLitExpr,
+    FloatLitExpr,
+    BoolLitExpr,
+    StringLitExpr,
+    CharacterLitExpr,
+    NameExpr,
+    FieldExpr,
+    IndexedFieldExpr,
+    FixedArrayParamElementExpr,
+    RawPointerIndexedElementExpr,
+    RawPointerFieldExpr,
+    AddressOfExpr,
+    DerefExpr,
+    TryExpr,
+    ConversionExpr,
+    EnumVariantExpr,
+    EnumPayloadExpr,
+    BinaryExpr,
+    CompareExpr,
+    CallExpr,
+    CallArgLinkExpr,
+}
+
+public struct ExprNode
+{
+    ExprKind Kind;
+    TokenKind Op;
+    u32[0 max] Left;
+    u32[0 max] Right;
+    // A call's 2nd/3rd/4th argument nodes (0 = none); unused by the other node kinds. The
+    // common AST call model carries four inline arguments (Right = first, Arg2/Arg3/Arg4 =
+    // the rest) and spills wider calls through ExtraArgLink.
+    u32[0 max] Arg2;
+    u32[0 max] Arg3;
+    u32[0 max] Arg4;
+    // For CallExpr this is the first overflow argument link; for CallArgLinkExpr it is
+    // the next overflow argument link. It is 0 for all other node kinds.
+    u32[0 max] ExtraArgLink;
+    // For CallExpr this preserves the source value type code inferred from the
+    // callee signature. It defaults to integer and is filled by module lowering
+    // after function call contract facts are known.
+    u32[0 max] ResultTypeCode;
+    // Indexed field reads carry whether the source proved a fixed compile-time bound.
+    bool IndexHasKnownBounds;
+    // Resolved field reads carry the field's declared integer range imported
+    // from the typed member path facts, so source value-fact queries can prove
+    // bounds through ranged field reads. The declared range is a type-level
+    // fact and stays sound across mutations of the field.
+    bool HasDeclaredRange;
+    i64[min max] DeclaredRangeLower;
+    i64[min max] DeclaredRangeUpperExclusive;
+    i64[min max] Imm;
+
+    ExprNode()
+    {
+        self.Kind = ExprKind.IntLitExpr;
+        self.Op = TokenKind.Plus;
+        self.Left = 0;
+        self.Right = 0;
+        self.Arg2 = 0;
+        self.Arg3 = 0;
+        self.Arg4 = 0;
+        self.ExtraArgLink = 0;
+        self.ResultTypeCode = SourceLocalTypeCodeInt();
+        self.IndexHasKnownBounds = false;
+        self.HasDeclaredRange = false;
+        self.DeclaredRangeLower = 0;
+        self.DeclaredRangeUpperExclusive = 0;
+        self.Imm = 0;
+    }
+}
+
+// Node builders — each appends one node and returns its 1-based id.
+public fn u32[0 max] MakeIntLit(mut borrow IrTable<ExprNode> nodes, i64[min max] value)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.IntLitExpr;
+    node.Imm = value;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeFloatLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.FloatLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeBoolLit(mut borrow IrTable<ExprNode> nodes, bool value)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.BoolLitExpr;
+    if (value)
+    {
+        node.Imm = 1;
+    }
+    else
+    {
+        node.Imm = 0;
+    }
+
+    return nodes.Add(node);
+}
+
+public fn bool SourceFloatLiteralNodeHasTypedLiteralRow(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    return node.Kind == ExprKind.FloatLitExpr && node.Right != 0;
+}
+
+public fn u32[0 max] SourceFloatLiteralNodeLiteralToken(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.FloatLitExpr)
+    {
+        return node.Left;
+    }
+
+    return 0;
+}
+
+public fn u32[0 max] SourceFloatLiteralNodeTypedLiteralRowIndexPlusOne(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.FloatLitExpr)
+    {
+        return node.Right;
+    }
+
+    return 0;
+}
+
+public fn bool TrySetSourceFloatLiteralNodeTypedLiteralRow(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!nodes.Contains(nodeId) || typedLiteralRowIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.FloatLitExpr)
+    {
+        return false;
+    }
+
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Replace(nodeId, node);
+}
+
+public fn u32[0 max] MakeStringLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.StringLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCharacterLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CharacterLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
+public fn bool SourceTextLiteralNodeHasTypedLiteralRow(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    return (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+        && node.Right != 0;
+}
+
+public fn u32[0 max] SourceTextLiteralNodeLiteralToken(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+    {
+        return node.Left;
+    }
+
+    return 0;
+}
+
+public fn u32[0 max] SourceTextLiteralNodeTypedLiteralRowIndexPlusOne(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+    {
+        return node.Right;
+    }
+
+    return 0;
+}
+
+public fn bool TrySetSourceTextLiteralNodeTypedLiteralRow(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!nodes.Contains(nodeId) || typedLiteralRowIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.StringLitExpr && node.Kind != ExprKind.CharacterLitExpr)
+    {
+        return false;
+    }
+
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Replace(nodeId, node);
+}
+
+public fn u32[0 max] MakeName(mut borrow IrTable<ExprNode> nodes, u32[0 max] paramIndex)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.NameExpr;
+    node.Left = paramIndex;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeConversion(mut borrow IrTable<ExprNode> nodes, u32[0 max] operandNode, u32[0 max] targetTypeToken, u32[0 max] targetTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.ConversionExpr;
+    node.Left = operandNode;
+    node.Right = targetTypeToken;
+    node.ResultTypeCode = targetTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeResolvedFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] byteOffset,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.FieldExpr;
+    node.Left = receiverParamIndex;
+    node.Right = byteOffset;
+    node.Arg2 = alignBytes;
+    node.Arg3 = fieldTypeCode;
+    return nodes.Add(node);
+}
+
+// Attaches a declared integer range fact to an already-built node. Used for
+// resolved field reads whose typed member path fact carries a declared range.
+public fn void SetNodeDeclaredRange(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] nodeId,
+    i64[min max] lower,
+    i64[min max] upperExclusive)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    node.HasDeclaredRange = true;
+    node.DeclaredRangeLower = lower;
+    node.DeclaredRangeUpperExclusive = upperExclusive;
+    stack bool replaced = nodes.Replace(nodeId, node);
+}
+
+public fn u32[0 max] MakeResolvedIndexedFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] indexNode,
+    u32[0 max] baseByteOffset,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.IndexedFieldExpr;
+    node.Left = receiverParamIndex;
+    node.Right = indexNode;
+    node.Arg2 = baseByteOffset;
+    node.Arg3 = elementSizeBytes;
+    node.Arg4 = alignBytes;
+    node.IndexHasKnownBounds = true;
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeResolvedRuntimeIndexedFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] indexNode,
+    u32[0 max] baseByteOffset,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.IndexedFieldExpr;
+    node.Left = receiverParamIndex;
+    node.Right = indexNode;
+    node.Arg2 = baseByteOffset;
+    node.Arg3 = elementSizeBytes;
+    node.Arg4 = alignBytes;
+    node.IndexHasKnownBounds = false;
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeFixedArrayParamElementRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] indexNode,
+    u32[0 max] arrayLength,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.FixedArrayParamElementExpr;
+    node.Left = receiverParamIndex;
+    node.Right = indexNode;
+    node.Arg2 = arrayLength;
+    node.Arg3 = elementSizeBytes;
+    node.Arg4 = alignBytes;
+    node.IndexHasKnownBounds = true;
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeRawPointerIndexedElementRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] pointerNode,
+    u32[0 max] indexNode,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    return MakeRawPointerIndexedElementReadWithNested(
+        nodes,
+        pointerNode,
+        indexNode,
+        elementSizeBytes,
+        alignBytes,
+        fieldTypeCode,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+public fn u32[0 max] MakeRawPointerIndexedElementReadWithNested(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] pointerNode,
+    u32[0 max] indexNode,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.RawPointerIndexedElementExpr;
+    node.Left = pointerNode;
+    node.Right = indexNode;
+    node.Arg2 = alignBytes;
+    node.Arg3 = elementSizeBytes;
+    node.Arg4 = PackRawPointerNestedFacts(nestedMutable, nestedFieldTypeCode, nestedElementSize, nestedElementAlignment);
+    node.IndexHasKnownBounds = true;
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeRawPointerFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] pointerNode,
+    u32[0 max] byteOffset,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.RawPointerFieldExpr;
+    node.Left = pointerNode;
+    node.Right = byteOffset;
+    node.Arg2 = alignBytes;
+    node.Arg3 = fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeAddressOf(mut borrow IrTable<ExprNode> nodes, u32[0 max] operand)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.AddressOfExpr;
+    node.Left = operand;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeDeref(mut borrow IrTable<ExprNode> nodes, u32[0 max] operand, u32[0 max] fieldTypeCode, u32[0 max] elementSize, u32[0 max] alignBytes)
+{
+    return MakeDerefWithNested(
+        nodes,
+        operand,
+        fieldTypeCode,
+        elementSize,
+        alignBytes,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+public fn u32[0 max] MakeDerefWithNested(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] operand,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] alignBytes,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.DerefExpr;
+    node.Left = operand;
+    node.Right = nestedFieldTypeCode;
+    node.Arg2 = alignBytes;
+    node.Arg3 = elementSize;
+    node.Arg4 = PackRawPointerNestedFacts(nestedMutable, nestedFieldTypeCode, nestedElementSize, nestedElementAlignment);
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeTry(mut borrow IrTable<ExprNode> nodes, u32[0 max] operand)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.TryExpr;
+    node.Left = operand;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeEnumVariant(
+    mut borrow IrTable<ExprNode> nodes,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.EnumVariantExpr;
+    node.Left = ownerType.Index();
+    node.Right = variantOrdinal;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeEnumPayloadInsert(
+    mut borrow IrTable<ExprNode> nodes,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] sourceEnumValue,
+    u32[0 max] payloadValue,
+    u32[0 max] payloadTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.EnumPayloadExpr;
+    node.Left = sourceEnumValue;
+    node.Right = payloadValue;
+    node.Arg2 = ownerType.Index();
+    node.Arg3 = variantOrdinal;
+    node.Arg4 = payloadOrdinal;
+    node.Imm = (i64[min max])payloadTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeBinary(mut borrow IrTable<ExprNode> nodes, TokenKind op, u32[0 max] left, u32[0 max] right)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.BinaryExpr;
+    node.Op = op;
+    node.Left = left;
+    node.Right = right;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCompare(mut borrow IrTable<ExprNode> nodes, TokenKind op, u32[0 max] left, u32[0 max] right)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CompareExpr;
+    node.Op = op;
+    node.Left = left;
+    node.Right = right;
+    return nodes.Add(node);
+}
+
+// A call node. `callee` is the resolved function id (0 = unresolved, filled in once the
+// parser threads a function-name table); `argCount` is the number of arguments WRITTEN at
+// the call site (checked against the callee's declared arity); `arg1`..`arg4` are the four
+// inline argument nodes and `extraArgLink` is the first overflow argument link.
+public fn u32[0 max] MakeCallWithExtra(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4, u32[0 max] extraArgLink)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CallExpr;
+    node.Left = callee;
+    node.Imm = (i64[min max])argCount;
+    node.Right = arg1;
+    node.Arg2 = arg2;
+    node.Arg3 = arg3;
+    node.Arg4 = arg4;
+    node.ExtraArgLink = extraArgLink;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4)
+{
+    return MakeCallWithExtra(nodes, callee, argCount, arg1, arg2, arg3, arg4, 0);
+}
+
+public fn bool TrySetCallResultTypeCode(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typeCode)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.CallExpr)
+    {
+        return false;
+    }
+
+    node.ResultTypeCode = typeCode;
+    return nodes.Replace(nodeId, node);
+}
+
+public fn u32[0 max] MakeCallArgLink(mut borrow IrTable<ExprNode> nodes, u32[0 max] argNode, u32[0 max] nextLink)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CallArgLinkExpr;
+    node.Left = argNode;
+    node.ExtraArgLink = nextLink;
+    return nodes.Add(node);
+}
+
+internal fn u32[0 max] BuildCallExtraArgLinks(mut borrow IrTable<ExprNode> nodes, borrow IrTable<u32[0 max]> extraArgs)
+{
+    stack mut u64[0 2 ** 63 - 1] i = extraArgs.Count();
+    stack mut u32[0 max] next = 0;
+    while willexit (i > 0)
+    {
+        stack u32[0 max] arg = extraArgs.Get((u32[0 max])i);
+        next = MakeCallArgLink(nodes, arg, next);
+        i = (u64[0 2 ** 63 - 1])(i - 1);
+    }
+
+    return next;
+}
+
+public fn u32[0 max] CallArgumentNodeAt(borrow IrTable<ExprNode> nodes, ExprNode node, u32[0 max] paramIndex)
+{
+    if (paramIndex == 0)
+    {
+        return node.Right;
+    }
+
+    if (paramIndex == 1)
+    {
+        return node.Arg2;
+    }
+
+    if (paramIndex == 2)
+    {
+        return node.Arg3;
+    }
+
+    if (paramIndex == 3)
+    {
+        return node.Arg4;
+    }
+
+    stack mut u32[0 max] remaining = paramIndex - 4;
+    stack mut u32[0 max] link = node.ExtraArgLink;
+    while willexit (link != 0)
+    {
+        if (!nodes.Contains(link))
+        {
+            return 0;
+        }
+
+        stack ExprNode argLink = nodes.Get(link);
+        if (argLink.Kind != ExprKind.CallArgLinkExpr)
+        {
+            return 0;
+        }
+
+        if (remaining == 0)
+        {
+            return argLink.Left;
+        }
+
+        remaining = remaining - 1;
+        link = argLink.ExtraArgLink;
+    }
+
+    return 0;
+}
+
+// The STRUCTURAL type of the expression rooted at `id`, recursing over the AST. A literal,
+// a variable, and a call are integers; an arithmetic node is an integer ONLY if both
+// operands are integers (else a type error — a boolean fed to arithmetic, e.g.
+// `(a < b) + 1`). Integer comparisons are boolean, and boolean equality/inequality is
+// boolean; ordering comparisons over booleans and mixed comparisons are type errors.
+// Unlike the token heuristic, this is correct on calls, parens, and chains by construction.
+// As `TypeOfNode`, but a name's type comes from `localTypes` (a per-index type table).
+// Boolean, storage-only, pointer, and enum-owner codes preserve source facts through MIR
+// lowering; absent entries stay integer for the bootstrap expression grammar.
+public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!nodes.Contains(id))
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case ExprKind.IntLitExpr:
+            return ExprType.IntType;
+        case ExprKind.FloatLitExpr:
+            return ExprType.FloatType;
+        case ExprKind.BoolLitExpr:
+            return ExprType.BoolType;
+        case ExprKind.StringLitExpr:
+            return ExprType.ErrorType;
+        case ExprKind.CharacterLitExpr:
+            return ExprType.ErrorType;
+        case ExprKind.NameExpr:
+            if (localTypes.Contains(node.Left + 1))
+            {
+                stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
+                if (typeCode == SourceLocalTypeCodeBool())
+                {
+                    return ExprType.BoolType;
+                }
+
+                if (SourceLocalTypeCodeIsIntegerValue(typeCode))
+                {
+                    return ExprType.IntType;
+                }
+
+                if (SourceLocalTypeCodeIsStoredScalar(typeCode))
+                {
+                    if (typeCode == SourceLocalTypeCodeStoredBool())
+                    {
+                        return ExprType.BoolType;
+                    }
+
+                    return ExprType.IntType;
+                }
+
+                if (typeCode == SourceLocalTypeCodeNonValue())
+                {
+                    return ExprType.ErrorType;
+                }
+
+                if (typeCode == SourceLocalTypeCodePointer())
+                {
+                    return ExprType.PtrType;
+                }
+
+                if (typeCode == SourceLocalTypeCodeStoredPointer())
+                {
+                    return ExprType.PtrType;
+                }
+
+                if (typeCode == SourceLocalTypeCodeSlice())
+                {
+                    return ExprType.ErrorType;
+                }
+
+                if (typeCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(typeCode))
+                {
+                    return ExprType.AggregateType;
+                }
+
+                if (SourceLocalTypeCodeIsEnum(typeCode) || SourceLocalTypeCodeIsStoredEnum(typeCode))
+                {
+                    return ExprType.EnumType;
+                }
+            }
+
+            return ExprType.IntType;
+        case ExprKind.FieldExpr:
+            if (node.Arg3 == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodeI8()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI16()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI32()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.IndexedFieldExpr:
+            stack u32[0 max] indexedTypeCode = (u32[0 max])node.Imm;
+            if (indexedTypeCode == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(indexedTypeCode))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (indexedTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (indexedTypeCode == SourceResolvedFieldTypeCodeI8()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI16()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI32()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.FixedArrayParamElementExpr:
+            stack u32[0 max] fixedArrayParamTypeCode = (u32[0 max])node.Imm;
+            if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeI8()
+                || fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeI16()
+                || fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeI32()
+                || fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.RawPointerIndexedElementExpr:
+            stack u32[0 max] rawPointerIndexedTypeCode = (u32[0 max])node.Imm;
+            if (rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI8()
+                || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI16()
+                || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI32()
+                || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.RawPointerFieldExpr:
+            if (node.Arg3 == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodeI8()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI16()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI32()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.AddressOfExpr:
+            if (!nodes.Contains(node.Left))
+            {
+                return ExprType.ErrorType;
+            }
+
+            stack ExprNode addressOperand = nodes.Get(node.Left);
+            if (addressOperand.Kind == ExprKind.NameExpr
+                || addressOperand.Kind == ExprKind.FieldExpr
+                || addressOperand.Kind == ExprKind.IndexedFieldExpr
+                || addressOperand.Kind == ExprKind.FixedArrayParamElementExpr
+                || addressOperand.Kind == ExprKind.RawPointerIndexedElementExpr
+                || addressOperand.Kind == ExprKind.RawPointerFieldExpr)
+            {
+                return ExprType.PtrType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.DerefExpr:
+            if (node.Imm < 0)
+            {
+                return ExprType.ErrorType;
+            }
+
+            stack u32[0 max] derefTypeCode = (u32[0 max])node.Imm;
+            if (derefTypeCode == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (derefTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (derefTypeCode == SourceResolvedFieldTypeCodeI8()
+                || derefTypeCode == SourceResolvedFieldTypeCodeI16()
+                || derefTypeCode == SourceResolvedFieldTypeCodeI32()
+                || derefTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.TryExpr:
+            return ExprType.ErrorType;
+        case ExprKind.ConversionExpr:
+            if (node.ResultTypeCode == SourceLocalTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceLocalTypeCodeIsIntegerValue(node.ResultTypeCode))
+            {
+                return ExprType.IntType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.EnumVariantExpr:
+            return ExprType.EnumType;
+        case ExprKind.EnumPayloadExpr:
+            if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.EnumType
+                && TypeOfNodeWithLocals(nodes, node.Right, localTypes) != ExprType.ErrorType)
+            {
+                return ExprType.EnumType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.CallExpr:
+            if (SourceLocalTypeCodeIsEnum(node.ResultTypeCode))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            return ExprType.IntType;
+        case ExprKind.CallArgLinkExpr:
+            return ExprType.ErrorType;
+        case ExprKind.BinaryExpr:
+            if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.IntType && TypeOfNodeWithLocals(nodes, node.Right, localTypes) == ExprType.IntType)
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.CompareExpr:
+            stack ExprType leftType = TypeOfNodeWithLocals(nodes, node.Left, localTypes);
+            stack ExprType rightType = TypeOfNodeWithLocals(nodes, node.Right, localTypes);
+            if (leftType == ExprType.IntType && rightType == ExprType.IntType)
+            {
+                return ExprType.BoolType;
+            }
+
+            if (leftType == ExprType.BoolType
+                && rightType == ExprType.BoolType
+                && (node.Op == TokenKind.EqEq || node.Op == TokenKind.Neq))
+            {
+                return ExprType.BoolType;
+            }
+
+            if (leftType == ExprType.EnumType
+                && rightType == ExprType.EnumType
+                && (node.Op == TokenKind.EqEq || node.Op == TokenKind.Neq))
+            {
+                return ExprType.BoolType;
+            }
+
+            return ExprType.ErrorType;
+    }
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (nodes.Contains(id))
+    {
+        stack ExprNode node = nodes.Get(id);
+        if (node.Kind == ExprKind.EnumVariantExpr && node.Left > 0)
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(node.Left - 1);
+        }
+
+        if (node.Kind == ExprKind.EnumPayloadExpr && node.Arg2 > 0)
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(node.Arg2 - 1);
+        }
+
+        if (node.Kind == ExprKind.CallExpr)
+        {
+            return node.ResultTypeCode;
+        }
+
+        if (node.Kind == ExprKind.ConversionExpr)
+        {
+            return node.ResultTypeCode;
+        }
+
+        if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3));
+        }
+
+        if (node.Kind == ExprKind.FieldExpr)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue(node.Arg3);
+        }
+
+        if (node.Kind == ExprKind.IndexedFieldExpr
+            && node.Imm >= 0
+            && SourceResolvedFieldTypeCodeIsEnum((u32[0 max])node.Imm))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex((u32[0 max])node.Imm));
+        }
+
+        if (node.Kind == ExprKind.IndexedFieldExpr && node.Imm >= 0)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
+        }
+
+        if (node.Kind == ExprKind.FixedArrayParamElementExpr && node.Imm >= 0)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
+        }
+
+        if (node.Kind == ExprKind.RawPointerIndexedElementExpr && node.Imm >= 0)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
+        }
+
+        if (node.Kind == ExprKind.RawPointerFieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3));
+        }
+
+        if (node.Kind == ExprKind.RawPointerFieldExpr)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue(node.Arg3);
+        }
+
+        if (node.Kind == ExprKind.AddressOfExpr)
+        {
+            return SourceLocalTypeCodePointer();
+        }
+
+        if (node.Kind == ExprKind.DerefExpr && node.Imm >= 0)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
+        }
+
+        if (node.Kind == ExprKind.TryExpr)
+        {
+            return SourceLocalTypeCodeNonValue();
+        }
+
+        if (node.Kind == ExprKind.FloatLitExpr)
+        {
+            return SourceLocalTypeCodeNonValue();
+        }
+
+        if (node.Kind == ExprKind.NameExpr && localTypes.Contains(node.Left + 1))
+        {
+            stack u32[0 max] sourceCode = localTypes.Get(node.Left + 1);
+            if (SourceLocalTypeCodeIsIntegerValue(sourceCode) || sourceCode == SourceLocalTypeCodeBool())
+            {
+                return sourceCode;
+            }
+
+            if (SourceLocalTypeCodeIsStoredScalar(sourceCode))
+            {
+                return SourceLocalTypeCodeForStoredScalarValue(sourceCode);
+            }
+
+            if (SourceLocalTypeCodeIsEnum(sourceCode))
+            {
+                return sourceCode;
+            }
+
+            if (sourceCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(sourceCode))
+            {
+                return sourceCode;
+            }
+
+            if (SourceLocalTypeCodeIsStoredEnum(sourceCode))
+            {
+                return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(sourceCode));
+            }
+
+            if (sourceCode == SourceLocalTypeCodeStoredPointer())
+            {
+                return SourceLocalTypeCodePointer();
+            }
+        }
+
+        if (node.Kind == ExprKind.BinaryExpr)
+        {
+            stack u32[0 max] leftCode = SourceLocalTypeCodeForNodeWithLocals(nodes, node.Left, localTypes);
+            stack u32[0 max] rightCode = SourceLocalTypeCodeForNodeWithLocals(nodes, node.Right, localTypes);
+            stack mut u32[0 max] resultCode = SourceLocalTypeCodeNonValue();
+            if (TrySourceLocalIntegerBinaryResultTypeCode(leftCode, rightCode, resultCode))
+            {
+                return resultCode;
+            }
+        }
+    }
+
+    stack ExprType type = TypeOfNodeWithLocals(nodes, id, localTypes);
+    if (type == ExprType.BoolType)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (type == ExprType.PtrType)
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    if (type == ExprType.AggregateType)
+    {
+        return SourceLocalTypeCodeNonValue();
+    }
+
+    if (type == ExprType.ErrorType)
+    {
+        return SourceLocalTypeCodeNonValue();
+    }
+
+    return SourceLocalTypeCodeInt();
+}
+
+public fn bool TryGetSourceExpressionEnumOwnerTypeIndexForNode(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes,
+    out u32[0 max] ownerTypeIndex)
+{
+    ownerTypeIndex = 0;
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind == ExprKind.EnumVariantExpr)
+    {
+        ownerTypeIndex = node.Left;
+        return ownerTypeIndex > 0;
+    }
+
+    if (node.Kind == ExprKind.EnumPayloadExpr)
+    {
+        ownerTypeIndex = node.Arg2;
+        return ownerTypeIndex > 0;
+    }
+
+    if (node.Kind == ExprKind.CallExpr && SourceLocalTypeCodeIsEnum(node.ResultTypeCode))
+    {
+        ownerTypeIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(node.ResultTypeCode) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.IndexedFieldExpr
+        && node.Imm >= 0
+        && SourceResolvedFieldTypeCodeIsEnum((u32[0 max])node.Imm))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex((u32[0 max])node.Imm) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.FixedArrayParamElementExpr
+        && node.Imm >= 0
+        && SourceResolvedFieldTypeCodeIsEnum((u32[0 max])node.Imm))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex((u32[0 max])node.Imm) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.RawPointerFieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.TryExpr)
+    {
+        return false;
+    }
+
+    if (node.Kind != ExprKind.NameExpr || !localTypes.Contains(node.Left + 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
+    if (SourceLocalTypeCodeIsStoredEnum(typeCode))
+    {
+        ownerTypeIndex = SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(typeCode) + 1;
+        return true;
+    }
+
+    if (!SourceLocalTypeCodeIsEnum(typeCode))
+    {
+        return false;
+    }
+
+    ownerTypeIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(typeCode) + 1;
+    return true;
+}
+
+internal fn bool TryGetSourceLocalEnumOwnerDeclarationIndexForNode(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    stack mut u32[0 max] ownerTypeIndex = 0;
+    if (!TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, id, localTypes, ownerTypeIndex)
+        || ownerTypeIndex == 0)
+    {
+        return false;
+    }
+
+    ownerDeclarationIndex = ownerTypeIndex - 1;
+    return true;
+}
+
+public fn bool TryGetSourceTryOperandNode(borrow IrTable<ExprNode> nodes, u32[0 max] id, out u32[0 max] operandNode)
+{
+    operandNode = 0;
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != ExprKind.TryExpr)
+    {
+        return false;
+    }
+
+    stack u32[0 max] operand = node.Left;
+    if (operand == 0 || !nodes.Contains(operand))
+    {
+        return false;
+    }
+
+    operandNode = operand;
+    return true;
+}
+
+// Types an expression where every name is a parameter (integer) — the common case.
+public fn ExprType TypeOfNode(borrow IrTable<ExprNode> nodes, u32[0 max] id)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return TypeOfNodeWithLocals(nodes, id, noLocalTypes);
+}
+
+// === Recursive-descent expression parser (toward the real typer, #33) ===
+// Builds the `ExprNode` AST from source. Stark has no mutable-borrow cursor (an in-out
+// primitive index is the write-only `out` mode), so each parser THREADS the cursor by
+// RETURN VALUE: it takes a cursor by value and returns the node it built plus the next
+// cursor. Recursion (parentheses, call arguments) composes through these returns. Grammar,
+// lowest precedence first: compare := add ((< > <= >= == !=) add)* ; add := mul ((+ -) mul)* ;
+// mul := primary ((* / %) primary)* ; primary := int | name | name(args) | ( compare ).
+// Left-associative folding makes a chained comparison a nested Compare node, which the
+// structural typer then flags.
+public struct ExprParseResult
+{
+    u32[0 max] NodeId;
+    u64[0 2 ** 63 - 1] Next;
+
+    ExprParseResult()
+    {
+        self.NodeId = 0;
+        self.Next = 0;
+    }
+}
+
+internal fn ExprParseResult MakeParseResult(u32[0 max] nodeId, u64[0 2 ** 63 - 1] next)
+{
+    stack mut ExprParseResult result = new();
+    result.NodeId = nodeId;
+    result.Next = next;
+    return result;
+}
+
+internal struct ParsedSwitchAssignmentArm
+{
+    ExprParseResult Assigned;
+    u32[0 max] AssignedRootStart;
+    u32[0 max] AssignedRootCount;
+    u32[0 max] CaptureStart;
+    u32[0 max] CaptureCount;
+    u32[0 max] LocalRootStart;
+    u32[0 max] LocalRootCount;
+
+    ParsedSwitchAssignmentArm()
+    {
+        self.Assigned = new();
+        self.AssignedRootStart = 0;
+        self.AssignedRootCount = 0;
+        self.CaptureStart = 0;
+        self.CaptureCount = 0;
+        self.LocalRootStart = 0;
+        self.LocalRootCount = 0;
+    }
+}
+
+// Resolves an identifier span to a 0-based parameter index in first-appearance order,
+// appending it to `params` the first time it is seen (so `a + b` makes `a`->0, `b`->1,
+// and a reused name maps to the same index).
+internal fn u32[0 max] ResolveParam(mut borrow IrTable<ParamName> params, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    return ResolveParamWithRawPointerElementFacts(
+        params,
+        source,
+        start,
+        length,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn u32[0 max] ResolveParamWithRawPointerElementFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment)
+{
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        start,
+        length,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        false,
+        false,
+        0,
+        0,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn u32[0 max] ResolveParamWithRawPointerElementAndCountFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex)
+{
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        start,
+        length,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn u32[0 max] ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
+    stack i64[min max] existing = ParamIndexOf(params, source, start, length);
+    if (existing >= 0)
+    {
+        return (u32[0 max])existing;
+    }
+
+    stack mut ParamName name = new();
+    name.Start = start;
+    name.Length = length;
+    name.RawPointerMutable = rawPointerMutable;
+    name.RawPointerFieldTypeCode = fieldTypeCode;
+    name.RawPointerElementSize = elementSize;
+    name.RawPointerElementAlignment = elementAlignment;
+    name.RawPointerNestedMutable = nestedMutable;
+    name.RawPointerNestedFieldTypeCode = nestedFieldTypeCode;
+    name.RawPointerNestedElementSize = nestedElementSize;
+    name.RawPointerNestedElementAlignment = nestedElementAlignment;
+    name.RawPointerHasElementCount = hasElementCount;
+    name.RawPointerElementCountIsParam = elementCountIsParam;
+    name.RawPointerElementCountLiteral = elementCountLiteral;
+    name.RawPointerElementCountParamIndex = elementCountParamIndex;
+    stack u32[0 max] added = params.Add(name);
+    return added - 1;
+}
+
+internal fn bool TryGetRawPointerDerefFactsForNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment)
+{
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    stack mut bool rawPointerMutable = false;
+    return TryGetRawPointerFactsForNode(nodes, params, nodeId, rawPointerMutable, fieldTypeCode, elementSize, elementAlignment);
+}
+
+internal fn bool TryGetRawPointerDerefFactsForNodeWithNested(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+    stack mut bool rawPointerMutable = false;
+    return TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        nodeId,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryGetRawPointerFactsForNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment)
+{
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    return TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        nodeId,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryGetRawPointerFactsForNodeWithNested(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.AddressOfExpr && nodes.Contains(node.Left))
+    {
+        stack ExprNode addressOperand = nodes.Get(node.Left);
+        if (addressOperand.Kind == ExprKind.RawPointerIndexedElementExpr
+            && nodes.Contains(addressOperand.Left))
+        {
+            stack ExprNode pointerOperand = nodes.Get(addressOperand.Left);
+            if (pointerOperand.Kind == ExprKind.NameExpr
+                && params.Contains(pointerOperand.Left + 1))
+            {
+                stack ParamName pointerParam = params.Get(pointerOperand.Left + 1);
+                if (pointerParam.RawPointerFieldTypeCodeValue() == SourceResolvedFieldTypeCodeInvalid()
+                    || pointerParam.RawPointerElementSizeValue() == 0
+                    || pointerParam.RawPointerElementAlignmentValue() == 0)
+                {
+                    return false;
+                }
+
+                fieldTypeCode = pointerParam.RawPointerFieldTypeCodeValue();
+                elementSize = pointerParam.RawPointerElementSizeValue();
+                elementAlignment = pointerParam.RawPointerElementAlignmentValue();
+                rawPointerMutable = pointerParam.RawPointerMutableValue();
+                nestedMutable = pointerParam.RawPointerNestedMutableValue();
+                nestedFieldTypeCode = pointerParam.RawPointerNestedFieldTypeCodeValue();
+                nestedElementSize = pointerParam.RawPointerNestedElementSizeValue();
+                nestedElementAlignment = pointerParam.RawPointerNestedElementAlignmentValue();
+                return true;
+            }
+        }
+    }
+
+    if ((node.Kind == ExprKind.DerefExpr || node.Kind == ExprKind.RawPointerIndexedElementExpr)
+        && node.Imm >= 0
+        && (u32[0 max])node.Imm == SourceResolvedFieldTypeCodePointer())
+    {
+        stack mut bool unpackedMutable = false;
+        stack mut u32[0 max] unpackedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] unpackedElementSize = 0;
+        stack mut u32[0 max] unpackedElementAlignment = 0;
+        if (!TryUnpackRawPointerNestedFacts(
+            node.Arg4,
+            unpackedMutable,
+            unpackedFieldTypeCode,
+            unpackedElementSize,
+            unpackedElementAlignment))
+        {
+            return false;
+        }
+
+        rawPointerMutable = unpackedMutable;
+        fieldTypeCode = unpackedFieldTypeCode;
+        elementSize = unpackedElementSize;
+        elementAlignment = unpackedElementAlignment;
+        return true;
+    }
+
+    if (node.Kind != ExprKind.NameExpr || !params.Contains(node.Left + 1))
+    {
+        return false;
+    }
+
+    stack ParamName param = params.Get(node.Left + 1);
+    if (param.RawPointerFieldTypeCodeValue() == SourceResolvedFieldTypeCodeInvalid()
+        || param.RawPointerElementSizeValue() == 0
+        || param.RawPointerElementAlignmentValue() == 0)
+    {
+        return false;
+    }
+
+    fieldTypeCode = param.RawPointerFieldTypeCodeValue();
+    elementSize = param.RawPointerElementSizeValue();
+    elementAlignment = param.RawPointerElementAlignmentValue();
+    rawPointerMutable = param.RawPointerMutableValue();
+    nestedMutable = param.RawPointerNestedMutableValue();
+    nestedFieldTypeCode = param.RawPointerNestedFieldTypeCodeValue();
+    nestedElementSize = param.RawPointerNestedElementSizeValue();
+    nestedElementAlignment = param.RawPointerNestedElementAlignmentValue();
+    return true;
+}
+
+internal fn bool TryGetRawPointerElementCountFactsForNameNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out bool hasElementCount,
+    out bool elementCountIsParam,
+    out u32[0 max] elementCountLiteral,
+    out u32[0 max] elementCountParamIndex)
+{
+    hasElementCount = false;
+    elementCountIsParam = false;
+    elementCountLiteral = 0;
+    elementCountParamIndex = 0;
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.NameExpr || !params.Contains(node.Left + 1))
+    {
+        return false;
+    }
+
+    stack ParamName param = params.Get(node.Left + 1);
+    if (!param.RawPointerHasElementCountValue())
+    {
+        return false;
+    }
+
+    hasElementCount = true;
+    elementCountIsParam = param.RawPointerElementCountIsParamValue();
+    elementCountLiteral = param.RawPointerElementCountLiteralValue();
+    elementCountParamIndex = param.RawPointerElementCountParamIndexValue();
+    return true;
+}
+
+internal fn bool ReplaceParamRawPointerElementCountFacts(
+    mut borrow IrTable<ParamName> params,
+    u32[0 max] paramIndex,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex)
+{
+    if (!params.Contains(paramIndex + 1))
+    {
+        return false;
+    }
+
+    stack mut ParamName param = params.Get(paramIndex + 1);
+    param.RawPointerHasElementCount = hasElementCount;
+    param.RawPointerElementCountIsParam = elementCountIsParam;
+    param.RawPointerElementCountLiteral = elementCountLiteral;
+    param.RawPointerElementCountParamIndex = elementCountParamIndex;
+    return params.Replace(paramIndex + 1, param);
+}
+
+internal fn bool ReplaceParamRawPointerFacts(
+    mut borrow IrTable<ParamName> params,
+    u32[0 max] paramIndex,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex)
+{
+    return ReplaceParamRawPointerFactsWithNested(
+        params,
+        paramIndex,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn bool ReplaceParamRawPointerFactsWithNested(
+    mut borrow IrTable<ParamName> params,
+    u32[0 max] paramIndex,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
+    if (!params.Contains(paramIndex + 1))
+    {
+        return false;
+    }
+
+    stack mut ParamName param = params.Get(paramIndex + 1);
+    param.RawPointerMutable = rawPointerMutable;
+    param.RawPointerFieldTypeCode = fieldTypeCode;
+    param.RawPointerElementSize = elementSize;
+    param.RawPointerElementAlignment = elementAlignment;
+    param.RawPointerNestedMutable = nestedMutable;
+    param.RawPointerNestedFieldTypeCode = nestedFieldTypeCode;
+    param.RawPointerNestedElementSize = nestedElementSize;
+    param.RawPointerNestedElementAlignment = nestedElementAlignment;
+    param.RawPointerHasElementCount = hasElementCount;
+    param.RawPointerElementCountIsParam = elementCountIsParam;
+    param.RawPointerElementCountLiteral = elementCountLiteral;
+    param.RawPointerElementCountParamIndex = elementCountParamIndex;
+    return params.Replace(paramIndex + 1, param);
+}
+
+internal fn bool ReplaceParamRawPointerElementCountFactsFromNameNode(
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] paramIndex,
+    u32[0 max] nodeId)
+{
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    if (!TryGetRawPointerElementCountFactsForNameNode(
+        nodes,
+        params,
+        nodeId,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex))
+    {
+        hasElementCount = false;
+    }
+
+    return ReplaceParamRawPointerElementCountFacts(
+        params,
+        paramIndex,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex);
+}
+
+internal inline finite law bool RawPointerElementCountFactsEqual(
+    bool leftHasElementCount,
+    bool leftElementCountIsParam,
+    u32[0 max] leftElementCountLiteral,
+    u32[0 max] leftElementCountParamIndex,
+    bool rightHasElementCount,
+    bool rightElementCountIsParam,
+    u32[0 max] rightElementCountLiteral,
+    u32[0 max] rightElementCountParamIndex)
+{
+    return leftHasElementCount == rightHasElementCount
+        && leftElementCountIsParam == rightElementCountIsParam
+        && leftElementCountLiteral == rightElementCountLiteral
+        && leftElementCountParamIndex == rightElementCountParamIndex;
+}
+
+internal fn bool TryMergeRawPointerFactsForAssignedNodes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] firstNodeId,
+    u32[0 max] secondNodeId,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool hasElementCount,
+    out bool elementCountIsParam,
+    out u32[0 max] elementCountLiteral,
+    out u32[0 max] elementCountParamIndex,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    hasElementCount = false;
+    elementCountIsParam = false;
+    elementCountLiteral = 0;
+    elementCountParamIndex = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+
+    stack mut bool firstMutable = false;
+    stack mut u32[0 max] firstFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] firstElementSize = 0;
+    stack mut u32[0 max] firstElementAlignment = 0;
+    stack mut bool firstNestedMutable = false;
+    stack mut u32[0 max] firstNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] firstNestedElementSize = 0;
+    stack mut u32[0 max] firstNestedElementAlignment = 0;
+    stack mut bool secondMutable = false;
+    stack mut u32[0 max] secondFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] secondElementSize = 0;
+    stack mut u32[0 max] secondElementAlignment = 0;
+    stack mut bool secondNestedMutable = false;
+    stack mut u32[0 max] secondNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] secondNestedElementSize = 0;
+    stack mut u32[0 max] secondNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        firstNodeId,
+        firstMutable,
+        firstFieldTypeCode,
+        firstElementSize,
+        firstElementAlignment,
+        firstNestedMutable,
+        firstNestedFieldTypeCode,
+        firstNestedElementSize,
+        firstNestedElementAlignment)
+        || !TryGetRawPointerFactsForNodeWithNested(
+            nodes,
+            params,
+            secondNodeId,
+            secondMutable,
+            secondFieldTypeCode,
+            secondElementSize,
+            secondElementAlignment,
+            secondNestedMutable,
+            secondNestedFieldTypeCode,
+            secondNestedElementSize,
+            secondNestedElementAlignment)
+        || firstMutable != secondMutable
+        || firstFieldTypeCode != secondFieldTypeCode
+        || firstElementSize != secondElementSize
+        || firstElementAlignment != secondElementAlignment
+        || firstNestedMutable != secondNestedMutable
+        || firstNestedFieldTypeCode != secondNestedFieldTypeCode
+        || firstNestedElementSize != secondNestedElementSize
+        || firstNestedElementAlignment != secondNestedElementAlignment)
+    {
+        return false;
+    }
+
+    rawPointerMutable = firstMutable;
+    fieldTypeCode = firstFieldTypeCode;
+    elementSize = firstElementSize;
+    elementAlignment = firstElementAlignment;
+    nestedMutable = firstNestedMutable;
+    nestedFieldTypeCode = firstNestedFieldTypeCode;
+    nestedElementSize = firstNestedElementSize;
+    nestedElementAlignment = firstNestedElementAlignment;
+
+    stack mut bool firstHasElementCount = false;
+    stack mut bool firstElementCountIsParam = false;
+    stack mut u32[0 max] firstElementCountLiteral = 0;
+    stack mut u32[0 max] firstElementCountParamIndex = 0;
+    stack bool firstHasCountFacts = TryGetRawPointerElementCountFactsForNameNode(
+        nodes,
+        params,
+        firstNodeId,
+        firstHasElementCount,
+        firstElementCountIsParam,
+        firstElementCountLiteral,
+        firstElementCountParamIndex);
+
+    stack mut bool secondHasElementCount = false;
+    stack mut bool secondElementCountIsParam = false;
+    stack mut u32[0 max] secondElementCountLiteral = 0;
+    stack mut u32[0 max] secondElementCountParamIndex = 0;
+    stack bool secondHasCountFacts = TryGetRawPointerElementCountFactsForNameNode(
+        nodes,
+        params,
+        secondNodeId,
+        secondHasElementCount,
+        secondElementCountIsParam,
+        secondElementCountLiteral,
+        secondElementCountParamIndex);
+
+    if (firstHasCountFacts
+        && secondHasCountFacts
+        && RawPointerElementCountFactsEqual(
+            firstHasElementCount,
+            firstElementCountIsParam,
+            firstElementCountLiteral,
+            firstElementCountParamIndex,
+            secondHasElementCount,
+            secondElementCountIsParam,
+            secondElementCountLiteral,
+            secondElementCountParamIndex))
+    {
+        hasElementCount = firstHasElementCount;
+        elementCountIsParam = firstElementCountIsParam;
+        elementCountLiteral = firstElementCountLiteral;
+        elementCountParamIndex = firstElementCountParamIndex;
+    }
+
+    return true;
+}
+
+internal fn bool ResolveParamWithMergedRawPointerFactsForAssignedNodes(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] firstNodeId,
+    u32[0 max] secondNodeId,
+    u32[0 max] expectedParamIndex)
+{
+    stack mut bool rawPointerMutable = false;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elementSize = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    if (TryMergeRawPointerFactsForAssignedNodes(
+        nodes,
+        params,
+        firstNodeId,
+        secondNodeId,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
+    {
+        return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+            params,
+            source,
+            start,
+            length,
+            rawPointerMutable,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            hasElementCount,
+            elementCountIsParam,
+            elementCountLiteral,
+            elementCountParamIndex,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment) == expectedParamIndex;
+    }
+
+    stack mut bool firstMutable = false;
+    stack mut u32[0 max] firstFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] firstElementSize = 0;
+    stack mut u32[0 max] firstElementAlignment = 0;
+    stack bool firstIsRawPointer = TryGetRawPointerFactsForNode(
+        nodes,
+        params,
+        firstNodeId,
+        firstMutable,
+        firstFieldTypeCode,
+        firstElementSize,
+        firstElementAlignment);
+
+    stack mut bool secondMutable = false;
+    stack mut u32[0 max] secondFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] secondElementSize = 0;
+    stack mut u32[0 max] secondElementAlignment = 0;
+    stack bool secondIsRawPointer = TryGetRawPointerFactsForNode(
+        nodes,
+        params,
+        secondNodeId,
+        secondMutable,
+        secondFieldTypeCode,
+        secondElementSize,
+        secondElementAlignment);
+
+    if (firstIsRawPointer || secondIsRawPointer)
+    {
+        return false;
+    }
+
+    return ResolveParam(params, source, start, length) == expectedParamIndex;
+}
+
+public finite law bool SourceExpressionTypeStartToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.IntegerType:
+            return true;
+        case TokenKind.FloatType:
+            return true;
+        case TokenKind.Bool:
+            return true;
+        case TokenKind.Void:
+            return true;
+        case TokenKind.AsciiView:
+            return true;
+        case TokenKind.UnicodeView:
+            return true;
+        case TokenKind.AsciiOwned:
+            return true;
+        case TokenKind.UnicodeOwned:
+            return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        case TokenKind.Fnptr:
+            return true;
+        case TokenKind.Closure:
+            return true;
+        case TokenKind.Dyn:
+            return true;
+        case TokenKind.Dynamic:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal finite law bool SourceExpressionConversionTypeQualifier(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Borrow:
+            return true;
+        case TokenKind.Retborrow:
+            return true;
+        case TokenKind.Storeborrow:
+            return true;
+        case TokenKind.Frozen:
+            return true;
+        case TokenKind.Shared:
+            return true;
+        case TokenKind.Out:
+            return true;
+        case TokenKind.Init:
+            return true;
+        case TokenKind.Mut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+public finite law bool SourceExpressionConversionOperandStartToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.IntegerLiteral:
+            return true;
+        case TokenKind.FloatLiteral:
+            return true;
+        case TokenKind.StringLiteral:
+            return true;
+        case TokenKind.CharacterLiteral:
+            return true;
+        case TokenKind.True:
+            return true;
+        case TokenKind.False:
+            return true;
+        case TokenKind.Null:
+            return true;
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.Minus:
+            return true;
+        case TokenKind.And:
+            return true;
+        case TokenKind.Star:
+            return true;
+        case TokenKind.Try:
+            return true;
+        case TokenKind.LParen:
+            return true;
+        default:
+            return false;
+    }
+}
+
+public fn u32[0 max] SourceExpressionTypeTokenValueTypeCode(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (kind == TokenKind.Rawptr || kind == TokenKind.Rawmutptr)
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    if (kind != TokenKind.IntegerType)
+    {
+        return SourceLocalTypeCodeNonValue();
+    }
+
+    stack u32[0 max] bits = IntegerTypeBitWidth(stream, source, typeToken);
+    switch (bits)
+    {
+        case 8:
+            return SourceLocalTypeCodeI8();
+        case 16:
+            return SourceLocalTypeCodeI16();
+        case 32:
+            return SourceLocalTypeCodeI32();
+        case 64:
+            return SourceLocalTypeCodeI64();
+        default:
+            return SourceLocalTypeCodeNonValue();
+    }
+}
+
+internal fn u32[0 max] SourceExpressionConversionTypePrimaryToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (SourceExpressionTypeStartToken(kind))
+        {
+            return scan;
+        }
+
+        if (!SourceExpressionConversionTypeQualifier(kind))
+        {
+            return 0;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+public fn bool TryFindSourceExpressionConversionType(borrow TokenStream stream, u32[0 max] pos, out u32[0 max] typeStart, out u32[0 max] closeParen)
+{
+    typeStart = 0;
+    closeParen = pos;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])pos) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] targetStart = pos + 1;
+    stack u32[0 max] primary = SourceExpressionConversionTypePrimaryToken(stream, targetStart, (u32[0 max])stream.Count());
+    if (primary == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = targetStart;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = guard - 1;
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return false;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            if (depth == 0)
+            {
+                stack TokenKind operandKind = stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1));
+                stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])primary);
+                if (primaryKind == TokenKind.Identifier && operandKind == TokenKind.LParen)
+                {
+                    return false;
+                }
+
+                if (!SourceExpressionConversionOperandStartToken(operandKind))
+                {
+                    return false;
+                }
+
+                typeStart = primary;
+                closeParen = scan;
+                return true;
+            }
+
+            depth = depth - 1;
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool CopyParamNamePrefix(borrow IrTable<ParamName> sourceParams, u64[0 2 ** 63 - 1] count, mut borrow IrTable<ParamName> destination)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamName name = sourceParams.Get((u32[0 max])(i + 1));
+        if (destination.Add(name) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TokenTextExistsInTokenTable(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> tokens,
+    u32[0 max] token)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokens.Count())
+    {
+        stack u32[0 max] current = tokens.Get((u32[0 max])(i + 1));
+        if (TokenTextEqualsAsciiSpan(stream, source, current, token))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindSwitchTargetOffsetForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u32[0 max] token,
+    out u32[0 max] targetOffset)
+{
+    targetOffset = 0;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < targetNameTokens.Count())
+    {
+        stack u32[0 max] current = targetNameTokens.Get((u32[0 max])(i + 1));
+        if (TokenTextEqualsAsciiSpan(stream, source, current, token))
+        {
+            targetOffset = (u32[0 max])i;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SwitchAssignmentArmTargetOffsetExists(
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] assignedRootStart,
+    u32[0 max] assignedRootCount,
+    u32[0 max] targetOffset)
+{
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])assignedRootCount)
+    {
+        stack u32[0 max] slot = assignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedTargetOffsets.Contains(slot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] currentOffset = assignedTargetOffsets.Get(slot);
+        if (currentOffset == targetOffset)
+        {
+            return true;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack TokenKind k = stream.KindAt(cursor);
+    if (k == TokenKind.IntegerLiteral)
+    {
+        stack i64[min max] value = ParseDigitSpan(source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        return MakeParseResult(MakeIntLit(nodes, value), cursor + 1);
+    }
+
+    if (k == TokenKind.FloatLiteral)
+    {
+        return MakeParseResult(MakeFloatLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.True)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, true), cursor + 1);
+    }
+
+    if (k == TokenKind.False)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, false), cursor + 1);
+    }
+
+    if (k == TokenKind.StringLiteral)
+    {
+        return MakeParseResult(MakeStringLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.CharacterLiteral)
+    {
+        return MakeParseResult(MakeCharacterLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.Minus)
+    {
+        // Unary minus: `-<primary>` lowers as `0 - <primary>`. It binds at the PRIMARY level
+        // (tighter than the binary operators), so `-x * y` parses as `(-x) * y` and `2 - -3`
+        // as `2 - (-3)`. A leading `-` is unambiguously unary here (a binary `-` is consumed
+        // between terms by ParseAdd, never at the start of a primary).
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        stack u32[0 max] zero = MakeIntLit(nodes, 0);
+        stack u32[0 max] negated = MakeBinary(nodes, TokenKind.Minus, zero, operand.NodeId);
+        return MakeParseResult(negated, operand.Next);
+    }
+
+    if (k == TokenKind.And)
+    {
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        return MakeParseResult(MakeAddressOf(nodes, operand.NodeId), operand.Next);
+    }
+
+    if (k == TokenKind.Star)
+    {
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] elementSize = 0;
+        stack mut u32[0 max] elementAlignment = 0;
+        stack mut bool nestedMutable = false;
+        stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] nestedElementSize = 0;
+        stack mut u32[0 max] nestedElementAlignment = 0;
+        if (!TryGetRawPointerDerefFactsForNodeWithNested(
+            nodes,
+            params,
+            operand.NodeId,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
+        {
+            fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            elementSize = 0;
+            elementAlignment = 0;
+            nestedMutable = false;
+            nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            nestedElementSize = 0;
+            nestedElementAlignment = 0;
+        }
+
+        return MakeParseResult(
+            MakeDerefWithNested(
+                nodes,
+                operand.NodeId,
+                fieldTypeCode,
+                elementSize,
+                elementAlignment,
+                nestedMutable,
+                nestedFieldTypeCode,
+                nestedElementSize,
+                nestedElementAlignment),
+            operand.Next);
+    }
+
+    if (k == TokenKind.Try)
+    {
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        return MakeParseResult(MakeTry(nodes, operand.NodeId), operand.Next);
+    }
+
+    if (k == TokenKind.LParen)
+    {
+        stack mut u32[0 max] conversionTypeStart = 0;
+        stack mut u32[0 max] conversionClose = 0;
+        if (TryFindSourceExpressionConversionType(stream, (u32[0 max])cursor, conversionTypeStart, conversionClose))
+        {
+            stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])(conversionClose + 1));
+            stack u32[0 max] targetTypeCode = SourceExpressionTypeTokenValueTypeCode(stream, source, conversionTypeStart);
+            return MakeParseResult(MakeConversion(nodes, operand.NodeId, conversionTypeStart, targetTypeCode), operand.Next);
+        }
+
+        // Parenthesized sub-expression: parse it, then skip the matching `)`.
+        stack ExprParseResult inner = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 1);
+        return MakeParseResult(inner.NodeId, inner.Next + 1);
+    }
+
+    if (k == TokenKind.Identifier && stream.KindAt(cursor + 1) == TokenKind.LParen)
+    {
+        // A call `name ( args )`. The callee NAME at `cursor` resolves against the
+        // function-name table to its 1-based function id (0 = unresolved — e.g. a call in a
+        // single-function context, whose table is empty, or a call to an unknown function).
+        stack i64[min max] calleeIndex = ParamIndexOf(funcNames, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        stack mut u32[0 max] callee = 0;
+        if (calleeIndex >= 0)
+        {
+            callee = (u32[0 max])(calleeIndex + 1);
+        }
+
+        // Empty args -> a 0-argument call.
+        if (stream.KindAt(cursor + 2) == TokenKind.RParen)
+        {
+            return MakeParseResult(MakeCall(nodes, callee, 0, 0, 0, 0, 0), cursor + 3);
+        }
+
+        // Parse the first argument, then consume any further comma-separated arguments,
+        // CAPTURING up to four and COUNTING the total — the count is checked against the
+        // callee's arity at validation (the AST model lowers up to four arguments, so a wider
+        // call is rejected by the count, not silently truncated).
+        stack ExprParseResult firstArg = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 2);
+        stack mut u64[0 2 ** 63 - 1] argCursor = firstArg.Next;
+        stack mut u32[0 max] argCount = 1;
+        stack mut u32[0 max] secondArg = 0;
+        stack mut u32[0 max] thirdArg = 0;
+        stack mut u32[0 max] fourthArg = 0;
+        stack mut IrTable<u32[0 max]> extraArgs = new();
+        while willexit (stream.KindAt(argCursor) == TokenKind.Comma)
+        {
+            stack ExprParseResult more = ParseExprIn(stream, source, nodes, params, funcNames, argCursor + 1);
+            if (argCount == 1)
+            {
+                secondArg = more.NodeId;
+            }
+            else if (argCount == 2)
+            {
+                thirdArg = more.NodeId;
+            }
+            else if (argCount == 3)
+            {
+                fourthArg = more.NodeId;
+            }
+            else
+            {
+                stack u32[0 max] addedExtra = extraArgs.Add(more.NodeId);
+                if (addedExtra == 0)
+                {
+                    return MakeParseResult(0, argCursor);
+                }
+            }
+
+            argCursor = more.Next;
+            argCount = argCount + 1;
+        }
+
+        stack u32[0 max] extraArgLink = BuildCallExtraArgLinks(nodes, extraArgs);
+        return MakeParseResult(MakeCallWithExtra(nodes, callee, argCount, firstArg.NodeId, secondArg, thirdArg, fourthArg, extraArgLink), argCursor + 1);
+    }
+
+    // A bare name: resolve it to a parameter index (first-appearance order).
+    stack u32[0 max] paramIndex = ResolveParam(params, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+    return MakeParseResult(MakeName(nodes, paramIndex), cursor + 1);
+}
+
+internal fn ExprParseResult ParseMulIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ExprParseResult left = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsProductOpToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParsePrimaryIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+internal fn ExprParseResult ParseAddIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ExprParseResult left = ParseMulIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsAddSubToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParseMulIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+// The full expression parser, parameterized by a function-name table so a call's callee
+// resolves to its function id. `ParseExpr` below is the thin wrapper used by the
+// single-function/expression paths (which pass an empty table — their calls, if any,
+// resolve to the 0 sentinel); the multi-function module compiler calls this directly.
+internal fn ExprParseResult ParseExprIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ExprParseResult left = ParseAddIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsComparisonOperator(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParseAddIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeCompare(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+// Single-function/expression entry: no cross-function call resolution (an empty
+// function-name table), so an unqualified `name(args)` keeps the 0 callee sentinel.
+internal fn ExprParseResult ParseExpr(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut IrTable<ParamName> noFuncs = new();
+    return ParseExprIn(stream, source, nodes, params, noFuncs, cursor);
+}
+
+// Lexes ONE expression, parses it into the AST, and returns the STRUCTURAL type of the
+// root — the correct successor to the token-counting `InferExpressionType`.
+public fn ExprType InferSourceExpressionType(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ExprParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            return TypeOfNode(nodes, root.NodeId);
+        case LexResult<TokenStream>.Err(var lexError):
+            return ExprType.ErrorType;
+    }
+}

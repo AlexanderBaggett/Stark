@@ -1,0 +1,668 @@
+import Vendor.Raylib.Types
+import Vendor.Raylib.Core
+import System.Memory
+import System.Text
+export import Vendor.Raylib.Types
+module Vendor.Raylib.Text
+
+public enum RaylibTextResult
+{
+    [Ok] Ok(RaylibOwnedText),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedText
+{
+    internal rawmutptr<i8[min max]> Data;
+
+    RaylibOwnedText()
+    {
+        self.Data = null;
+    }
+
+    public fn bool IsEmpty(borrow RaylibOwnedText self)
+    {
+        return self.Length() == 0;
+    }
+
+    public fn u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedText self)
+    {
+        if (self.Data == null)
+        {
+            return 0;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] length = 0;
+            while willexit (*(&self.Data[length]) != 0)
+            {
+                length += 1;
+                if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+                {
+                    return length;
+                }
+            }
+
+            return length;
+        }
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedText self, borrow mut i8[min max][] destination, out u64[0 2 ** 63 - 1] written)
+    {
+        written = 0;
+        if (self.Data == null)
+        {
+            return RaylibStatus.InvalidArgument;
+        }
+
+        stack u64[0 2 ** 63 - 1] length = self.Length();
+        if (destination.Length < length)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            while willexit (written < length)
+            {
+                destination[written] = *(&self.Data[written]);
+                written = (u64[0 2 ** 63 - 1])(written + (u64[0 2 ** 63 - 1])1);
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_MemFree(self.Data);
+                self.Data = null;
+            }
+        }
+    }
+}
+
+public enum RaylibCodepointsResult
+{
+    [Ok] Ok(RaylibOwnedCodepoints),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedCodepoints
+{
+    internal rawmutptr<i32[min max]> Data;
+    internal u64[0 2 ** 63 - 1] Count;
+
+    RaylibOwnedCodepoints()
+    {
+        self.Data = null;
+        self.Count = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedCodepoints self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow RaylibOwnedCodepoints self, u64[0 2 ** 63 - 1] index, out i32[min max] value)
+    {
+        value = 0;
+        if (index >= self.Count || self.Data == null)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            value = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedCodepoints self, borrow mut i32[min max][] destination)
+    {
+        if (destination.Length < self.Count)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.Count)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedCodepoints self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_UnloadCodepoints(self.Data);
+                self.Data = null;
+                self.Count = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe inline finite law rawptr<u8[0 max]> ReadU8OrNull(borrow u8[0 max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<i32[min max]> ReadCodepointsOrNull(borrow i32[min max][] codepoints)
+{
+    if (codepoints.Length == 0)
+    {
+        return null;
+    }
+
+    return &codepoints[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
+internal unsafe fn RaylibTextResult OwnedTextFromPointer(rawmutptr<i8[min max]> data)
+{
+    if (data == null)
+    {
+        return RaylibTextResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    return RaylibTextResult.Ok(new RaylibOwnedText() { Data = data });
+}
+
+[LinkName("GetFontDefault")]
+internal unsafe ffi fn Font stark_raylib_GetFontDefault();
+public fn Font GetFontDefault() {
+    unsafe {
+        return stark_raylib_GetFontDefault();
+    }
+}
+
+[LinkName("LoadFont")]
+internal unsafe ffi fn Font stark_raylib_LoadFont(ascii fileName);
+public fn Font LoadFont(ascii fileName) {
+    unsafe {
+        return stark_raylib_LoadFont(fileName);
+    }
+}
+
+[LinkName("LoadFontEx")]
+internal unsafe ffi fn Font stark_raylib_LoadFontEx(ascii fileName, i32[min max] fontSize, rawptr<i32[min max]> codepoints, i32[min max] codepointCount);
+public fn Font LoadFontEx(ascii fileName, i32[min max] fontSize, borrow i32[min max][] codepoints) {
+    if (TooManyForI32(codepoints.Length))
+    {
+        return DefaultFont();
+    }
+
+    unsafe {
+        return stark_raylib_LoadFontEx(fileName, fontSize, ReadCodepointsOrNull(codepoints), (i32[min max])codepoints.Length);
+    }
+}
+
+[LinkName("LoadFontFromImage")]
+internal unsafe ffi fn Font stark_raylib_LoadFontFromImage(Image image, Color key, i32[min max] firstChar);
+public fn Font LoadFontFromImage(Image image, Color key, i32[min max] firstChar) {
+    unsafe {
+        return stark_raylib_LoadFontFromImage(image, key, firstChar);
+    }
+}
+
+[LinkName("LoadFontFromMemory")]
+internal unsafe ffi fn Font stark_raylib_LoadFontFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawptr<i32[min max]> codepoints, i32[min max] codepointCount);
+public fn Font LoadFontFromMemory(ascii fileType, borrow u8[0 max][] fileData, i32[min max] fontSize, borrow i32[min max][] codepoints) {
+    if (TooManyForI32(fileData.Length) || TooManyForI32(codepoints.Length))
+    {
+        return DefaultFont();
+    }
+
+    unsafe {
+        return stark_raylib_LoadFontFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length, fontSize, ReadCodepointsOrNull(codepoints), (i32[min max])codepoints.Length);
+    }
+}
+
+[LinkName("IsFontValid")]
+internal unsafe ffi fn bool stark_raylib_IsFontValid(Font font);
+public fn bool IsFontValid(Font font) {
+    unsafe {
+        return stark_raylib_IsFontValid(font);
+    }
+}
+
+[LinkName("LoadFontData")]
+public unsafe ffi fn rawmutptr<GlyphInfo> LoadFontData(rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount, i32[min max] type);
+[LinkName("GenImageFontAtlas")]
+internal unsafe ffi fn Image stark_raylib_GenImageFontAtlas(rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod);
+public unsafe fn Image GenImageFontAtlas(rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod) {
+    unsafe {
+        return stark_raylib_GenImageFontAtlas(glyphs, glyphRecs, glyphCount, fontSize, padding, packMethod);
+    }
+}
+
+public unsafe ffi fn void UnloadFontData(rawmutptr<GlyphInfo> glyphs, i32[min max] glyphCount);
+[LinkName("UnloadFont")]
+internal unsafe ffi fn void stark_raylib_UnloadFont(Font font);
+public fn void UnloadFont(Font font) {
+    unsafe {
+        stark_raylib_UnloadFont(font);
+    }
+    return;
+}
+
+[LinkName("ExportFontAsCode")]
+internal unsafe ffi fn bool stark_raylib_ExportFontAsCode(Font font, ascii fileName);
+public fn bool ExportFontAsCode(Font font, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportFontAsCode(font, fileName);
+    }
+}
+
+[LinkName("DrawFPS")]
+internal unsafe ffi fn void stark_raylib_DrawFPS(i32[min max] posX, i32[min max] posY);
+public fn void DrawFPS(i32[min max] posX, i32[min max] posY) {
+    unsafe {
+        stark_raylib_DrawFPS(posX, posY);
+    }
+    return;
+}
+[LinkName("DrawText")]
+internal unsafe ffi fn void stark_raylib_DrawText(ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color);
+public fn void DrawText(ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color) {
+    unsafe {
+        stark_raylib_DrawText(text, posX, posY, fontSize, color);
+    }
+    return;
+}
+
+[LinkName("DrawTextEx")]
+internal unsafe ffi fn void stark_raylib_DrawTextEx(Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint);
+public fn void DrawTextEx(Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextEx(font, text, position, fontSize, spacing, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextPro")]
+internal unsafe ffi fn void stark_raylib_DrawTextPro(Font font, ascii text, Vector2 position, Vector2 origin, f32 rotation, f32 fontSize, f32 spacing, Color tint);
+public fn void DrawTextPro(Font font, ascii text, Vector2 position, Vector2 origin, f32 rotation, f32 fontSize, f32 spacing, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextPro(font, text, position, origin, rotation, fontSize, spacing, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextCodepoint")]
+internal unsafe ffi fn void stark_raylib_DrawTextCodepoint(Font font, i32[min max] codepoint, Vector2 position, f32 fontSize, Color tint);
+public fn void DrawTextCodepoint(Font font, i32[min max] codepoint, Vector2 position, f32 fontSize, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextCodepoint(font, codepoint, position, fontSize, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextCodepoints")]
+internal unsafe ffi fn void stark_raylib_DrawTextCodepoints(Font font, rawptr<i32[min max]> codepoints, i32[min max] codepointCount, Vector2 position, f32 fontSize, f32 spacing, Color tint);
+public fn RaylibStatus DrawTextCodepoints(Font font, borrow i32[min max][] codepoints, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
+    if (TooManyForI32(codepoints.Length))
+    {
+        return RaylibStatus.TooManyItems;
+    }
+
+    unsafe {
+        stark_raylib_DrawTextCodepoints(font, ReadCodepointsOrNull(codepoints), (i32[min max])codepoints.Length, position, fontSize, spacing, tint);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+[LinkName("SetTextLineSpacing")]
+internal unsafe ffi fn void stark_raylib_SetTextLineSpacing(i32[min max] spacing);
+public fn void SetTextLineSpacing(i32[min max] spacing) {
+    unsafe {
+        stark_raylib_SetTextLineSpacing(spacing);
+    }
+    return;
+}
+[LinkName("MeasureText")]
+internal unsafe ffi fn i32[min max] stark_raylib_MeasureText(ascii text, i32[min max] fontSize);
+public fn i32[min max] MeasureText(ascii text, i32[min max] fontSize) {
+    unsafe {
+        return stark_raylib_MeasureText(text, fontSize);
+    }
+}
+[LinkName("MeasureTextEx")]
+internal unsafe ffi fn Vector2 stark_raylib_MeasureTextEx(Font font, ascii text, f32 fontSize, f32 spacing);
+public fn Vector2 MeasureTextEx(Font font, ascii text, f32 fontSize, f32 spacing) {
+    unsafe {
+        return stark_raylib_MeasureTextEx(font, text, fontSize, spacing);
+    }
+}
+
+[LinkName("MeasureTextCodepoints")]
+internal unsafe ffi fn Vector2 stark_raylib_MeasureTextCodepoints(Font font, rawptr<i32[min max]> codepoints, i32[min max] length, f32 fontSize, f32 spacing);
+public fn Vector2 MeasureTextCodepoints(Font font, borrow i32[min max][] codepoints, f32 fontSize, f32 spacing) {
+    if (TooManyForI32(codepoints.Length))
+    {
+        return Vec2(0.0f, 0.0f);
+    }
+
+    unsafe {
+        return stark_raylib_MeasureTextCodepoints(font, ReadCodepointsOrNull(codepoints), (i32[min max])codepoints.Length, fontSize, spacing);
+    }
+}
+
+[LinkName("GetGlyphIndex")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGlyphIndex(Font font, i32[min max] codepoint);
+public fn i32[min max] GetGlyphIndex(Font font, i32[min max] codepoint) {
+    unsafe {
+        return stark_raylib_GetGlyphIndex(font, codepoint);
+    }
+}
+
+[LinkName("GetGlyphInfo")]
+internal unsafe ffi fn GlyphInfo stark_raylib_GetGlyphInfo(Font font, i32[min max] codepoint);
+public fn GlyphInfo GetGlyphInfo(Font font, i32[min max] codepoint) {
+    unsafe {
+        return stark_raylib_GetGlyphInfo(font, codepoint);
+    }
+}
+
+[LinkName("GetGlyphAtlasRec")]
+internal unsafe ffi fn Rectangle stark_raylib_GetGlyphAtlasRec(Font font, i32[min max] codepoint);
+public fn Rectangle GetGlyphAtlasRec(Font font, i32[min max] codepoint) {
+    unsafe {
+        return stark_raylib_GetGlyphAtlasRec(font, codepoint);
+    }
+}
+
+[LinkName("LoadUTF8")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_LoadUTF8(rawptr<i32[min max]> codepoints, i32[min max] length);
+[LinkName("UnloadUTF8")]
+internal unsafe ffi fn void stark_raylib_UnloadUTF8(rawmutptr<i8[min max]> text);
+[LinkName("LoadCodepoints")]
+internal unsafe ffi fn rawmutptr<i32[min max]> stark_raylib_LoadCodepoints(ascii text, rawmutptr<i32[min max]> count);
+[LinkName("UnloadCodepoints")]
+internal unsafe ffi fn void stark_raylib_UnloadCodepoints(rawmutptr<i32[min max]> codepoints);
+public unsafe ffi fn rawmutptr<rawmutptr<i8[min max]>> LoadTextLines(ascii text, rawmutptr<i32[min max]> count);
+public unsafe ffi fn void UnloadTextLines(rawmutptr<rawmutptr<i8[min max]>> text, i32[min max] lineCount);
+
+public fn RaylibTextResult LoadUTF8(borrow i32[min max][] codepoints)
+{
+    if (TooManyForI32(codepoints.Length))
+    {
+        return RaylibTextResult.Err(RaylibStatus.TooManyItems);
+    }
+
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_LoadUTF8(ReadCodepointsOrNull(codepoints), (i32[min max])codepoints.Length));
+    }
+}
+
+public fn RaylibCodepointsResult LoadCodepoints(ascii text)
+{
+    unsafe
+    {
+        stack mut i32[min max] count = 0;
+        stack rawmutptr<i32[min max]> codepoints = stark_raylib_LoadCodepoints(text, &count);
+        if (count < 0)
+        {
+            if (codepoints != null)
+            {
+                stark_raylib_UnloadCodepoints(codepoints);
+            }
+
+            return RaylibCodepointsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        if (count == 0)
+        {
+            if (codepoints != null)
+            {
+                stark_raylib_UnloadCodepoints(codepoints);
+            }
+
+            return RaylibCodepointsResult.Ok(new RaylibOwnedCodepoints());
+        }
+
+        if (codepoints == null)
+        {
+            return RaylibCodepointsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibCodepointsResult.Ok(new RaylibOwnedCodepoints()
+        {
+            Data = codepoints,
+            Count = (u64[0 2 ** 63 - 1])count
+        });
+    }
+}
+[LinkName("GetCodepointCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCodepointCount(ascii text);
+public fn i32[min max] GetCodepointCount(ascii text) {
+    unsafe {
+        return stark_raylib_GetCodepointCount(text);
+    }
+}
+[LinkName("GetCodepoint")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCodepoint(ascii text, rawmutptr<i32[min max]> codepointSize);
+public fn i32[min max] GetCodepoint(ascii text, out i32[min max] codepointSize) {
+    unsafe {
+        stack mut i32[min max] nativeSize = 0;
+        stack i32[min max] codepoint = stark_raylib_GetCodepoint(text, &nativeSize);
+        codepointSize = nativeSize;
+        return codepoint;
+    }
+}
+
+[LinkName("GetCodepointNext")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCodepointNext(ascii text, rawmutptr<i32[min max]> codepointSize);
+public fn i32[min max] GetCodepointNext(ascii text, out i32[min max] codepointSize) {
+    unsafe {
+        stack mut i32[min max] nativeSize = 0;
+        stack i32[min max] codepoint = stark_raylib_GetCodepointNext(text, &nativeSize);
+        codepointSize = nativeSize;
+        return codepoint;
+    }
+}
+
+[LinkName("GetCodepointPrevious")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCodepointPrevious(ascii text, rawmutptr<i32[min max]> codepointSize);
+public fn i32[min max] GetCodepointPrevious(ascii text, out i32[min max] codepointSize) {
+    unsafe {
+        stack mut i32[min max] nativeSize = 0;
+        stack i32[min max] codepoint = stark_raylib_GetCodepointPrevious(text, &nativeSize);
+        codepointSize = nativeSize;
+        return codepoint;
+    }
+}
+
+[LinkName("CodepointToUTF8")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_CodepointToUTF8(i32[min max] codepoint, rawmutptr<i32[min max]> utf8Size);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CodepointToUTF8(i32[min max] codepoint, out i32[min max] utf8Size) {
+    unsafe {
+        stack mut i32[min max] nativeSize = 0;
+        stack rawptr<i8[min max]> text = stark_raylib_CodepointToUTF8(codepoint, &nativeSize);
+        utf8Size = nativeSize;
+        return CopyCString(text);
+    }
+}
+
+[LinkName("TextCopy")]
+internal unsafe ffi fn i32[min max] stark_raylib_TextCopy(rawmutptr<i8[min max]> dst, ascii src);
+public fn RaylibStatus TextCopy(ascii source, borrow mut i8[min max][] destination, out i32[min max] copied) {
+    copied = 0;
+    if (destination.Length == 0)
+    {
+        return RaylibStatus.DestinationTooSmall;
+    }
+
+    unsafe {
+        copied = stark_raylib_TextCopy(&destination[0], source);
+    }
+
+    return RaylibStatus.Ok;
+}
+[LinkName("TextIsEqual")]
+internal unsafe ffi fn bool stark_raylib_TextIsEqual(ascii text1, ascii text2);
+public fn bool TextIsEqual(ascii text1, ascii text2) {
+    unsafe {
+        return stark_raylib_TextIsEqual(text1, text2);
+    }
+}
+[LinkName("TextLength")]
+internal unsafe ffi fn u32[0 max] stark_raylib_TextLength(ascii text);
+public fn u32[0 max] TextLength(ascii text) {
+    unsafe {
+        return stark_raylib_TextLength(text);
+    }
+}
+public ffi varargs unsafe fn rawptr<i8[min max]> TextFormat(ascii text);
+[LinkName("TextSubtext")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextSubtext(ascii text, i32[min max] position, i32[min max] length);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextSubtext(ascii text, i32[min max] position, i32[min max] length) {
+    unsafe {
+        return CopyCString(stark_raylib_TextSubtext(text, position, length));
+    }
+}
+[LinkName("TextReplace")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextReplace(ascii text, ascii search, ascii replacement);
+public fn RaylibTextResult TextReplace(ascii text, ascii search, ascii replacement)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextReplace(text, search, replacement));
+    }
+}
+
+[LinkName("TextInsert")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextInsert(ascii text, ascii insert, i32[min max] position);
+public fn RaylibTextResult TextInsert(ascii text, ascii insert, i32[min max] position)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextInsert(text, insert, position));
+    }
+}
+
+public unsafe ffi fn rawptr<i8[min max]> TextJoin(rawptr<rawptr<i8[min max]>> textList, i32[min max] count, ascii delimiter);
+public unsafe ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);
+public unsafe ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);
+[LinkName("TextFindIndex")]
+internal unsafe ffi fn i32[min max] stark_raylib_TextFindIndex(ascii text, ascii find);
+public fn i32[min max] TextFindIndex(ascii text, ascii find) {
+    unsafe {
+        return stark_raylib_TextFindIndex(text, find);
+    }
+}
+[LinkName("TextRemoveSpaces")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextRemoveSpaces(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextRemoveSpaces(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextRemoveSpaces(text));
+    }
+}
+
+[LinkName("GetTextBetween")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_GetTextBetween(ascii text, ascii begin, ascii end);
+public fn RaylibTextResult GetTextBetween(ascii text, ascii begin, ascii end)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_GetTextBetween(text, begin, end));
+    }
+}
+[LinkName("TextReplaceBetween")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement);
+public fn RaylibTextResult TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextReplaceBetween(text, begin, end, replacement));
+    }
+}
+
+[LinkName("TextToUpper")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextToUpper(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextToUpper(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextToUpper(text));
+    }
+}
+
+[LinkName("TextToLower")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextToLower(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextToLower(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextToLower(text));
+    }
+}
+
+[LinkName("TextToPascal")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextToPascal(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextToPascal(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextToPascal(text));
+    }
+}
+
+[LinkName("TextToSnake")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextToSnake(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextToSnake(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextToSnake(text));
+    }
+}
+
+[LinkName("TextToCamel")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_raylib_TextToCamel(ascii text);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TextToCamel(ascii text) {
+    unsafe {
+        return CopyCString(stark_raylib_TextToCamel(text));
+    }
+}
+[LinkName("TextToInteger")]
+internal unsafe ffi fn i32[min max] stark_raylib_TextToInteger(ascii text);
+public fn i32[min max] TextToInteger(ascii text) {
+    unsafe {
+        return stark_raylib_TextToInteger(text);
+    }
+}
+[LinkName("TextToFloat")]
+internal unsafe ffi fn f32 stark_raylib_TextToFloat(ascii text);
+public fn f32 TextToFloat(ascii text) {
+    unsafe {
+        return stark_raylib_TextToFloat(text);
+    }
+}

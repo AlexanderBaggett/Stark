@@ -1,0 +1,40 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedGroupedLocalDeclarationIntegrationTests
+
+// Ported from PackageImageTypedGroupedLocalDeclarationIntegrationTests.ManifestBackedTypedGroupedLocalDeclarationsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedGroupedLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed grouped local declaration bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "manifest-backed-typed-grouped-local-declarations-no-synthetic-source",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.SumTo(5, 0);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] SumTo<T>(i32[min max] limit, T tag)
+{
+    stack mut i32[min max] total = 0, stop = limit;
+    for willexit (stack mut i32[min max] index = 0, max = stop; index < max; index += 1)
+    {
+        total += index;
+    }
+
+    return total;
+}
+""",
+            "Facade.SumTo",
+            "",
+            10);
+    }
+}

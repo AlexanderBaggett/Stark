@@ -1,0 +1,63 @@
+import LlvmTestSupport
+import System.Testing
+module RawMultilineStringParityTests
+
+// Ported from RawMultilineStringParityTests.MultilineRawStringsStripDelimiterNewlinesAndClosingIndentation.
+internal fn bool MultilineRawStringsStripDelimiterNewlinesAndClosingIndentationImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "raw-multiline-strip-delimiter-newlines",
+        "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"\n        first\n          indented\n        second\n        \"\"\";\n}");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "c\"first\\0A  indented\\0Asecond\\00\"");
+}
+
+// Ported from RawMultilineStringParityTests.WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLines.
+internal fn bool WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLinesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "raw-multiline-whitespace-only-lines",
+        "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"\n        first\n  \n        second\n        \"\"\";\n}");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "c\"first\\0A\\0Asecond\\00\"");
+}
+
+// Ported from RawMultilineStringParityTests.SingleLineRawTripleQuoteStringsKeepTheirContentVerbatim.
+internal fn bool SingleLineRawTripleQuoteStringsKeepTheirContentVerbatimImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "raw-single-line-triple-quote-verbatim",
+        "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"quote \" and \\d inside\"\"\";\n}");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "c\"quote \\22 and \\5Cd inside\\00\"");
+}
+
+// Ported from RawMultilineStringParityTests.InterpolatedRawMultilineStringsNormalizeBeforeHoleSplitting.
+internal fn bool InterpolatedRawMultilineStringsNormalizeBeforeHoleSplittingImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "raw-multiline-interpolated-normalize",
+        "module Demo\n\nunsafe fn ascii Value()\n{\n    return $raw\"\"\"\n        Score: {100}\n        next \\d\n        \"\"\";\n}");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "c\"Score: 100\\0Anext \\5Cd\\00\"");
+}

@@ -1,0 +1,401 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding
+import Compiler.Typing.StorageSelectors
+import Compiler.Typing.TypedAssignments
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallMemberDependencies
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedConversions
+import Compiler.Typing.TypedCtfeQueries
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedDynamicFacts
+import Compiler.Typing.TypedEnumPayloads
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedLocals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedReturns
+import Compiler.Typing.TypedSignatures
+import Compiler.Typing.TypedTypeCompatibility
+import Compiler.Typing.TypedTypeResolution
+import Compiler.TargetFacts
+import System.Memory
+import System.Text
+export import Compiler.Mir.Model
+export import Compiler.Mir.Builder
+export import Compiler.Mir.Validation
+export import Compiler.Mir.AssemblyMetadata
+export import Compiler.Mir.LlvmText
+export import Compiler.Mir.LlvmFacts
+export import Compiler.Mir.LlvmInstructions
+export import Compiler.Mir.LlvmBlocks
+export import Compiler.Mir.LlvmControlFlow
+export import Compiler.Mir.LlvmFunctions
+export import Compiler.Mir.LlvmModules
+export import Compiler.Mir.EnumLayout
+export import Compiler.Mir.TextRendering
+export import Compiler.Mir.PackageCodec
+export import Compiler.Mir.PackageImage
+export import Compiler.Mir.ImportedTemplateLowering
+export import Compiler.Mir.ImportedTemplateSpecialization
+export import Compiler.Mir.Facts
+export import Compiler.Mir.SourceRangeFacts
+export import Compiler.Mir.SourceSemanticProbes
+export import Compiler.Mir.SourceSymbols
+export import Compiler.Mir.SourceExpressions
+export import Compiler.Mir.SourceMemberFacts
+export import Compiler.Mir.SourceModuleFacts
+export import Compiler.Mir.SourceExpressionLowering
+export import Compiler.Mir.SourceLocalLowering
+export import Compiler.Mir.SourceLocalStorageLayout
+export import Compiler.Mir.SourceTryPropagation
+export import Compiler.Mir.SourceLocalExpressionParsing
+export import Compiler.Mir.SourceLocalInitialization
+export import Compiler.Mir.SourceLocalMutation
+export import Compiler.Mir.SourceLocalArena
+export import Compiler.Mir.SourceFunctionContext
+export import Compiler.Mir.SourceFunctionEffects
+export import Compiler.Mir.SourceIfCore
+export import Compiler.Mir.SourceIfShapes
+export import Compiler.Mir.SourceIfParsing
+export import Compiler.Mir.SourceIfStorageMutation
+export import Compiler.Mir.SourceIfAssignmentLowering
+export import Compiler.Mir.SourceIfFunctionLowering
+export import Compiler.Mir.SourceIfReturnLowering
+export import Compiler.Mir.SourceIfLowering
+export import Compiler.Mir.SourceSwitchPatterns
+export import Compiler.Mir.SourceSwitchPatternConditions
+export import Compiler.Mir.SourceSwitchAggregatePatterns
+export import Compiler.Mir.SourceSwitchStoragePatterns
+export import Compiler.Mir.SourceSwitchCaseParsing
+export import Compiler.Mir.SourceSwitchAssignmentArms
+export import Compiler.Mir.SourceSwitchTerminalParsing
+export import Compiler.Mir.SourceSwitchTerminalLowering
+export import Compiler.Mir.SourceSwitchAssignmentParsing
+export import Compiler.Mir.SourceSwitchAssignmentLowering
+export import Compiler.Mir.SourceSwitchFunctionLowering
+export import Compiler.Mir.SourceSwitchLowering
+export import Compiler.Mir.SourceLoopLowering
+export import Compiler.Mir.SourceTryLowering
+export import Compiler.Mir.SourceModuleLowering
+export import Compiler.Mir.TestSupport
+module Compiler.Mir
+
+// === Phase-boundary MIR verification (doc 24, toward #30) ===
+// A structural well-formedness check over a function's owned MIR before a later phase (e.g.
+// codegen) consumes it: the block/instruction ranges lie within the tables, the entry block
+// is one the function owns, every owned instruction's operands name values that EXIST (no
+// dangling/out-of-range reference), and every owned block is TERMINATED and names only
+// in-range values (a Return / CondBranch condition) and blocks (Branch / CondBranch targets).
+// This catches the structural-corruption class (a 0 or out-of-range slot) at a phase
+// boundary, independent of the emitter — the kind of invariant a real compiler asserts
+// between passes. (Operand 0 is the "unused" sentinel and is allowed; a phi's forward
+// back-edge reference is in-range by construction, so the bound is the value table size.)
+
+// Verify-then-emit: a phase-boundary gate that runs `MirFunctionWellFormed` over EVERY
+// function in the module and emits the LLVM ONLY if all are structurally well-formed. A
+// malformed function (a dangling reference, an unterminated block) is rejected before any
+// output, so the back end never emits corrupt IR. Returns false on a malformed module OR an
+// emit failure; true on a clean emit — the canonical "validate at the phase boundary, then
+// lower" shape for the MIR-function-table codegen path.
+public fn bool EmitLlvmModuleVerified(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        if (!MirFunctionWellFormed(instrs, blocks, f))
+        {
+            return false;
+        }
+
+        id = id + 1;
+    }
+
+    switch (EmitLlvmModule(instrs, blocks, funcs, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// === FFI capability probe (foundation for a libLLVM C-API binding, #31 direct) ===
+// The libLLVM direct-C-API route is `ffi fn` declarations of the LLVM C API linked
+// against libLLVM. As a foundation check that the self-hosted compiler package can
+// declare and call C functions through FFI, this binds libc `abs` — resolved from the
+// system C library that every macOS Stark binary already links. The remaining work
+// for the real binding is the static-archive link integration for libLLVM (it ships
+// here only as `libLLVM*.a` component archives, with no single shared `libLLVM`).
+
+internal unsafe ffi fn i32[min max] abs(i32[min max] value);
+
+// Calls libc `abs` through FFI.
+public fn i32[min max] AbsViaFfi(i32[min max] value)
+{
+    unsafe
+    {
+        return abs(value);
+    }
+}
+
+// === Minimal source -> MIR -> LLVM thread (toward bootstrap, #33) ===
+// Connects the front end (lexer) to the back end (MIR + codegen) for a trivial
+// `return <int>` program: lex the source, find the first integer literal, parse its
+// value from the source span, build a MIR `const`+`return`, and emit the LLVM. This
+// is the first source-to-codegen thread — a minimal but real bootstrap-direction
+// slice (a full Stark-source -> MIR translator is the multi-session capstone).
+
+// Lexes a trivial `return <int>` source, lowers it to MIR, and emits the LLVM function
+// `@main` into `sink`. Returns false if the source has no integer literal or fails to
+// lex.
+public fn bool LowerReturnIntToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] value = FirstIntLiteralValue(stream, sourceBytes);
+            if (value < 0)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack MirValueId v = MirConstInt(instrs, value);
+            stack MirBlockId entry = MirReturnBlock(blocks, v);
+            stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinition(instrs, blocks, "main", entry.Index(), 1, 1, sink);
+            return true;
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+internal fn bool StreamHasIdentifier(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+// Lowers a `return <expr>` where `<expr>` is a sum of products: `term (('+'|'-') term)*`
+// and `term` is `int ('*' int)*`. `*` binds tighter than `+`/`-` (real precedence);
+// each tier folds left-associatively (the product fold is inlined for the first term
+// and again per additive term). `2 + 3 * 4` lowers as `2 + (3 * 4)`.
+internal fn bool LowerExprStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] firstIndex = FirstPrimaryIndex(stream);
+    if (firstIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    BuildParamTable(stream, source, params);
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // A single optional comparison binds below `+`/`-`: `<sum> (('<'|'>') <sum>)?`. The
+    // i1 result is zero-extended to i64 so the function can return it.
+    stack mut MirValueId acc = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])firstIndex);
+    stack i64[min max] comparisonIndex = FirstComparisonIndex(stream);
+    if (comparisonIndex >= 0)
+    {
+        stack i64[min max] rhsIndex = FirstPrimaryIndexAfter(stream, (u64[0 2 ** 63 - 1])comparisonIndex);
+        if (rhsIndex >= 0)
+        {
+            stack MirValueId rhs = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])rhsIndex);
+            stack MirValueId comparison = LowerComparison(instrs, stream.KindAt((u64[0 2 ** 63 - 1])comparisonIndex), acc, rhs);
+            acc = MirZExt(instrs, comparison);
+        }
+    }
+
+    stack MirBlockId entry = MirReturnBlock(blocks, acc);
+    stack u32[0 max] count = (u32[0 max])instrs.Count();
+    stack u32[0 max] paramCount = (u32[0 max])params.Count();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, count, sink);
+    return true;
+}
+
+// Lowers a program `(var <name> = <expr>;)* return <expr>` to LLVM: each `var` binds a
+// local to its expression's value (earlier locals are visible to later ones), and the
+// `return` expression may reference any of them by name. No parameters in this mode.
+// A `var` statement is `var Id = <expr> ;`, so its name is at the var token + 1 and its
+// expression begins at + 3 (after `=`).
+internal fn bool LowerProgramStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] returnIndex = FirstTokenOfKind(stream, TokenKind.Return);
+    if (returnIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // Bind every `var` declaration, in source order.
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokenCount)
+    {
+        if (stream.KindAt(i) == TokenKind.Var)
+        {
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(i + 1);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(i + 1);
+            stack MirValueId boundValue = FoldExpr(stream, source, params, locals, instrs, i + 3);
+            stack mut LocalBinding binding = new();
+            binding.Start = nameStart;
+            binding.Length = nameLength;
+            binding.ValueIndex = boundValue.Index();
+            stack u32[0 max] addedLocal = locals.Add(binding);
+        }
+
+        i = i + 1;
+    }
+
+    // `return <expr>`: expression begins at returnIndex + 1.
+    stack MirValueId resultValue = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])returnIndex + 1);
+
+    stack MirBlockId entry = MirReturnBlock(blocks, resultValue);
+    stack u32[0 max] count = (u32[0 max])instrs.Count();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinitionWithParams(instrs, blocks, "main", 0, entry.Index(), 1, count, sink);
+    return true;
+}
+
+// Lexes and lowers a `var <name> = <expr>; return <expr>` program to LLVM `@main`.
+public fn bool LowerProgramToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerProgramStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lexes a `return <int>` or `return <int> <+|-|*> <int>` source, lowers it to MIR, and
+// emits the LLVM `@main` function into `sink`.
+public fn bool LowerReturnExprToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerExprStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+internal fn bool LowerRecursiveFactorialStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] ifIdx = FirstTokenOfKind(stream, TokenKind.If);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] firstReturn = FirstTokenOfKind(stream, TokenKind.Return);
+    if (ifIdx < 0 || cmpIdx < 0 || firstReturn < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] secondReturn = FirstTokenOfKindAfter(stream, TokenKind.Return, (u64[0 2 ** 63 - 1])firstReturn);
+    if (secondReturn < 0)
+    {
+        return false;
+    }
+
+    // The recursive call's `(` is the first LParen after the second `return`; its `n -
+    // 1` operands follow.
+    stack i64[min max] callLParen = FirstTokenOfKindAfter(stream, TokenKind.LParen, (u64[0 2 ** 63 - 1])secondReturn);
+    if (callLParen < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind mulOp = stream.KindAt((u64[0 2 ** 63 - 1])secondReturn + 2);
+    stack TokenKind subOp = stream.KindAt((u64[0 2 ** 63 - 1])callLParen + 2);
+    stack i64[min max] condRhs = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] baseValue = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])firstReturn + 1), stream.LengthAt((u64[0 2 ** 63 - 1])firstReturn + 1));
+    stack i64[min max] subStep = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])callLParen + 3), stream.LengthAt((u64[0 2 ** 63 - 1])callLParen + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Entry block: the base-vs-recurse comparison `<p> <cmp> <a>`.
+    stack MirValueId p = MirParam(instrs, 0);
+    stack MirValueId condRhsConst = MirConstInt(instrs, condRhs);
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, p, condRhsConst);
+    // Base block: `return <base>`.
+    stack MirValueId baseConst = MirConstInt(instrs, baseValue);
+    // Recursive block: `<p> <op> <name>(<p> <op2> <step>)`.
+    stack MirValueId subConst = MirConstInt(instrs, subStep);
+    stack MirValueId reduced = LowerBinOp(instrs, subOp, p, subConst);
+    stack MirValueId recursive = MirCall1(instrs, MirFuncIdOf(1), reduced);
+    stack MirValueId result = LowerBinOp(instrs, mulOp, p, recursive);
+
+    stack MirBlockId entry = MirCondBlock(blocks, cond, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId base = MirReturnBlock(blocks, baseConst);
+    stack MirBlockId recurse = MirReturnBlock(blocks, result);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(base.Index(), 4, 1));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(recurse.Index(), 5, 4));
+
+    switch (EmitLlvmBlocks(instrs, blocks, "f1", 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a self-recursive factorial-shaped function to the recursive `@f1`.
+public fn bool LowerRecursiveFactorialToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerRecursiveFactorialStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}

@@ -3,9 +3,10 @@ title = "Raylib"
 weight = 180
 +++
 
-The Raylib example is a native-backed library package. The binding is split
-into modules such as `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`,
-`Raylib.Text`, `Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`.
+The Raylib example is a native-backed library package. It uses direct C ABI
+aggregate carriers for small by-value Raylib structs and is split into modules
+such as `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`, `Raylib.Text`,
+`Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`.
 
 ## Build And Run
 
@@ -15,7 +16,10 @@ Follow the local setup notes in the checked-in README:
 bash examples/raylib/build-package.sh
 ```
 
-Raylib must be available through `pkg-config` or configured native paths.
+That helper is a binding-author/source-checkout workflow and acquires or locates
+Raylib as described in the README. An installed release SDK already owns the
+advertised `Vendor.Raylib` package and native payload; applications simply
+`import Vendor.Raylib` and do not configure `pkg-config` or native paths.
 Graphical execution is intentionally manual.
 
 Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNativeExecution` and package-linked by `ExamplesCompileRunTests.BreakoutRaylibBuildsThroughPackageOwnedNativeMetadataWithoutGraphicalExecution`.
@@ -24,7 +28,7 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 - README.md (embedded below)
 - [Raylib.stark](samples/Raylib.stark)
-- [RaylibSmoke.stark](samples/RaylibSmoke.stark)
+- [RaylibHeadlessGeometry.stark](samples/RaylibHeadlessGeometry.stark)
 - [Raylib/Types.stark](samples/Raylib/Types.stark)
 - [Raylib/Core.stark](samples/Raylib/Core.stark)
 - [Raylib/Shapes.stark](samples/Raylib/Shapes.stark)
@@ -32,7 +36,6 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 - [Raylib/Text.stark](samples/Raylib/Text.stark)
 - [Raylib/Models.stark](samples/Raylib/Models.stark)
 - [Raylib/Audio.stark](samples/Raylib/Audio.stark)
-- [RaylibNative.c](samples/RaylibNative.c)
 - [Raylib.package.args](samples/Raylib.package.args)
 - [Stark.toml](samples/Stark.toml)
 
@@ -44,9 +47,9 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 {{< file-sample "samples/Raylib.stark" "stark" >}}
 
-### RaylibSmoke.stark
+### RaylibHeadlessGeometry.stark
 
-{{< file-sample "samples/RaylibSmoke.stark" "stark" >}}
+{{< file-sample "samples/RaylibHeadlessGeometry.stark" "stark" >}}
 
 ### Raylib/Types.stark
 
@@ -75,10 +78,6 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 ### Raylib/Audio.stark
 
 {{< file-sample "samples/Raylib/Audio.stark" "stark" >}}
-
-### RaylibNative.c
-
-{{< file-sample "samples/RaylibNative.c" "c" >}}
 
 ### Raylib.package.args
 

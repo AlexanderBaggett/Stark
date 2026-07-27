@@ -1,0 +1,584 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.ExpressionTypeHelpers
+import System.Text
+import System.Memory
+module Compiler.Binding.ReceiverCandidates
+
+public enum ReceiverCandidateSiteKind
+{
+    Unknown,
+    Value,
+    Static,
+}
+
+public enum ReceiverCandidateKind
+{
+    Field,
+    InstanceMethod,
+    StaticMethod,
+}
+
+public struct ReceiverCandidateSetTable
+{
+    internal dynamic ReceiverCandidateSiteKind SiteKinds;
+    internal dynamic u32[0 max] MemberNodes;
+    internal dynamic u32[0 max] CallNodes;
+    internal dynamic u32[0 max] ReceiverNodes;
+    internal dynamic u32[0 max] ReceiverTypeTokens;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] ArgumentCounts;
+    internal dynamic u32[0 max] CandidateStartSlots;
+    internal dynamic u32[0 max] CandidateCounts;
+    internal dynamic ReceiverCandidateKind CandidateKinds;
+    internal dynamic u32[0 max] CandidateTokens;
+
+    ReceiverCandidateSetTable()
+    {
+        self.SiteKinds = new();
+        self.MemberNodes = new();
+        self.CallNodes = new();
+        self.ReceiverNodes = new();
+        self.ReceiverTypeTokens = new();
+        self.NameTokens = new();
+        self.ArgumentCounts = new();
+        self.CandidateStartSlots = new();
+        self.CandidateCounts = new();
+        self.CandidateKinds = new();
+        self.CandidateTokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ReceiverCandidateSetTable self)
+    {
+        return self.MemberNodes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TotalCandidateCount(borrow ReceiverCandidateSetTable self)
+    {
+        return self.CandidateTokens.Length;
+    }
+
+    public law ReceiverCandidateSiteKind SiteKindAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ReceiverCandidateSiteKind kind = ReceiverCandidateSiteKind.Unknown;
+        if (index < self.SiteKinds.Length)
+        {
+            kind = self.SiteKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] MemberNodeAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.MemberNodes.Length)
+        {
+            node = self.MemberNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] CallNodeAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.CallNodes.Length)
+        {
+            node = self.CallNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] ReceiverNodeAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ReceiverNodes.Length)
+        {
+            node = self.ReceiverNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] ReceiverTypeTokenAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ReceiverTypeTokens.Length)
+        {
+            token = self.ReceiverTypeTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentCountAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ArgumentCounts.Length)
+        {
+            count = self.ArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CandidateCountAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CandidateCounts.Length)
+        {
+            count = self.CandidateCounts[index];
+        }
+
+        return count;
+    }
+
+    public law ReceiverCandidateKind CandidateKindAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] site, u32[0 max] candidate)
+    {
+        stack mut ReceiverCandidateKind kind = ReceiverCandidateKind.Field;
+        if (site < self.CandidateStartSlots.Length && candidate < self.CandidateCountAt(site))
+        {
+            stack u32[0 max] start = self.CandidateStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + candidate);
+                if (slot < self.CandidateKinds.Length)
+                {
+                    kind = self.CandidateKinds[slot];
+                }
+            }
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] CandidateTokenAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] site, u32[0 max] candidate)
+    {
+        stack mut u32[0 max] token = 0;
+        if (site < self.CandidateStartSlots.Length && candidate < self.CandidateCountAt(site))
+        {
+            stack u32[0 max] start = self.CandidateStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + candidate);
+                if (slot < self.CandidateTokens.Length)
+                {
+                    token = self.CandidateTokens[slot];
+                }
+            }
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FieldCandidateCountAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] candidates = self.CandidateCountAt(site);
+        for willexit (stack mut u32[0 max] candidate = 0; candidate < candidates; candidate += 1)
+        {
+            if (self.CandidateKindAt(site, candidate) == ReceiverCandidateKind.Field)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] InstanceMethodCandidateCountAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] candidates = self.CandidateCountAt(site);
+        for willexit (stack mut u32[0 max] candidate = 0; candidate < candidates; candidate += 1)
+        {
+            if (self.CandidateKindAt(site, candidate) == ReceiverCandidateKind.InstanceMethod)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] StaticMethodCandidateCountAt(borrow ReceiverCandidateSetTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] candidates = self.CandidateCountAt(site);
+        for willexit (stack mut u32[0 max] candidate = 0; candidate < candidates; candidate += 1)
+        {
+            if (self.CandidateKindAt(site, candidate) == ReceiverCandidateKind.StaticMethod)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendSet(
+        mut borrow ReceiverCandidateSetTable self,
+        ReceiverCandidateSiteKind siteKind,
+        u32[0 max] memberNode,
+        u32[0 max] callNode,
+        u32[0 max] receiverNode,
+        u32[0 max] receiverTypeToken,
+        u32[0 max] nameToken,
+        u32[0 max] argumentCount,
+        out u32[0 max] siteIndex)
+    {
+        siteIndex = 0;
+        if (!self.SiteKinds.TryReserve(1)
+            || !self.MemberNodes.TryReserve(1)
+            || !self.CallNodes.TryReserve(1)
+            || !self.ReceiverNodes.TryReserve(1)
+            || !self.ReceiverTypeTokens.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.ArgumentCounts.TryReserve(1)
+            || !self.CandidateStartSlots.TryReserve(1)
+            || !self.CandidateCounts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        siteIndex = (u32[0 max])(self.MemberNodes.Length + 1);
+        init self.SiteKinds[self.SiteKinds.Length] = siteKind;
+        init self.MemberNodes[self.MemberNodes.Length] = memberNode;
+        init self.CallNodes[self.CallNodes.Length] = callNode;
+        init self.ReceiverNodes[self.ReceiverNodes.Length] = receiverNode;
+        init self.ReceiverTypeTokens[self.ReceiverTypeTokens.Length] = receiverTypeToken;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.ArgumentCounts[self.ArgumentCounts.Length] = argumentCount;
+        init self.CandidateStartSlots[self.CandidateStartSlots.Length] = (u32[0 max])(self.CandidateTokens.Length + 1);
+        init self.CandidateCounts[self.CandidateCounts.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendCandidate(mut borrow ReceiverCandidateSetTable self, u32[0 max] siteIndex, ReceiverCandidateKind kind, u32[0 max] candidateToken)
+    {
+        if (siteIndex == 0 || candidateToken == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.CandidateKinds.TryReserve(1)
+            || !self.CandidateTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.CandidateKinds[self.CandidateKinds.Length] = kind;
+        init self.CandidateTokens[self.CandidateTokens.Length] = candidateToken;
+
+        stack u64[0 2 ** 63 - 1] siteSlot = (u64[0 2 ** 63 - 1])(siteIndex - 1);
+        if (siteSlot < self.CandidateCounts.Length)
+        {
+            self.CandidateCounts[siteSlot] = (u32[0 max])(self.CandidateCounts[siteSlot] + 1);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn u32[0 max] FindDataDeclarationName(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] typeToken)
+{
+    if (typeToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii typeName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])typeToken);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Struct || table.KindAt(index) == DeclarationKind.Record)
+        {
+            stack ascii declName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(typeName, declName))
+            {
+                found = table.NameTokenAt(index);
+            }
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] StaticReceiverDeclarationNameToken(borrow DeclarationTable table, ascii source, borrow TokenStream stream, borrow ReferenceTable refs, borrow StatementList body, u32[0 max] receiverNode)
+{
+    if (receiverNode == 0 || body.ExprKindAt(receiverNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, receiverNode);
+    if (refIndexPlusOne == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+    if (refs.KindAt(refIndex) != ReferenceKind.Declaration)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] targetPlusOne = refs.TargetAt(refIndex);
+    if (targetPlusOne == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    if (table.KindAt(target) == DeclarationKind.Struct || table.KindAt(target) == DeclarationKind.Record)
+    {
+        return table.NameTokenAt(target);
+    }
+
+    return 0;
+}
+
+internal finite law bool ReceiverMemberHasStaticBefore(borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] fnKeyword)
+{
+    stack mut u32[0 max] scan = memberStart;
+    stack mut u32[0 max] bracketDepth = 0;
+    while willexit (scan < fnKeyword)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Static && bracketDepth == 0)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = (u32[0 max])(bracketDepth + 1);
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = (u32[0 max])(bracketDepth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus AppendReceiverFieldCandidates(
+    mut borrow ReceiverCandidateSetTable sets,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerNameToken,
+    u32[0 max] siteIndex,
+    u32[0 max] memberNameToken)
+{
+    switch (ParseStructFields(stream, ownerNameToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] count = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                if (BindingTokenTextEqualsToken(source, stream, fields.NameTokenAt(index), memberNameToken))
+                {
+                    switch (sets.AppendCandidate(siteIndex, ReceiverCandidateKind.Field, fields.NameTokenAt(index)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var appendError):
+                            return System.Memory.MemoryStatus.Err(appendError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendReceiverMethodCandidates(
+    mut borrow ReceiverCandidateSetTable sets,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerNameToken,
+    u32[0 max] siteIndex,
+    u32[0 max] memberNameToken,
+    bool wantStatic)
+{
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, ownerNameToken);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] memberStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])memberStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] memberEnd = ReceiverMemberEndToken(stream, memberStart);
+        if (memberEnd < memberStart)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] fnKeyword = ReceiverMemberFunctionToken(stream, memberStart, memberEnd);
+        if (fnKeyword != 0)
+        {
+            stack bool isStatic = ReceiverMemberHasStaticBefore(stream, memberStart, fnKeyword);
+            if (isStatic == wantStatic)
+            {
+                switch (ParseFunctionSignature(stream, fnKeyword))
+                {
+                    case ParseResult<FunctionSignature>.Err(var sigError):
+                    {
+                    }
+                    case ParseResult<FunctionSignature>.Ok(var signature):
+                        if (BindingTokenTextEqualsToken(source, stream, signature.Name(), memberNameToken))
+                        {
+                            stack mut ReceiverCandidateKind candidateKind = ReceiverCandidateKind.InstanceMethod;
+                            if (isStatic)
+                            {
+                                candidateKind = ReceiverCandidateKind.StaticMethod;
+                            }
+
+                            switch (sets.AppendCandidate(siteIndex, candidateKind, signature.Name()))
+                            {
+                                case System.Memory.MemoryStatus.Err(var appendError):
+                                    return System.Memory.MemoryStatus.Err(appendError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                }
+            }
+        }
+
+        memberStart = (u32[0 max])(memberEnd + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] CallNodeWithCallee(borrow StatementList body, u32[0 max] calleeNode)
+{
+    stack u64[0 2 ** 63 - 1] count = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= count; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call && body.ExprLeftAt(node) == calleeNode)
+        {
+            return node;
+        }
+    }
+
+    return 0;
+}
+
+public fn BindResult<ReceiverCandidateSetTable> BuildReceiverCandidateSets(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body)
+{
+    stack mut ReceiverCandidateSetTable sets = new();
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] memberNode = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(memberNode) == Compiler.Parsing.ExprKind.Member)
+        {
+            stack u32[0 max] receiverNode = body.ExprLeftAt(memberNode);
+            stack u32[0 max] memberNameToken = body.ExprTokenAt(memberNode);
+            stack u32[0 max] callNode = CallNodeWithCallee(body, memberNode);
+            stack mut u32[0 max] argumentCount = 0;
+            if (callNode != 0)
+            {
+                argumentCount = body.ExprCallArgCountAt(callNode);
+            }
+
+            stack mut ReceiverCandidateSiteKind siteKind = ReceiverCandidateSiteKind.Unknown;
+            stack mut u32[0 max] receiverTypeToken = MemberStructNameToken(table, source, refs, scope, stream, body, receiverNode);
+            stack mut u32[0 max] ownerNameToken = FindDataDeclarationName(table, source, stream, receiverTypeToken);
+            if (ownerNameToken != 0)
+            {
+                siteKind = ReceiverCandidateSiteKind.Value;
+            }
+            else
+            {
+                receiverTypeToken = StaticReceiverDeclarationNameToken(table, source, stream, refs, body, receiverNode);
+                ownerNameToken = receiverTypeToken;
+                if (ownerNameToken != 0)
+                {
+                    siteKind = ReceiverCandidateSiteKind.Static;
+                }
+            }
+
+            stack mut u32[0 max] siteIndex = 0;
+            switch (sets.AppendSet(siteKind, memberNode, callNode, receiverNode, receiverTypeToken, memberNameToken, argumentCount, siteIndex))
+            {
+                case System.Memory.MemoryStatus.Err(var setError):
+                    return BindResult<ReceiverCandidateSetTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (siteKind == ReceiverCandidateSiteKind.Value)
+            {
+                switch (AppendReceiverFieldCandidates(sets, source, stream, ownerNameToken, siteIndex, memberNameToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var fieldError):
+                        return BindResult<ReceiverCandidateSetTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (AppendReceiverMethodCandidates(sets, source, stream, ownerNameToken, siteIndex, memberNameToken, false))
+                {
+                    case System.Memory.MemoryStatus.Err(var methodError):
+                        return BindResult<ReceiverCandidateSetTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (siteKind == ReceiverCandidateSiteKind.Static)
+            {
+                switch (AppendReceiverMethodCandidates(sets, source, stream, ownerNameToken, siteIndex, memberNameToken, true))
+                {
+                    case System.Memory.MemoryStatus.Err(var staticError):
+                        return BindResult<ReceiverCandidateSetTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return BindResult<ReceiverCandidateSetTable>.Ok(sets);
+}

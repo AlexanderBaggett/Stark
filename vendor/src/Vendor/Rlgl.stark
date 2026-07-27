@@ -1,0 +1,1980 @@
+import Vendor.Raylib.Types
+
+module Vendor.Rlgl
+
+public enum RlglStatus
+{
+    Ok,
+    TooManyItems,
+    InvalidArgument,
+    DestinationTooSmall,
+    SourceTooLarge,
+    Unsupported,
+}
+
+public enum RlglPixelsResult
+{
+    [Ok] Ok(OwnedPixels),
+    [Err] Err(RlglStatus),
+}
+
+[StructLayout(C)]
+internal struct NativeVertexBuffer
+{
+    i32[min max] ElementCount;
+    rawmutptr<f32> Vertices;
+    rawmutptr<f32> Texcoords;
+    rawmutptr<f32> Normals;
+    rawmutptr<u8[0 max]> Colors;
+    rawmutptr<u32[0 max]> Indices;
+    u32[0 max] VaoId;
+    u32[0 max][5] VboId;
+}
+
+[StructLayout(C)]
+public struct DrawCall
+{
+    i32[min max] Mode;
+    i32[min max] VertexCount;
+    i32[min max] VertexAlignment;
+    u32[0 max] TextureId;
+}
+
+[StructLayout(C)]
+internal struct NativeRenderBatch
+{
+    i32[min max] BufferCount;
+    i32[min max] CurrentBuffer;
+    rawmutptr<NativeVertexBuffer> VertexBuffer;
+    rawmutptr<DrawCall> Draws;
+    i32[min max] DrawCounter;
+    f32 CurrentDepth;
+}
+
+public struct RenderBatch
+{
+    internal NativeRenderBatch Native;
+
+    RenderBatch()
+    {
+        self.Native = new();
+    }
+
+    public finite law bool IsEmpty(borrow RenderBatch self)
+    {
+        return self.Native.BufferCount == 0;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Native.BufferCount != 0)
+            {
+                stark_rlgl_rlUnloadRenderBatch(self.Native);
+                self.Native = new();
+            }
+        }
+    }
+}
+
+public struct GlTextureFormats
+{
+    u32[0 max] InternalFormat;
+    u32[0 max] Format;
+    u32[0 max] Type;
+}
+
+public struct OwnedPixels
+{
+    internal rawmutptr<u8[0 max]> Data;
+    internal u64[0 2 ** 63 - 1] ByteLength;
+
+    OwnedPixels()
+    {
+        self.Data = null;
+        self.ByteLength = 0;
+    }
+
+    public finite law bool IsEmpty(borrow OwnedPixels self)
+    {
+        return self.Data == null || self.ByteLength == 0;
+    }
+
+    public finite law u64[0 2 ** 63 - 1] Length(borrow OwnedPixels self)
+    {
+        return self.ByteLength;
+    }
+
+    public fn RlglStatus CopyTo(borrow OwnedPixels self, borrow mut u8[0 max][] destination)
+    {
+        if (self.Data == null)
+        {
+            return RlglStatus.InvalidArgument;
+        }
+
+        if (destination.Length < self.ByteLength)
+        {
+            return RlglStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < self.ByteLength; index += 1)
+            {
+                destination[index] = *(&self.Data[index]);
+            }
+        }
+
+        return RlglStatus.Ok;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_MemFree((rawmutptr<i8[min max]>)self.Data);
+                self.Data = null;
+                self.ByteLength = 0;
+            }
+        }
+    }
+}
+
+[LinkName("MemFree")]
+internal unsafe ffi fn void stark_raylib_MemFree(rawmutptr<i8[min max]> pointer);
+[LinkName("GetPixelDataSize")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetPixelDataSize(i32[min max] width, i32[min max] height, i32[min max] format);
+
+internal inline finite law bool TooManyForI32(u64[0 max] value)
+{
+    return value > (u64[0 max])(2 ** 31 - 1);
+}
+
+internal unsafe inline finite law rawptr<i8[min max]> ReadBytesOrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawmutptr<i8[min max]> MutableBytesOrNull(borrow mut i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal fn RlglStatus ValidateI32Length(u64[0 max] length)
+{
+    if (TooManyForI32(length))
+    {
+        return RlglStatus.TooManyItems;
+    }
+
+    return RlglStatus.Ok;
+}
+
+public const RL_TEXTURE_WRAP_S = 10242;
+public const RL_TEXTURE_WRAP_T = 10243;
+public const RL_TEXTURE_MAG_FILTER = 10240;
+public const RL_TEXTURE_MIN_FILTER = 10241;
+public const RL_TEXTURE_FILTER_NEAREST = 9728;
+public const RL_TEXTURE_FILTER_LINEAR = 9729;
+public const RL_TEXTURE_FILTER_MIP_NEAREST = 9984;
+public const RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR = 9986;
+public const RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST = 9985;
+public const RL_TEXTURE_FILTER_MIP_LINEAR = 9987;
+public const RL_TEXTURE_FILTER_ANISOTROPIC = 12288;
+public const RL_TEXTURE_MIPMAP_BIAS_RATIO = 16384;
+public const RL_TEXTURE_WRAP_REPEAT = 10497;
+public const RL_TEXTURE_WRAP_CLAMP = 33071;
+public const RL_TEXTURE_WRAP_MIRROR_REPEAT = 33648;
+public const RL_TEXTURE_WRAP_MIRROR_CLAMP = 34626;
+public const RL_MODELVIEW = 5888;
+public const RL_PROJECTION = 5889;
+public const RL_TEXTURE = 5890;
+public const RL_LINES = 1;
+public const RL_TRIANGLES = 4;
+public const RL_QUADS = 7;
+public const RL_UNSIGNED_BYTE = 5121;
+public const RL_FLOAT = 5126;
+public const RL_STREAM_DRAW = 35040;
+public const RL_STREAM_READ = 35041;
+public const RL_STREAM_COPY = 35042;
+public const RL_STATIC_DRAW = 35044;
+public const RL_STATIC_READ = 35045;
+public const RL_STATIC_COPY = 35046;
+public const RL_DYNAMIC_DRAW = 35048;
+public const RL_DYNAMIC_READ = 35049;
+public const RL_DYNAMIC_COPY = 35050;
+public const RL_FRAGMENT_SHADER = 35632;
+public const RL_VERTEX_SHADER = 35633;
+public const RL_COMPUTE_SHADER = 37305;
+public const RL_ZERO = 0;
+public const RL_ONE = 1;
+public const RL_SRC_COLOR = 768;
+public const RL_ONE_MINUS_SRC_COLOR = 769;
+public const RL_SRC_ALPHA = 770;
+public const RL_ONE_MINUS_SRC_ALPHA = 771;
+public const RL_DST_ALPHA = 772;
+public const RL_ONE_MINUS_DST_ALPHA = 773;
+public const RL_DST_COLOR = 774;
+public const RL_ONE_MINUS_DST_COLOR = 775;
+public const RL_SRC_ALPHA_SATURATE = 776;
+public const RL_CONSTANT_COLOR = 32769;
+public const RL_ONE_MINUS_CONSTANT_COLOR = 32770;
+public const RL_CONSTANT_ALPHA = 32771;
+public const RL_ONE_MINUS_CONSTANT_ALPHA = 32772;
+public const RL_FUNC_ADD = 32774;
+public const RL_MIN = 32775;
+public const RL_MAX = 32776;
+public const RL_FUNC_SUBTRACT = 32778;
+public const RL_FUNC_REVERSE_SUBTRACT = 32779;
+public const RL_BLEND_EQUATION = 32777;
+public const RL_BLEND_EQUATION_RGB = 32777;
+public const RL_BLEND_EQUATION_ALPHA = 34877;
+public const RL_BLEND_DST_RGB = 32968;
+public const RL_BLEND_SRC_RGB = 32969;
+public const RL_BLEND_DST_ALPHA = 32970;
+public const RL_BLEND_SRC_ALPHA = 32971;
+public const RL_BLEND_COLOR = 32773;
+public const RL_READ_FRAMEBUFFER = 36008;
+public const RL_DRAW_FRAMEBUFFER = 36009;
+public const RL_DEFAULT_SHADER_ATTRIB_LOCATION_TANGENT = 4;
+public const RL_MAX_SHADER_LOCATIONS = 32;
+public const RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 = 7;
+public const RL_SHADER_LOC_MAP_ALBEDO = 15;
+public const RL_SHADER_LOC_MAP_METALNESS = 16;
+public const RL_SHADER_LOC_MAP_DIFFUSE = RL_SHADER_LOC_MAP_ALBEDO;
+public const RL_SHADER_LOC_MAP_SPECULAR = RL_SHADER_LOC_MAP_METALNESS;
+public const RL_OPENGL_SOFTWARE = 0;
+public const RL_LOG_ALL = 0;
+public const RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE = 1;
+public const RL_TEXTURE_FILTER_POINT = 0;
+public const RL_BLEND_ALPHA = 0;
+public const RL_SHADER_LOC_VERTEX_POSITION = 0;
+public const RL_SHADER_UNIFORM_FLOAT = 0;
+public const RL_SHADER_ATTRIB_FLOAT = 0;
+public const RL_ATTACHMENT_COLOR_CHANNEL0 = 0;
+public const RL_ATTACHMENT_CUBEMAP_POSITIVE_X = 0;
+public const RL_CULL_FACE_FRONT = 0;
+public const RL_CULL_FACE_BACK = 1;
+
+
+[LinkName("rlMatrixMode")]
+internal unsafe ffi fn void stark_rlgl_rlMatrixMode(i32[min max] mode);
+[LinkName("rlPushMatrix")]
+internal unsafe ffi fn void stark_rlgl_rlPushMatrix();
+[LinkName("rlPopMatrix")]
+internal unsafe ffi fn void stark_rlgl_rlPopMatrix();
+[LinkName("rlLoadIdentity")]
+internal unsafe ffi fn void stark_rlgl_rlLoadIdentity();
+[LinkName("rlTranslatef")]
+internal unsafe ffi fn void stark_rlgl_rlTranslatef(f32 x, f32 y, f32 z);
+[LinkName("rlRotatef")]
+internal unsafe ffi fn void stark_rlgl_rlRotatef(f32 angle, f32 x, f32 y, f32 z);
+[LinkName("rlScalef")]
+internal unsafe ffi fn void stark_rlgl_rlScalef(f32 x, f32 y, f32 z);
+[LinkName("rlMultMatrixf")]
+internal unsafe ffi fn void stark_rlgl_rlMultMatrixf(rawptr<f32> matf);
+[LinkName("rlFrustum")]
+internal unsafe ffi fn void stark_rlgl_rlFrustum(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar);
+[LinkName("rlOrtho")]
+internal unsafe ffi fn void stark_rlgl_rlOrtho(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar);
+[LinkName("rlViewport")]
+internal unsafe ffi fn void stark_rlgl_rlViewport(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height);
+[LinkName("rlSetClipPlanes")]
+internal unsafe ffi fn void stark_rlgl_rlSetClipPlanes(f64 nearPlane, f64 farPlane);
+[LinkName("rlGetCullDistanceNear")]
+internal unsafe ffi fn f64 stark_rlgl_rlGetCullDistanceNear();
+[LinkName("rlGetCullDistanceFar")]
+internal unsafe ffi fn f64 stark_rlgl_rlGetCullDistanceFar();
+[LinkName("rlBegin")]
+internal unsafe ffi fn void stark_rlgl_rlBegin(i32[min max] mode);
+[LinkName("rlEnd")]
+internal unsafe ffi fn void stark_rlgl_rlEnd();
+[LinkName("rlVertex2i")]
+internal unsafe ffi fn void stark_rlgl_rlVertex2i(i32[min max] x, i32[min max] y);
+[LinkName("rlVertex2f")]
+internal unsafe ffi fn void stark_rlgl_rlVertex2f(f32 x, f32 y);
+[LinkName("rlVertex3f")]
+internal unsafe ffi fn void stark_rlgl_rlVertex3f(f32 x, f32 y, f32 z);
+[LinkName("rlTexCoord2f")]
+internal unsafe ffi fn void stark_rlgl_rlTexCoord2f(f32 x, f32 y);
+[LinkName("rlNormal3f")]
+internal unsafe ffi fn void stark_rlgl_rlNormal3f(f32 x, f32 y, f32 z);
+[LinkName("rlColor4ub")]
+internal unsafe ffi fn void stark_rlgl_rlColor4ub(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a);
+[LinkName("rlColor3f")]
+internal unsafe ffi fn void stark_rlgl_rlColor3f(f32 x, f32 y, f32 z);
+[LinkName("rlColor4f")]
+internal unsafe ffi fn void stark_rlgl_rlColor4f(f32 x, f32 y, f32 z, f32 w);
+[LinkName("rlEnableVertexArray")]
+internal unsafe ffi fn bool stark_rlgl_rlEnableVertexArray(u32[0 max] vaoId);
+[LinkName("rlDisableVertexArray")]
+internal unsafe ffi fn void stark_rlgl_rlDisableVertexArray();
+[LinkName("rlEnableVertexBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlEnableVertexBuffer(u32[0 max] id);
+[LinkName("rlDisableVertexBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlDisableVertexBuffer();
+[LinkName("rlEnableVertexBufferElement")]
+internal unsafe ffi fn void stark_rlgl_rlEnableVertexBufferElement(u32[0 max] id);
+[LinkName("rlDisableVertexBufferElement")]
+internal unsafe ffi fn void stark_rlgl_rlDisableVertexBufferElement();
+[LinkName("rlEnableVertexAttribute")]
+internal unsafe ffi fn void stark_rlgl_rlEnableVertexAttribute(u32[0 max] index);
+[LinkName("rlDisableVertexAttribute")]
+internal unsafe ffi fn void stark_rlgl_rlDisableVertexAttribute(u32[0 max] index);
+[LinkName("rlEnableStatePointer")]
+internal unsafe ffi fn void stark_rlgl_rlEnableStatePointer(i32[min max] vertexAttribType, rawmutptr<i8[min max]> buffer);
+[LinkName("rlDisableStatePointer")]
+internal unsafe ffi fn void stark_rlgl_rlDisableStatePointer(i32[min max] vertexAttribType);
+[LinkName("rlActiveTextureSlot")]
+internal unsafe ffi fn void stark_rlgl_rlActiveTextureSlot(i32[min max] slot);
+[LinkName("rlEnableTexture")]
+internal unsafe ffi fn void stark_rlgl_rlEnableTexture(u32[0 max] id);
+[LinkName("rlDisableTexture")]
+internal unsafe ffi fn void stark_rlgl_rlDisableTexture();
+[LinkName("rlEnableTextureCubemap")]
+internal unsafe ffi fn void stark_rlgl_rlEnableTextureCubemap(u32[0 max] id);
+[LinkName("rlDisableTextureCubemap")]
+internal unsafe ffi fn void stark_rlgl_rlDisableTextureCubemap();
+[LinkName("rlTextureParameters")]
+internal unsafe ffi fn void stark_rlgl_rlTextureParameters(u32[0 max] id, i32[min max] param, i32[min max] value);
+[LinkName("rlCubemapParameters")]
+internal unsafe ffi fn void stark_rlgl_rlCubemapParameters(u32[0 max] id, i32[min max] param, i32[min max] value);
+[LinkName("rlEnableShader")]
+internal unsafe ffi fn void stark_rlgl_rlEnableShader(u32[0 max] id);
+[LinkName("rlDisableShader")]
+internal unsafe ffi fn void stark_rlgl_rlDisableShader();
+[LinkName("rlEnableFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlEnableFramebuffer(u32[0 max] id);
+[LinkName("rlDisableFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlDisableFramebuffer();
+[LinkName("rlGetActiveFramebuffer")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlGetActiveFramebuffer();
+[LinkName("rlActiveDrawBuffers")]
+internal unsafe ffi fn void stark_rlgl_rlActiveDrawBuffers(i32[min max] count);
+[LinkName("rlBlitFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlBlitFramebuffer(i32[min max] srcX, i32[min max] srcY, i32[min max] srcWidth, i32[min max] srcHeight, i32[min max] dstX, i32[min max] dstY, i32[min max] dstWidth, i32[min max] dstHeight, i32[min max] bufferMask);
+[LinkName("rlBindFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlBindFramebuffer(u32[0 max] target, u32[0 max] framebuffer);
+[LinkName("rlEnableColorBlend")]
+internal unsafe ffi fn void stark_rlgl_rlEnableColorBlend();
+[LinkName("rlDisableColorBlend")]
+internal unsafe ffi fn void stark_rlgl_rlDisableColorBlend();
+[LinkName("rlEnableDepthTest")]
+internal unsafe ffi fn void stark_rlgl_rlEnableDepthTest();
+[LinkName("rlDisableDepthTest")]
+internal unsafe ffi fn void stark_rlgl_rlDisableDepthTest();
+[LinkName("rlEnableDepthMask")]
+internal unsafe ffi fn void stark_rlgl_rlEnableDepthMask();
+[LinkName("rlDisableDepthMask")]
+internal unsafe ffi fn void stark_rlgl_rlDisableDepthMask();
+[LinkName("rlEnableBackfaceCulling")]
+internal unsafe ffi fn void stark_rlgl_rlEnableBackfaceCulling();
+[LinkName("rlDisableBackfaceCulling")]
+internal unsafe ffi fn void stark_rlgl_rlDisableBackfaceCulling();
+[LinkName("rlColorMask")]
+internal unsafe ffi fn void stark_rlgl_rlColorMask(bool r, bool g, bool b, bool a);
+[LinkName("rlSetCullFace")]
+internal unsafe ffi fn void stark_rlgl_rlSetCullFace(i32[min max] mode);
+[LinkName("rlEnableScissorTest")]
+internal unsafe ffi fn void stark_rlgl_rlEnableScissorTest();
+[LinkName("rlDisableScissorTest")]
+internal unsafe ffi fn void stark_rlgl_rlDisableScissorTest();
+[LinkName("rlScissor")]
+internal unsafe ffi fn void stark_rlgl_rlScissor(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height);
+[LinkName("rlEnablePointMode")]
+internal unsafe ffi fn void stark_rlgl_rlEnablePointMode();
+[LinkName("rlDisablePointMode")]
+internal unsafe ffi fn void stark_rlgl_rlDisablePointMode();
+[LinkName("rlSetPointSize")]
+internal unsafe ffi fn void stark_rlgl_rlSetPointSize(f32 size);
+[LinkName("rlGetPointSize")]
+internal unsafe ffi fn f32 stark_rlgl_rlGetPointSize();
+[LinkName("rlEnableWireMode")]
+internal unsafe ffi fn void stark_rlgl_rlEnableWireMode();
+[LinkName("rlDisableWireMode")]
+internal unsafe ffi fn void stark_rlgl_rlDisableWireMode();
+[LinkName("rlSetLineWidth")]
+internal unsafe ffi fn void stark_rlgl_rlSetLineWidth(f32 width);
+[LinkName("rlGetLineWidth")]
+internal unsafe ffi fn f32 stark_rlgl_rlGetLineWidth();
+[LinkName("rlEnableSmoothLines")]
+internal unsafe ffi fn void stark_rlgl_rlEnableSmoothLines();
+[LinkName("rlDisableSmoothLines")]
+internal unsafe ffi fn void stark_rlgl_rlDisableSmoothLines();
+[LinkName("rlEnableStereoRender")]
+internal unsafe ffi fn void stark_rlgl_rlEnableStereoRender();
+[LinkName("rlDisableStereoRender")]
+internal unsafe ffi fn void stark_rlgl_rlDisableStereoRender();
+[LinkName("rlIsStereoRenderEnabled")]
+internal unsafe ffi fn bool stark_rlgl_rlIsStereoRenderEnabled();
+[LinkName("rlClearColor")]
+internal unsafe ffi fn void stark_rlgl_rlClearColor(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a);
+[LinkName("rlClearScreenBuffers")]
+internal unsafe ffi fn void stark_rlgl_rlClearScreenBuffers();
+[LinkName("rlCheckErrors")]
+internal unsafe ffi fn void stark_rlgl_rlCheckErrors();
+[LinkName("rlSetBlendMode")]
+internal unsafe ffi fn void stark_rlgl_rlSetBlendMode(i32[min max] mode);
+[LinkName("rlSetBlendFactors")]
+internal unsafe ffi fn void stark_rlgl_rlSetBlendFactors(i32[min max] glSrcFactor, i32[min max] glDstFactor, i32[min max] glEquation);
+[LinkName("rlSetBlendFactorsSeparate")]
+internal unsafe ffi fn void stark_rlgl_rlSetBlendFactorsSeparate(i32[min max] glSrcRGB, i32[min max] glDstRGB, i32[min max] glSrcAlpha, i32[min max] glDstAlpha, i32[min max] glEqRGB, i32[min max] glEqAlpha);
+[LinkName("rlglInit")]
+internal unsafe ffi fn void stark_rlgl_rlglInit(i32[min max] width, i32[min max] height);
+[LinkName("rlglClose")]
+internal unsafe ffi fn void stark_rlgl_rlglClose();
+[LinkName("rlLoadExtensions")]
+internal unsafe ffi fn void stark_rlgl_rlLoadExtensions(rawmutptr<i8[min max]> loader);
+[LinkName("rlGetProcAddress")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_rlgl_rlGetProcAddress(ascii procName);
+[LinkName("rlGetVersion")]
+internal unsafe ffi fn i32[min max] stark_rlgl_rlGetVersion();
+[LinkName("rlSetFramebufferWidth")]
+internal unsafe ffi fn void stark_rlgl_rlSetFramebufferWidth(i32[min max] width);
+[LinkName("rlGetFramebufferWidth")]
+internal unsafe ffi fn i32[min max] stark_rlgl_rlGetFramebufferWidth();
+[LinkName("rlSetFramebufferHeight")]
+internal unsafe ffi fn void stark_rlgl_rlSetFramebufferHeight(i32[min max] height);
+[LinkName("rlGetFramebufferHeight")]
+internal unsafe ffi fn i32[min max] stark_rlgl_rlGetFramebufferHeight();
+[LinkName("rlGetTextureIdDefault")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlGetTextureIdDefault();
+[LinkName("rlGetShaderIdDefault")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlGetShaderIdDefault();
+[LinkName("rlGetShaderLocsDefault")]
+internal unsafe ffi fn rawmutptr<i32[min max]> stark_rlgl_rlGetShaderLocsDefault();
+[LinkName("rlLoadRenderBatch")]
+internal unsafe ffi fn NativeRenderBatch stark_rlgl_rlLoadRenderBatch(i32[min max] numBuffers, i32[min max] bufferElements);
+[LinkName("rlUnloadRenderBatch")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadRenderBatch(NativeRenderBatch batch);
+[LinkName("rlDrawRenderBatch")]
+internal unsafe ffi fn void stark_rlgl_rlDrawRenderBatch(rawmutptr<NativeRenderBatch> batch);
+[LinkName("rlSetRenderBatchActive")]
+internal unsafe ffi fn void stark_rlgl_rlSetRenderBatchActive(rawmutptr<NativeRenderBatch> batch);
+[LinkName("rlDrawRenderBatchActive")]
+internal unsafe ffi fn void stark_rlgl_rlDrawRenderBatchActive();
+[LinkName("rlCheckRenderBatchLimit")]
+internal unsafe ffi fn bool stark_rlgl_rlCheckRenderBatchLimit(i32[min max] vCount);
+[LinkName("rlSetTexture")]
+internal unsafe ffi fn void stark_rlgl_rlSetTexture(u32[0 max] id);
+[LinkName("rlLoadVertexArray")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadVertexArray();
+[LinkName("rlLoadVertexBuffer")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadVertexBuffer(rawptr<i8[min max]> buffer, i32[min max] size, bool isDynamic);
+[LinkName("rlLoadVertexBufferElement")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadVertexBufferElement(rawptr<i8[min max]> buffer, i32[min max] size, bool isDynamic);
+[LinkName("rlUpdateVertexBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlUpdateVertexBuffer(u32[0 max] bufferId, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset);
+[LinkName("rlUpdateVertexBufferElements")]
+internal unsafe ffi fn void stark_rlgl_rlUpdateVertexBufferElements(u32[0 max] id, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset);
+[LinkName("rlUnloadVertexArray")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadVertexArray(u32[0 max] vaoId);
+[LinkName("rlUnloadVertexBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadVertexBuffer(u32[0 max] vboId);
+[LinkName("rlSetVertexAttribute")]
+internal unsafe ffi fn void stark_rlgl_rlSetVertexAttribute(u32[0 max] index, i32[min max] compSize, i32[min max] attributeType, bool normalized, i32[min max] stride, i32[min max] offset);
+[LinkName("rlSetVertexAttributeDivisor")]
+internal unsafe ffi fn void stark_rlgl_rlSetVertexAttributeDivisor(u32[0 max] index, i32[min max] divisor);
+[LinkName("rlSetVertexAttributeDefault")]
+internal unsafe ffi fn void stark_rlgl_rlSetVertexAttributeDefault(i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] attribType, i32[min max] count);
+[LinkName("rlDrawVertexArray")]
+internal unsafe ffi fn void stark_rlgl_rlDrawVertexArray(i32[min max] offset, i32[min max] count);
+[LinkName("rlDrawVertexArrayElements")]
+internal unsafe ffi fn void stark_rlgl_rlDrawVertexArrayElements(i32[min max] offset, i32[min max] count, rawptr<i8[min max]> buffer);
+[LinkName("rlDrawVertexArrayInstanced")]
+internal unsafe ffi fn void stark_rlgl_rlDrawVertexArrayInstanced(i32[min max] offset, i32[min max] count, i32[min max] instances);
+[LinkName("rlDrawVertexArrayElementsInstanced")]
+internal unsafe ffi fn void stark_rlgl_rlDrawVertexArrayElementsInstanced(i32[min max] offset, i32[min max] count, rawptr<i8[min max]> buffer, i32[min max] instances);
+[LinkName("rlLoadTexture")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadTexture(rawptr<i8[min max]> data, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] mipmapCount);
+[LinkName("rlLoadTextureDepth")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadTextureDepth(i32[min max] width, i32[min max] height, bool useRenderBuffer);
+[LinkName("rlLoadTextureCubemap")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadTextureCubemap(rawptr<i8[min max]> data, i32[min max] size, i32[min max] format, i32[min max] mipmapCount);
+[LinkName("rlUpdateTexture")]
+internal unsafe ffi fn void stark_rlgl_rlUpdateTexture(u32[0 max] id, i32[min max] offsetX, i32[min max] offsetY, i32[min max] width, i32[min max] height, i32[min max] format, rawptr<i8[min max]> data);
+[LinkName("rlGetGlTextureFormats")]
+internal unsafe ffi fn void stark_rlgl_rlGetGlTextureFormats(i32[min max] format, rawmutptr<u32[0 max]> glInternalFormat, rawmutptr<u32[0 max]> glFormat, rawmutptr<u32[0 max]> glType);
+[LinkName("rlGetPixelFormatName")]
+internal unsafe ffi fn rawptr<i8[min max]> stark_rlgl_rlGetPixelFormatName(u32[0 max] format);
+[LinkName("rlUnloadTexture")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadTexture(u32[0 max] id);
+[LinkName("rlGenTextureMipmaps")]
+internal unsafe ffi fn void stark_rlgl_rlGenTextureMipmaps(u32[0 max] id, i32[min max] width, i32[min max] height, i32[min max] format, rawmutptr<i32[min max]> mipmaps);
+[LinkName("rlReadTexturePixels")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_rlgl_rlReadTexturePixels(u32[0 max] id, i32[min max] width, i32[min max] height, i32[min max] format);
+[LinkName("rlReadScreenPixels")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_rlgl_rlReadScreenPixels(i32[min max] width, i32[min max] height);
+[LinkName("rlLoadFramebuffer")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadFramebuffer();
+[LinkName("rlFramebufferAttach")]
+internal unsafe ffi fn void stark_rlgl_rlFramebufferAttach(u32[0 max] id, u32[0 max] texId, i32[min max] attachType, i32[min max] texType, i32[min max] mipLevel);
+[LinkName("rlFramebufferComplete")]
+internal unsafe ffi fn bool stark_rlgl_rlFramebufferComplete(u32[0 max] id);
+[LinkName("rlUnloadFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadFramebuffer(u32[0 max] id);
+[LinkName("rlCopyFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlCopyFramebuffer(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height, i32[min max] format, rawmutptr<i8[min max]> pixels);
+[LinkName("rlResizeFramebuffer")]
+internal unsafe ffi fn void stark_rlgl_rlResizeFramebuffer(i32[min max] width, i32[min max] height);
+[LinkName("rlLoadShader")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadShader(ascii code, i32[min max] shaderType);
+[LinkName("rlLoadShaderProgram")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadShaderProgram(ascii vsCode, ascii fsCode);
+[LinkName("rlLoadShaderProgramEx")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadShaderProgramEx(u32[0 max] vsId, u32[0 max] fsId);
+[LinkName("rlLoadShaderProgramCompute")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadShaderProgramCompute(u32[0 max] csId);
+[LinkName("rlUnloadShader")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadShader(u32[0 max] id);
+[LinkName("rlUnloadShaderProgram")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadShaderProgram(u32[0 max] id);
+[LinkName("rlGetLocationUniform")]
+internal unsafe ffi fn i32[min max] stark_rlgl_rlGetLocationUniform(u32[0 max] id, ascii uniformName);
+[LinkName("rlGetLocationAttrib")]
+internal unsafe ffi fn i32[min max] stark_rlgl_rlGetLocationAttrib(u32[0 max] id, ascii attribName);
+[LinkName("rlSetUniform")]
+internal unsafe ffi fn void stark_rlgl_rlSetUniform(i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType, i32[min max] count);
+[LinkName("rlSetUniformMatrix")]
+internal unsafe ffi fn void stark_rlgl_rlSetUniformMatrix(i32[min max] locIndex, Matrix mat);
+[LinkName("rlSetUniformMatrices")]
+internal unsafe ffi fn void stark_rlgl_rlSetUniformMatrices(i32[min max] locIndex, rawptr<Matrix> mat, i32[min max] count);
+[LinkName("rlSetUniformSampler")]
+internal unsafe ffi fn void stark_rlgl_rlSetUniformSampler(i32[min max] locIndex, u32[0 max] textureId);
+[LinkName("rlSetShader")]
+internal unsafe ffi fn void stark_rlgl_rlSetShader(u32[0 max] id, rawmutptr<i32[min max]> locs);
+[LinkName("rlComputeShaderDispatch")]
+internal unsafe ffi fn void stark_rlgl_rlComputeShaderDispatch(u32[0 max] groupX, u32[0 max] groupY, u32[0 max] groupZ);
+[LinkName("rlLoadShaderBuffer")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlLoadShaderBuffer(u32[0 max] size, rawptr<i8[min max]> data, i32[min max] usageHint);
+[LinkName("rlUnloadShaderBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlUnloadShaderBuffer(u32[0 max] ssboId);
+[LinkName("rlUpdateShaderBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlUpdateShaderBuffer(u32[0 max] id, rawptr<i8[min max]> data, u32[0 max] dataSize, u32[0 max] offset);
+[LinkName("rlBindShaderBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlBindShaderBuffer(u32[0 max] id, u32[0 max] index);
+[LinkName("rlReadShaderBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlReadShaderBuffer(u32[0 max] id, rawmutptr<i8[min max]> dest, u32[0 max] count, u32[0 max] offset);
+[LinkName("rlCopyShaderBuffer")]
+internal unsafe ffi fn void stark_rlgl_rlCopyShaderBuffer(u32[0 max] destId, u32[0 max] srcId, u32[0 max] destOffset, u32[0 max] srcOffset, u32[0 max] count);
+[LinkName("rlGetShaderBufferSize")]
+internal unsafe ffi fn u32[0 max] stark_rlgl_rlGetShaderBufferSize(u32[0 max] id);
+[LinkName("rlBindImageTexture")]
+internal unsafe ffi fn void stark_rlgl_rlBindImageTexture(u32[0 max] id, u32[0 max] index, i32[min max] format, bool readOnly);
+[LinkName("rlGetMatrixModelview")]
+internal unsafe ffi fn Matrix stark_rlgl_rlGetMatrixModelview();
+[LinkName("rlGetMatrixProjection")]
+internal unsafe ffi fn Matrix stark_rlgl_rlGetMatrixProjection();
+[LinkName("rlGetMatrixTransform")]
+internal unsafe ffi fn Matrix stark_rlgl_rlGetMatrixTransform();
+[LinkName("rlGetMatrixProjectionStereo")]
+internal unsafe ffi fn Matrix stark_rlgl_rlGetMatrixProjectionStereo(i32[min max] eye);
+[LinkName("rlGetMatrixViewOffsetStereo")]
+internal unsafe ffi fn Matrix stark_rlgl_rlGetMatrixViewOffsetStereo(i32[min max] eye);
+[LinkName("rlSetMatrixProjection")]
+internal unsafe ffi fn void stark_rlgl_rlSetMatrixProjection(Matrix proj);
+[LinkName("rlSetMatrixModelview")]
+internal unsafe ffi fn void stark_rlgl_rlSetMatrixModelview(Matrix view);
+[LinkName("rlSetMatrixProjectionStereo")]
+internal unsafe ffi fn void stark_rlgl_rlSetMatrixProjectionStereo(Matrix right, Matrix left);
+[LinkName("rlSetMatrixViewOffsetStereo")]
+internal unsafe ffi fn void stark_rlgl_rlSetMatrixViewOffsetStereo(Matrix right, Matrix left);
+[LinkName("rlLoadDrawCube")]
+internal unsafe ffi fn void stark_rlgl_rlLoadDrawCube();
+[LinkName("rlLoadDrawQuad")]
+internal unsafe ffi fn void stark_rlgl_rlLoadDrawQuad();
+
+
+
+public fn RlglStatus rlMultMatrixf(borrow f32[] matf)
+{
+    if (matf.Length < 16) { return RlglStatus.InvalidArgument; }
+    unsafe { stark_rlgl_rlMultMatrixf(&matf[0]); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlEnableStatePointer(i32[min max] vertexAttribType, borrow mut i8[min max][] buffer)
+{
+    unsafe { stark_rlgl_rlEnableStatePointer(vertexAttribType, MutableBytesOrNull(buffer)); }
+    return RlglStatus.Ok;
+}
+
+public fn RenderBatch rlLoadRenderBatch(i32[min max] numBuffers, i32[min max] bufferElements)
+{
+    stack mut RenderBatch batch = new();
+    unsafe { batch.Native = stark_rlgl_rlLoadRenderBatch(numBuffers, bufferElements); }
+    return batch;
+}
+
+public fn void rlDrawRenderBatch(mut borrow RenderBatch batch)
+{
+    unsafe { stark_rlgl_rlDrawRenderBatch(&batch.Native); }
+    return;
+}
+
+public fn void rlUnloadRenderBatch(mut borrow RenderBatch batch)
+{
+    unsafe
+    {
+        if (batch.Native.BufferCount != 0)
+        {
+            stark_rlgl_rlUnloadRenderBatch(batch.Native);
+            batch.Native = new();
+        }
+    }
+    return;
+}
+
+public fn void rlSetRenderBatchActive(mut borrow RenderBatch batch)
+{
+    unsafe { stark_rlgl_rlSetRenderBatchActive(&batch.Native); }
+    return;
+}
+
+public fn void rlSetDefaultRenderBatchActive()
+{
+    unsafe { stark_rlgl_rlSetRenderBatchActive(null); }
+    return;
+}
+
+public fn i32[min max] rlGetShaderLocsDefault(borrow mut i32[min max][] locations)
+{
+    if (locations.Length == 0) { return 0; }
+    stack mut i32[min max] copied = 0;
+    unsafe
+    {
+        stack rawmutptr<i32[min max]> source = stark_rlgl_rlGetShaderLocsDefault();
+        if (source == null) { return 0; }
+        stack mut u64[0 2 ** 63 - 1] limit = locations.Length;
+        if (limit > (u64[0 2 ** 63 - 1])RL_MAX_SHADER_LOCATIONS) { limit = (u64[0 2 ** 63 - 1])RL_MAX_SHADER_LOCATIONS; }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < limit; index += 1)
+        {
+            locations[index] = *(&source[index]);
+            copied += 1;
+        }
+    }
+    return copied;
+}
+
+public fn RlglStatus rlLoadVertexBuffer(borrow i8[min max][] buffer, bool isDynamic, out u32[0 max] id)
+{
+    if (TooManyForI32(buffer.Length)) { id = 0; return RlglStatus.TooManyItems; }
+    unsafe { id = stark_rlgl_rlLoadVertexBuffer(ReadBytesOrNull(buffer), (i32[min max])buffer.Length, isDynamic); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlLoadVertexBufferElement(borrow i8[min max][] buffer, bool isDynamic, out u32[0 max] id)
+{
+    if (TooManyForI32(buffer.Length)) { id = 0; return RlglStatus.TooManyItems; }
+    unsafe { id = stark_rlgl_rlLoadVertexBufferElement(ReadBytesOrNull(buffer), (i32[min max])buffer.Length, isDynamic); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlUpdateVertexBuffer(u32[0 max] bufferId, borrow i8[min max][] data, i32[min max] offset)
+{
+    if (TooManyForI32(data.Length)) { return RlglStatus.TooManyItems; }
+    unsafe { stark_rlgl_rlUpdateVertexBuffer(bufferId, ReadBytesOrNull(data), (i32[min max])data.Length, offset); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlUpdateVertexBufferElements(u32[0 max] id, borrow i8[min max][] data, i32[min max] offset)
+{
+    if (TooManyForI32(data.Length)) { return RlglStatus.TooManyItems; }
+    unsafe { stark_rlgl_rlUpdateVertexBufferElements(id, ReadBytesOrNull(data), (i32[min max])data.Length, offset); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlSetVertexAttributeDefault(i32[min max] locIndex, borrow i8[min max][] value, i32[min max] attribType, i32[min max] count)
+{
+    unsafe { stark_rlgl_rlSetVertexAttributeDefault(locIndex, ReadBytesOrNull(value), attribType, count); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlDrawVertexArrayElements(i32[min max] offset, i32[min max] count, borrow i8[min max][] buffer)
+{
+    unsafe { stark_rlgl_rlDrawVertexArrayElements(offset, count, ReadBytesOrNull(buffer)); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlDrawVertexArrayElementsInstanced(i32[min max] offset, i32[min max] count, borrow i8[min max][] buffer, i32[min max] instances)
+{
+    unsafe { stark_rlgl_rlDrawVertexArrayElementsInstanced(offset, count, ReadBytesOrNull(buffer), instances); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlLoadTexture(borrow i8[min max][] data, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] mipmapCount, out u32[0 max] id)
+{
+    unsafe { id = stark_rlgl_rlLoadTexture(ReadBytesOrNull(data), width, height, format, mipmapCount); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlLoadTextureCubemap(borrow i8[min max][] data, i32[min max] size, i32[min max] format, i32[min max] mipmapCount, out u32[0 max] id)
+{
+    unsafe { id = stark_rlgl_rlLoadTextureCubemap(ReadBytesOrNull(data), size, format, mipmapCount); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlUpdateTexture(u32[0 max] id, i32[min max] offsetX, i32[min max] offsetY, i32[min max] width, i32[min max] height, i32[min max] format, borrow i8[min max][] data)
+{
+    unsafe { stark_rlgl_rlUpdateTexture(id, offsetX, offsetY, width, height, format, ReadBytesOrNull(data)); }
+    return RlglStatus.Ok;
+}
+
+public fn GlTextureFormats rlGetGlTextureFormats(i32[min max] format)
+{
+    stack mut u32[0 max] internalFormat = 0;
+    stack mut u32[0 max] glFormat = 0;
+    stack mut u32[0 max] glType = 0;
+    unsafe { stark_rlgl_rlGetGlTextureFormats(format, &internalFormat, &glFormat, &glType); }
+    return new GlTextureFormats() { InternalFormat = internalFormat, Format = glFormat, Type = glType };
+}
+
+public fn RlglStatus rlGetPixelFormatName(u32[0 max] format, borrow mut i8[min max][] destination, out u64[0 2 ** 63 - 1] written)
+{
+    written = 0;
+    unsafe
+    {
+        stack rawptr<i8[min max]> name = stark_rlgl_rlGetPixelFormatName(format);
+        if (name == null) { return RlglStatus.InvalidArgument; }
+        while willexit (*(&name[written]) != 0)
+        {
+            if (written >= destination.Length) { return RlglStatus.DestinationTooSmall; }
+            destination[written] = *(&name[written]);
+            written = (u64[0 2 ** 63 - 1])(written + (u64[0 2 ** 63 - 1])1);
+            if (written == (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) { return RlglStatus.SourceTooLarge; }
+        }
+    }
+    return RlglStatus.Ok;
+}
+
+public fn i32[min max] rlGenTextureMipmaps(u32[0 max] id, i32[min max] width, i32[min max] height, i32[min max] format)
+{
+    stack mut i32[min max] mipmaps = 0;
+    unsafe { stark_rlgl_rlGenTextureMipmaps(id, width, height, format, &mipmaps); }
+    return mipmaps;
+}
+
+public fn RlglPixelsResult rlReadTexturePixels(u32[0 max] id, i32[min max] width, i32[min max] height, i32[min max] format)
+{
+    if (width <= 0 || height <= 0) { return RlglPixelsResult.Err(RlglStatus.InvalidArgument); }
+    unsafe
+    {
+        stack i32[min max] byteCount = stark_raylib_GetPixelDataSize(width, height, format);
+        if (byteCount <= 0) { return RlglPixelsResult.Err(RlglStatus.Unsupported); }
+        stack rawmutptr<i8[min max]> data = stark_rlgl_rlReadTexturePixels(id, width, height, format);
+        if (data == null) { return RlglPixelsResult.Err(RlglStatus.InvalidArgument); }
+        stack mut OwnedPixels pixels = new();
+        pixels.Data = (rawmutptr<u8[0 max]>)data;
+        pixels.ByteLength = (u64[0 2 ** 63 - 1])byteCount;
+        return RlglPixelsResult.Ok(pixels);
+    }
+}
+
+public fn RlglPixelsResult rlReadScreenPixels(i32[min max] width, i32[min max] height)
+{
+    if (width <= 0 || height <= 0) { return RlglPixelsResult.Err(RlglStatus.InvalidArgument); }
+    unsafe
+    {
+        stack i32[min max] byteCount = stark_raylib_GetPixelDataSize(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        stack rawmutptr<u8[0 max]> data = stark_rlgl_rlReadScreenPixels(width, height);
+        if (data == null) { return RlglPixelsResult.Err(RlglStatus.InvalidArgument); }
+        stack mut OwnedPixels pixels = new();
+        pixels.Data = data;
+        pixels.ByteLength = (u64[0 2 ** 63 - 1])byteCount;
+        return RlglPixelsResult.Ok(pixels);
+    }
+}
+
+public fn RlglStatus rlCopyFramebuffer(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height, i32[min max] format, borrow mut i8[min max][] pixels)
+{
+    unsafe { stark_rlgl_rlCopyFramebuffer(x, y, width, height, format, MutableBytesOrNull(pixels)); }
+    return RlglStatus.Ok;
+}
+
+public fn u32[0 max] rlLoadShader(ascii code, i32[min max] shaderType) { unsafe { return stark_rlgl_rlLoadShader(code, shaderType); } }
+public fn u32[0 max] rlLoadShaderProgram(ascii vsCode, ascii fsCode) { unsafe { return stark_rlgl_rlLoadShaderProgram(vsCode, fsCode); } }
+public fn i32[min max] rlGetLocationUniform(u32[0 max] id, ascii uniformName) { unsafe { return stark_rlgl_rlGetLocationUniform(id, uniformName); } }
+public fn i32[min max] rlGetLocationAttrib(u32[0 max] id, ascii attribName) { unsafe { return stark_rlgl_rlGetLocationAttrib(id, attribName); } }
+
+public fn RlglStatus rlSetUniform(i32[min max] locIndex, borrow i8[min max][] value, i32[min max] uniformType, i32[min max] count)
+{
+    unsafe { stark_rlgl_rlSetUniform(locIndex, ReadBytesOrNull(value), uniformType, count); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlSetUniformMatrices(i32[min max] locIndex, borrow Matrix[] matrices)
+{
+    if (TooManyForI32(matrices.Length)) { return RlglStatus.TooManyItems; }
+    if (matrices.Length == 0) { return RlglStatus.InvalidArgument; }
+    unsafe { stark_rlgl_rlSetUniformMatrices(locIndex, &matrices[0], (i32[min max])matrices.Length); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlSetShader(u32[0 max] id, borrow mut i32[min max][] locs)
+{
+    if (locs.Length == 0) { return RlglStatus.InvalidArgument; }
+    unsafe { stark_rlgl_rlSetShader(id, &locs[0]); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlLoadShaderBuffer(borrow i8[min max][] data, i32[min max] usageHint, out u32[0 max] id)
+{
+    if (data.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)) { id = 0; return RlglStatus.TooManyItems; }
+    unsafe { id = stark_rlgl_rlLoadShaderBuffer((u32[0 max])data.Length, ReadBytesOrNull(data), usageHint); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlUpdateShaderBuffer(u32[0 max] id, borrow i8[min max][] data, u32[0 max] offset)
+{
+    if (data.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)) { return RlglStatus.TooManyItems; }
+    unsafe { stark_rlgl_rlUpdateShaderBuffer(id, ReadBytesOrNull(data), (u32[0 max])data.Length, offset); }
+    return RlglStatus.Ok;
+}
+
+public fn RlglStatus rlReadShaderBuffer(u32[0 max] id, borrow mut i8[min max][] destination, u32[0 max] offset)
+{
+    if (destination.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)) { return RlglStatus.TooManyItems; }
+    unsafe { stark_rlgl_rlReadShaderBuffer(id, MutableBytesOrNull(destination), (u32[0 max])destination.Length, offset); }
+    return RlglStatus.Ok;
+}
+
+
+public fn void rlMatrixMode(i32[min max] mode)
+{
+    unsafe
+    {
+        stark_rlgl_rlMatrixMode(mode);
+    }
+    return;
+}
+
+public fn void rlPushMatrix()
+{
+    unsafe
+    {
+        stark_rlgl_rlPushMatrix();
+    }
+    return;
+}
+
+public fn void rlPopMatrix()
+{
+    unsafe
+    {
+        stark_rlgl_rlPopMatrix();
+    }
+    return;
+}
+
+public fn void rlLoadIdentity()
+{
+    unsafe
+    {
+        stark_rlgl_rlLoadIdentity();
+    }
+    return;
+}
+
+public fn void rlTranslatef(f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlTranslatef(x, y, z);
+    }
+    return;
+}
+
+public fn void rlRotatef(f32 angle, f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlRotatef(angle, x, y, z);
+    }
+    return;
+}
+
+public fn void rlScalef(f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlScalef(x, y, z);
+    }
+    return;
+}
+
+public fn void rlFrustum(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar)
+{
+    unsafe
+    {
+        stark_rlgl_rlFrustum(left, right, bottom, top, znear, zfar);
+    }
+    return;
+}
+
+public fn void rlOrtho(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar)
+{
+    unsafe
+    {
+        stark_rlgl_rlOrtho(left, right, bottom, top, znear, zfar);
+    }
+    return;
+}
+
+public fn void rlViewport(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height)
+{
+    unsafe
+    {
+        stark_rlgl_rlViewport(x, y, width, height);
+    }
+    return;
+}
+
+public fn void rlSetClipPlanes(f64 nearPlane, f64 farPlane)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetClipPlanes(nearPlane, farPlane);
+    }
+    return;
+}
+
+public fn f64 rlGetCullDistanceNear()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetCullDistanceNear();
+    }
+}
+
+public fn f64 rlGetCullDistanceFar()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetCullDistanceFar();
+    }
+}
+
+public fn void rlBegin(i32[min max] mode)
+{
+    unsafe
+    {
+        stark_rlgl_rlBegin(mode);
+    }
+    return;
+}
+
+public fn void rlEnd()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnd();
+    }
+    return;
+}
+
+public fn void rlVertex2i(i32[min max] x, i32[min max] y)
+{
+    unsafe
+    {
+        stark_rlgl_rlVertex2i(x, y);
+    }
+    return;
+}
+
+public fn void rlVertex2f(f32 x, f32 y)
+{
+    unsafe
+    {
+        stark_rlgl_rlVertex2f(x, y);
+    }
+    return;
+}
+
+public fn void rlVertex3f(f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlVertex3f(x, y, z);
+    }
+    return;
+}
+
+public fn void rlTexCoord2f(f32 x, f32 y)
+{
+    unsafe
+    {
+        stark_rlgl_rlTexCoord2f(x, y);
+    }
+    return;
+}
+
+public fn void rlNormal3f(f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlNormal3f(x, y, z);
+    }
+    return;
+}
+
+public fn void rlColor4ub(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a)
+{
+    unsafe
+    {
+        stark_rlgl_rlColor4ub(r, g, b, a);
+    }
+    return;
+}
+
+public fn void rlColor3f(f32 x, f32 y, f32 z)
+{
+    unsafe
+    {
+        stark_rlgl_rlColor3f(x, y, z);
+    }
+    return;
+}
+
+public fn void rlColor4f(f32 x, f32 y, f32 z, f32 w)
+{
+    unsafe
+    {
+        stark_rlgl_rlColor4f(x, y, z, w);
+    }
+    return;
+}
+
+public fn bool rlEnableVertexArray(u32[0 max] vaoId)
+{
+    unsafe
+    {
+        return stark_rlgl_rlEnableVertexArray(vaoId);
+    }
+}
+
+public fn void rlDisableVertexArray()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableVertexArray();
+    }
+    return;
+}
+
+public fn void rlEnableVertexBuffer(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableVertexBuffer(id);
+    }
+    return;
+}
+
+public fn void rlDisableVertexBuffer()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableVertexBuffer();
+    }
+    return;
+}
+
+public fn void rlEnableVertexBufferElement(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableVertexBufferElement(id);
+    }
+    return;
+}
+
+public fn void rlDisableVertexBufferElement()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableVertexBufferElement();
+    }
+    return;
+}
+
+public fn void rlEnableVertexAttribute(u32[0 max] index)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableVertexAttribute(index);
+    }
+    return;
+}
+
+public fn void rlDisableVertexAttribute(u32[0 max] index)
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableVertexAttribute(index);
+    }
+    return;
+}
+
+public fn void rlDisableStatePointer(i32[min max] vertexAttribType)
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableStatePointer(vertexAttribType);
+    }
+    return;
+}
+
+public fn void rlActiveTextureSlot(i32[min max] slot)
+{
+    unsafe
+    {
+        stark_rlgl_rlActiveTextureSlot(slot);
+    }
+    return;
+}
+
+public fn void rlEnableTexture(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableTexture(id);
+    }
+    return;
+}
+
+public fn void rlDisableTexture()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableTexture();
+    }
+    return;
+}
+
+public fn void rlEnableTextureCubemap(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableTextureCubemap(id);
+    }
+    return;
+}
+
+public fn void rlDisableTextureCubemap()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableTextureCubemap();
+    }
+    return;
+}
+
+public fn void rlTextureParameters(u32[0 max] id, i32[min max] param, i32[min max] value)
+{
+    unsafe
+    {
+        stark_rlgl_rlTextureParameters(id, param, value);
+    }
+    return;
+}
+
+public fn void rlCubemapParameters(u32[0 max] id, i32[min max] param, i32[min max] value)
+{
+    unsafe
+    {
+        stark_rlgl_rlCubemapParameters(id, param, value);
+    }
+    return;
+}
+
+public fn void rlEnableShader(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableShader(id);
+    }
+    return;
+}
+
+public fn void rlDisableShader()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableShader();
+    }
+    return;
+}
+
+public fn void rlEnableFramebuffer(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableFramebuffer(id);
+    }
+    return;
+}
+
+public fn void rlDisableFramebuffer()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableFramebuffer();
+    }
+    return;
+}
+
+public fn u32[0 max] rlGetActiveFramebuffer()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetActiveFramebuffer();
+    }
+}
+
+public fn void rlActiveDrawBuffers(i32[min max] count)
+{
+    unsafe
+    {
+        stark_rlgl_rlActiveDrawBuffers(count);
+    }
+    return;
+}
+
+public fn void rlBlitFramebuffer(i32[min max] srcX, i32[min max] srcY, i32[min max] srcWidth, i32[min max] srcHeight, i32[min max] dstX, i32[min max] dstY, i32[min max] dstWidth, i32[min max] dstHeight, i32[min max] bufferMask)
+{
+    unsafe
+    {
+        stark_rlgl_rlBlitFramebuffer(srcX, srcY, srcWidth, srcHeight, dstX, dstY, dstWidth, dstHeight, bufferMask);
+    }
+    return;
+}
+
+public fn void rlBindFramebuffer(u32[0 max] target, u32[0 max] framebuffer)
+{
+    unsafe
+    {
+        stark_rlgl_rlBindFramebuffer(target, framebuffer);
+    }
+    return;
+}
+
+public fn void rlEnableColorBlend()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableColorBlend();
+    }
+    return;
+}
+
+public fn void rlDisableColorBlend()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableColorBlend();
+    }
+    return;
+}
+
+public fn void rlEnableDepthTest()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableDepthTest();
+    }
+    return;
+}
+
+public fn void rlDisableDepthTest()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableDepthTest();
+    }
+    return;
+}
+
+public fn void rlEnableDepthMask()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableDepthMask();
+    }
+    return;
+}
+
+public fn void rlDisableDepthMask()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableDepthMask();
+    }
+    return;
+}
+
+public fn void rlEnableBackfaceCulling()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableBackfaceCulling();
+    }
+    return;
+}
+
+public fn void rlDisableBackfaceCulling()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableBackfaceCulling();
+    }
+    return;
+}
+
+public fn void rlColorMask(bool r, bool g, bool b, bool a)
+{
+    unsafe
+    {
+        stark_rlgl_rlColorMask(r, g, b, a);
+    }
+    return;
+}
+
+public fn void rlSetCullFace(i32[min max] mode)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetCullFace(mode);
+    }
+    return;
+}
+
+public fn void rlEnableScissorTest()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableScissorTest();
+    }
+    return;
+}
+
+public fn void rlDisableScissorTest()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableScissorTest();
+    }
+    return;
+}
+
+public fn void rlScissor(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height)
+{
+    unsafe
+    {
+        stark_rlgl_rlScissor(x, y, width, height);
+    }
+    return;
+}
+
+public fn void rlEnablePointMode()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnablePointMode();
+    }
+    return;
+}
+
+public fn void rlDisablePointMode()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisablePointMode();
+    }
+    return;
+}
+
+public fn void rlSetPointSize(f32 size)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetPointSize(size);
+    }
+    return;
+}
+
+public fn f32 rlGetPointSize()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetPointSize();
+    }
+}
+
+public fn void rlEnableWireMode()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableWireMode();
+    }
+    return;
+}
+
+public fn void rlDisableWireMode()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableWireMode();
+    }
+    return;
+}
+
+public fn void rlSetLineWidth(f32 width)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetLineWidth(width);
+    }
+    return;
+}
+
+public fn f32 rlGetLineWidth()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetLineWidth();
+    }
+}
+
+public fn void rlEnableSmoothLines()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableSmoothLines();
+    }
+    return;
+}
+
+public fn void rlDisableSmoothLines()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableSmoothLines();
+    }
+    return;
+}
+
+public fn void rlEnableStereoRender()
+{
+    unsafe
+    {
+        stark_rlgl_rlEnableStereoRender();
+    }
+    return;
+}
+
+public fn void rlDisableStereoRender()
+{
+    unsafe
+    {
+        stark_rlgl_rlDisableStereoRender();
+    }
+    return;
+}
+
+public fn bool rlIsStereoRenderEnabled()
+{
+    unsafe
+    {
+        return stark_rlgl_rlIsStereoRenderEnabled();
+    }
+}
+
+public fn void rlClearColor(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a)
+{
+    unsafe
+    {
+        stark_rlgl_rlClearColor(r, g, b, a);
+    }
+    return;
+}
+
+public fn void rlClearScreenBuffers()
+{
+    unsafe
+    {
+        stark_rlgl_rlClearScreenBuffers();
+    }
+    return;
+}
+
+public fn void rlCheckErrors()
+{
+    unsafe
+    {
+        stark_rlgl_rlCheckErrors();
+    }
+    return;
+}
+
+public fn void rlSetBlendMode(i32[min max] mode)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetBlendMode(mode);
+    }
+    return;
+}
+
+public fn void rlSetBlendFactors(i32[min max] glSrcFactor, i32[min max] glDstFactor, i32[min max] glEquation)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetBlendFactors(glSrcFactor, glDstFactor, glEquation);
+    }
+    return;
+}
+
+public fn void rlSetBlendFactorsSeparate(i32[min max] glSrcRGB, i32[min max] glDstRGB, i32[min max] glSrcAlpha, i32[min max] glDstAlpha, i32[min max] glEqRGB, i32[min max] glEqAlpha)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetBlendFactorsSeparate(glSrcRGB, glDstRGB, glSrcAlpha, glDstAlpha, glEqRGB, glEqAlpha);
+    }
+    return;
+}
+
+public fn void rlglInit(i32[min max] width, i32[min max] height)
+{
+    unsafe
+    {
+        stark_rlgl_rlglInit(width, height);
+    }
+    return;
+}
+
+public fn void rlglClose()
+{
+    unsafe
+    {
+        stark_rlgl_rlglClose();
+    }
+    return;
+}
+
+public fn i32[min max] rlGetVersion()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetVersion();
+    }
+}
+
+public fn void rlSetFramebufferWidth(i32[min max] width)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetFramebufferWidth(width);
+    }
+    return;
+}
+
+public fn i32[min max] rlGetFramebufferWidth()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetFramebufferWidth();
+    }
+}
+
+public fn void rlSetFramebufferHeight(i32[min max] height)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetFramebufferHeight(height);
+    }
+    return;
+}
+
+public fn i32[min max] rlGetFramebufferHeight()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetFramebufferHeight();
+    }
+}
+
+public fn u32[0 max] rlGetTextureIdDefault()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetTextureIdDefault();
+    }
+}
+
+public fn u32[0 max] rlGetShaderIdDefault()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetShaderIdDefault();
+    }
+}
+
+public fn void rlDrawRenderBatchActive()
+{
+    unsafe
+    {
+        stark_rlgl_rlDrawRenderBatchActive();
+    }
+    return;
+}
+
+public fn bool rlCheckRenderBatchLimit(i32[min max] vCount)
+{
+    unsafe
+    {
+        return stark_rlgl_rlCheckRenderBatchLimit(vCount);
+    }
+}
+
+public fn void rlSetTexture(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetTexture(id);
+    }
+    return;
+}
+
+public fn u32[0 max] rlLoadVertexArray()
+{
+    unsafe
+    {
+        return stark_rlgl_rlLoadVertexArray();
+    }
+}
+
+public fn void rlUnloadVertexArray(u32[0 max] vaoId)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadVertexArray(vaoId);
+    }
+    return;
+}
+
+public fn void rlUnloadVertexBuffer(u32[0 max] vboId)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadVertexBuffer(vboId);
+    }
+    return;
+}
+
+public fn void rlSetVertexAttribute(u32[0 max] index, i32[min max] compSize, i32[min max] attributeType, bool normalized, i32[min max] stride, i32[min max] offset)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetVertexAttribute(index, compSize, attributeType, normalized, stride, offset);
+    }
+    return;
+}
+
+public fn void rlSetVertexAttributeDivisor(u32[0 max] index, i32[min max] divisor)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetVertexAttributeDivisor(index, divisor);
+    }
+    return;
+}
+
+public fn void rlDrawVertexArray(i32[min max] offset, i32[min max] count)
+{
+    unsafe
+    {
+        stark_rlgl_rlDrawVertexArray(offset, count);
+    }
+    return;
+}
+
+public fn void rlDrawVertexArrayInstanced(i32[min max] offset, i32[min max] count, i32[min max] instances)
+{
+    unsafe
+    {
+        stark_rlgl_rlDrawVertexArrayInstanced(offset, count, instances);
+    }
+    return;
+}
+
+public fn u32[0 max] rlLoadTextureDepth(i32[min max] width, i32[min max] height, bool useRenderBuffer)
+{
+    unsafe
+    {
+        return stark_rlgl_rlLoadTextureDepth(width, height, useRenderBuffer);
+    }
+}
+
+public fn void rlUnloadTexture(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadTexture(id);
+    }
+    return;
+}
+
+public fn u32[0 max] rlLoadFramebuffer()
+{
+    unsafe
+    {
+        return stark_rlgl_rlLoadFramebuffer();
+    }
+}
+
+public fn void rlFramebufferAttach(u32[0 max] id, u32[0 max] texId, i32[min max] attachType, i32[min max] texType, i32[min max] mipLevel)
+{
+    unsafe
+    {
+        stark_rlgl_rlFramebufferAttach(id, texId, attachType, texType, mipLevel);
+    }
+    return;
+}
+
+public fn bool rlFramebufferComplete(u32[0 max] id)
+{
+    unsafe
+    {
+        return stark_rlgl_rlFramebufferComplete(id);
+    }
+}
+
+public fn void rlUnloadFramebuffer(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadFramebuffer(id);
+    }
+    return;
+}
+
+public fn void rlResizeFramebuffer(i32[min max] width, i32[min max] height)
+{
+    unsafe
+    {
+        stark_rlgl_rlResizeFramebuffer(width, height);
+    }
+    return;
+}
+
+public fn u32[0 max] rlLoadShaderProgramEx(u32[0 max] vsId, u32[0 max] fsId)
+{
+    unsafe
+    {
+        return stark_rlgl_rlLoadShaderProgramEx(vsId, fsId);
+    }
+}
+
+public fn u32[0 max] rlLoadShaderProgramCompute(u32[0 max] csId)
+{
+    unsafe
+    {
+        return stark_rlgl_rlLoadShaderProgramCompute(csId);
+    }
+}
+
+public fn void rlUnloadShader(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadShader(id);
+    }
+    return;
+}
+
+public fn void rlUnloadShaderProgram(u32[0 max] id)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadShaderProgram(id);
+    }
+    return;
+}
+
+public fn void rlSetUniformMatrix(i32[min max] locIndex, Matrix mat)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetUniformMatrix(locIndex, mat);
+    }
+    return;
+}
+
+public fn void rlSetUniformSampler(i32[min max] locIndex, u32[0 max] textureId)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetUniformSampler(locIndex, textureId);
+    }
+    return;
+}
+
+public fn void rlComputeShaderDispatch(u32[0 max] groupX, u32[0 max] groupY, u32[0 max] groupZ)
+{
+    unsafe
+    {
+        stark_rlgl_rlComputeShaderDispatch(groupX, groupY, groupZ);
+    }
+    return;
+}
+
+public fn void rlUnloadShaderBuffer(u32[0 max] ssboId)
+{
+    unsafe
+    {
+        stark_rlgl_rlUnloadShaderBuffer(ssboId);
+    }
+    return;
+}
+
+public fn void rlBindShaderBuffer(u32[0 max] id, u32[0 max] index)
+{
+    unsafe
+    {
+        stark_rlgl_rlBindShaderBuffer(id, index);
+    }
+    return;
+}
+
+public fn void rlCopyShaderBuffer(u32[0 max] destId, u32[0 max] srcId, u32[0 max] destOffset, u32[0 max] srcOffset, u32[0 max] count)
+{
+    unsafe
+    {
+        stark_rlgl_rlCopyShaderBuffer(destId, srcId, destOffset, srcOffset, count);
+    }
+    return;
+}
+
+public fn u32[0 max] rlGetShaderBufferSize(u32[0 max] id)
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetShaderBufferSize(id);
+    }
+}
+
+public fn void rlBindImageTexture(u32[0 max] id, u32[0 max] index, i32[min max] format, bool readOnly)
+{
+    unsafe
+    {
+        stark_rlgl_rlBindImageTexture(id, index, format, readOnly);
+    }
+    return;
+}
+
+public fn Matrix rlGetMatrixModelview()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetMatrixModelview();
+    }
+}
+
+public fn Matrix rlGetMatrixProjection()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetMatrixProjection();
+    }
+}
+
+public fn Matrix rlGetMatrixTransform()
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetMatrixTransform();
+    }
+}
+
+public fn Matrix rlGetMatrixProjectionStereo(i32[min max] eye)
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetMatrixProjectionStereo(eye);
+    }
+}
+
+public fn Matrix rlGetMatrixViewOffsetStereo(i32[min max] eye)
+{
+    unsafe
+    {
+        return stark_rlgl_rlGetMatrixViewOffsetStereo(eye);
+    }
+}
+
+public fn void rlSetMatrixProjection(Matrix proj)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetMatrixProjection(proj);
+    }
+    return;
+}
+
+public fn void rlSetMatrixModelview(Matrix view)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetMatrixModelview(view);
+    }
+    return;
+}
+
+public fn void rlSetMatrixProjectionStereo(Matrix right, Matrix left)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetMatrixProjectionStereo(right, left);
+    }
+    return;
+}
+
+public fn void rlSetMatrixViewOffsetStereo(Matrix right, Matrix left)
+{
+    unsafe
+    {
+        stark_rlgl_rlSetMatrixViewOffsetStereo(right, left);
+    }
+    return;
+}
+
+public fn void rlLoadDrawCube()
+{
+    unsafe
+    {
+        stark_rlgl_rlLoadDrawCube();
+    }
+    return;
+}
+
+public fn void rlLoadDrawQuad()
+{
+    unsafe
+    {
+        stark_rlgl_rlLoadDrawQuad();
+    }
+    return;
+}

@@ -1,0 +1,983 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceLocalExpressionParsing
+import Compiler.Mir.SourceLocalMutation
+import Compiler.Mir.SourceLocalArena
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Mir.SourceSwitchAggregatePatterns
+import Compiler.Mir.SourceSwitchStoragePatterns
+import Compiler.Mir.SourceSwitchCaseParsing
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchAssignmentArms
+
+internal fn bool TryParseSwitchAssignmentArmWithCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack u64[0 2 ** 63 - 1] targetCountWide = targetNameTokens.Count();
+    if (targetCountWide == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, baseParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] captureOffset = 0;
+    while willexit (captureOffset < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureOffset;
+        if (!captureNameTokens.Contains(captureRow) || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureNameToken = captureNameTokens.Get(captureRow);
+        stack u64[0 2 ** 63 - 1] captureNameStart = stream.StartAt((u64[0 2 ** 63 - 1])captureNameToken);
+        stack u64[0 2 ** 63 - 1] captureNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])captureNameToken);
+        if (ParamIndexOf(armParams, source, captureNameStart, captureNameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureLocalIndex = ResolveParam(armParams, source, captureNameStart, captureNameLength);
+        if (captureLocalIndex != (u32[0 max])(baseParamCount + (u64[0 2 ** 63 - 1])captureOffset))
+        {
+            return false;
+        }
+
+        captureOffset = captureOffset + 1;
+    }
+
+    stack u32[0 max] localRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+    stack u32[0 max] assignedRootStart = (u32[0 max])(assignedRoots.Count() + 1);
+    stack mut u32[0 max] localRootCount = 0;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseExprIn(stream, source, nodes, armParams, funcNames, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            if (armLocalRoots.Add(localRoot.NodeId) == 0)
+            {
+                return false;
+            }
+
+            localRootCount = localRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+        while willexit (assignmentIndex < targetCountWide)
+        {
+            stack mut u32[0 max] targetOffset = 0;
+            if (cursor >= (u64[0 2 ** 63 - 1])closeBrace
+                || stream.KindAt(cursor) != TokenKind.Identifier
+                || stream.KindAt(cursor + 1) != TokenKind.Assign
+                || !TryFindSwitchTargetOffsetForToken(stream, source, targetNameTokens, (u32[0 max])cursor, targetOffset)
+                || SwitchAssignmentArmTargetOffsetExists(assignedTargetOffsets, assignedRootStart, (u32[0 max])assignmentIndex, targetOffset))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeAssign = armParams.Count();
+            stack ExprParseResult parsedAssigned = ParseExprIn(stream, source, nodes, armParams, funcNames, cursor + 2);
+            if (armParams.Count() != beforeAssign)
+            {
+                return false;
+            }
+
+            if (assignmentIndex == 0)
+            {
+                arm.Assigned = parsedAssigned;
+            }
+
+            if (assignedRoots.Add(parsedAssigned.NodeId) == 0 || assignedTargetOffsets.Add(targetOffset) == 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] afterExpr = parsedAssigned.Next;
+            stack mut bool hasSemicolon = false;
+            if (stream.KindAt(afterExpr) == TokenKind.Semi)
+            {
+                hasSemicolon = true;
+                afterExpr = afterExpr + 1;
+            }
+
+            assignmentIndex = assignmentIndex + 1;
+            if (assignmentIndex < targetCountWide)
+            {
+                if (!hasSemicolon)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+            else
+            {
+                if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+        }
+
+        if (cursor != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm.AssignedRootStart = assignedRootStart;
+        arm.AssignedRootCount = (u32[0 max])targetCountWide;
+        arm.CaptureStart = captureStart;
+        arm.CaptureCount = captureCount;
+        arm.LocalRootStart = localRootStart;
+        arm.LocalRootCount = localRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (targetCountWide != 1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] compactTargetNameToken = targetNameTokens.Get(1);
+    if (stream.KindAt(armStart) != TokenKind.Identifier
+        || stream.KindAt(armStart + 1) != TokenKind.Assign
+        || !TokenTextEqualsAsciiSpan(stream, source, compactTargetNameToken, (u32[0 max])armStart))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCompact = armParams.Count();
+    stack ExprParseResult parsedCompactArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 2);
+    stack mut u64[0 2 ** 63 - 1] afterCompactExpr = parsedCompactArm.Next;
+    if (stream.KindAt(afterCompactExpr) == TokenKind.Semi)
+    {
+        afterCompactExpr = afterCompactExpr + 1;
+    }
+
+    if (armParams.Count() != beforeCompact)
+    {
+        return false;
+    }
+
+    arm.Assigned = parsedCompactArm;
+    arm.AssignedRootStart = assignedRootStart;
+    arm.AssignedRootCount = 1;
+    arm.CaptureStart = captureStart;
+    arm.CaptureCount = captureCount;
+    arm.LocalRootStart = localRootStart;
+    arm.LocalRootCount = 0;
+    if (assignedRoots.Add(parsedCompactArm.NodeId) == 0)
+    {
+        return false;
+    }
+
+    if (assignedTargetOffsets.Add(0) == 0)
+    {
+        return false;
+    }
+
+    nextToken = afterCompactExpr;
+    return true;
+}
+
+internal fn bool TryParseSwitchAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    stack mut IrTable<u32[0 max]> noCaptureNameTokens = new();
+    stack mut IrTable<u32[0 max]> noCaptureTypeCodes = new();
+    return TryParseSwitchAssignmentArmWithCaptures(
+        stream,
+        source,
+        nodes,
+        baseParams,
+        baseParamCount,
+        funcNames,
+        targetNameTokens,
+        noCaptureNameTokens,
+        noCaptureTypeCodes,
+        0,
+        0,
+        armStart,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        arm,
+        nextToken);
+}
+
+internal struct ParsedSwitchFieldAssignmentArm
+{
+    u32[0 max] AssignmentStart;
+    u32[0 max] AssignmentCount;
+    u32[0 max] LocalRootStart;
+    u32[0 max] LocalRootCount;
+
+    ParsedSwitchFieldAssignmentArm()
+    {
+        self.AssignmentStart = 0;
+        self.AssignmentCount = 0;
+        self.LocalRootStart = 0;
+        self.LocalRootCount = 0;
+    }
+}
+
+internal inline finite law u32[0 max] SwitchArenaDynamicReserveMethodReserve()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] SwitchArenaDynamicReserveMethodTryReserve()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] SwitchArenaDynamicReserveMethodTryReserveCapacity()
+{
+    return 3;
+}
+
+internal struct SwitchArenaDynamicReserveStatement
+{
+    u32[0 max] StorageValue;
+    u32[0 max] Amount;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+    u32[0 max] Method;
+
+    SwitchArenaDynamicReserveStatement()
+    {
+        self.StorageValue = 0;
+        self.Amount = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+        self.Method = 0;
+    }
+}
+
+internal fn bool TryParseSwitchArenaDynamicReserveStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ArenaDynamicLocal> arenaDynamicLocals,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    mut borrow IrTable<SwitchArenaDynamicReserveStatement> reserveStatements,
+    mut borrow IrTable<SourceStorageMutationStatement> mutationStatements)
+{
+    if (start + 6 != end
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.Dot
+        || stream.KindAt(start + 2) != TokenKind.Identifier
+        || stream.KindAt(start + 3) != TokenKind.LParen
+        || stream.KindAt(start + 5) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] amount = 0;
+    if (!TryReadNonNegativeIntegerToken(stream, source, start + 4, amount))
+    {
+        return false;
+    }
+
+    stack mut ArenaDynamicLocal local = new();
+    if (!TryFindArenaDynamicLocal(arenaDynamicLocals, source, stream.StartAt(start), stream.LengthAt(start), local))
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = (u32[0 max])(start + 2);
+    stack mut u32[0 max] method = 0;
+    if (TokenTextIsReserveName(stream, source, methodToken))
+    {
+        method = SwitchArenaDynamicReserveMethodReserve();
+    }
+    else if (TokenTextIsTryReserveName(stream, source, methodToken))
+    {
+        method = SwitchArenaDynamicReserveMethodTryReserve();
+    }
+    else if (TokenTextIsTryReserveCapacityName(stream, source, methodToken))
+    {
+        method = SwitchArenaDynamicReserveMethodTryReserveCapacity();
+    }
+    else
+    {
+        return false;
+    }
+
+    stack mut SwitchArenaDynamicReserveStatement reserve = new();
+    reserve.StorageValue = local.StorageValue;
+    reserve.Amount = amount;
+    reserve.ElementSize = local.ElementSize;
+    reserve.Alignment = local.Alignment;
+    reserve.Method = method;
+    if (reserveStatements.Add(reserve) == 0)
+    {
+        return false;
+    }
+
+    stack mut SourceStorageMutationStatement mutation = new();
+    mutation.Kind = SourceStorageMutationKindArenaDynamicReserve();
+    mutation.AssignmentIndex = (u32[0 max])reserveStatements.Count();
+    return mutationStatements.Add(mutation) != 0;
+}
+
+internal fn bool LowerSwitchArenaDynamicReserveStatement(
+    SwitchArenaDynamicReserveStatement statement,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    stack MirValueId storage = MirValueIdOf(statement.StorageValue);
+    if (!storage.IsValid())
+    {
+        return false;
+    }
+
+    if (statement.Method == SwitchArenaDynamicReserveMethodReserve())
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageReserve(instrs, storage, statement.Amount, statement.ElementSize, statement.Alignment);
+        return reserve.IsValid();
+    }
+
+    if (statement.Method == SwitchArenaDynamicReserveMethodTryReserve())
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserve(instrs, storage, statement.Amount, statement.ElementSize, statement.Alignment);
+        return reserve.IsValid();
+    }
+
+    if (statement.Method == SwitchArenaDynamicReserveMethodTryReserveCapacity())
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserveCapacity(instrs, storage, statement.Amount, statement.ElementSize, statement.Alignment);
+        return reserve.IsValid();
+    }
+
+    return false;
+}
+
+internal fn bool BuildSwitchFieldAssignmentArmLocalTypes(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchFieldAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] localTypeIndex = 0;
+    while willexit (localTypeIndex < (u64[0 2 ** 63 - 1])baseLocalCount)
+    {
+        stack mut u32[0 max] typeCode = 0;
+        stack u32[0 max] typeSlot = (u32[0 max])(localTypeIndex + 1);
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        localTypeIndex = localTypeIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack u32[0 max] localTypeCode = SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryParseSwitchFieldAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<ArenaDynamicLocal> arenaDynamicLocals,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<ValueFacts> baseSourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    out ParsedSwitchFieldAssignmentArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(baseSourceValueFacts)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, baseParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<ValueFacts> armSourceValueFacts = new();
+    stack mut u64[0 2 ** 63 - 1] baseTypeIndex = 0;
+    while willexit (baseTypeIndex < baseParamCount)
+    {
+        stack mut u32[0 max] typeCode = 0;
+        stack u32[0 max] typeSlot = (u32[0 max])(baseTypeIndex + 1);
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        stack mut ValueFacts baseFacts = new();
+        if (baseSourceValueFacts.Contains(typeSlot))
+        {
+            baseFacts = baseSourceValueFacts.Get(typeSlot);
+        }
+
+        if (armSourceValueFacts.Add(baseFacts) == 0)
+        {
+            return false;
+        }
+
+        baseTypeIndex = baseTypeIndex + 1;
+    }
+
+    stack u32[0 max] localRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+    stack u32[0 max] assignmentStart = (u32[0 max])(storageMutationStatements.Count() + 1);
+    stack mut u32[0 max] localRootCount = 0;
+    stack mut u32[0 max] assignmentCount = 0;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, moduleFacts, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot.NodeId, armLocalTypes);
+            if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            stack mut ValueFacts localFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, localRoot.NodeId, armSourceValueFacts, localFacts)
+                && localType == ExprType.BoolType)
+            {
+                localFacts.SetIntegerRange(0, 2);
+            }
+
+            if (armLocalRoots.Add(localRoot.NodeId) == 0
+                || armLocalTypes.Add(SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot.NodeId, armLocalTypes)) == 0
+                || armSourceValueFacts.Add(localFacts) == 0)
+            {
+                return false;
+            }
+
+            localRootCount = localRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, statementEnd))
+            {
+                return false;
+            }
+
+            if (!TryParseSourceStorageMutationStatement(
+                stream,
+                source,
+                nodes,
+                armParams,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                scalarStorageLocals,
+                enumStorageLocals,
+                armLocalTypes,
+                armSourceValueFacts,
+                moduleFacts,
+                cursor,
+                statementEnd,
+                scalarAssignments,
+                enumAssignments,
+                fieldAssignments,
+                storageMutationStatements))
+            {
+                if (!TryParseSwitchArenaDynamicReserveStatement(
+                    stream,
+                    source,
+                    arenaDynamicLocals,
+                    cursor,
+                    statementEnd,
+                    arenaDynamicReserveStatements,
+                    storageMutationStatements))
+                {
+                    return false;
+                }
+            }
+
+            assignmentCount = assignmentCount + 1;
+            cursor = statementEnd + 1;
+        }
+
+        if (assignmentCount == 0 || cursor != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm.AssignmentStart = assignmentStart;
+        arm.AssignmentCount = assignmentCount;
+        arm.LocalRootStart = localRootStart;
+        arm.LocalRootCount = localRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] compactEnd = armStart;
+    if (!FindSelfHostedStatementEnd(stream, armStart, stream.Count(), compactEnd))
+    {
+        return false;
+    }
+
+    if (!TryParseSourceStorageMutationStatement(
+        stream,
+        source,
+        nodes,
+        armParams,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        armLocalTypes,
+        armSourceValueFacts,
+        moduleFacts,
+        armStart,
+        compactEnd,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements))
+    {
+        if (!TryParseSwitchArenaDynamicReserveStatement(
+            stream,
+            source,
+            arenaDynamicLocals,
+            armStart,
+            compactEnd,
+            arenaDynamicReserveStatements,
+            storageMutationStatements))
+        {
+            return false;
+        }
+    }
+
+    arm.AssignmentStart = assignmentStart;
+    arm.AssignmentCount = 1;
+    arm.LocalRootStart = localRootStart;
+    arm.LocalRootCount = 0;
+    nextToken = compactEnd + 1;
+    return true;
+}
+
+internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchFieldAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildSwitchFieldAssignmentArmLocalTypes(nodes, arm, armLocalRoots, baseLocalTypes, baseLocalCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRootWithSlices(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+    while willexit (assignmentIndex < (u64[0 2 ** 63 - 1])arm.AssignmentCount)
+    {
+        stack u32[0 max] assignmentSlot = arm.AssignmentStart + (u32[0 max])assignmentIndex;
+        if (!storageMutationStatements.Contains(assignmentSlot))
+        {
+            return false;
+        }
+
+        stack SourceStorageMutationStatement statement = storageMutationStatements.Get(assignmentSlot);
+        if (statement.Kind == SourceStorageMutationKindScalar())
+        {
+            if (!scalarAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindEnum())
+        {
+            if (!enumAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindConstructedObjectField())
+        {
+            if (!fieldAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ConstructedObjectFieldAssignment assignment = fieldAssignments.Get(statement.AssignmentIndex);
+            if (assignment.IndexRoot != 0
+                && !ValidateModuleCallsForRootWithSlices(nodes, assignment.IndexRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindArenaDynamicReserve())
+        {
+            if (!arenaDynamicReserveStatements.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        assignmentIndex = assignmentIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerSwitchFieldAssignmentArmStores(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchFieldAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] overrideIndex = 0;
+    while willexit (overrideIndex < baseLocalOverrides.Count())
+    {
+        stack u32[0 max] overrideValue = baseLocalOverrides.Get((u32[0 max])(overrideIndex + 1));
+        if (localOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        overrideIndex = overrideIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithCallContext(nodes, localRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+    while willexit (assignmentIndex < (u64[0 2 ** 63 - 1])arm.AssignmentCount)
+    {
+        stack u32[0 max] assignmentSlot = arm.AssignmentStart + (u32[0 max])assignmentIndex;
+        if (!storageMutationStatements.Contains(assignmentSlot))
+        {
+            return false;
+        }
+
+        stack SourceStorageMutationStatement statement = storageMutationStatements.Get(assignmentSlot);
+        if (statement.Kind == SourceStorageMutationKindScalar())
+        {
+            if (!scalarAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
+            if (!LowerScalarStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindEnum())
+        {
+            if (!enumAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
+            if (!LowerEnumStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindConstructedObjectField())
+        {
+            if (!fieldAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ConstructedObjectFieldAssignment assignment = fieldAssignments.Get(statement.AssignmentIndex);
+            if (!LowerConstructedObjectFieldAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindArenaDynamicReserve())
+        {
+            if (!arenaDynamicReserveStatements.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack SwitchArenaDynamicReserveStatement reserve = arenaDynamicReserveStatements.Get(statement.AssignmentIndex);
+            if (!LowerSwitchArenaDynamicReserveStatement(reserve, instrs))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        assignmentIndex = assignmentIndex + 1;
+    }
+
+    return true;
+}

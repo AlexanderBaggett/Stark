@@ -1,0 +1,8 @@
+[project]
+name = "sdl3"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "Sdl3WindowAudio.stark"
+output = "sdl3-window-audio"

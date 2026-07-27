@@ -85,6 +85,14 @@ internal sealed class SsaOwnershipTrafficOptimizer
                 AddInstructionUseDef(instruction, definitions, candidateRoots, use, def, defined);
             }
 
+            AddTerminatorUses(block.Terminator, definitions, candidateRoots, root =>
+            {
+                if (!defined.Contains(root))
+                {
+                    use.Add(root);
+                }
+            });
+
             transfers[block.Id] = new BlockTransfer(use, def);
         }
 
@@ -161,6 +169,8 @@ internal sealed class SsaOwnershipTrafficOptimizer
         var live = new HashSet<string>(liveOut, StringComparer.Ordinal);
         var instructions = new List<SsaInstruction>(block.Instructions.Count);
         var blockChanged = false;
+
+        AddTerminatorUses(block.Terminator, definitions, candidateRoots, root => live.Add(root));
 
         for (var index = block.Instructions.Count - 1; index >= 0; index--)
         {
@@ -274,7 +284,11 @@ internal sealed class SsaOwnershipTrafficOptimizer
                         use.Add(root);
                     }
                 });
-                if (TryResolveDirectLocalAddress(copy.DestinationAddress, definitions, out var destinationLocal))
+                // Only a copy into the WHOLE local defines it; a copy into a
+                // field/element is a partial write and must not kill liveness
+                // of the aggregate (it deleted preceding sibling-field copies
+                // as "dead" — the bundle field-store wrong-code bug).
+                if (TryResolveWholeLocalAddress(copy.DestinationAddress, definitions, out var destinationLocal))
                 {
                     AddWholeLocalDefinition(destinationLocal, candidateRoots, def, defined);
                 }
@@ -310,6 +324,38 @@ internal sealed class SsaOwnershipTrafficOptimizer
         }
     }
 
+    private static void AddTerminatorUses(
+        SsaTerminator terminator,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlySet<string> candidateRoots,
+        Action<string> addUse)
+    {
+        if (terminator.Condition is not null)
+        {
+            AddAddressUse(terminator.Condition, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.Value is not null)
+        {
+            AddAddressUse(terminator.Value, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            AddCallUses(terminator.TailDirectCall, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddCallUses(terminator.TailIndirectCall, definitions, candidateRoots, addUse);
+        }
+
+        foreach (var switchCase in terminator.SwitchCases ?? [])
+        {
+            AddAddressUse(switchCase.MatchValue, definitions, candidateRoots, addUse);
+        }
+    }
+
     private static void ApplyReverseTransfer(
         SsaInstruction instruction,
         IReadOnlyDictionary<string, SsaRValue> definitions,
@@ -337,7 +383,9 @@ internal sealed class SsaOwnershipTrafficOptimizer
                 break;
 
             case SsaCopyMemoryInstruction copy:
-                if (TryResolveDirectLocalAddress(copy.DestinationAddress, definitions, out var destinationLocal))
+                // Partial (field/element) writes must not kill the whole
+                // local's liveness — see AddInstructionUseDef's copy case.
+                if (TryResolveWholeLocalAddress(copy.DestinationAddress, definitions, out var destinationLocal))
                 {
                     live.Remove(destinationLocal);
                 }
@@ -495,6 +543,40 @@ internal sealed class SsaOwnershipTrafficOptimizer
         out string localName)
     {
         return TryResolveDirectLocalAddress(value, definitions, [], out localName);
+    }
+
+    // Like TryResolveDirectLocalAddress but WITHOUT walking through
+    // field/element steps: succeeds only for the local's own address, so a
+    // store through it overwrites the entire local.
+    private static bool TryResolveWholeLocalAddress(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName)
+    {
+        localName = string.Empty;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = value;
+        while (current is SsaValueReference reference
+               && visited.Add(reference.Name)
+               && definitions.TryGetValue(reference.Name, out var definition))
+        {
+            switch (definition)
+            {
+                case SsaAddressOfLocalRValue address:
+                    localName = address.LocalName;
+                    return true;
+                case SsaUseRValue use:
+                    current = use.Value;
+                    continue;
+                case SsaConvertRValue convert:
+                    current = convert.Operand;
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryResolveDirectLocalAddress(

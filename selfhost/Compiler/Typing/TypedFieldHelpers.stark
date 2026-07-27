@@ -1,0 +1,164 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedFieldHelpers
+
+internal finite law bool TypedFieldDeclarationKindOwnsFields(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct || kind == DeclarationKind.Record;
+}
+
+internal fn u32[0 max] TypedFieldSkipAttribute(borrow TokenStream stream, u32[0 max] start)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])start) != TokenKind.LBrack)
+    {
+        return start;
+    }
+
+    stack u32[0 max] close = TypedSignatureMatchingCloseToken(stream, start);
+    if (close <= start)
+    {
+        return start;
+    }
+
+    return (u32[0 max])(close + 1);
+}
+
+internal fn u32[0 max] TypedFieldModifierEndToken(borrow TokenStream stream, u32[0 max] token)
+{
+    if (TypedSignatureIsContextualTailToken(stream, token))
+    {
+        return (u32[0 max])(token + 1);
+    }
+
+    switch (stream.KindAt((u64[0 2 ** 63 - 1])token))
+    {
+        case TokenKind.Internal:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Public:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Export:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Finite:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Law:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Noinline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inlinehint:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Hot:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Cold:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Varargs:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Unsafe:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Strictfp:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Static:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Ffi:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(TypedSignatureMatchingCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        case TokenKind.Asm:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(TypedSignatureMatchingCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        default:
+            return token;
+    }
+}
+
+internal fn u32[0 max] TypedFieldMemberKindCursor(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] cursor = start;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.LBrack)
+    {
+        stack u32[0 max] nextAttribute = TypedFieldSkipAttribute(stream, cursor);
+        if (nextAttribute <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = nextAttribute;
+    }
+
+    while willexit (true)
+    {
+        stack u32[0 max] nextModifier = TypedFieldModifierEndToken(stream, cursor);
+        if (nextModifier <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = nextModifier;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] TypedFieldLastIdentifierInSpan(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] token = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            token = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return token;
+}
+
+internal fn u32[0 max] TypedFieldStorageCapacityStartToken(borrow TokenStream stream, u32[0 max] nameToken, u32[0 max] endExclusive)
+{
+    stack u32[0 max] next = (u32[0 max])(nameToken + 1);
+    if (next < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])next) == TokenKind.LBrack)
+    {
+        stack u32[0 max] close = TypedSignatureMatchingCloseToken(stream, next);
+        if (close > next && close < endExclusive)
+        {
+            return next;
+        }
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedFieldStorageCapacityEndToken(borrow TokenStream stream, u32[0 max] capacityStartToken)
+{
+    if (capacityStartToken == 0)
+    {
+        return 0;
+    }
+
+    return TypedSignatureMatchingCloseToken(stream, capacityStartToken);
+}

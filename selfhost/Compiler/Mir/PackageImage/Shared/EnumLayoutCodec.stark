@@ -1,0 +1,276 @@
+import Compiler.Ir
+import Compiler.Typing
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedEnumPayloads
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Shared.EnumLayoutCodec
+
+// Enum layout facts: u32 count + fixed 108-byte records. This is a durable
+// package-boundary section, not a transient MIR optimization fact.
+internal inline finite law u32[0 max] MirEnumLayoutFactRecordSize()
+{
+    return 108;
+}
+
+internal inline finite law u32[0 max] BoolToU32(bool value)
+{
+    if (value)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+internal inline finite law bool BoolFromU32(u32[0 max] value)
+{
+    return value != 0;
+}
+
+internal finite law u32[0 max] MirEnumLayoutFactRowKindToU32(MirEnumLayoutFactRowKind kind)
+{
+    switch (kind)
+    {
+        case MirEnumLayoutFactRowKind.Variant:
+            return 1;
+        case MirEnumLayoutFactRowKind.Payload:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromU32(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return MirEnumLayoutFactRowKind.Variant;
+        case 2:
+            return MirEnumLayoutFactRowKind.Payload;
+        default:
+            return MirEnumLayoutFactRowKind.Unknown;
+    }
+}
+
+internal finite law u32[0 max] TypedEnumPayloadKindToU32(Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind kind)
+{
+    switch (kind)
+    {
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Positional:
+            return 1;
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Named:
+            return 2;
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.From:
+            return 3;
+        default:
+            return 0;
+    }
+}
+
+internal finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind TypedEnumPayloadKindFromU32(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Positional;
+        case 2:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Named;
+        case 3:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.From;
+        default:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Unknown;
+    }
+}
+
+internal finite law u32[0 max] TypedEnumVariantRoleToU32(Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole role)
+{
+    switch (role)
+    {
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Ok:
+            return 1;
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Err:
+            return 2;
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.OkErr:
+            return 3;
+        default:
+            return 0;
+    }
+}
+
+internal finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole TypedEnumVariantRoleFromU32(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Ok;
+        case 2:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Err;
+        case 3:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.OkErr;
+        default:
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.None;
+    }
+}
+
+internal finite law u32[0 max] TypedSignatureTypeKindToU32(TypedSignatureTypeKind kind)
+{
+    switch (kind)
+    {
+        case TypedSignatureTypeKind.Void:
+            return 1;
+        case TypedSignatureTypeKind.Bool:
+            return 2;
+        case TypedSignatureTypeKind.Integer:
+            return 3;
+        case TypedSignatureTypeKind.Float:
+            return 4;
+        case TypedSignatureTypeKind.Text:
+            return 5;
+        case TypedSignatureTypeKind.Named:
+            return 6;
+        case TypedSignatureTypeKind.GenericParameter:
+            return 7;
+        case TypedSignatureTypeKind.RawPointer:
+            return 8;
+        case TypedSignatureTypeKind.FunctionPointer:
+            return 9;
+        case TypedSignatureTypeKind.Closure:
+            return 10;
+        case TypedSignatureTypeKind.Dynamic:
+            return 11;
+        case TypedSignatureTypeKind.FixedArray:
+            return 12;
+        case TypedSignatureTypeKind.Slice:
+            return 13;
+        default:
+            return 0;
+    }
+}
+
+internal finite law TypedSignatureTypeKind TypedSignatureTypeKindFromU32(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return TypedSignatureTypeKind.Void;
+        case 2:
+            return TypedSignatureTypeKind.Bool;
+        case 3:
+            return TypedSignatureTypeKind.Integer;
+        case 4:
+            return TypedSignatureTypeKind.Float;
+        case 5:
+            return TypedSignatureTypeKind.Text;
+        case 6:
+            return TypedSignatureTypeKind.Named;
+        case 7:
+            return TypedSignatureTypeKind.GenericParameter;
+        case 8:
+            return TypedSignatureTypeKind.RawPointer;
+        case 9:
+            return TypedSignatureTypeKind.FunctionPointer;
+        case 10:
+            return TypedSignatureTypeKind.Closure;
+        case 11:
+            return TypedSignatureTypeKind.Dynamic;
+        case 12:
+            return TypedSignatureTypeKind.FixedArray;
+        case 13:
+            return TypedSignatureTypeKind.Slice;
+        default:
+            return TypedSignatureTypeKind.Unknown;
+    }
+}
+
+public fn void SerializeEnumLayoutFacts(borrow IrTable<MirEnumLayoutFact> facts, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirEnumLayoutFact fact = facts.Get(id);
+        stack TypeId ownerType = fact.OwnerType();
+        WriteU32(buf, MirEnumLayoutFactRowKindToU32(fact.RowKind()));
+        WriteU32(buf, ownerType.Index());
+        WriteU32(buf, fact.OwnerNameToken());
+        WriteU32(buf, fact.VariantOrdinal());
+        WriteU32(buf, fact.VariantNameToken());
+        WriteU32(buf, fact.VariantTag());
+        WriteU32(buf, fact.PayloadCount());
+        WriteU32(buf, fact.PayloadOrdinal());
+        WriteU32(buf, fact.PayloadNameToken());
+        WriteU32(buf, TypedEnumPayloadKindToU32(fact.PayloadKind()));
+        WriteU32(buf, TypedEnumVariantRoleToU32(fact.VariantRole()));
+        WriteU32(buf, BoolToU32(fact.IsErrorFunnel()));
+        WriteU32(buf, BoolToU32(fact.UsesNamedPayloads()));
+        WriteU32(buf, fact.StorageFieldOrdinal());
+        WriteU64(buf, fact.OffsetBytes());
+        WriteU64(buf, fact.SizeBytes());
+        WriteU64(buf, fact.AlignmentBytes());
+        WriteU32(buf, BoolToU32(fact.IsMisaligned()));
+        WriteU32(buf, TypedSignatureTypeKindToU32(fact.TypeKind()));
+        WriteU32(buf, fact.TypeHeadToken());
+        WriteU32(buf, fact.TypePrimaryToken());
+        WriteU32(buf, fact.BitWidth());
+        WriteU32(buf, fact.TypeFlags());
+        WriteU32(buf, BoolToU32(fact.HasConcreteLayout()));
+        id = id + 1;
+    }
+}
+
+public fn bool DeserializeEnumLayoutFacts(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirEnumLayoutFact> outFacts)
+{
+    return DeserializeEnumLayoutFactsAt(buf, 1, outFacts);
+}
+
+public fn bool DeserializeEnumLayoutFactsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow IrTable<MirEnumLayoutFact> outFacts)
+{
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, startOffset, MirEnumLayoutFactRecordSize(), rowCount, byteCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] i = 0;
+    while willexit (i < rowCount)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + i * MirEnumLayoutFactRecordSize();
+        stack mut MirEnumLayoutFact fact = new();
+        fact.RowKindValue = MirEnumLayoutFactRowKindFromU32(ReadU32(buf, recordBase));
+        fact.OwnerTypeValue = TypeIdOf(ReadU32(buf, recordBase + 4));
+        fact.OwnerNameTokenValue = ReadU32(buf, recordBase + 8);
+        fact.VariantOrdinalValue = ReadU32(buf, recordBase + 12);
+        fact.VariantNameTokenValue = ReadU32(buf, recordBase + 16);
+        fact.VariantTagValue = ReadU32(buf, recordBase + 20);
+        fact.PayloadCountValue = ReadU32(buf, recordBase + 24);
+        fact.PayloadOrdinalValue = ReadU32(buf, recordBase + 28);
+        fact.PayloadNameTokenValue = ReadU32(buf, recordBase + 32);
+        fact.PayloadKindValue = TypedEnumPayloadKindFromU32(ReadU32(buf, recordBase + 36));
+        fact.VariantRoleValue = TypedEnumVariantRoleFromU32(ReadU32(buf, recordBase + 40));
+        fact.ErrorFunnelValue = BoolFromU32(ReadU32(buf, recordBase + 44));
+        fact.UsesNamedPayloadsValue = BoolFromU32(ReadU32(buf, recordBase + 48));
+        fact.StorageFieldOrdinalValue = ReadU32(buf, recordBase + 52);
+        fact.OffsetBytesValue = ReadU64(buf, recordBase + 56);
+        fact.SizeBytesValue = ReadU64(buf, recordBase + 64);
+        fact.AlignmentBytesValue = ReadU64(buf, recordBase + 72);
+        fact.MisalignedValue = BoolFromU32(ReadU32(buf, recordBase + 80));
+        fact.TypeKindValue = TypedSignatureTypeKindFromU32(ReadU32(buf, recordBase + 84));
+        fact.TypeHeadTokenValue = ReadU32(buf, recordBase + 88);
+        fact.TypePrimaryTokenValue = ReadU32(buf, recordBase + 92);
+        fact.BitWidthValue = ReadU32(buf, recordBase + 96);
+        fact.TypeFlagsValue = ReadU32(buf, recordBase + 100);
+        fact.ConcreteLayoutValue = BoolFromU32(ReadU32(buf, recordBase + 104));
+        if (outFacts.Add(fact) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}

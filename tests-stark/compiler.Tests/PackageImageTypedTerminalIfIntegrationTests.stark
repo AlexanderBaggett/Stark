@@ -1,0 +1,43 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedTerminalIfIntegrationTests
+
+// Ported from PackageImageTypedTerminalIfIntegrationTests.ManifestBackedTypedTerminalIfBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedTerminalIfBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    // Covers manifest-backed terminal-if bodies from package image through runtime execution.
+    return CompileAndRunTypedOnlyPackage(
+        "pkgimg-typed-terminal-if-manifest-backed",
+        raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.ChooseTerminal(false, true, 1, 7, 9, 0);
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+""",
+        "Facade.ChooseTerminal",
+        "",
+        7);
+}

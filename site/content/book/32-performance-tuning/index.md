@@ -318,16 +318,11 @@ C: initialize four values and sum them.
 If Stark uses a language feature that the other language does not have, keep
 the benchmark, but name it after the source task being demonstrated.
 
-## Step 6: Use Release Builds For Numbers
+## Step 6: Record The Build That Produced The Numbers
 
-Use the project profile that matches the measurement:
-
-```toml
-[profiles.release]
-opt = 3
-```
-
-Then record the command that produced the result:
+Every Stark build compiles fully optimized; there is no optimization knob to
+remember before measuring. What still matters is recording the exact command
+that produced the result:
 
 ```bash
 stark run --release
@@ -340,7 +335,7 @@ result. A number without its measurement setup is not very useful later.
 
 Tune in a loop:
 
-1. Run the benchmark in `Release`.
+1. Run the benchmark.
 2. Compare against C and Rust using C as `1.0`.
 3. Inspect generated output only for the specific question under investigation.
 4. Change the source or benchmark setup when required work is hidden or misplaced.

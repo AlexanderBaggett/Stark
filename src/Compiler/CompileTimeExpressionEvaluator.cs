@@ -11,7 +11,11 @@ internal enum CompileTimeConstantKind
     Float,
     Bool,
     Text,
-    Null
+    Null,
+    Void,
+    FixedArray,
+    NamedAggregate,
+    EnumAggregate
 }
 
 internal readonly record struct CompileTimeConstant
@@ -22,7 +26,10 @@ internal readonly record struct CompileTimeConstant
         BigInteger integerValue,
         double floatValue,
         bool boolValue,
-        string? textLiteral)
+        string? textLiteral,
+        string? variantName,
+        IReadOnlyList<CompileTimeConstant>? elements,
+        bool isSymbolic)
     {
         Kind = kind;
         Type = type;
@@ -30,6 +37,9 @@ internal readonly record struct CompileTimeConstant
         FloatValue = floatValue;
         BoolValue = boolValue;
         TextLiteral = textLiteral;
+        VariantName = variantName;
+        Elements = elements ?? [];
+        IsSymbolic = isSymbolic;
     }
 
     public CompileTimeConstantKind Kind { get; }
@@ -38,21 +48,49 @@ internal readonly record struct CompileTimeConstant
     public double FloatValue { get; }
     public bool BoolValue { get; }
     public string? TextLiteral { get; }
+    public string? VariantName { get; }
+    public IReadOnlyList<CompileTimeConstant> Elements { get; }
+    public bool IsSymbolic { get; }
 
     public static CompileTimeConstant Integer(BigInteger value, StarkTypeSymbol type) =>
-        new(CompileTimeConstantKind.Integer, type, value, default, default, null);
+        new(CompileTimeConstantKind.Integer, type, value, default, default, null, null, [], isSymbolic: false);
 
     public static CompileTimeConstant Float(double value, StarkTypeSymbol type) =>
-        new(CompileTimeConstantKind.Float, type, default, value, default, null);
+        new(CompileTimeConstantKind.Float, type, default, value, default, null, null, [], isSymbolic: false);
 
     public static CompileTimeConstant Bool(bool value) =>
-        new(CompileTimeConstantKind.Bool, StarkTypeSymbols.Bool, default, default, value, null);
+        new(CompileTimeConstantKind.Bool, StarkTypeSymbols.Bool, default, default, value, null, null, [], isSymbolic: false);
+
+    public static CompileTimeConstant SymbolicInteger(StarkTypeSymbol type) =>
+        new(CompileTimeConstantKind.Integer, type, default, default, default, null, null, [], isSymbolic: true);
+
+    public static CompileTimeConstant SymbolicBool() =>
+        new(CompileTimeConstantKind.Bool, StarkTypeSymbols.Bool, default, default, default, null, null, [], isSymbolic: true);
 
     public static CompileTimeConstant Text(string literalText, StarkTypeSymbol type) =>
-        new(CompileTimeConstantKind.Text, type, default, default, default, literalText);
+        new(CompileTimeConstantKind.Text, type, default, default, default, literalText, null, [], isSymbolic: false);
 
     public static CompileTimeConstant Null(StarkTypeSymbol type) =>
-        new(CompileTimeConstantKind.Null, type, default, default, default, null);
+        new(CompileTimeConstantKind.Null, type, default, default, default, null, null, [], isSymbolic: false);
+
+    public static CompileTimeConstant Void() =>
+        new(CompileTimeConstantKind.Void, StarkTypeSymbols.Void, default, default, default, null, null, [], isSymbolic: false);
+
+    public static CompileTimeConstant FixedArray(
+        IReadOnlyList<CompileTimeConstant> elements,
+        StarkTypeSymbol type) =>
+        new(CompileTimeConstantKind.FixedArray, type, default, default, default, null, null, elements, isSymbolic: false);
+
+    public static CompileTimeConstant NamedAggregate(
+        IReadOnlyList<CompileTimeConstant> elements,
+        StarkTypeSymbol type) =>
+        new(CompileTimeConstantKind.NamedAggregate, type, default, default, default, null, null, elements, isSymbolic: false);
+
+    public static CompileTimeConstant EnumAggregate(
+        string variantName,
+        IReadOnlyList<CompileTimeConstant> elements,
+        StarkTypeSymbol type) =>
+        new(CompileTimeConstantKind.EnumAggregate, type, default, default, default, null, variantName, elements, isSymbolic: false);
 }
 
 internal delegate bool TryResolveCompileTimeIdentifier(string name, out CompileTimeConstant constant);
@@ -62,9 +100,50 @@ internal delegate bool TryEvaluateCompileTimePostfixExpression(
     CompileTimeEvaluationServices services,
     out CompileTimeConstant constant);
 
+internal delegate bool TryEvaluateCompileTimeBlockExpression(
+    StarkParser.BlockContext block,
+    CompileTimeEvaluationServices services,
+    out CompileTimeConstant constant);
+
+internal delegate bool TryEvaluateCompileTimeObjectCreationExpression(
+    StarkParser.ObjectCreationExpressionContext expression,
+    CompileTimeEvaluationServices services,
+    out CompileTimeConstant constant);
+
+internal delegate bool TryEvaluateCompileTimeEnumConstructorExpression(
+    StarkParser.EnumConstructorExpressionContext expression,
+    CompileTimeEvaluationServices services,
+    out CompileTimeConstant constant);
+
+internal delegate bool TryEvaluateCompileTimeEnumValueExpression(
+    ParserRuleContext expression,
+    string caseName,
+    CompileTimeEvaluationServices services,
+    out CompileTimeConstant constant);
+
+internal delegate bool TryEvaluateCompileTimeTypeLayoutExpression(
+    StarkParser.PrimaryExpressionContext expression,
+    out CompileTimeConstant constant);
+
+internal delegate bool TryResolveCompileTimeConversionType(
+    StarkParser.ConversionTypeContext conversionType,
+    out StarkTypeSymbol type);
+
+internal delegate bool TryEvaluateCompileTimeTryExpression(
+    StarkParser.UnaryExpressionContext expression,
+    CompileTimeEvaluationServices services,
+    out CompileTimeConstant constant);
+
 internal readonly record struct CompileTimeEvaluationServices(
     TryResolveCompileTimeIdentifier? TryResolveIdentifier = null,
-    TryEvaluateCompileTimePostfixExpression? TryEvaluatePostfixExpression = null);
+    TryEvaluateCompileTimePostfixExpression? TryEvaluatePostfixExpression = null,
+    TryEvaluateCompileTimeBlockExpression? TryEvaluateBlockExpression = null,
+    TryEvaluateCompileTimeObjectCreationExpression? TryEvaluateObjectCreationExpression = null,
+    TryEvaluateCompileTimeEnumConstructorExpression? TryEvaluateEnumConstructorExpression = null,
+    TryEvaluateCompileTimeEnumValueExpression? TryEvaluateEnumValueExpression = null,
+    TryEvaluateCompileTimeTypeLayoutExpression? TryEvaluateTypeLayoutExpression = null,
+    TryResolveCompileTimeConversionType? TryResolveConversionType = null,
+    TryEvaluateCompileTimeTryExpression? TryEvaluateTryExpression = null);
 
 internal static class CompileTimeExpressionEvaluator
 {
@@ -130,13 +209,24 @@ internal static class CompileTimeExpressionEvaluator
         value = BigInteger.Zero;
 
         if (!TryEvaluate(expression, out var constant, services)
-            || constant.Kind != CompileTimeConstantKind.Integer)
+            || constant.Kind != CompileTimeConstantKind.Integer
+            || constant.IsSymbolic)
         {
             return false;
         }
 
         value = constant.IntegerValue;
         return true;
+    }
+
+    public static bool TryEvaluateBinaryOperator(
+        string operatorText,
+        CompileTimeConstant left,
+        CompileTimeConstant right,
+        bool requireInteger,
+        out CompileTimeConstant constant)
+    {
+        return TryEvaluateBinary(operatorText, left, right, requireInteger, out constant);
     }
 
     public static bool TryCoerce(
@@ -151,6 +241,23 @@ internal static class CompileTimeExpressionEvaluator
             return true;
         }
 
+        if (constant.IsSymbolic)
+        {
+            if (constant.Kind == CompileTimeConstantKind.Integer
+                && targetType.Kind == StarkTypeKind.Integer)
+            {
+                coerced = CompileTimeConstant.SymbolicInteger(targetType);
+                return true;
+            }
+
+            if (constant.Kind == CompileTimeConstantKind.Bool
+                && targetType.Kind == StarkTypeKind.Bool)
+            {
+                coerced = CompileTimeConstant.SymbolicBool();
+                return true;
+            }
+        }
+
         if (constant.Kind == CompileTimeConstantKind.Null && targetType.Kind == StarkTypeKind.RawPointer)
         {
             coerced = CompileTimeConstant.Null(targetType);
@@ -160,6 +267,42 @@ internal static class CompileTimeExpressionEvaluator
         if (constant.Kind == CompileTimeConstantKind.Text
             && TryCoerceText(constant, targetType, out coerced))
         {
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.FixedArray
+            && targetType.Kind == StarkTypeKind.FixedArray
+            && targetType.ElementType is { } targetElementType
+            && targetType.FixedLength is int targetLength
+            && constant.Elements.Count == targetLength)
+        {
+            var coercedElements = new CompileTimeConstant[targetLength];
+            for (var index = 0; index < targetLength; index++)
+            {
+                if (!TryCoerce(constant.Elements[index], targetElementType, out coercedElements[index]))
+                {
+                    return false;
+                }
+            }
+
+            coerced = CompileTimeConstant.FixedArray(coercedElements, targetType);
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.NamedAggregate
+            && targetType.Kind == StarkTypeKind.Named
+            && TypeCompatibilityFacts.CanAssign(targetType, constant.Type))
+        {
+            coerced = CompileTimeConstant.NamedAggregate(constant.Elements, targetType);
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.EnumAggregate
+            && targetType.Kind == StarkTypeKind.Named
+            && TypeCompatibilityFacts.CanAssign(targetType, constant.Type)
+            && constant.VariantName is { } variantName)
+        {
+            coerced = CompileTimeConstant.EnumAggregate(variantName, constant.Elements, targetType);
             return true;
         }
 
@@ -242,7 +385,7 @@ internal static class CompileTimeExpressionEvaluator
             return true;
         }
 
-        if (condition.Kind != CompileTimeConstantKind.Bool)
+        if (condition.Kind != CompileTimeConstantKind.Bool || condition.IsSymbolic)
         {
             return false;
         }
@@ -276,9 +419,10 @@ internal static class CompileTimeExpressionEvaluator
             return false;
         }
 
+        var sawSymbolic = current.IsSymbolic;
         for (var index = 1; index < operands.Length; index++)
         {
-            if (current.BoolValue)
+            if (!current.IsSymbolic && current.BoolValue)
             {
                 constant = CompileTimeConstant.Bool(true);
                 return true;
@@ -289,9 +433,14 @@ internal static class CompileTimeExpressionEvaluator
             {
                 return false;
             }
+
+            if (current.IsSymbolic)
+            {
+                sawSymbolic = true;
+            }
         }
 
-        constant = current;
+        constant = sawSymbolic ? CompileTimeConstant.SymbolicBool() : current;
         return true;
     }
 
@@ -318,9 +467,10 @@ internal static class CompileTimeExpressionEvaluator
             return false;
         }
 
+        var sawSymbolic = current.IsSymbolic;
         for (var index = 1; index < operands.Length; index++)
         {
-            if (!current.BoolValue)
+            if (!current.IsSymbolic && !current.BoolValue)
             {
                 constant = CompileTimeConstant.Bool(false);
                 return true;
@@ -331,9 +481,14 @@ internal static class CompileTimeExpressionEvaluator
             {
                 return false;
             }
+
+            if (current.IsSymbolic)
+            {
+                sawSymbolic = true;
+            }
         }
 
-        constant = current;
+        constant = sawSymbolic ? CompileTimeConstant.SymbolicBool() : current;
         return true;
     }
 
@@ -451,9 +606,20 @@ internal static class CompileTimeExpressionEvaluator
             return TryEvaluatePowerExpression(powerExpression, services, out constant);
         }
 
-        if (expression.conversionType() is not null)
+        if (expression.conversionType() is { } conversionType)
         {
-            return false;
+            return TryEvaluateConversionExpression(expression, conversionType, services, out constant);
+        }
+
+        if (expression.COMPTIME() is not null)
+        {
+            return TryEvaluateUnaryExpression(expression.unaryExpression(), services, out constant);
+        }
+
+        if (expression.TRY() is not null)
+        {
+            return services.TryEvaluateTryExpression is not null
+                && services.TryEvaluateTryExpression(expression, services, out constant);
         }
 
         var op = expression.unaryOperator()?.GetText();
@@ -473,6 +639,75 @@ internal static class CompileTimeExpressionEvaluator
             "~" when operand.Kind == CompileTimeConstantKind.Integer => TryFoldBitwiseNot(operand, out constant),
             _ => false
         };
+    }
+
+    private static bool TryEvaluateConversionExpression(
+        StarkParser.UnaryExpressionContext expression,
+        StarkParser.ConversionTypeContext conversionType,
+        CompileTimeEvaluationServices services,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (services.TryResolveConversionType is null
+            || !services.TryResolveConversionType(conversionType, out var targetType)
+            || targetType.Kind == StarkTypeKind.Error
+            || !TryEvaluateUnaryExpression(expression.unaryExpression(), services, out var operand))
+        {
+            return false;
+        }
+
+        return TryExplicitConvert(operand, targetType, out constant);
+    }
+
+    public static bool TryExplicitConvert(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant converted)
+    {
+        if (constant.Kind == CompileTimeConstantKind.Float
+            && targetType.Kind == StarkTypeKind.Float
+            && TryConvertFloatToFloat(constant.FloatValue, targetType, out var convertedFloat))
+        {
+            converted = CompileTimeConstant.Float(convertedFloat, targetType);
+            return true;
+        }
+
+        if (TryCoerce(constant, targetType, out converted))
+        {
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.Integer
+            && targetType.Kind == StarkTypeKind.Integer)
+        {
+            return TryFoldSignedInteger(targetType, constant.IntegerValue, out converted);
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.Integer
+            && targetType.Kind == StarkTypeKind.Float
+            && TryConvertIntegerToFloat(constant.IntegerValue, targetType, out var floatValue))
+        {
+            converted = CompileTimeConstant.Float(floatValue, targetType);
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.Float
+            && targetType.Kind == StarkTypeKind.Integer
+            && TryConvertFloatToInteger(constant.FloatValue, targetType, out converted))
+        {
+            return true;
+        }
+
+        if (constant.Kind == CompileTimeConstantKind.Integer
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && constant.IntegerValue.IsZero)
+        {
+            converted = CompileTimeConstant.Null(targetType);
+            return true;
+        }
+
+        converted = default;
+        return false;
     }
 
     private static bool TryEvaluatePowerExpression(
@@ -529,6 +764,37 @@ internal static class CompileTimeExpressionEvaluator
             return TryEvaluateLiteral(literal, services, out constant);
         }
 
+        if (expression.COMPTIME() is not null && expression.block() is { } block)
+        {
+            return services.TryEvaluateBlockExpression is not null
+                && services.TryEvaluateBlockExpression(block, services, out constant);
+        }
+
+        if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
+        {
+            return services.TryEvaluateTypeLayoutExpression is not null
+                && services.TryEvaluateTypeLayoutExpression(expression, out constant);
+        }
+
+        if (expression.objectCreationExpression() is { } objectCreation)
+        {
+            return services.TryEvaluateObjectCreationExpression is not null
+                && services.TryEvaluateObjectCreationExpression(objectCreation, services, out constant);
+        }
+
+        if (expression.enumConstructorExpression() is { } enumConstructor)
+        {
+            return services.TryEvaluateEnumConstructorExpression is not null
+                && services.TryEvaluateEnumConstructorExpression(enumConstructor, services, out constant);
+        }
+
+        if (expression.genericEnumCaseReference() is { } genericEnumCaseReference
+            && services.TryEvaluateEnumValueExpression is not null
+            && services.TryEvaluateEnumValueExpression(genericEnumCaseReference, genericEnumCaseReference.GetText(), services, out constant))
+        {
+            return true;
+        }
+
         if (expression.Identifier() is { } identifier)
         {
             return services.TryResolveIdentifier is not null
@@ -537,6 +803,12 @@ internal static class CompileTimeExpressionEvaluator
 
         if (expression.qualifiedName() is { } qualifiedName)
         {
+            if (services.TryEvaluateEnumValueExpression is not null
+                && services.TryEvaluateEnumValueExpression(qualifiedName, qualifiedName.GetText(), services, out constant))
+            {
+                return true;
+            }
+
             return services.TryResolveIdentifier is not null
                 && services.TryResolveIdentifier(qualifiedName.GetText(), out constant);
         }
@@ -692,12 +964,20 @@ internal static class CompileTimeExpressionEvaluator
             return true;
         }
 
+        var sawSymbolic = false;
         for (var index = 0; index < operators.Count; index++)
         {
             if (!evaluateOperand(operands[index + 1], out var right)
                 || !TryEvaluatePairComparison(operators[index], left, right, out var comparison))
             {
                 return false;
+            }
+
+            if (comparison.IsSymbolic)
+            {
+                sawSymbolic = true;
+                left = right;
+                continue;
             }
 
             if (!comparison.BoolValue)
@@ -709,7 +989,9 @@ internal static class CompileTimeExpressionEvaluator
             left = right;
         }
 
-        constant = CompileTimeConstant.Bool(true);
+        constant = sawSymbolic
+            ? CompileTimeConstant.SymbolicBool()
+            : CompileTimeConstant.Bool(true);
         return true;
     }
 
@@ -770,6 +1052,12 @@ internal static class CompileTimeExpressionEvaluator
             && right.Kind == CompileTimeConstantKind.Bool
             && operatorText is "==" or "!=")
         {
+            if (left.IsSymbolic || right.IsSymbolic)
+            {
+                constant = CompileTimeConstant.SymbolicBool();
+                return true;
+            }
+
             constant = CompileTimeConstant.Bool(
                 operatorText == "=="
                     ? left.BoolValue == right.BoolValue
@@ -785,7 +1073,86 @@ internal static class CompileTimeExpressionEvaluator
             return true;
         }
 
+        if (left.Kind == CompileTimeConstantKind.EnumAggregate
+            && right.Kind == CompileTimeConstantKind.EnumAggregate
+            && operatorText is "==" or "!="
+            && left.Type == right.Type)
+        {
+            var equal = CompileTimeConstantsEqual(left, right);
+            constant = CompileTimeConstant.Bool(operatorText == "==" ? equal : !equal);
+            return true;
+        }
+
+        if (left.Kind == CompileTimeConstantKind.Text
+            && right.Kind == CompileTimeConstantKind.Text
+            && operatorText is "==" or "!="
+            && TryCompareTextConstants(left, right, out var textEqual))
+        {
+            constant = CompileTimeConstant.Bool(operatorText == "==" ? textEqual : !textEqual);
+            return true;
+        }
+
         return TryEvaluateBinary(operatorText, left, right, requireInteger: false, out constant);
+    }
+
+    private static bool TryCompareTextConstants(
+        CompileTimeConstant left,
+        CompileTimeConstant right,
+        out bool equal)
+    {
+        equal = false;
+        if (left.TextLiteral is null || right.TextLiteral is null)
+        {
+            return false;
+        }
+
+        var resultType = FindCommonType(left.Type, right.Type);
+        if (resultType.Kind == StarkTypeKind.Error
+            || !TryCoerce(left, resultType, out var coercedLeft)
+            || !TryCoerce(right, resultType, out var coercedRight)
+            || coercedLeft.TextLiteral is null
+            || coercedRight.TextLiteral is null
+            || !TextLiteralDecoder.TryDecode(
+                coercedLeft.TextLiteral,
+                GetTextLiteralKind(coercedLeft.TextLiteral),
+                out var decodedLeft,
+                out _)
+            || !TextLiteralDecoder.TryDecode(
+                coercedRight.TextLiteral,
+                GetTextLiteralKind(coercedRight.TextLiteral),
+                out var decodedRight,
+                out _))
+        {
+            return false;
+        }
+
+        equal = string.Equals(decodedLeft.Value, decodedRight.Value, StringComparison.Ordinal);
+        return true;
+    }
+
+    private static bool CompileTimeConstantsEqual(CompileTimeConstant left, CompileTimeConstant right)
+    {
+        if (left.Kind != right.Kind || left.Type != right.Type)
+        {
+            return false;
+        }
+
+        return left.Kind switch
+        {
+            CompileTimeConstantKind.Integer => left.IntegerValue == right.IntegerValue,
+            CompileTimeConstantKind.Float => left.FloatValue.Equals(right.FloatValue),
+            CompileTimeConstantKind.Bool => left.BoolValue == right.BoolValue,
+            CompileTimeConstantKind.Text => string.Equals(left.TextLiteral, right.TextLiteral, StringComparison.Ordinal),
+            CompileTimeConstantKind.Null => true,
+            CompileTimeConstantKind.FixedArray or CompileTimeConstantKind.NamedAggregate =>
+                left.Elements.Count == right.Elements.Count
+                && left.Elements.Zip(right.Elements, CompileTimeConstantsEqual).All(static equal => equal),
+            CompileTimeConstantKind.EnumAggregate =>
+                string.Equals(left.VariantName, right.VariantName, StringComparison.Ordinal)
+                && left.Elements.Count == right.Elements.Count
+                && left.Elements.Zip(right.Elements, CompileTimeConstantsEqual).All(static equal => equal),
+            _ => false
+        };
     }
 
     private static bool TryFoldIntegerBinary(
@@ -797,6 +1164,18 @@ internal static class CompileTimeExpressionEvaluator
         constant = default;
         var targetType = left.Type;
         var bitWidth = targetType.BitWidth ?? 0;
+        if (left.IsSymbolic || right.IsSymbolic)
+        {
+            return operatorText switch
+            {
+                "+" or "-" or "*" or "**" or "+%" or "-%" or "*%" or "+|" or "-|" or "*|"
+                    or "/" or "%" or "&" or "^" or "|" or "<<" or ">>" =>
+                    TrySymbolicIntegerConstant(targetType, out constant),
+                "==" or "!=" or "<" or "<=" or ">" or ">=" => TrySymbolicBoolConstant(out constant),
+                _ => false
+            };
+        }
+
         if (bitWidth <= 0)
         {
             return StarkTypeSymbols.IsCompileTimeInteger(targetType)
@@ -938,6 +1317,11 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryFoldIntegerNegate(CompileTimeConstant operand, out CompileTimeConstant constant)
     {
+        if (operand.IsSymbolic)
+        {
+            return TrySymbolicIntegerConstant(operand.Type, out constant);
+        }
+
         var value = -operand.IntegerValue;
         if (StarkTypeSymbols.IntegerValueFitsEffectiveRange(value, operand.Type))
         {
@@ -955,11 +1339,21 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryFoldWrappingNegate(CompileTimeConstant operand, out CompileTimeConstant constant)
     {
+        if (operand.IsSymbolic)
+        {
+            return TrySymbolicIntegerConstant(operand.Type, out constant);
+        }
+
         return TryWrapSignedInteger(operand.Type, -operand.IntegerValue, out constant);
     }
 
     private static bool TryFoldLogicalNot(CompileTimeConstant operand, out CompileTimeConstant constant)
     {
+        if (operand.IsSymbolic)
+        {
+            return TrySymbolicBoolConstant(out constant);
+        }
+
         constant = CompileTimeConstant.Bool(!operand.BoolValue);
         return true;
     }
@@ -967,6 +1361,11 @@ internal static class CompileTimeExpressionEvaluator
     private static bool TryFoldBitwiseNot(CompileTimeConstant operand, out CompileTimeConstant constant)
     {
         constant = default;
+        if (operand.IsSymbolic)
+        {
+            return TrySymbolicIntegerConstant(operand.Type, out constant);
+        }
+
         var bitWidth = operand.Type.BitWidth ?? 0;
         if (bitWidth <= 0)
         {
@@ -992,6 +1391,18 @@ internal static class CompileTimeExpressionEvaluator
         return true;
     }
 
+    private static bool TrySymbolicBoolConstant(out CompileTimeConstant constant)
+    {
+        constant = CompileTimeConstant.SymbolicBool();
+        return true;
+    }
+
+    private static bool TrySymbolicIntegerConstant(StarkTypeSymbol type, out CompileTimeConstant constant)
+    {
+        constant = CompileTimeConstant.SymbolicInteger(type);
+        return true;
+    }
+
     private static bool TryIntegerLiteralConstant(BigInteger value, out CompileTimeConstant constant)
     {
         constant = CompileTimeConstant.Integer(value, InferIntegerLiteralType(value));
@@ -1002,6 +1413,48 @@ internal static class CompileTimeExpressionEvaluator
     {
         constant = CompileTimeConstant.Float(value, type);
         return true;
+    }
+
+    private static bool TryConvertIntegerToFloat(BigInteger value, StarkTypeSymbol targetType, out double converted)
+    {
+        converted = (double)value;
+        if (!double.IsFinite(converted))
+        {
+            return false;
+        }
+
+        if (targetType.BitWidth == 32)
+        {
+            converted = (float)converted;
+        }
+
+        return double.IsFinite(converted);
+    }
+
+    private static bool TryConvertFloatToFloat(double value, StarkTypeSymbol targetType, out double converted)
+    {
+        converted = value;
+        if (targetType.BitWidth == 32)
+        {
+            converted = (float)value;
+        }
+
+        return double.IsFinite(converted);
+    }
+
+    private static bool TryConvertFloatToInteger(
+        double value,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (!double.IsFinite(value))
+        {
+            return false;
+        }
+
+        var truncated = new BigInteger(Math.Truncate(value));
+        return TryFoldSignedInteger(targetType, truncated, out constant);
     }
 
     private static bool TryFoldSignedInteger(StarkTypeSymbol type, BigInteger value, out CompileTimeConstant constant)

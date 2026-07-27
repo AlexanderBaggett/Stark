@@ -1,17 +1,30 @@
 import System.Runtime
 import System.Syscall
+import System.Core
 import System.Testing
+import System.Testing.HostCompiler
+import System.Testing.HostCompilerDiagnostics
+import System.Compiler.IntegerFacts
+import System.Text.Interning
 export import System.Console
 export import System.BitOperations
 export import System.Collections
+export import System.C
+export import System.Compiler.IntegerFacts
+export import System.Cryptography.Sha256
 export import System.FileSystem
 export import System.IO
 export import System.IO.File
 export import System.IO.Path
+export import System.Json
 export import System.Math
 export import System.Memory
 export import System.Net
 export import System.Net.Tcp
 export import System.Process
 export import System.Threading
+export import System.Toml
 module System
+
+public alias Result<T, E> = System.Core.Result<T, E>;
+public alias Option<T> = System.Core.Option<T>;

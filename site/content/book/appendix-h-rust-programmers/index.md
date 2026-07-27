@@ -55,6 +55,25 @@ small fallible helper. If the caller should own the destination storage, return
 a status value and write through `out`. Use a result-shaped enum when the caller
 needs the successful value and the failure reason in one returned value.
 
+When a function genuinely propagates, Stark's `try` fills the role of Rust's
+`?`, with deliberate differences: it is a leading keyword
+(`stack T value = try Read(path);`), so every propagation point is greppable,
+and it may only sit at statement boundaries instead of composing inside larger
+expressions. Where Rust's `?` is tied to `Result`/`Option` (or a `Try` trait
+implementation), Stark's `try` works on any two-variant enum whose declaration
+marks its variants with the `[Ok]`/`[Err]` role attributes — the stdlib result
+types are ordinary enums that carry those marks, not privileged types.
+Cross-family error conversion is declared on the destination error enum with a
+`from` variant — `enum LoadError { Io from IoError }` plays the role of
+`#[from]`/`From` impls: declared once, applied automatically by `try`, and a
+missing conversion is a compile error rather than an inferred one.
+
+Rust's `if let` and `while let` are written as `is` conditions:
+`if let Some(x) = lookup(key)` becomes
+`if (lookup(key) is Option<Value>.Some(var x))`, and
+`while let Some(job) = queue.pop()` becomes
+`while willexit (queue.Pop() is Option<Job>.Some(var job))`.
+
 ## Borrowing Habit Shift
 
 Do not start by inventing lifetime parameters. Start by asking whether a borrow

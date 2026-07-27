@@ -1,0 +1,1279 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.TypeCodec
+import System.Json
+import System.Memory
+import System.Text
+export import Compiler.Mir.PackageImage.Loader.TypedInterfaceTypeReferenceLoader
+export import Compiler.Mir.PackageImage.Loader.TypedInterfaceDeclarationLoader
+module Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+
+// Effective typed-interface graph orchestration, compact summary readers, and
+// public zero-copy text/type-reference accessors.
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedInterfaceFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph typeAliasGraph,
+    mut borrow LogicalPackageTypedCallableFactGraph callableGraph,
+    mut borrow LogicalPackageTypedGlobalFactGraph globalGraph,
+    mut borrow LogicalPackageTypedTypeFactGraph typeGraph,
+    out bool hasTypeAliasFacts,
+    out bool hasCallableFacts,
+    out bool hasGlobalFacts,
+    out bool hasTypeFacts)
+{
+    hasTypeAliasFacts = false;
+    hasCallableFacts = false;
+    hasGlobalFacts = false;
+    hasTypeFacts = false;
+
+    stack mut u64[0 2 ** 63 - 1] typeAliasesNode = 0;
+    stack mut u32[0 max] typeAliasCount = 0;
+    if (!LogicalPackageImageJsonTypedDeclarationArrayNode(
+        document,
+        typedInterfaceNode,
+        LogicalPackageTypedDeclarationKind.TypeAlias,
+        typeAliasesNode,
+        typeAliasCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeAliasIndex = 0;
+    while willexit (typeAliasIndex < typeAliasCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+        if (!document.TryChildAt(typeAliasesNode, (u64[0 2 ** 63 - 1])typeAliasIndex, typeAliasNode)
+            || document.KindAt(typeAliasNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypedTypeAliasFactRows(
+                document,
+                typeAliasNode,
+                moduleOrdinal,
+                typeAliasIndex,
+                typeAliasGraph))
+        {
+            return false;
+        }
+
+        typeAliasIndex = typeAliasIndex + 1;
+    }
+
+    hasTypeAliasFacts = typeAliasesNode != 0;
+
+    stack mut u64[0 2 ** 63 - 1] functionsNode = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!LogicalPackageImageJsonTypedDeclarationArrayNode(
+        document,
+        typedInterfaceNode,
+        LogicalPackageTypedDeclarationKind.Function,
+        functionsNode,
+        functionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] functionIndex = 0;
+    while willexit (functionIndex < functionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] functionNode = 0;
+        if (!document.TryChildAt(functionsNode, (u64[0 2 ** 63 - 1])functionIndex, functionNode)
+            || document.KindAt(functionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypedCallableFactRows(
+                document,
+                functionNode,
+                moduleOrdinal,
+                LogicalPackageTypedCallableKind.Function,
+                functionIndex,
+                0,
+                callableGraph))
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    hasCallableFacts = functionsNode != 0;
+
+    stack mut u64[0 2 ** 63 - 1] globalsNode = 0;
+    stack mut u32[0 max] globalCount = 0;
+    if (!LogicalPackageImageJsonTypedDeclarationArrayNode(
+        document,
+        typedInterfaceNode,
+        LogicalPackageTypedDeclarationKind.Global,
+        globalsNode,
+        globalCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] globalIndex = 0;
+    while willexit (globalIndex < globalCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] globalNode = 0;
+        if (!document.TryChildAt(globalsNode, (u64[0 2 ** 63 - 1])globalIndex, globalNode)
+            || document.KindAt(globalNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypedGlobalFactRows(
+                document,
+                globalNode,
+                moduleOrdinal,
+                globalIndex,
+                globalGraph))
+        {
+            return false;
+        }
+
+        globalIndex = globalIndex + 1;
+    }
+
+    hasGlobalFacts = globalsNode != 0;
+
+    stack mut u64[0 2 ** 63 - 1] typesNode = 0;
+    stack mut u32[0 max] typeCount = 0;
+    if (!LogicalPackageImageJsonTypedDeclarationArrayNode(
+        document,
+        typedInterfaceNode,
+        LogicalPackageTypedDeclarationKind.Type,
+        typesNode,
+        typeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeIndex = 0;
+    while willexit (typeIndex < typeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] methodsNode = 0;
+        stack mut u32[0 max] methodCount = 0;
+        if (!document.TryChildAt(typesNode, (u64[0 2 ** 63 - 1])typeIndex, typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypedTypeFactRows(
+                document,
+                typeNode,
+                moduleOrdinal,
+                typeIndex,
+                typeGraph)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "Methods",
+                methodsNode,
+                methodCount))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] methodIndex = 0;
+        while willexit (methodIndex < methodCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] methodNode = 0;
+            if (!document.TryChildAt(methodsNode, (u64[0 2 ** 63 - 1])methodIndex, methodNode)
+                || document.KindAt(methodNode) != JsonKind.Object
+                || !LogicalPackageImageJsonMaterializeTypedCallableFactRows(
+                    document,
+                    methodNode,
+                    moduleOrdinal,
+                    LogicalPackageTypedCallableKind.Method,
+                    typeIndex,
+                    methodIndex,
+                    callableGraph))
+            {
+                return false;
+            }
+
+            methodIndex = methodIndex + 1;
+        }
+
+        if (methodsNode != 0)
+        {
+            hasCallableFacts = true;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    hasTypeFacts = typesNode != 0;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonTypeReferenceSummaryFacts(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    out LogicalPackageTypeReferenceSummary typeReference,
+    mut borrow OwnedAscii kind,
+    mut borrow OwnedAscii name)
+{
+    typeReference = new();
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeValueArgumentCount = 0;
+    stack mut u32[0 max] parameterTypeCount = 0;
+    stack mut u32[0 max] parameterRawPointerElementCountExpressionCount = 0;
+    stack mut u32[0 max] disjointParameterGroupCount = 0;
+    stack mut u32[0 max] overlapParameterGroupCount = 0;
+    stack mut u32[0 max] sameParameterGroupCount = 0;
+    stack mut u32[0 max] pointeeDeadOnReturnParameterNameCount = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] fixedLength = 0;
+    stack mut bool hasName = false;
+    stack mut bool hasBitWidth = false;
+    stack mut bool hasRangeMin = false;
+    stack mut bool hasRangeMax = false;
+    stack mut bool hasIsUnsigned = false;
+    stack mut bool isUnsigned = false;
+    stack mut bool isMutablePointer = false;
+    stack mut bool hasBorrowKind = false;
+    stack mut bool hasAccessKind = false;
+    stack mut bool hasInitializationKind = false;
+    stack mut bool isMutableView = false;
+    stack mut bool hasFixedLength = false;
+    stack mut bool hasFixedLengthParameterName = false;
+    stack mut bool hasElementType = false;
+    stack mut bool hasFunctionKind = false;
+    stack mut bool hasFunctionAbi = false;
+    stack mut bool hasFunctionIsUnsafe = false;
+    stack mut bool functionIsUnsafe = false;
+    stack mut bool hasFunctionIsTailCallable = false;
+    stack mut bool functionIsTailCallable = false;
+    stack mut bool hasClosureStorageKind = false;
+    stack mut bool hasClosureCallCapability = false;
+    stack mut bool hasDynTraitStorageKind = false;
+    stack mut bool hasReturnType = false;
+    stack mut bool hasAssociatedOwnerType = false;
+    stack mut bool hasAssociatedTypeName = false;
+    stack mut bool hasSourceAliasName = false;
+    stack mut u64[0 2 ** 63 - 1] elementTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] associatedOwnerTypeNode = 0;
+    if (!LogicalPackageImageJsonAppendRequiredTextMember(document, typeReferenceNode, "Kind", kind)
+        || !LogicalPackageImageJsonAppendOptionalTextMember(document, typeReferenceNode, "Name", name, hasName)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeReferenceNode, "BitWidth", hasBitWidth, bitWidth)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "RangeMin", hasRangeMin)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "RangeMax", hasRangeMax))
+    {
+        return false;
+    }
+
+    hasIsUnsigned = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "IsUnsigned");
+    if (!LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsUnsigned", isUnsigned))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsMutablePointer", isMutablePointer)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "BorrowKind", hasBorrowKind)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "AccessKind", hasAccessKind)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "InitializationKind", hasInitializationKind)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsMutableView", isMutableView)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(
+            document,
+            typeReferenceNode,
+            "FixedLength",
+            hasFixedLength,
+            fixedLength)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "FixedLengthParameterName", hasFixedLengthParameterName)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, typeReferenceNode, "ElementType", elementTypeNode, hasElementType)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "TypeArguments", typeArgumentCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "ComptimeValueArguments", comptimeValueArgumentCount)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "FunctionKind", hasFunctionKind)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "FunctionAbi", hasFunctionAbi))
+    {
+        return false;
+    }
+
+    hasFunctionIsUnsafe = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "FunctionIsUnsafe");
+    hasFunctionIsTailCallable = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "FunctionIsTailCallable");
+    if (!LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "FunctionIsUnsafe", functionIsUnsafe)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "FunctionIsTailCallable", functionIsTailCallable)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "ClosureStorageKind", hasClosureStorageKind)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "ClosureCallCapability", hasClosureCallCapability)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "DynTraitStorageKind", hasDynTraitStorageKind)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, typeReferenceNode, "ReturnType", returnTypeNode, hasReturnType)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "ParameterTypes", parameterTypeCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            typeReferenceNode,
+            "ParameterRawPointerElementCountExpressions",
+            parameterRawPointerElementCountExpressionCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "DisjointParameterGroups", disjointParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "OverlapParameterGroups", overlapParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeReferenceNode, "SameParameterGroups", sameParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            typeReferenceNode,
+            "PointeeDeadOnReturnParameterNames",
+            pointeeDeadOnReturnParameterNameCount)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, typeReferenceNode, "AssociatedOwnerType", associatedOwnerTypeNode, hasAssociatedOwnerType)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "AssociatedTypeName", hasAssociatedTypeName)
+        || !LogicalPackageImageJsonMemberIsPresentText(document, typeReferenceNode, "SourceAliasName", hasSourceAliasName))
+    {
+        return false;
+    }
+
+    typeReference = new LogicalPackageTypeReferenceSummary()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        DeclarationKindValue = declarationKind,
+        SourceValue = source,
+        PayloadOrdinalValue = payloadOrdinal,
+        TypeArgumentCountValue = typeArgumentCount,
+        ComptimeValueArgumentCountValue = comptimeValueArgumentCount,
+        ParameterTypeCountValue = parameterTypeCount,
+        ParameterRawPointerElementCountExpressionCountValue = parameterRawPointerElementCountExpressionCount,
+        DisjointParameterGroupCountValue = disjointParameterGroupCount,
+        OverlapParameterGroupCountValue = overlapParameterGroupCount,
+        SameParameterGroupCountValue = sameParameterGroupCount,
+        PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+        BitWidthValue = bitWidth,
+        FixedLengthValue = fixedLength,
+        HasNameValue = hasName,
+        HasBitWidthValue = hasBitWidth,
+        HasRangeMinValue = hasRangeMin,
+        HasRangeMaxValue = hasRangeMax,
+        HasIsUnsignedValue = hasIsUnsigned,
+        IsUnsignedValue = isUnsigned,
+        IsMutablePointerValue = isMutablePointer,
+        HasBorrowKindValue = hasBorrowKind,
+        HasAccessKindValue = hasAccessKind,
+        HasInitializationKindValue = hasInitializationKind,
+        IsMutableViewValue = isMutableView,
+        HasFixedLengthValue = hasFixedLength,
+        HasFixedLengthParameterNameValue = hasFixedLengthParameterName,
+        HasElementTypeValue = hasElementType,
+        HasFunctionKindValue = hasFunctionKind,
+        HasFunctionAbiValue = hasFunctionAbi,
+        HasFunctionIsUnsafeValue = hasFunctionIsUnsafe,
+        FunctionIsUnsafeValue = functionIsUnsafe,
+        HasFunctionIsTailCallableValue = hasFunctionIsTailCallable,
+        FunctionIsTailCallableValue = functionIsTailCallable,
+        HasClosureStorageKindValue = hasClosureStorageKind,
+        HasClosureCallCapabilityValue = hasClosureCallCapability,
+        HasDynTraitStorageKindValue = hasDynTraitStorageKind,
+        HasReturnTypeValue = hasReturnType,
+        HasAssociatedOwnerTypeValue = hasAssociatedOwnerType,
+        HasAssociatedTypeNameValue = hasAssociatedTypeName,
+        HasSourceAliasNameValue = hasSourceAliasName
+    };
+    return true;
+}
+
+public unsafe fn bool TryReadLogicalPackageTypedDeclarationJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    out LogicalPackageTypedDeclarationSummary declaration,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii manifestKind)
+{
+    declaration = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] declarationsNode = 0;
+            stack mut u32[0 max] declarationCount = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationArrayNode(document, typedInterfaceNode, declarationKind, declarationsNode, declarationCount)
+                || declarationOrdinal >= declarationCount)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] declarationNode = 0;
+            if (!document.TryChildAt(declarationsNode, (u64[0 2 ** 63 - 1])declarationOrdinal, declarationNode)
+                || document.KindAt(declarationNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            stack mut bool hasManifestKind = false;
+            if (!LogicalPackageImageJsonAppendTypedDeclarationHeaderText(
+                document,
+                declarationNode,
+                declarationKind,
+                name,
+                qualifiedName,
+                visibility,
+                manifestKind,
+                hasManifestKind))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u32[0 max] comptimeGenericParameterCount = 0;
+            stack mut u32[0 max] parameterCount = 0;
+            stack mut u32[0 max] fieldCount = 0;
+            stack mut u32[0 max] variantCount = 0;
+            stack mut u32[0 max] methodCount = 0;
+            stack mut u32[0 max] constructorCount = 0;
+            stack mut u32[0 max] associatedTypeCount = 0;
+            stack mut u32[0 max] implementedTraitCount = 0;
+            stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+            stack mut u32[0 max] threadSafetyLawPredicateCount = 0;
+            stack mut u32[0 max] typeParameterConstraintCount = 0;
+            stack mut u32[0 max] valueContractCount = 0;
+            stack mut bool hasBackendOptimizationMode = false;
+            stack mut bool hasStructLayout = false;
+            stack mut bool hasPackBytes = false;
+            stack mut bool hasAlignBytes = false;
+            stack mut bool isDynTrait = false;
+            stack mut bool isMutableGlobal = false;
+            stack mut bool hasConstantInitializer = false;
+            stack mut bool isFfiFunction = false;
+            stack mut bool isStrictFpFunction = false;
+            stack mut bool usesFastCallingConvention = false;
+            stack mut bool hasGenericTemplateBody = false;
+            switch (declarationKind)
+            {
+                case LogicalPackageTypedDeclarationKind.TypeAlias:
+                    if (!LogicalPackageImageJsonTypedDeclarationTypeAliasFacts(
+                        document,
+                        declarationNode,
+                        genericParameterCount,
+                        comptimeGenericParameterCount))
+                    {
+                        return false;
+                    }
+                case LogicalPackageTypedDeclarationKind.Type:
+                    if (!LogicalPackageImageJsonTypedDeclarationTypeFacts(
+                        document,
+                        declarationNode,
+                        genericParameterCount,
+                        comptimeGenericParameterCount,
+                        fieldCount,
+                        variantCount,
+                        methodCount,
+                        constructorCount,
+                        associatedTypeCount,
+                        implementedTraitCount,
+                        threadSafetyLawAttributeCount,
+                        hasBackendOptimizationMode,
+                        hasStructLayout,
+                        hasPackBytes,
+                        hasAlignBytes,
+                        isDynTrait))
+                    {
+                        return false;
+                    }
+                case LogicalPackageTypedDeclarationKind.Function:
+                    if (!LogicalPackageImageJsonTypedDeclarationFunctionFacts(
+                        document,
+                        declarationNode,
+                        genericParameterCount,
+                        comptimeGenericParameterCount,
+                        parameterCount,
+                        threadSafetyLawPredicateCount,
+                        typeParameterConstraintCount,
+                        valueContractCount,
+                        hasBackendOptimizationMode,
+                        isFfiFunction,
+                        isStrictFpFunction,
+                        usesFastCallingConvention,
+                        hasGenericTemplateBody))
+                    {
+                        return false;
+                    }
+                case LogicalPackageTypedDeclarationKind.Global:
+                    if (!LogicalPackageImageJsonTypedDeclarationGlobalFacts(
+                        document,
+                        declarationNode,
+                        isMutableGlobal,
+                        hasConstantInitializer))
+                    {
+                        return false;
+                    }
+            }
+
+            declaration = new LogicalPackageTypedDeclarationSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                DeclarationOrdinalValue = declarationOrdinal,
+                DeclarationKindValue = declarationKind,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+                ParameterCountValue = parameterCount,
+                FieldCountValue = fieldCount,
+                VariantCountValue = variantCount,
+                MethodCountValue = methodCount,
+                ConstructorCountValue = constructorCount,
+                AssociatedTypeCountValue = associatedTypeCount,
+                ImplementedTraitCountValue = implementedTraitCount,
+                ThreadSafetyLawAttributeCountValue = threadSafetyLawAttributeCount,
+                ThreadSafetyLawPredicateCountValue = threadSafetyLawPredicateCount,
+                TypeParameterConstraintCountValue = typeParameterConstraintCount,
+                ValueContractCountValue = valueContractCount,
+                HasManifestKindValue = hasManifestKind,
+                HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+                HasStructLayoutValue = hasStructLayout,
+                HasPackBytesValue = hasPackBytes,
+                HasAlignBytesValue = hasAlignBytes,
+                IsDynTraitValue = isDynTrait,
+                IsMutableGlobalValue = isMutableGlobal,
+                HasConstantInitializerValue = hasConstantInitializer,
+                IsFfiFunctionValue = isFfiFunction,
+                IsStrictFpFunctionValue = isStrictFpFunction,
+                UsesFastCallingConventionValue = usesFastCallingConvention,
+                HasGenericTemplateBodyValue = hasGenericTemplateBody
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageTypedCallableJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    out LogicalPackageTypedCallableSummary callable,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii symbolName,
+    mut borrow OwnedAscii manifestKind,
+    mut borrow OwnedAscii qualifiedResolvedName,
+    mut borrow OwnedAscii publishedOverloadKey,
+    mut borrow OwnedAscii inlinePreference,
+    mut borrow OwnedAscii ffiAbi,
+    mut borrow OwnedAscii backendOptimizationMode,
+    mut borrow OwnedAscii linkName)
+{
+    callable = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] callableNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedCallableNode(
+                    document,
+                    typedInterfaceNode,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    callableNode))
+            {
+                return false;
+            }
+
+            stack mut bool hasVisibility = false;
+            stack mut bool hasQualifiedResolvedName = false;
+            stack mut bool hasPublishedOverloadKey = false;
+            stack mut bool hasInlinePreference = false;
+            stack mut bool hasFfiAbi = false;
+            stack mut bool hasBackendOptimizationMode = false;
+            stack mut bool hasLinkName = false;
+            if (!LogicalPackageImageJsonAppendTypedCallableText(
+                document,
+                callableNode,
+                callableKind,
+                name,
+                qualifiedName,
+                visibility,
+                symbolName,
+                manifestKind,
+                qualifiedResolvedName,
+                publishedOverloadKey,
+                inlinePreference,
+                ffiAbi,
+                backendOptimizationMode,
+                linkName,
+                hasVisibility,
+                hasQualifiedResolvedName,
+                hasPublishedOverloadKey,
+                hasInlinePreference,
+                hasFfiAbi,
+                hasBackendOptimizationMode,
+                hasLinkName))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u32[0 max] comptimeGenericParameterCount = 0;
+            stack mut u32[0 max] parameterCount = 0;
+            stack mut u32[0 max] threadSafetyLawPredicateCount = 0;
+            stack mut u32[0 max] typeParameterConstraintCount = 0;
+            stack mut u32[0 max] valueContractCount = 0;
+            stack mut u32[0 max] disjointParameterGroupCount = 0;
+            stack mut u32[0 max] overlapParameterGroupCount = 0;
+            stack mut u32[0 max] sameParameterGroupCount = 0;
+            stack mut u32[0 max] pointeeDeadOnReturnParameterNameCount = 0;
+            stack mut bool hasAsm = false;
+            stack mut bool isFfi = false;
+            stack mut bool isStrictFp = false;
+            stack mut bool usesFastCallingConvention = false;
+            stack mut bool hasGenericTemplateBody = false;
+            stack mut bool isHot = false;
+            stack mut bool isCold = false;
+            stack mut bool hasExplicitInlinePreference = false;
+            stack mut bool isStatic = false;
+            stack mut bool isUnsafe = false;
+            stack mut bool isVarargs = false;
+            stack mut bool isTailCallable = false;
+            stack mut bool hasBody = true;
+            if (!LogicalPackageImageJsonTypedCallableFacts(
+                document,
+                callableNode,
+                callableKind,
+                genericParameterCount,
+                comptimeGenericParameterCount,
+                parameterCount,
+                threadSafetyLawPredicateCount,
+                typeParameterConstraintCount,
+                valueContractCount,
+                disjointParameterGroupCount,
+                overlapParameterGroupCount,
+                sameParameterGroupCount,
+                pointeeDeadOnReturnParameterNameCount,
+                hasAsm,
+                isFfi,
+                isStrictFp,
+                usesFastCallingConvention,
+                hasGenericTemplateBody,
+                isHot,
+                isCold,
+                hasExplicitInlinePreference,
+                isStatic,
+                isUnsafe,
+                isVarargs,
+                isTailCallable,
+                hasBody))
+            {
+                return false;
+            }
+
+            callable = new LogicalPackageTypedCallableSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                CallableKindValue = callableKind,
+                DeclarationOrdinalValue = declarationOrdinal,
+                MethodOrdinalValue = methodOrdinal,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+                ParameterCountValue = parameterCount,
+                ThreadSafetyLawPredicateCountValue = threadSafetyLawPredicateCount,
+                TypeParameterConstraintCountValue = typeParameterConstraintCount,
+                ValueContractCountValue = valueContractCount,
+                DisjointParameterGroupCountValue = disjointParameterGroupCount,
+                OverlapParameterGroupCountValue = overlapParameterGroupCount,
+                SameParameterGroupCountValue = sameParameterGroupCount,
+                PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+                HasVisibilityValue = hasVisibility,
+                HasQualifiedResolvedNameValue = hasQualifiedResolvedName,
+                HasPublishedOverloadKeyValue = hasPublishedOverloadKey,
+                HasInlinePreferenceValue = hasInlinePreference,
+                HasFfiAbiValue = hasFfiAbi,
+                HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+                HasLinkNameValue = hasLinkName,
+                HasAsmValue = hasAsm,
+                IsFfiValue = isFfi,
+                IsStrictFpValue = isStrictFp,
+                UsesFastCallingConventionValue = usesFastCallingConvention,
+                HasGenericTemplateBodyValue = hasGenericTemplateBody,
+                IsHotValue = isHot,
+                IsColdValue = isCold,
+                HasExplicitInlinePreferenceValue = hasExplicitInlinePreference,
+                IsStaticValue = isStatic,
+                IsUnsafeValue = isUnsafe,
+                IsVarargsValue = isVarargs,
+                IsTailCallableValue = isTailCallable,
+                HasBodyValue = hasBody
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageTypedCallableParameterJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] parameterOrdinal,
+    out LogicalPackageTypedCallableParameterSummary parameter,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii rawPointerElementCountExpression)
+{
+    parameter = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] callableNode = 0;
+            stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedCallableNode(
+                    document,
+                    typedInterfaceNode,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    callableNode)
+                || !LogicalPackageImageJsonTypedCallableParameterNode(
+                    document,
+                    callableNode,
+                    parameterOrdinal,
+                    parameterNode))
+            {
+                return false;
+            }
+
+            stack mut bool hasRawPointerElementCountExpression = false;
+            stack mut bool isDisjoint = false;
+            stack mut bool isConst = false;
+            if (!LogicalPackageImageJsonAppendTypedCallableParameterText(
+                    document,
+                    parameterNode,
+                    name,
+                    rawPointerElementCountExpression,
+                    hasRawPointerElementCountExpression)
+                || !LogicalPackageImageJsonTypedCallableParameterFacts(document, parameterNode, isDisjoint, isConst))
+            {
+                return false;
+            }
+
+            parameter = new LogicalPackageTypedCallableParameterSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                CallableKindValue = callableKind,
+                DeclarationOrdinalValue = declarationOrdinal,
+                MethodOrdinalValue = methodOrdinal,
+                ParameterOrdinalValue = parameterOrdinal,
+                IsDisjointValue = isDisjoint,
+                IsConstValue = isConst,
+                HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypedCallableFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] callableNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedCallableNode(
+                    document,
+                    typedInterfaceNode,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    callableNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeTypedCallableFactRows(
+                document,
+                callableNode,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                graph);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypedTypeAliasFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationNode(
+                    document,
+                    typedInterfaceNode,
+                    LogicalPackageTypedDeclarationKind.TypeAlias,
+                    typeAliasOrdinal,
+                    typeAliasNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeTypedTypeAliasFactRows(
+                document,
+                typeAliasNode,
+                moduleOrdinal,
+                typeAliasOrdinal,
+                graph);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypedGlobalFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    mut borrow LogicalPackageTypedGlobalFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] globalNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationNode(
+                    document,
+                    typedInterfaceNode,
+                    LogicalPackageTypedDeclarationKind.Global,
+                    globalOrdinal,
+                    globalNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeTypedGlobalFactRows(
+                document,
+                globalNode,
+                moduleOrdinal,
+                globalOrdinal,
+                graph);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypedTypeFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationNode(
+                    document,
+                    typedInterfaceNode,
+                    LogicalPackageTypedDeclarationKind.Type,
+                    typeOrdinal,
+                    typeNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeTypedTypeFactRows(
+                document,
+                typeNode,
+                moduleOrdinal,
+                typeOrdinal,
+                graph);
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageTypeReferenceJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    out LogicalPackageTypeReferenceSummary typeReference,
+    mut borrow OwnedAscii kind,
+    mut borrow OwnedAscii name)
+{
+    typeReference = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] declarationNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeReferenceNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationNode(document, typedInterfaceNode, declarationKind, declarationOrdinal, declarationNode)
+                || !LogicalPackageImageJsonTypedDeclarationTypeReferenceNode(
+                    document,
+                    declarationNode,
+                    declarationKind,
+                    source,
+                    payloadOrdinal,
+                    typeReferenceNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonTypeReferenceSummaryFacts(
+                document,
+                typeReferenceNode,
+                moduleOrdinal,
+                declarationKind,
+                declarationOrdinal,
+                0,
+                source,
+                payloadOrdinal,
+                typeReference,
+                kind,
+                name);
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageTypedCallableTypeReferenceJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    out LogicalPackageTypeReferenceSummary typeReference,
+    mut borrow OwnedAscii kind,
+    mut borrow OwnedAscii name)
+{
+    typeReference = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeReferenceNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedCallableTypeReferenceNode(
+                    document,
+                    typedInterfaceNode,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    source,
+                    payloadOrdinal,
+                    typeReferenceNode))
+            {
+                return false;
+            }
+
+            stack LogicalPackageTypedDeclarationKind declarationKind =
+                callableKind == LogicalPackageTypedCallableKind.Method
+                    ? LogicalPackageTypedDeclarationKind.Type
+                    : LogicalPackageTypedDeclarationKind.Function;
+            return LogicalPackageImageJsonTypeReferenceSummaryFacts(
+                document,
+                typeReferenceNode,
+                moduleOrdinal,
+                declarationKind,
+                declarationOrdinal,
+                methodOrdinal,
+                source,
+                payloadOrdinal,
+                typeReference,
+                kind,
+                name);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypeReferenceJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] rootTypeReferenceRow)
+{
+    rootTypeReferenceRow = 0;
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] declarationNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeReferenceNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedDeclarationNode(document, typedInterfaceNode, declarationKind, declarationOrdinal, declarationNode)
+                || !LogicalPackageImageJsonTypedDeclarationTypeReferenceNode(
+                    document,
+                    declarationNode,
+                    declarationKind,
+                    source,
+                    payloadOrdinal,
+                    typeReferenceNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeReferenceNode,
+                moduleOrdinal,
+                declarationKind,
+                declarationOrdinal,
+                0,
+                0,
+                source,
+                payloadOrdinal,
+                graph,
+                rootTypeReferenceRow);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageTypedCallableTypeReferenceJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] rootTypeReferenceRow)
+{
+    rootTypeReferenceRow = 0;
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typedInterfaceNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeReferenceNode = 0;
+            stack mut bool usesCompilerSections = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveTypedInterfaceNode(document, moduleNode, typedInterfaceNode, usesCompilerSections)
+                || !LogicalPackageImageJsonTypedCallableTypeReferenceNode(
+                    document,
+                    typedInterfaceNode,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    source,
+                    payloadOrdinal,
+                    typeReferenceNode))
+            {
+                return false;
+            }
+
+            stack LogicalPackageTypedDeclarationKind declarationKind =
+                callableKind == LogicalPackageTypedCallableKind.Method
+                    ? LogicalPackageTypedDeclarationKind.Type
+                    : LogicalPackageTypedDeclarationKind.Function;
+            return LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeReferenceNode,
+                moduleOrdinal,
+                declarationKind,
+                declarationOrdinal,
+                methodOrdinal,
+                0,
+                source,
+                payloadOrdinal,
+                graph,
+                rootTypeReferenceRow);
+    }
+}
+
+public fn MemoryStatus AppendLogicalPackageTypedTypeAliasFactText(
+    borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    LogicalPackageTypedTypeAliasFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageTypedCallableFactText(
+    borrow LogicalPackageTypedCallableFactGraph graph,
+    LogicalPackageTypedCallableFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageTypedGlobalFactText(
+    borrow LogicalPackageTypedGlobalFactGraph graph,
+    LogicalPackageTypedGlobalFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageTypedTypeFactText(
+    borrow LogicalPackageTypedTypeFactGraph graph,
+    LogicalPackageTypedTypeFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+
+public fn bool TryFindLogicalPackageTypedCallableParameterGroup(
+    borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] groupOrdinal,
+    out u32[0 max] groupRow)
+{
+    groupRow = 0;
+    stack mut u64[0 2 ** 63 - 1] rowIndex = 1;
+    while willexit (rowIndex <= graph.ParameterGroupRows.Count())
+    {
+        if (rowIndex > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack u32[0 max] narrowedRowIndex = (u32[0 max])rowIndex;
+        stack LogicalPackageTypedCallableParameterGroupRow row =
+            graph.ParameterGroupRows.Get(narrowedRowIndex);
+        if (row.ModuleOrdinalValue == moduleOrdinal
+            && row.CallableKindValue == callableKind
+            && row.DeclarationOrdinalValue == declarationOrdinal
+            && row.MethodOrdinalValue == methodOrdinal
+            && row.GroupKindValue == groupKind
+            && row.GroupOrdinalValue == groupOrdinal)
+        {
+            groupRow = narrowedRowIndex;
+            return true;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+
+    return false;
+}

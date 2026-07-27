@@ -13,19 +13,133 @@ unsafe ffi fn i32[min max] native_value();
 unsafe ffi fn void native_draw(rawptr<NativeRectangle> rectangle);
 ```
 
+Use `[LinkName("foreign_symbol")]` when the Stark declaration name should
+differ from the linker symbol and the ABI shape already matches:
+
+```stark
+[LinkName("vendor_current_value")]
+unsafe ffi(c) fn i32[min max] CurrentValue();
+```
+
+`LinkName` is exact and zero-overhead. It does not change calling convention,
+parameter lowering, return lowering, ownership, unwinding, or safety. Use a C
+shim only when the native signature needs real ABI adaptation.
+
 Use C varargs only through an unsafe varargs declaration:
 
 ```stark
-unsafe ffi varargs fn i32[min max] printf(ascii format);
+unsafe ffi(c) varargs fn System.C.c_int printf(rawptr<System.C.c_char> format);
 
 unsafe fn i32[min max] PrintScore(i32[min max] score)
 {
-    return printf("score: %d\n", score);
+    stack System.C.CStringResult<System.C.OwnedCStr> created =
+        System.C.FromAscii("score: %d\n");
+    switch (created)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return -1;
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var value):
+            stack mut System.C.OwnedCStr format = value;
+            return printf(format.Data(), score);
+    }
 }
 ```
 
 Pass ABI-ready values explicitly. Do not rely on hidden conversions at C
-vararg boundaries.
+vararg boundaries. A `%s` conversion takes `rawptr<System.C.c_char>` or
+`rawmutptr<System.C.c_char>`, never Stark `ascii`/`unicode` (compile-time error
+STK3009); convert with `System.C.FromAscii(...)` and pass `OwnedCStr.Data()`.
+
+C APIs that receive an existing C `va_list` use fixed-arity `ffi(c)`
+declarations with `System.C.VaList`, not `ffi varargs`:
+
+```stark
+unsafe ffi(c) fn rawmutptr<System.C.c_char> vformat(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+```
+
+`System.C.VaList` is a target-specific C ABI carrier. It is valid only as an
+unsafe `ffi(c)`-compatible function parameter, an `ffi(c)` function-pointer
+parameter, or the direct pointee of `rawptr<System.C.VaList>` /
+`rawmutptr<System.C.VaList>`. Do not store it, return it, construct it, or put
+it in ordinary Stark wrapper signatures.
+
+## Calling Conventions
+
+An `ffi` function uses the target's C ABI by default. A bare `unsafe ffi fn`
+means `ffi(c)`. Spell a different convention explicitly with `ffi(abi)`:
+
+```stark
+unsafe ffi(c) fn i32[min max] puts(rawptr<i8[min max]> text);
+unsafe ffi(stdcall) fn i32[min max] LegacyCall(i32[min max] value);
+```
+
+Supported names: `c`, `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`,
+`sysv`, `win64`, `aapcs`, `aapcs64`. An ABI the active target does not support
+is a compile-time error (STK2111), so convention-specific declarations are only
+checkable under a matching `--target`.
+
+The ABI is part of function-pointer type identity: `fnptr<ffi(c) fn void()>`,
+`fnptr<ffi(stdcall) fn void()>`, and `fnptr<fn void()>` are distinct,
+incompatible types, and there is no implicit conversion between them. Safety is
+a separate fact: an unsafe foreign callback needs `fnptr<unsafe ffi(c) fn ...>`,
+and promoting an unsafe function item into it requires an unsafe context.
+
+One declaration can select a different ABI per target with `ffi(platform(...))`.
+Keys are `os.arch`, a bare `os`, or `default`; the most specific match wins:
+
+```stark
+unsafe ffi(platform(
+    windows.x86: stdcall,
+    windows.x64: win64,
+    linux.x64: sysv,
+    default: c
+)) fn i32[min max] HostCall(rawptr<i8[min max]> context);
+```
+
+## C Primitive Aliases
+
+Use `System.C` aliases so FFI declarations mirror C headers instead of
+hard-coding a width. They are target-resolved to ordinary Stark primitives.
+
+```stark
+unsafe ffi(c) fn System.C.c_int close(System.C.c_int fd);
+unsafe ffi(c) fn System.C.c_size_t strlen(rawptr<System.C.c_char> text);
+unsafe ffi(c) fn rawmutptr<System.C.c_void> malloc(System.C.c_size_t bytes);
+unsafe ffi(c) fn void free(rawmutptr<System.C.c_void> ptr);
+```
+
+- Integer aliases: `c_char`, `c_schar`, `c_uchar`, `c_short`, `c_ushort`,
+  `c_int`, `c_uint`, `c_long`, `c_ulong`, `c_longlong`, `c_ulonglong`,
+  `c_size_t`, `c_ptrdiff_t`. `c_int` is `i32[min max]`; `c_long` is
+  `i32[min max]` on ILP32/LLP64 and `i64[min max]` on LP64; `c_size_t` is
+  `u64[0 max]` on 64-bit and `u32[0 max]` on 32-bit.
+- `c_char` follows the target's plain-`char` signedness
+  (`System.C.c_char_is_signed`). Use `c_schar`/`c_uchar` for explicit-signedness
+  `char`, and `c_uchar`/`u8[0 max]` for non-text bytes.
+- `c_void` is valid only as `rawptr<c_void>` / `rawmutptr<c_void>`; C `void`
+  returns use Stark `void`.
+- `VaList` is the C `va_list` carrier for fixed-arity `vprintf`-style APIs and
+  callbacks. It stays at the FFI edge and lowers to the target C ABI carrier.
+- To leave the platform-width surface, bind into a Stark-typed local or cast the
+  alias value to a Stark width. A qualified alias is not a valid C-style cast
+  target, so `(System.C.c_size_t)value` does not parse — write
+  `stack System.C.c_size_t size = value;` instead.
+
+## C Strings
+
+Use `System.C` for null-terminated C strings. Stark `ascii` and `unicode` are
+not implicitly convertible to `char*`.
+
+- Pass `rawptr<System.C.c_char>` for C `const char*`.
+- Pass `rawmutptr<System.C.c_char>` for mutable C `char*` or C-owned messages.
+- Use `System.C.FromAscii` / `System.C.FromUnicodeUtf8` to create Stark-owned
+  `OwnedCStr` values before calling C.
+- Use `System.C.TryFromRawBounded` before viewing a raw C string returned by C.
+- Use `System.C.ForeignOwnedCStr` plus a `System.C.CStringDisposer` for
+  C-owned message strings that must be copied into Stark text and then released
+  by the matching C dispose function.
 
 ## Exported Stark Functions
 
@@ -145,6 +259,88 @@ internal finite law NativeRectangle ToNative(Rectangle rectangle)
 Keep interop types `internal` unless the native representation is truly part
 of the Stark package API.
 
+## C ABI Layout Attributes
+
+Default Stark layout is not a stable ABI. A struct that must match a C aggregate
+opts into C-compatible layout with attributes (Stark's `repr(C)` equivalent):
+
+```stark
+[StructLayout(C)]
+struct Timespec
+{
+    System.C.c_long Seconds;
+    System.C.c_long Nanoseconds;
+}
+
+[StructLayout(C), Pack(1)]
+struct WireHeader
+{
+    u8[0 max] Tag;
+    u32[0 max] Length;
+}
+
+[StructLayout(Explicit)]
+struct WordParts
+{
+    [FieldOffset(0)] u32[0 max] Whole;
+    [FieldOffset(0)] u16[0 max] Low;
+    [FieldOffset(2)] u16[0 max] High;
+}
+```
+
+- `[StructLayout(C)]`: declaration order, target C ABI alignment and padding.
+- `[StructLayout(Explicit)]`: every field placed by `[FieldOffset(N)]`.
+- `[Pack(N)]`: cap each field's effective alignment at `N` (power of two).
+  `Pack(1)` is fully packed.
+- `[Align(N)]`: raise the aggregate alignment to at least `N` (power of two); it
+  never caps field alignment. With both, offsets come from `Pack`, then `Align`
+  raises the struct alignment.
+
+C-layout field types are limited to Stark sized primitives, `System.C` aliases,
+raw pointers (including `rawptr<System.C.c_void>`), fixed arrays of FFI-safe
+elements, and nested C/Explicit structs. Stark enums, dynamic storage, safe
+borrows, closures, trait objects, and owning heap values are rejected.
+
+For by-value C aggregate parameters and returns, `[StructLayout(C)]` plus
+`ffi(c)` is the contract. The source declaration keeps the named struct type,
+and the compiler lowers the FFI edge through the target C ABI carrier shape.
+Use `[LinkName("NativeSymbol")]` when the Stark declaration name differs from
+the C symbol; do not add a C shim merely to pass or return a C-layout aggregate
+by value.
+
+```stark
+[StructLayout(C)]
+public struct Vector2
+{
+    public f32 X;
+    public f32 Y;
+}
+
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+[LinkName("DrawLineV")]
+internal unsafe ffi(c) fn void raylib_DrawLineV(Vector2 start, Vector2 end, Color tint);
+```
+
+On x86_64 System V this emits the same carrier forms Clang uses: `Vector2` as
+`<2 x float>`, `Vector3` as `<2 x float>, float`, `Vector4`/`Rectangle` as two
+`<2 x float>` carriers, and four-byte integer structs such as `Color` as one
+integer carrier. Larger aggregates use the target ABI's indirect form.
+
+Parameter and result carriers are separate facts. On AArch64 AAPCS64, a
+non-HFA/HVA integer-like aggregate of up to eight bytes uses an `i64` parameter
+carrier and an exact-width return carrier. Raylib `Color` is therefore passed
+as `i64` and returned as `i32`; 9-16 byte integer-like aggregates use
+`[2 x i64]`, and larger values are indirect.
+
+Packed-field safety: a packed (misaligned) field reads/writes through unaligned
+loads and stores; taking a **safe borrow** of one is a compile-time error;
+taking a **raw pointer** to one is allowed in unsafe code and preserves the
+misalignment. Inspect layout in `comptime` with `StructLayoutIsC<T>()`,
+`StructHasPack<T>()`, `FieldHasExplicitOffset<T, I>()`, and
+`FieldIsMisaligned<T, I>()`.
+
 ## Enums At Native Boundaries
 
 Stark enums are for Stark APIs. Cross a C boundary with explicit tags or
@@ -207,6 +403,11 @@ public unsafe fn ReadNumberResult ReadNumber()
 
 Put native requirements in the package that owns the wrapper:
 
+The following is a custom/source package authoring form. Official `Vendor.*`
+SDK packages already contain target-resolved, relative, checksummed native
+payload and link facts; applications import them without repeating metadata or
+running `pkg-config`.
+
 ```toml
 [native]
 sources = ["NativeShim.c"]
@@ -223,9 +424,17 @@ Consumers should depend on the package, not repeat its linker settings.
 ## Boundary Checklist
 
 - Preserve foreign symbol spellings exactly.
+- Prefer `[LinkName("foreign_symbol")]` over a C rename shim when only the
+  external symbol name differs.
+- Declare underscore-leading C symbols directly, such as `__error`; bare `_`
+  is still the discard token and pattern.
 - Keep unsafe blocks as small as the raw or foreign operation.
 - Convert raw failures into Stark status/result values quickly.
 - Do not let foreign unwinding cross Stark frames.
 - Keep Stark enums, closures, and ordinary source-facing structs off C ABI
   surfaces unless a purpose-built interop contract exists.
+- Use `System.C` aliases for C integer/pointer-size types and `[StructLayout(C)]`
+  for C aggregates; do not hand-pick widths or rely on default layout for ABI.
+- Use `System.C` C strings (`OwnedCStr`, `CStr`, `CCharBuffer`) at `char*`
+  boundaries; never pass Stark text to a `%s` varargs position.
 - Use `public` for Stark callers and `export` only for binary visibility.

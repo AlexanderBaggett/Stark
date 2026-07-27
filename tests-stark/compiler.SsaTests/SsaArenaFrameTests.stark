@@ -1,0 +1,32 @@
+import SsaTestSupport
+module SsaArenaFrameTests
+
+// Ported from SsaLoweringTests.ArenaMirFrameScopeLowersToExplicitSsaInstructions.
+// The host bridge exposes rendered SSA text, so this checks the explicit frame
+// operations and per-return leave count rather than the C# SSA object graph.
+internal fn bool ArenaMirFrameScopeLowersToExplicitSsaInstructionsImpl()
+{
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-arena-frame-early-return",
+        raw"""
+module Demo
+
+unsafe fn u64[0 max] Run(bool flag)
+{
+    stack mut dynamic u32[0 max] values = new(arena, 4);
+    if (flag)
+    {
+        return values.Capacity;
+    }
+
+    values.Reserve(8);
+    return values.Capacity;
+}
+""");
+
+    return Succeeds(compiled)
+        && SsaOccurrences(compiled, "arena-frame.enter") == 1
+        && SsaOccurrences(compiled, "arena-frame.leave") == 2
+        && SsaContains(compiled, "alloca[stack] values: dynamic u32")
+        && SsaContains(compiled, "return");
+}

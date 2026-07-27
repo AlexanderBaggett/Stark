@@ -1,0 +1,221 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedCallArguments
+
+internal fn System.Memory.MemoryStatus AppendTypedCallArgumentsFromTree(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow ExprTree tree,
+    u32[0 max] callNode,
+    u32[0 max] callIndexPlusOne,
+    u32[0 max] signatureIndexPlusOne,
+    u32[0 max] parameterOffset,
+    u32[0 max] callableTypeStartToken,
+    u32[0 max] callableTypeEndToken)
+{
+    stack u32[0 max] argumentCount = tree.CallArgCount(callNode);
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < argumentCount)
+    {
+        stack u32[0 max] argumentNode = tree.CallArgAt(callNode, ordinal);
+        stack mut u32[0 max] parameterSlotIndexPlusOne = 0;
+        if (signatureIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] signatureIndex = (u64[0 2 ** 63 - 1])(signatureIndexPlusOne - 1);
+            parameterSlotIndexPlusOne = signatures.ParameterTypeSlotIndexPlusOneAt(signatureIndex, (u32[0 max])(ordinal + parameterOffset));
+        }
+
+        stack mut TypedSignatureTypeKind expectedTypeKind = TypedSignatureTypeKind.Unknown;
+        stack mut u32[0 max] expectedTypeHeadToken = 0;
+        stack mut u32[0 max] expectedTypePrimaryToken = 0;
+        stack mut u32[0 max] expectedTypeStartToken = 0;
+        stack mut u32[0 max] expectedTypeEndToken = 0;
+        stack mut u32[0 max] expectedRangeStartToken = 0;
+        stack mut u32[0 max] expectedRangeEndToken = 0;
+        stack mut u32[0 max] expectedElementCountStartToken = 0;
+        stack mut u32[0 max] expectedElementCountEndToken = 0;
+        stack mut u32[0 max] expectedBitWidth = 0;
+        stack mut u32[0 max] expectedTypeArgumentCount = 0;
+        stack mut u32[0 max] expectedComptimeArgumentCount = 0;
+        stack mut u32[0 max] expectedTypeFlags = 0;
+        TypedCallSignatureSlotFacts(
+            signatures,
+            parameterSlotIndexPlusOne,
+            expectedTypeKind,
+            expectedTypeHeadToken,
+            expectedTypePrimaryToken,
+            expectedTypeStartToken,
+            expectedTypeEndToken,
+            expectedRangeStartToken,
+            expectedRangeEndToken,
+            expectedElementCountStartToken,
+            expectedElementCountEndToken,
+            expectedBitWidth,
+            expectedTypeArgumentCount,
+            expectedComptimeArgumentCount,
+            expectedTypeFlags);
+        if (parameterSlotIndexPlusOne == 0 && callableTypeStartToken != 0)
+        {
+            TypedCallCallableParameterFacts(
+                source,
+                stream,
+                callableTypeStartToken,
+                callableTypeEndToken,
+                ordinal,
+                expectedTypeKind,
+                expectedTypeHeadToken,
+                expectedTypePrimaryToken,
+                expectedTypeStartToken,
+                expectedTypeEndToken,
+                expectedRangeStartToken,
+                expectedRangeEndToken,
+                expectedElementCountStartToken,
+                expectedElementCountEndToken,
+                expectedBitWidth,
+                expectedTypeArgumentCount,
+                expectedComptimeArgumentCount,
+                expectedTypeFlags);
+        }
+
+        switch (table.AppendArgument(
+            callIndexPlusOne,
+            ordinal,
+            argumentNode,
+            tree.TokenAt(argumentNode),
+            expectedTypeKind,
+            expectedTypeHeadToken,
+            expectedTypePrimaryToken,
+            expectedTypeStartToken,
+            expectedTypeEndToken,
+            expectedRangeStartToken,
+            expectedRangeEndToken,
+            expectedElementCountStartToken,
+            expectedElementCountEndToken,
+            expectedBitWidth,
+            expectedTypeArgumentCount,
+            expectedComptimeArgumentCount,
+            expectedTypeFlags))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        ordinal = (u32[0 max])(ordinal + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedCallArgumentsFromBody(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] callIndexPlusOne,
+    u32[0 max] signatureIndexPlusOne,
+    u32[0 max] parameterOffset,
+    u32[0 max] callableTypeStartToken,
+    u32[0 max] callableTypeEndToken)
+{
+    stack u32[0 max] argumentCount = body.ExprCallArgCountAt(callNode);
+    stack mut u32[0 max] ordinal = 0;
+    while willexit (ordinal < argumentCount)
+    {
+        stack u32[0 max] argumentNode = body.ExprCallArgAt(callNode, ordinal);
+        stack mut u32[0 max] parameterSlotIndexPlusOne = 0;
+        if (signatureIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] signatureIndex = (u64[0 2 ** 63 - 1])(signatureIndexPlusOne - 1);
+            parameterSlotIndexPlusOne = signatures.ParameterTypeSlotIndexPlusOneAt(signatureIndex, (u32[0 max])(ordinal + parameterOffset));
+        }
+
+        stack mut TypedSignatureTypeKind expectedTypeKind = TypedSignatureTypeKind.Unknown;
+        stack mut u32[0 max] expectedTypeHeadToken = 0;
+        stack mut u32[0 max] expectedTypePrimaryToken = 0;
+        stack mut u32[0 max] expectedTypeStartToken = 0;
+        stack mut u32[0 max] expectedTypeEndToken = 0;
+        stack mut u32[0 max] expectedRangeStartToken = 0;
+        stack mut u32[0 max] expectedRangeEndToken = 0;
+        stack mut u32[0 max] expectedElementCountStartToken = 0;
+        stack mut u32[0 max] expectedElementCountEndToken = 0;
+        stack mut u32[0 max] expectedBitWidth = 0;
+        stack mut u32[0 max] expectedTypeArgumentCount = 0;
+        stack mut u32[0 max] expectedComptimeArgumentCount = 0;
+        stack mut u32[0 max] expectedTypeFlags = 0;
+        TypedCallSignatureSlotFacts(
+            signatures,
+            parameterSlotIndexPlusOne,
+            expectedTypeKind,
+            expectedTypeHeadToken,
+            expectedTypePrimaryToken,
+            expectedTypeStartToken,
+            expectedTypeEndToken,
+            expectedRangeStartToken,
+            expectedRangeEndToken,
+            expectedElementCountStartToken,
+            expectedElementCountEndToken,
+            expectedBitWidth,
+            expectedTypeArgumentCount,
+            expectedComptimeArgumentCount,
+            expectedTypeFlags);
+        if (parameterSlotIndexPlusOne == 0 && callableTypeStartToken != 0)
+        {
+            TypedCallCallableParameterFacts(
+                source,
+                stream,
+                callableTypeStartToken,
+                callableTypeEndToken,
+                ordinal,
+                expectedTypeKind,
+                expectedTypeHeadToken,
+                expectedTypePrimaryToken,
+                expectedTypeStartToken,
+                expectedTypeEndToken,
+                expectedRangeStartToken,
+                expectedRangeEndToken,
+                expectedElementCountStartToken,
+                expectedElementCountEndToken,
+                expectedBitWidth,
+                expectedTypeArgumentCount,
+                expectedComptimeArgumentCount,
+                expectedTypeFlags);
+        }
+
+        switch (table.AppendArgument(
+            callIndexPlusOne,
+            ordinal,
+            argumentNode,
+            body.ExprTokenAt(argumentNode),
+            expectedTypeKind,
+            expectedTypeHeadToken,
+            expectedTypePrimaryToken,
+            expectedTypeStartToken,
+            expectedTypeEndToken,
+            expectedRangeStartToken,
+            expectedRangeEndToken,
+            expectedElementCountStartToken,
+            expectedElementCountEndToken,
+            expectedBitWidth,
+            expectedTypeArgumentCount,
+            expectedComptimeArgumentCount,
+            expectedTypeFlags))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        ordinal = (u32[0 max])(ordinal + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

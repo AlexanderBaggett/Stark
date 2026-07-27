@@ -1,0 +1,1181 @@
+import Vendor.Raylib.Types
+import Vendor.Raylib.Core
+import Vendor.Raylib.Textures
+import Vendor.Raylib.Text
+import Vendor.Raylib.Models
+import Vendor.Raylib.Audio
+module Vendor.Raylib.Owners
+
+public struct OwnedImage
+{
+    internal Image Resource;
+
+    OwnedImage()
+    {
+        self.Resource = DefaultImage();
+    }
+
+    public inline finite law Image Value(borrow OwnedImage self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedImage self)
+    {
+        return self.Resource.Data == null;
+    }
+
+    public fn bool IsValid(borrow OwnedImage self)
+    {
+        return IsImageValid(self.Resource);
+    }
+
+    public fn Image Release(mut borrow OwnedImage self)
+    {
+        stack Image resource = self.Resource;
+        self.Resource = DefaultImage();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedImage self)
+    {
+        if (IsImageValid(self.Resource))
+        {
+            UnloadImage(self.Resource);
+            self.Resource = DefaultImage();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedImage OwnImage(Image image)
+{
+    stack mut OwnedImage owner = new OwnedImage();
+    owner.Resource = image;
+    return owner;
+}
+
+public fn OwnedImage LoadOwnedImage(ascii fileName)
+{
+    return OwnImage(LoadImage(fileName));
+}
+
+public struct OwnedTexture2D
+{
+    internal Texture2D Resource;
+
+    OwnedTexture2D()
+    {
+        self.Resource = DefaultTexture();
+    }
+
+    public inline finite law Texture2D Value(borrow OwnedTexture2D self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedTexture2D self)
+    {
+        return self.Resource.Id == (u32[0 max])0;
+    }
+
+    public fn bool IsValid(borrow OwnedTexture2D self)
+    {
+        return IsTextureValid(self.Resource);
+    }
+
+    public fn Texture2D Release(mut borrow OwnedTexture2D self)
+    {
+        stack Texture2D resource = self.Resource;
+        self.Resource = DefaultTexture();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedTexture2D self)
+    {
+        if (IsTextureValid(self.Resource))
+        {
+            UnloadTexture(self.Resource);
+            self.Resource = DefaultTexture();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedTexture2D OwnTexture2D(Texture2D texture)
+{
+    stack mut OwnedTexture2D owner = new OwnedTexture2D();
+    owner.Resource = texture;
+    return owner;
+}
+
+public fn OwnedTexture2D LoadOwnedTexture(ascii fileName)
+{
+    return OwnTexture2D(LoadTexture(fileName));
+}
+
+public fn OwnedTexture2D LoadOwnedTextureFromImage(Image image)
+{
+    return OwnTexture2D(LoadTextureFromImage(image));
+}
+
+public struct OwnedRenderTexture2D
+{
+    internal RenderTexture2D Resource;
+
+    OwnedRenderTexture2D()
+    {
+        self.Resource = DefaultRenderTexture();
+    }
+
+    public inline finite law RenderTexture2D Value(borrow OwnedRenderTexture2D self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedRenderTexture2D self)
+    {
+        return self.Resource.Id == (u32[0 max])0;
+    }
+
+    public fn bool IsValid(borrow OwnedRenderTexture2D self)
+    {
+        return IsRenderTextureValid(self.Resource);
+    }
+
+    public fn RenderTexture2D Release(mut borrow OwnedRenderTexture2D self)
+    {
+        stack RenderTexture2D resource = self.Resource;
+        self.Resource = DefaultRenderTexture();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedRenderTexture2D self)
+    {
+        if (IsRenderTextureValid(self.Resource))
+        {
+            UnloadRenderTexture(self.Resource);
+            self.Resource = DefaultRenderTexture();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedRenderTexture2D OwnRenderTexture2D(RenderTexture2D texture)
+{
+    stack mut OwnedRenderTexture2D owner = new OwnedRenderTexture2D();
+    owner.Resource = texture;
+    return owner;
+}
+
+public fn OwnedRenderTexture2D LoadOwnedRenderTexture(i32[min max] width, i32[min max] height)
+{
+    return OwnRenderTexture2D(LoadRenderTexture(width, height));
+}
+
+public struct OwnedFont
+{
+    internal Font Resource;
+
+    OwnedFont()
+    {
+        self.Resource = DefaultFont();
+    }
+
+    public inline finite law Font Value(borrow OwnedFont self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedFont self)
+    {
+        return self.Resource.Recs == null && self.Resource.Glyphs == null;
+    }
+
+    public fn bool IsValid(borrow OwnedFont self)
+    {
+        return IsFontValid(self.Resource);
+    }
+
+    public fn Font Release(mut borrow OwnedFont self)
+    {
+        stack Font resource = self.Resource;
+        self.Resource = DefaultFont();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedFont self)
+    {
+        if (IsFontValid(self.Resource))
+        {
+            UnloadFont(self.Resource);
+            self.Resource = DefaultFont();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedFont OwnFont(Font font)
+{
+    stack mut OwnedFont owner = new OwnedFont();
+    owner.Resource = font;
+    return owner;
+}
+
+public fn OwnedFont LoadOwnedFont(ascii fileName)
+{
+    return OwnFont(LoadFont(fileName));
+}
+
+public fn OwnedFont LoadOwnedFontFromImage(Image image, Color key, i32[min max] firstChar)
+{
+    return OwnFont(LoadFontFromImage(image, key, firstChar));
+}
+
+public struct OwnedShader
+{
+    internal Shader Resource;
+
+    OwnedShader()
+    {
+        self.Resource = DefaultShader();
+    }
+
+    public inline finite law Shader Value(borrow OwnedShader self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedShader self)
+    {
+        return self.Resource.Id == (u32[0 max])0;
+    }
+
+    public fn bool IsValid(borrow OwnedShader self)
+    {
+        return IsShaderValid(self.Resource);
+    }
+
+    public fn Shader Release(mut borrow OwnedShader self)
+    {
+        stack Shader resource = self.Resource;
+        self.Resource = DefaultShader();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedShader self)
+    {
+        if (IsShaderValid(self.Resource))
+        {
+            UnloadShader(self.Resource);
+            self.Resource = DefaultShader();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedShader OwnShader(Shader shader)
+{
+    stack mut OwnedShader owner = new OwnedShader();
+    owner.Resource = shader;
+    return owner;
+}
+
+public fn OwnedShader LoadOwnedShader(ascii vsFileName, ascii fsFileName)
+{
+    return OwnShader(LoadShader(vsFileName, fsFileName));
+}
+
+public fn OwnedShader LoadOwnedShaderFromMemory(ascii vsCode, ascii fsCode)
+{
+    return OwnShader(LoadShaderFromMemory(vsCode, fsCode));
+}
+
+public struct OwnedMesh
+{
+    internal Mesh Resource;
+
+    OwnedMesh()
+    {
+        self.Resource = DefaultMesh();
+    }
+
+    public inline finite law Mesh Value(borrow OwnedMesh self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedMesh self)
+    {
+        return self.Resource.Vertices == null
+            && self.Resource.Indices == null
+            && self.Resource.VboId == null
+            && self.Resource.VaoId == (u32[0 max])0;
+    }
+
+    public fn Mesh Release(mut borrow OwnedMesh self)
+    {
+        stack Mesh resource = self.Resource;
+        self.Resource = DefaultMesh();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedMesh self)
+    {
+        if (!self.IsEmpty())
+        {
+            UnloadMesh(self.Resource);
+            self.Resource = DefaultMesh();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedMesh OwnMesh(Mesh mesh)
+{
+    stack mut OwnedMesh owner = new OwnedMesh();
+    owner.Resource = mesh;
+    return owner;
+}
+
+public struct OwnedMaterial
+{
+    internal Material Resource;
+
+    OwnedMaterial()
+    {
+        self.Resource = DefaultMaterial();
+    }
+
+    public inline finite law Material Value(borrow OwnedMaterial self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedMaterial self)
+    {
+        return self.Resource.Maps == null && self.Resource.Shader.Id == (u32[0 max])0;
+    }
+
+    public fn bool IsValid(borrow OwnedMaterial self)
+    {
+        return IsMaterialValid(self.Resource);
+    }
+
+    public fn Material Release(mut borrow OwnedMaterial self)
+    {
+        stack Material resource = self.Resource;
+        self.Resource = DefaultMaterial();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedMaterial self)
+    {
+        if (IsMaterialValid(self.Resource))
+        {
+            UnloadMaterial(self.Resource);
+            self.Resource = DefaultMaterial();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedMaterial OwnMaterial(Material material)
+{
+    stack mut OwnedMaterial owner = new OwnedMaterial();
+    owner.Resource = material;
+    return owner;
+}
+
+public fn OwnedMaterial LoadOwnedMaterialDefault()
+{
+    return OwnMaterial(LoadMaterialDefault());
+}
+
+public struct OwnedMaterials
+{
+    internal rawmutptr<Material> Data;
+    internal u32[0 2 ** 31 - 1] Count;
+
+    OwnedMaterials()
+    {
+        self.Data = null;
+        self.Count = 0;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedMaterials self)
+    {
+        return self.Data == null || self.Count == 0;
+    }
+
+    public inline finite law u32[0 2 ** 31 - 1] Length(borrow OwnedMaterials self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow OwnedMaterials self, u32[0 2 ** 31 - 1] index, out Material material)
+    {
+        material = DefaultMaterial();
+        if (self.Data == null || index >= self.Count)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            material = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn void Close(mut borrow OwnedMaterials self)
+    {
+        if (self.Data != null)
+        {
+            unsafe
+            {
+                stack mut u32[0 2 ** 31 - 1] index = 0;
+                while willexit (index < self.Count)
+                {
+                    UnloadMaterial(*(&self.Data[index]));
+                    index += 1;
+                }
+
+                stark_raylib_MemFree((rawmutptr<i8[min max]>)self.Data);
+            }
+
+            self.Data = null;
+            self.Count = 0;
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe fn OwnedMaterials OwnMaterials(rawmutptr<Material> materials, i32[min max] count)
+{
+    if (materials == null || count <= 0)
+    {
+        return new OwnedMaterials();
+    }
+
+    stack mut OwnedMaterials owner = new OwnedMaterials();
+    owner.Data = materials;
+    owner.Count = (u32[0 2 ** 31 - 1])count;
+    return owner;
+}
+
+public fn OwnedMaterials LoadOwnedMaterials(ascii fileName)
+{
+    unsafe
+    {
+        stack mut i32[min max] count = 0;
+        stack rawmutptr<Material> materials = LoadMaterials(fileName, &count);
+        return OwnMaterials(materials, count);
+    }
+}
+
+public struct OwnedModel
+{
+    internal Model Resource;
+
+    OwnedModel()
+    {
+        self.Resource = DefaultModel();
+    }
+
+    public inline finite law Model Value(borrow OwnedModel self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedModel self)
+    {
+        return self.Resource.Meshes == null && self.Resource.Materials == null;
+    }
+
+    public fn bool IsValid(borrow OwnedModel self)
+    {
+        return IsModelValid(self.Resource);
+    }
+
+    public fn Model Release(mut borrow OwnedModel self)
+    {
+        stack Model resource = self.Resource;
+        self.Resource = DefaultModel();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedModel self)
+    {
+        if (IsModelValid(self.Resource))
+        {
+            UnloadModel(self.Resource);
+            self.Resource = DefaultModel();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedModel OwnModel(Model model)
+{
+    stack mut OwnedModel owner = new OwnedModel();
+    owner.Resource = model;
+    return owner;
+}
+
+public fn OwnedModel LoadOwnedModel(ascii fileName)
+{
+    return OwnModel(LoadModel(fileName));
+}
+
+public fn OwnedModel LoadOwnedModelFromMesh(Mesh mesh)
+{
+    return OwnModel(LoadModelFromMesh(mesh));
+}
+
+public struct OwnedModelAnimations
+{
+    internal rawmutptr<ModelAnimation> Data;
+    internal u32[0 2 ** 31 - 1] Count;
+
+    OwnedModelAnimations()
+    {
+        self.Data = null;
+        self.Count = 0;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedModelAnimations self)
+    {
+        return self.Data == null || self.Count == 0;
+    }
+
+    public inline finite law u32[0 2 ** 31 - 1] Length(borrow OwnedModelAnimations self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow OwnedModelAnimations self, u32[0 2 ** 31 - 1] index, out ModelAnimation animation)
+    {
+        animation = DefaultModelAnimation();
+        if (self.Data == null || index >= self.Count)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            animation = *(&self.Data[index]);
+        }
+        return true;
+    }
+
+    public fn void Close(mut borrow OwnedModelAnimations self)
+    {
+        if (self.Data != null)
+        {
+            unsafe
+            {
+                UnloadModelAnimations(self.Data, (i32[min max])self.Count);
+            }
+            self.Data = null;
+            self.Count = 0;
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe fn OwnedModelAnimations OwnModelAnimations(rawmutptr<ModelAnimation> animations, i32[min max] count)
+{
+    if (animations == null || count <= 0)
+    {
+        return new OwnedModelAnimations();
+    }
+
+    stack mut OwnedModelAnimations owner = new OwnedModelAnimations();
+    owner.Data = animations;
+    owner.Count = (u32[0 2 ** 31 - 1])count;
+    return owner;
+}
+
+public fn OwnedModelAnimations LoadOwnedModelAnimations(ascii fileName)
+{
+    unsafe
+    {
+        stack mut i32[min max] count = 0;
+        stack rawmutptr<ModelAnimation> animations = LoadModelAnimations(fileName, &count);
+        return OwnModelAnimations(animations, count);
+    }
+}
+
+public struct OwnedWave
+{
+    internal Wave Resource;
+
+    OwnedWave()
+    {
+        self.Resource = DefaultWave();
+    }
+
+    public inline finite law Wave Value(borrow OwnedWave self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedWave self)
+    {
+        return self.Resource.Data == null;
+    }
+
+    public fn bool IsValid(borrow OwnedWave self)
+    {
+        return IsWaveValid(self.Resource);
+    }
+
+    public fn Wave Release(mut borrow OwnedWave self)
+    {
+        stack Wave resource = self.Resource;
+        self.Resource = DefaultWave();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedWave self)
+    {
+        if (IsWaveValid(self.Resource))
+        {
+            UnloadWave(self.Resource);
+            self.Resource = DefaultWave();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedWave OwnWave(Wave wave)
+{
+    stack mut OwnedWave owner = new OwnedWave();
+    owner.Resource = wave;
+    return owner;
+}
+
+public fn OwnedWave LoadOwnedWave(ascii fileName)
+{
+    return OwnWave(LoadWave(fileName));
+}
+
+public struct OwnedSound
+{
+    internal Sound Resource;
+
+    OwnedSound()
+    {
+        self.Resource = DefaultSound();
+    }
+
+    public inline finite law Sound Value(borrow OwnedSound self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedSound self)
+    {
+        return self.Resource.Stream.Buffer == null;
+    }
+
+    public fn bool IsValid(borrow OwnedSound self)
+    {
+        return IsSoundValid(self.Resource);
+    }
+
+    public fn Sound Release(mut borrow OwnedSound self)
+    {
+        stack Sound resource = self.Resource;
+        self.Resource = DefaultSound();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedSound self)
+    {
+        if (IsSoundValid(self.Resource))
+        {
+            UnloadSound(self.Resource);
+            self.Resource = DefaultSound();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedSound OwnSound(Sound sound)
+{
+    stack mut OwnedSound owner = new OwnedSound();
+    owner.Resource = sound;
+    return owner;
+}
+
+public fn OwnedSound LoadOwnedSound(ascii fileName)
+{
+    return OwnSound(LoadSound(fileName));
+}
+
+public fn OwnedSound LoadOwnedSoundFromWave(Wave wave)
+{
+    return OwnSound(LoadSoundFromWave(wave));
+}
+
+public struct OwnedSoundAlias
+{
+    internal Sound Resource;
+
+    OwnedSoundAlias()
+    {
+        self.Resource = DefaultSound();
+    }
+
+    public inline finite law Sound Value(borrow OwnedSoundAlias self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedSoundAlias self)
+    {
+        return self.Resource.Stream.Buffer == null;
+    }
+
+    public fn Sound Release(mut borrow OwnedSoundAlias self)
+    {
+        stack Sound resource = self.Resource;
+        self.Resource = DefaultSound();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedSoundAlias self)
+    {
+        if (self.Resource.Stream.Buffer != null)
+        {
+            UnloadSoundAlias(self.Resource);
+            self.Resource = DefaultSound();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedSoundAlias OwnSoundAlias(Sound sound)
+{
+    stack mut OwnedSoundAlias owner = new OwnedSoundAlias();
+    owner.Resource = sound;
+    return owner;
+}
+
+public fn OwnedSoundAlias LoadOwnedSoundAlias(Sound source)
+{
+    return OwnSoundAlias(LoadSoundAlias(source));
+}
+
+public struct OwnedMusic
+{
+    internal Music Resource;
+
+    OwnedMusic()
+    {
+        self.Resource = DefaultMusic();
+    }
+
+    public inline finite law Music Value(borrow OwnedMusic self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedMusic self)
+    {
+        return self.Resource.Stream.Buffer == null;
+    }
+
+    public fn bool IsValid(borrow OwnedMusic self)
+    {
+        return IsMusicValid(self.Resource);
+    }
+
+    public fn Music Release(mut borrow OwnedMusic self)
+    {
+        stack Music resource = self.Resource;
+        self.Resource = DefaultMusic();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedMusic self)
+    {
+        if (IsMusicValid(self.Resource))
+        {
+            UnloadMusicStream(self.Resource);
+            self.Resource = DefaultMusic();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedMusic OwnMusic(Music music)
+{
+    stack mut OwnedMusic owner = new OwnedMusic();
+    owner.Resource = music;
+    return owner;
+}
+
+public fn OwnedMusic LoadOwnedMusicStream(ascii fileName)
+{
+    return OwnMusic(LoadMusicStream(fileName));
+}
+
+public struct OwnedAudioStream
+{
+    internal AudioStream Resource;
+
+    OwnedAudioStream()
+    {
+        self.Resource = DefaultAudioStream();
+    }
+
+    public inline finite law AudioStream Value(borrow OwnedAudioStream self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedAudioStream self)
+    {
+        return self.Resource.Buffer == null;
+    }
+
+    public fn bool IsValid(borrow OwnedAudioStream self)
+    {
+        return IsAudioStreamValid(self.Resource);
+    }
+
+    public fn AudioStream Release(mut borrow OwnedAudioStream self)
+    {
+        stack AudioStream resource = self.Resource;
+        self.Resource = DefaultAudioStream();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedAudioStream self)
+    {
+        if (IsAudioStreamValid(self.Resource))
+        {
+            UnloadAudioStream(self.Resource);
+            self.Resource = DefaultAudioStream();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedAudioStream OwnAudioStream(AudioStream stream)
+{
+    stack mut OwnedAudioStream owner = new OwnedAudioStream();
+    owner.Resource = stream;
+    return owner;
+}
+
+public fn OwnedAudioStream LoadOwnedAudioStream(u32[0 max] sampleRate, u32[0 max] sampleSize, u32[0 max] channels)
+{
+    return OwnAudioStream(LoadAudioStream(sampleRate, sampleSize, channels));
+}
+
+public struct OwnedVrStereoConfig
+{
+    internal VrStereoConfig Resource;
+    internal bool Active;
+
+    OwnedVrStereoConfig()
+    {
+        self.Resource = DefaultVrStereoConfig();
+        self.Active = false;
+    }
+
+    public inline finite law VrStereoConfig Value(borrow OwnedVrStereoConfig self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedVrStereoConfig self)
+    {
+        return !self.Active;
+    }
+
+    public fn VrStereoConfig Release(mut borrow OwnedVrStereoConfig self)
+    {
+        stack VrStereoConfig resource = self.Resource;
+        self.Resource = DefaultVrStereoConfig();
+        self.Active = false;
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedVrStereoConfig self)
+    {
+        if (self.Active)
+        {
+            UnloadVrStereoConfig(self.Resource);
+            self.Resource = DefaultVrStereoConfig();
+            self.Active = false;
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedVrStereoConfig OwnVrStereoConfig(VrStereoConfig config)
+{
+    stack mut OwnedVrStereoConfig owner = new OwnedVrStereoConfig();
+    owner.Resource = config;
+    owner.Active = true;
+    return owner;
+}
+
+public fn OwnedVrStereoConfig LoadOwnedVrStereoConfig(VrDeviceInfo device)
+{
+    return OwnVrStereoConfig(LoadVrStereoConfig(device));
+}
+
+public struct OwnedDirectoryFiles
+{
+    internal FilePathList Resource;
+
+    OwnedDirectoryFiles()
+    {
+        self.Resource = DefaultFilePathList();
+    }
+
+    public inline finite law FilePathList Value(borrow OwnedDirectoryFiles self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedDirectoryFiles self)
+    {
+        return self.Resource.Paths == null || self.Resource.Count == (u32[0 max])0;
+    }
+
+    public fn FilePathList Release(mut borrow OwnedDirectoryFiles self)
+    {
+        stack FilePathList resource = self.Resource;
+        self.Resource = DefaultFilePathList();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedDirectoryFiles self)
+    {
+        if (self.Resource.Paths != null)
+        {
+            UnloadDirectoryFiles(self.Resource);
+            self.Resource = DefaultFilePathList();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedDirectoryFiles OwnDirectoryFiles(FilePathList files)
+{
+    stack mut OwnedDirectoryFiles owner = new OwnedDirectoryFiles();
+    owner.Resource = files;
+    return owner;
+}
+
+public fn OwnedDirectoryFiles LoadOwnedDirectoryFiles(ascii dirPath)
+{
+    return OwnDirectoryFiles(LoadDirectoryFiles(dirPath));
+}
+
+public fn OwnedDirectoryFiles LoadOwnedDirectoryFilesEx(ascii basePath, ascii filter, bool scanSubdirs)
+{
+    return OwnDirectoryFiles(LoadDirectoryFilesEx(basePath, filter, scanSubdirs));
+}
+
+public struct OwnedDroppedFiles
+{
+    internal FilePathList Resource;
+
+    OwnedDroppedFiles()
+    {
+        self.Resource = DefaultFilePathList();
+    }
+
+    public inline finite law FilePathList Value(borrow OwnedDroppedFiles self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedDroppedFiles self)
+    {
+        return self.Resource.Paths == null || self.Resource.Count == (u32[0 max])0;
+    }
+
+    public fn FilePathList Release(mut borrow OwnedDroppedFiles self)
+    {
+        stack FilePathList resource = self.Resource;
+        self.Resource = DefaultFilePathList();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedDroppedFiles self)
+    {
+        if (self.Resource.Paths != null)
+        {
+            UnloadDroppedFiles(self.Resource);
+            self.Resource = DefaultFilePathList();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedDroppedFiles OwnDroppedFiles(FilePathList files)
+{
+    stack mut OwnedDroppedFiles owner = new OwnedDroppedFiles();
+    owner.Resource = files;
+    return owner;
+}
+
+public fn OwnedDroppedFiles LoadOwnedDroppedFiles()
+{
+    return OwnDroppedFiles(LoadDroppedFiles());
+}
+
+public struct OwnedAutomationEventList
+{
+    internal AutomationEventList Resource;
+
+    OwnedAutomationEventList()
+    {
+        self.Resource = DefaultAutomationEventList();
+    }
+
+    public inline finite law AutomationEventList Value(borrow OwnedAutomationEventList self)
+    {
+        return self.Resource;
+    }
+
+    public inline finite law bool IsEmpty(borrow OwnedAutomationEventList self)
+    {
+        return self.Resource.Events == null || self.Resource.Count == (u32[0 max])0;
+    }
+
+    public fn AutomationEventList Release(mut borrow OwnedAutomationEventList self)
+    {
+        stack AutomationEventList resource = self.Resource;
+        self.Resource = DefaultAutomationEventList();
+        return resource;
+    }
+
+    public fn void Close(mut borrow OwnedAutomationEventList self)
+    {
+        if (self.Resource.Events != null)
+        {
+            UnloadAutomationEventList(self.Resource);
+            self.Resource = DefaultAutomationEventList();
+        }
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public fn OwnedAutomationEventList OwnAutomationEventList(AutomationEventList events)
+{
+    stack mut OwnedAutomationEventList owner = new OwnedAutomationEventList();
+    owner.Resource = events;
+    return owner;
+}
+
+public fn OwnedAutomationEventList LoadOwnedAutomationEventList(ascii fileName)
+{
+    return OwnAutomationEventList(LoadAutomationEventList(fileName));
+}

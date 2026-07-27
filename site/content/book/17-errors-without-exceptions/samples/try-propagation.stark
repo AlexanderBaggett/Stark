@@ -1,0 +1,81 @@
+import System
+module Book.TryPropagation
+
+enum ParseError
+{
+    Empty,
+    BadDigit,
+}
+
+enum LoadError
+{
+    Parse from ParseError,
+    TooLarge,
+}
+
+// A user-defined propagatable enum: the [Ok]/[Err] role attributes, not the
+// variant names, are what make `try` work on it.
+enum ParseOutcome
+{
+    [Ok] Parsed(i32[min max]),
+    [Err] Rejected(ParseError),
+}
+
+fn ParseOutcome ParseDigit(i32[min max] raw)
+{
+    if (raw < 0)
+    {
+        return ParseOutcome.Rejected(ParseError.Empty);
+    }
+
+    if (raw > 9)
+    {
+        return ParseOutcome.Rejected(ParseError.BadDigit);
+    }
+
+    return ParseOutcome.Parsed(raw);
+}
+
+fn System.Result<i32[min max], LoadError> LoadDigit(i32[min max] raw)
+{
+    // Cross-family propagation: a ParseOutcome operand inside a System.Result
+    // function, connected by LoadError's `Parse from ParseError` funnel.
+    stack i32[min max] digit = try ParseDigit(raw);
+    if (digit > 7)
+    {
+        return System.Result<i32[min max], LoadError>.Err(LoadError.TooLarge);
+    }
+
+    return System.Result<i32[min max], LoadError>.Ok(digit * 10);
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] okValue = 0;
+    switch (LoadDigit(5))
+    {
+        case System.Result<i32[min max], LoadError>.Ok(var value):
+            okValue = value;
+        case System.Result<i32[min max], LoadError>.Err(var error):
+            return 1;
+    }
+
+    if (okValue != 50)
+    {
+        return 2;
+    }
+
+    switch (LoadDigit(-1))
+    {
+        case System.Result<i32[min max], LoadError>.Ok(var value):
+            return 3;
+        case System.Result<i32[min max], LoadError>.Err(var error):
+            switch (error)
+            {
+                case LoadError.Parse(_):
+                    return 0;
+                case LoadError.TooLarge:
+                    return 4;
+            }
+    }
+}

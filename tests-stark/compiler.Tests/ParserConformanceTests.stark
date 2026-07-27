@@ -1,0 +1,1048 @@
+import CompilerTestSupport
+import System.Testing
+module ParserConformanceTests
+
+// Ported from ParserConformanceTests.InvalidProgramsDoNotParse.
+internal fn bool ParserConformanceTests_InvalidProgramsDoNotParseImpl()
+{
+    {
+        // PORT-NOTE: the original is a [Theory] over the InvalidPrograms MemberData
+        // rows. Each row calls StarkSyntax.ParseCompilationUnit(source) and asserts
+        // result.Succeeded is false AND result.SyntaxErrorCount > 0. The compile
+        // helpers do not expose a standalone ParseCompilationUnit/SyntaxErrorCount
+        // surface, so each embedded program (kept verbatim from the C# raw strings);
+        // is run through CompileFull and the "should fail to parse" assertion is
+        // reduced to !Succeeds(c) (the parse-error signal). The Impl returns true
+        // only when every row fails, matching the per-row Assert.False.
+
+        // Row 1: wildcard imports are not part of the grammar.
+        stack mut LlvmCompile case1 = CompileFull(
+            "invalid-programs-wildcard-imports",
+            raw"""
+import Core.*
+module Demo
+""");
+
+        // Row 2: top level imports and module declarations do not end in semicolons.
+        stack mut LlvmCompile case2 = CompileFull(
+            "invalid-programs-top-level-semicolons",
+            raw"""
+import Core.Math;
+module Demo;
+""");
+
+        // Row 3: function parameters do not support default values.
+        stack mut LlvmCompile case3 = CompileFull(
+            "invalid-programs-parameter-default-values",
+            raw"""
+module Demo
+
+fn i32[min max] Sum(i32[min max] left = 1, i32[min max] right)
+{
+    return left + right;
+}
+""");
+
+        // Row 4: alias declarations require an equals sign and target type.
+        stack mut LlvmCompile case4 = CompileFull(
+            "invalid-programs-alias-requires-target",
+            raw"""
+module Demo
+
+alias Bytes;
+""");
+
+        // Row 5: bare integer widths are not valid source types.
+        stack mut LlvmCompile case5 = CompileFull(
+            "invalid-programs-bare-integer-widths",
+            raw"""
+module Demo
+
+fn i32 Run(i32 value)
+{
+    return value;
+}
+""");
+
+        // Row 6: function pointer kinds use finite law order.
+        stack mut LlvmCompile case6 = CompileFull(
+            "invalid-programs-fnptr-finite-law-order",
+            raw"""
+module Demo
+
+fn void Register(fnptr<law finite i32[min max]()> callback);
+""");
+
+        // Row 7: unsupported numeric width spellings are not valid builtin types.
+        stack mut LlvmCompile case7 = CompileFull(
+            "invalid-programs-unsupported-numeric-widths",
+            raw"""
+module Demo
+
+fn void Run(i40[0 1] count, f256 amount)
+{
+    return;
+}
+""");
+
+        // Row 8: type is no longer the alias declaration keyword.
+        stack mut LlvmCompile case8 = CompileFull(
+            "invalid-programs-type-not-alias-keyword",
+            raw"""
+module Demo
+
+type Bytes = i8[min max];
+""");
+
+        // Row 9: doctrine members may not use fn.
+        stack mut LlvmCompile case9 = CompileFull(
+            "invalid-programs-doctrine-members-no-fn",
+            raw"""
+module Demo
+
+doctrine Numbers
+{
+    fn i32[min max] Identity(i32[min max] value);
+}
+""");
+
+        // Row 10: var patterns require a capture identifier.
+        stack mut LlvmCompile case10 = CompileFull(
+            "invalid-programs-var-pattern-requires-identifier",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    switch (value)
+    {
+        case var:
+            return 1;
+        default:
+            return 0;
+    }
+}
+""");
+
+        // Row 11: where clauses require at least one constrained type.
+        stack mut LlvmCompile case11 = CompileFull(
+            "invalid-programs-where-requires-constraint",
+            raw"""
+module Demo
+
+fn T Echo<T>(T value) where T:
+{
+    return value;
+}
+""");
+
+        // Row 12: for headers still require both semicolons.
+        stack mut LlvmCompile case12 = CompileFull(
+            "invalid-programs-for-requires-both-semicolons",
+            raw"""
+module Demo
+
+fn void Run(bool flag)
+{
+    for willexit (stack i32[min max] i = 0)
+    {
+        ;
+    }
+}
+""");
+
+        // Row 13: labels only attach to loops and switches.
+        stack mut LlvmCompile case13 = CompileFull(
+            "invalid-programs-labels-only-on-loops-switches",
+            raw"""
+module Demo
+
+fn void Run()
+{
+    done: return;
+}
+""");
+
+        // Row 14: legacy loop behavior alias spelling is no longer accepted.
+        stack mut LlvmCompile case14 = CompileFull(
+            "invalid-programs-legacy-loop-behavior-alias",
+            raw"""
+module Demo
+
+fn void Run(bool flag)
+{
+    for nondeterministic (; flag; )
+    {
+        ;
+    }
+}
+""");
+
+        // Row 15: object initializers require an expression on the right side.
+        stack mut LlvmCompile case15 = CompileFull(
+            "invalid-programs-object-initializer-requires-expression",
+            raw"""
+module Demo
+
+struct Item
+{
+    i32[min max] Value;
+}
+
+fn void Run()
+{
+    stack Item item = new Item()
+    {
+        Value =
+    };
+}
+""");
+
+        // Row 16: raw pointer types require a closing generic bracket.
+        stack mut LlvmCompile case16 = CompileFull(
+            "invalid-programs-rawptr-requires-closing-bracket",
+            raw"""
+module Demo
+
+unsafe fn void Run(rawptr<i32[min max] value)
+{
+    return;
+}
+""");
+
+        // Row 17: top level declarations accept only one visibility modifier.
+        stack mut LlvmCompile case17 = CompileFull(
+            "invalid-programs-single-visibility-modifier",
+            raw"""
+module Demo
+
+public export fn void Run();
+""");
+
+        // Row 18: loop behavior must use the supported token forms.
+        stack mut LlvmCompile case18 = CompileFull(
+            "invalid-programs-loop-behavior-token-forms",
+            raw"""
+module Demo
+
+fn void Run(bool flag)
+{
+    while non deterministic (flag)
+    {
+        break;
+    }
+}
+""");
+
+        // Row 19: argument lists still require comma separators.
+        stack mut LlvmCompile case19 = CompileFull(
+            "invalid-programs-argument-lists-require-commas",
+            raw"""
+module Demo
+
+fn void Write(i32[min max] left, i32[min max] right)
+{
+    return;
+}
+
+fn void Run()
+{
+    Write(1 2);
+}
+""");
+
+        return !Succeeds(case1)
+            && !Succeeds(case2)
+            && !Succeeds(case3)
+            && !Succeeds(case4)
+            && !Succeeds(case5)
+            && !Succeeds(case6)
+            && !Succeeds(case7)
+            && !Succeeds(case8)
+            && !Succeeds(case9)
+            && !Succeeds(case10)
+            && !Succeeds(case11)
+            && !Succeeds(case12)
+            && !Succeeds(case13)
+            && !Succeeds(case14)
+            && !Succeeds(case15)
+            && !Succeeds(case16)
+            && !Succeeds(case17)
+            && !Succeeds(case18)
+            && !Succeeds(case19);
+    }
+}
+
+// Ported from ParserConformanceTests.ValidProgramsParse.
+internal fn bool ParserConformanceTests_ValidProgramsParseImpl()
+{
+    {
+        // PORT-NOTE: the original is a [Theory] over the ValidPrograms TheoryData; each row is parsed with
+        // StarkSyntax.ParseCompilationUnit and asserts result.Succeeded with result.SyntaxErrorCount == 0.
+        // The Stark helpers expose no standalone parse entry point, so each embedded program is run through
+        // CompileFull and the parse-success assertion is reduced to Succeeds(...). All rows are inlined and
+        // ANDed together so the Impl returns true only when every valid program parses/compiles successfully.
+
+        // "top level imports module and ordinary parameters"
+        stack mut LlvmCompile c01 = CompileFull(
+            "valid-programs-parse-01-top-level-imports-module-ordinary-params",
+            raw"""
+import Core.Math
+export import Core.Text
+module Demo.Api
+
+public fn i32[min max] Sum(i32[min max] left, i32[min max] right,)
+{
+    return left + right;
+}
+""");
+
+        // "callable values unsafe blocks and explicit lambda captures"
+        stack mut LlvmCompile c02 = CompileFull(
+            "valid-programs-parse-02-callable-values-unsafe-blocks-lambda-captures",
+            raw"""
+module Demo
+
+unsafe fn void Danger();
+fn void RegisterZero(fnptr<fn u32[0 2 ** 31 - 1]()> callback);
+fn void RegisterOne(fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback);
+
+fn void Run(u32[0 2 ** 31 - 1] scale, u32[0 2 ** 31 - 1] token, u32[0 2 ** 31 - 1] sharedState)
+{
+    stack fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback = Transform;
+    RegisterZero(() => 0);
+    RegisterOne(capture(copy scale, read token, move sharedState) (u32[0 2 ** 31 - 1] index) =>
+    {
+        return index;
+    });
+
+    unsafe
+    {
+        Danger();
+        RegisterZero(capture(unsafe addr token, unsafe shared sharedState) () => 0);
+    }
+}
+
+fn u32[0 2 ** 31 - 1] Transform(u32[0 2 ** 31 - 1] value)
+{
+    return value;
+}
+""");
+
+        // "function pointer memory contracts parse"
+        stack mut LlvmCompile c03 = CompileFull(
+            "valid-programs-parse-03-function-pointer-memory-contracts",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void RegisterOverlap(fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> callback);
+fn void RegisterSame(fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> callback);
+fn void RegisterFinite(fnptr<finite i32[min max](i32[min max])> callback);
+fn void RegisterLaw(fnptr<law bool(borrow Box)> callback);
+fn void RegisterFiniteLaw(fnptr<finite law i32[min max](i32[min max])> callback);
+""");
+
+        // "closure type forms parse for inline borrow and heap callbacks"
+        stack mut LlvmCompile c04 = CompileFull(
+            "valid-programs-parse-04-closure-type-forms-inline-borrow-heap",
+            raw"""
+module Demo
+
+struct Ui
+{
+    i32[min max] Frame;
+}
+
+struct Packet
+{
+    i32[min max] Code;
+}
+
+struct Button
+{
+    heap closure<fn void()> OnClick;
+    heap closure<mut fn void(i32[min max])> OnValue;
+}
+
+inline fn void Horizontal(
+    borrow mut Ui ui,
+    inline closure<fn void(borrow mut Ui)> body)
+    {
+        body(ui);
+    return;
+}
+
+fn void WithPanel(
+    borrow mut Ui ui,
+    borrow closure<fn void(borrow mut Ui)> body)
+    {
+        body(ui);
+    return;
+}
+
+fn void PushEvent(
+    mut borrow closure<mut fn void(i32[min max])> sink,
+    i32[min max] value)
+    {
+        sink(value);
+    return;
+}
+
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset)
+{
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+
+fn Packet BuildWith(inline closure<once fn Packet()> producer)
+{
+    return producer();
+}
+
+fn void RegisterOverlap(
+    borrow closure<fn void(borrow mut Ui, borrow mut Ui) where overlap(arg0, arg1)> body);
+""");
+
+        // "constant interpolated text literal"
+        stack mut LlvmCompile c05 = CompileFull(
+            "valid-programs-parse-05-constant-interpolated-text-literal",
+            raw"""
+module Demo
+
+finite law ascii Label()
+{
+    return $"Score: {100}";
+}
+""");
+
+        // "raw and multiline text literals"
+        stack mut LlvmCompile c06 = CompileFull(
+            "valid-programs-parse-06-raw-and-multiline-text-literals",
+            "module Demo\n\nfinite law ascii RawPath()\n{\n    return raw\"c:\\compiler\\stage1\";\n}\n\nfinite law ascii Template()\n{\n    return raw\"\"\"\n    define fastcc i32 @main() {\n      ret i32 0\n    }\n    \"\"\";\n}\n\nfinite law ascii Label()\n{\n    return $raw\"Score: {100}\\n\";\n}");
+
+        // "fixed-capacity stack text concatenation declaration"
+        stack mut LlvmCompile c07 = CompileFull(
+            "valid-programs-parse-07-fixed-capacity-stack-text-concatenation",
+            raw"""
+module Demo
+
+fn void Join(Ascii left, Ascii right, Unicode wideLeft, Unicode wideRight)
+{
+    stack Ascii combined[4096] = left + right;
+    stack Unicode wideCombined[4096] = wideLeft + wideRight;
+}
+""");
+
+        // "ffi varargs function declaration"
+        stack mut LlvmCompile c08 = CompileFull(
+            "valid-programs-parse-08-ffi-varargs-function-declaration",
+            raw"""
+module Native
+
+public ffi varargs fn i32[min max] printf(ascii format);
+""");
+
+        // "ffi abi modifiers parse on functions and function pointer types"
+        stack mut LlvmCompile c09 = CompileFull(
+            "valid-programs-parse-09-ffi-abi-modifiers-functions-and-fnptr-types",
+            raw"""
+module Native
+
+public unsafe ffi(c) fn i32[min max] puts(ascii text);
+public unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max] write(ascii text);
+public fn void Register(fnptr<ffi(c) fn i32[min max](ascii)> callback);
+public fn void RegisterPlatform(fnptr<ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max](ascii)> callback);
+""");
+
+        // "underscore-leading ffi symbols parse while bare discard remains a pattern"
+        stack mut LlvmCompile c10 = CompileFull(
+            "valid-programs-parse-10-underscore-leading-ffi-symbols-and-discard-pattern",
+            raw"""
+module Native
+
+internal unsafe ffi fn rawmutptr<i32[min max]> __error();
+
+enum Token
+{
+    Number(i32[min max]),
+}
+
+fn bool MatchesAny(Token token)
+{
+    switch (token)
+    {
+        case Token.Number(_):
+            return true;
+    }
+}
+""");
+
+        // "ffi struct layout attributes parse on structs and fields"
+        stack mut LlvmCompile c11 = CompileFull(
+            "valid-programs-parse-11-ffi-struct-layout-attributes",
+            raw"""
+module Native
+
+[StructLayout(C), Pack(1), Align(4)]
+public struct Packet
+{
+    public u8[0 max] Tag;
+    public u32[0 max] Length;
+}
+
+[StructLayout(Explicit), Align(4)]
+public struct WordParts
+{
+    [FieldOffset(0)] public u32[0 max] Whole;
+    [FieldOffset(0)] public u16[0 max] Low;
+    [FieldOffset(2)] public u16[0 max] High;
+}
+""");
+
+        // "record members support fields methods constructors and generics"
+        stack mut LlvmCompile c12 = CompileFull(
+            "valid-programs-parse-12-record-members-fields-methods-constructors-generics",
+            raw"""
+module Models
+
+record Pair<T>(T Left, T Right)
+{
+    mut i32[min max] Count;
+
+    Pair(T left, T right)
+    {
+        ;
+    }
+
+    fn i32[min max] Width()
+    {
+        return 2;
+    }
+
+    internal fn i32[min max] HiddenWidth()
+    {
+        return 2;
+    }
+
+    static finite law Pair<T> Empty(T value)
+    {
+        return new Pair<T>(value, value);
+    }
+
+    drop
+    {
+        ;
+    }
+}
+
+struct Buffer
+{
+    rawptr<i8[min max]> Ptr;
+
+    mut drop
+    {
+        self.Ptr = null;
+    }
+}
+""");
+
+        // "alias declarations parse with visibility and generics"
+        stack mut LlvmCompile c13 = CompileFull(
+            "valid-programs-parse-13-alias-declarations-visibility-and-generics",
+            raw"""
+module Types
+
+public alias Byte = i8[min max];
+internal alias BufferView<T> = borrow T[];
+""");
+
+        // "traits and doctrines accept constraints and semicolon bodies"
+        stack mut LlvmCompile c14 = CompileFull(
+            "valid-programs-parse-14-traits-and-doctrines-constraints-semicolon-bodies",
+            raw"""
+module Contracts
+
+trait Parser<T>
+{
+    law T Parse(ascii text) where T: Node, Printable;
+}
+
+doctrine Numbers<T>
+{
+    finite law T Clamp(T value, T min, T max) where T: Ordered;
+}
+""");
+
+        // "complex nested type syntax parses"
+        stack mut LlvmCompile c15 = CompileFull(
+            "valid-programs-parse-15-complex-nested-type-syntax",
+            raw"""
+module Types
+
+unsafe fn void Accept(
+    borrow rawptr<i8[min max]>[] buffers,
+    shared Matrix<Vector<i32[min max][4]>> table,
+    out i32[min max][4][2] lanes,
+    frozen u8[0 max][] levels)
+{
+    return;
+}
+""");
+
+        // "all loop behaviors and empty statements parse"
+        stack mut LlvmCompile c16 = CompileFull(
+            "valid-programs-parse-16-all-loop-behaviors-and-empty-statements",
+            raw"""
+module Flow
+
+fn void Run(bool flag)
+{
+    ;
+
+    while infinite (flag) ;
+
+    while non-deterministic (flag)
+    {
+        break;
+    }
+
+    for non-deterministic (; flag; ) ;
+
+    for willexit (stack mut i32[min max] i = 0; i < 4; i += 1, i += 2)
+    {
+        continue;
+    }
+}
+""");
+
+        // "labeled control-flow statements parse"
+        stack mut LlvmCompile c17 = CompileFull(
+            "valid-programs-parse-17-labeled-control-flow-statements",
+            raw"""
+module Flow
+
+fn void Run(i32[min max] value)
+{
+    outer: while willexit (value > 0)
+    {
+        inner: for willexit (stack mut i32[min max] i = 0; i < value; i += 1)
+        {
+            if (i == 2)
+            {
+                continue outer;
+            }
+
+            break inner;
+        }
+
+        selector: switch (value)
+        {
+            case 1:
+                break selector;
+            default:
+                break outer;
+        }
+    }
+}
+""");
+
+        // "memory separation contracts parse"
+        stack mut LlvmCompile c18 = CompileFull(
+            "valid-programs-parse-18-memory-separation-contracts",
+            raw"""
+module Memory
+
+unsafe fn void Copy(
+    rawptr<i32[min max]> source,
+    rawmutptr<i32[min max]> destination)
+    where disjoint(source[0, 4], destination[0, 4])
+    where overlap(source, destination)
+    {
+        if disjoint(source, destination)
+    {
+        return;
+    }
+
+    assume disjoint(source, destination)
+    {
+        return;
+    }
+
+    while willexit independent (false)
+    {
+        break;
+    }
+
+    for willexit independent (stack mut u32[0 2 ** 31 - 1] index = 0; index < 4; index += 1)
+    {
+        continue;
+    }
+}
+
+unsafe fn void SameMemory(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where same(left, right)
+    {
+        return;
+}
+""");
+
+        // "switch sections may contain multiple labels and guards"
+        stack mut LlvmCompile c19 = CompileFull(
+            "valid-programs-parse-19-switch-sections-multiple-labels-and-guards",
+            raw"""
+module Branching
+
+fn i32[min max] Pick(i32[min max] state)
+{
+    switch w99 (state)
+    {
+        case 0:
+        case 1:
+            return 1;
+        case var value when value > 10:
+            return value;
+        default:
+            return 0;
+    }
+}
+""");
+
+        // "switch labels may contain or-pattern alternatives"
+        stack mut LlvmCompile c20 = CompileFull(
+            "valid-programs-parse-20-switch-labels-or-pattern-alternatives",
+            raw"""
+module Branching
+
+fn i32[min max] Pick(u8[0 3] state, bool allow)
+{
+    switch (state)
+    {
+        case 0 | 1 when allow:
+            return 10;
+        case 2 | 3:
+            return 20;
+    }
+}
+""");
+
+        // "switch labels may contain inclusive integer range patterns"
+        stack mut LlvmCompile c21 = CompileFull(
+            "valid-programs-parse-21-switch-labels-inclusive-integer-range-patterns",
+            raw"""
+module Branching
+
+enum Token
+{
+    Number(i32[min max]),
+    End,
+}
+
+fn i32[min max] Pick(Token token, u8[0 40] state, bool allow)
+{
+    switch (state)
+    {
+        case 0..9:
+            return 10;
+        case 10..20 | 30..40 when allow:
+            return 20;
+        default:
+            return 0;
+    }
+
+    switch (token)
+    {
+        case Token.Number(0..9):
+            return 1;
+        case Token.Number(_):
+            return 2;
+        case Token.End:
+            return 0;
+    }
+}
+""");
+
+        // "postfix chains and trailing comma argument lists parse"
+        stack mut LlvmCompile c22 = CompileFull(
+            "valid-programs-parse-22-postfix-chains-and-trailing-comma-argument-lists",
+            raw"""
+module Access
+
+struct Leaf
+{
+    i32[min max] Value;
+}
+
+struct Node
+{
+    Leaf[2] Leaves;
+}
+
+fn Node GetNode(i32[min max] index, i32[min max] count,)
+{
+    return new Node();
+}
+
+fn i32[min max] Read()
+{
+    return GetNode(1, 2,).Leaves[0].Value;
+}
+""");
+
+        // "target typed object creation parses"
+        stack mut LlvmCompile c23 = CompileFull(
+            "valid-programs-parse-23-target-typed-object-creation",
+            raw"""
+module AllocationSyntax
+
+struct Box
+{
+    i32[min max] Value;
+
+    Box(i32[min max] value)
+    {
+        ;
+    }
+}
+
+fn Box Make(i32[min max] value)
+{
+    stack Box empty = new();
+    stack Box constructed = new(value);
+    stack Box initialized = new()
+    {
+        Value = value
+    };
+    return new(value);
+}
+""");
+
+        // "assignment precedence and unary operators parse"
+        stack mut LlvmCompile c24 = CompileFull(
+            "valid-programs-parse-24-assignment-precedence-and-unary-operators",
+            raw"""
+module Operators
+
+fn i32[min max] Compute(i32[min max] left, i32[min max] middle, i32[min max] right, bool flag)
+{
+    stack mut i32[min max] value = left + middle * right << 1;
+    value &= left ^ middle | right;
+    value = flag ? value : left;
+    return ~value;
+}
+""");
+
+        // "qualified names may be used directly as expressions"
+        stack mut LlvmCompile c25 = CompileFull(
+            "valid-programs-parse-25-qualified-names-as-expressions",
+            raw"""
+import Core.Math
+module Demo
+
+fn i32[min max] Read()
+{
+    return Core.Math.Constants.Value;
+}
+""");
+
+        // "object and array initializers allow trailing commas"
+        stack mut LlvmCompile c26 = CompileFull(
+            "valid-programs-parse-26-object-and-array-initializers-trailing-commas",
+            raw"""
+module Init
+
+struct Item
+{
+    i32[min max] Value;
+}
+
+fn void Run()
+{
+    stack Item item = new Item()
+    {
+        Value = 1,
+    };
+    stack i32[min max][3] numbers =
+    {
+        1, 2, 3,
+    };
+}
+""");
+
+        // "ffi raw pointer nesting parses"
+        stack mut LlvmCompile c27 = CompileFull(
+            "valid-programs-parse-27-ffi-raw-pointer-nesting",
+            raw"""
+module Interop
+
+export unsafe ffi fn rawptr<rawmutptr<i8[min max]>> Transform(rawptr<rawptr<i8[min max]>> input);
+""");
+
+        // "negative range constraints combine with fixed arrays"
+        stack mut LlvmCompile c28 = CompileFull(
+            "valid-programs-parse-28-negative-range-constraints-with-fixed-arrays",
+            raw"""
+module Ranges
+
+fn void Accept(i32[-10 10][4] buckets)
+{
+    return;
+}
+""");
+
+        // "type relative integer range endpoints parse"
+        stack mut LlvmCompile c29 = CompileFull(
+            "valid-programs-parse-29-type-relative-integer-range-endpoints",
+            raw"""
+module Ranges
+
+fn void Accept(
+    i32[min max] signedValue,
+    u64[0 2 ** 63 - 1] nonNegative,
+    u8[min 127] bytePrefix)
+{
+    return;
+}
+""");
+
+        // "constant arithmetic integer range endpoints parse"
+        stack mut LlvmCompile c30 = CompileFull(
+            "valid-programs-parse-30-constant-arithmetic-integer-range-endpoints",
+            raw"""
+module Ranges
+
+fn void Accept(
+    u64[10 ** 2 10 ** 10] decimalPowers,
+    u24[2 ** 4 2 ** 16] binaryPowers,
+    u32[1024 * 1024 1024 * 1024 * 1024] sizes,
+    i32[(1 + 2) * 3 20 / 2 + 1] parenthesized)
+{
+    return;
+}
+""");
+
+        // "all supported integer and floating point widths parse in source types"
+        stack mut LlvmCompile c31 = CompileFull(
+            "valid-programs-parse-31-all-integer-and-floating-point-widths",
+            raw"""
+module Scalars
+
+fn void Accept(
+    i8[min max] a,
+    i16[min max] b,
+    i24[min max] c,
+    i32[min max] d,
+    i48[min max] e,
+    i64[min max] f,
+    i96[-1 1] g,
+    i128[-1 1] h,
+    i192[-1 1] i,
+    i256[-1 1] j,
+    i384[-1 1] k,
+    i512[-1 1] l,
+    i768[-1 1] m,
+    i1024[-1 1] n,
+    u8[0 max] ua,
+    u16[0 max] ub,
+    u24[0 max] uc,
+    u32[0 max] ud,
+    u48[0 max] ue,
+    u64[0 max] uf,
+    u96[0 max] ug,
+    u128[0 max] uh,
+    u192[0 max] ui,
+    u256[0 max] uj,
+    u384[0 max] uk,
+    u512[0 max] ul,
+    u768[0 max] um,
+    u1024[0 max] un,
+    f16 half,
+    f32 single,
+    f64 doubleValue,
+    f80 extended,
+    f128 quad)
+{
+    return;
+}
+""");
+
+        // "ffi link name attribute parses on imported functions"
+        stack mut LlvmCompile c32 = CompileFull(
+            "valid-programs-parse-32-ffi-link-name-attribute",
+            raw"""
+module Native
+
+[LinkName("InitWindow")]
+public unsafe ffi(c) fn void RaylibInitWindow(i32[min max] width, i32[min max] height, ascii title);
+
+[LinkName("?Decorated@@YAHH@Z")]
+internal unsafe ffi(c) fn i32[min max] Decorated(i32[min max] value);
+""");
+
+        // "c layout aggregate ffi boundary declarations parse"
+        stack mut LlvmCompile c33 = CompileFull(
+            "valid-programs-parse-33-c-layout-aggregate-ffi-boundary-declarations",
+            raw"""
+module Native
+
+[StructLayout(C)]
+public struct Vector2
+{
+    public f32 X;
+    public f32 Y;
+}
+
+[StructLayout(C)]
+public struct Rectangle
+{
+    public f32 X;
+    public f32 Y;
+    public f32 Width;
+    public f32 Height;
+}
+
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+[LinkName("DrawRectangleRec")]
+internal unsafe ffi(c) fn void raylib_DrawRectangleRec(Rectangle rec, Vector2 origin);
+""");
+
+        return Succeeds(c01)
+            && Succeeds(c02)
+            && Succeeds(c03)
+            && Succeeds(c04)
+            && Succeeds(c05)
+            && Succeeds(c06)
+            && Succeeds(c07)
+            && Succeeds(c08)
+            && Succeeds(c09)
+            && Succeeds(c10)
+            && Succeeds(c11)
+            && Succeeds(c12)
+            && Succeeds(c13)
+            && Succeeds(c14)
+            && Succeeds(c15)
+            && Succeeds(c16)
+            && Succeeds(c17)
+            && Succeeds(c18)
+            && Succeeds(c19)
+            && Succeeds(c20)
+            && Succeeds(c21)
+            && Succeeds(c22)
+            && Succeeds(c23)
+            && Succeeds(c24)
+            && Succeeds(c25)
+            && Succeeds(c26)
+            && Succeeds(c27)
+            && Succeeds(c28)
+            && Succeeds(c29)
+            && Succeeds(c30)
+            && Succeeds(c31)
+            && Succeeds(c32)
+            && Succeeds(c33);
+    }
+}

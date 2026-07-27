@@ -1,0 +1,363 @@
+import Compiler.Parsing
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+import System.Json
+import System.Memory
+import System.Text
+export import Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridgeCore
+import Compiler.Mir.PackageImage.Bridge.PackageImageSourceDeclarationRenderer
+module Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridge
+
+// Public compatibility bridge orchestration. Structured package facts remain
+// authoritative for specialization, ABI, ownership, and LLVM lowering.
+
+public unsafe fn bool TryRenderLogicalPackageSourceBridgePrefix(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow OwnedAscii sink)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+            stack mut u64[0 2 ** 63 - 1] importsNode = 0;
+            stack mut u32[0 max] importCount = 0;
+            stack mut u64[0 2 ** 63 - 1] reExportsNode = 0;
+            stack mut u32[0 max] reExportCount = 0;
+            stack mut PackageImageSourceBridgeTemplateContext templateContext = new();
+            stack mut OwnedAscii overloadKeyScratch = new();
+            stack mut OwnedAscii typedBodyScratch = new();
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !document.TryFindMember(moduleNode, "ModuleName", moduleNameNode)
+                || document.KindAt(moduleNameNode) != JsonKind.Text
+                || AsciiLength(document.TextAt(moduleNameNode)) == 0
+                || !LogicalPackageImageJsonSourceSurfaceImportNodes(
+                    document,
+                    moduleNode,
+                    importsNode,
+                    importCount,
+                    reExportsNode,
+                    reExportCount)
+                || !PackageImageSourceBridgeBuildTemplateContext(
+                    document,
+                    moduleNode,
+                    templateContext))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] importIndex = 0;
+            while willexit (importIndex < importCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] importNode = 0;
+                stack mut u64[0 2 ** 63 - 1] importNameNode = 0;
+                stack mut bool isExported = false;
+                if (!document.TryChildAt(importsNode, (u64[0 2 ** 63 - 1])importIndex, importNode)
+                    || document.KindAt(importNode) != JsonKind.Object
+                    || !document.TryFindMember(importNode, "ModuleName", importNameNode)
+                    || document.KindAt(importNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(importNameNode)) == 0
+                    || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                        document,
+                        importNode,
+                        "IsExported",
+                        isExported))
+                {
+                    return false;
+                }
+
+                stack ascii importName = document.TextAt(importNameNode);
+                stack bool hasReExport = LogicalPackageImageJsonReExportListHasModuleName(
+                    document,
+                    reExportsNode,
+                    reExportCount,
+                    importName);
+                if ((isExported || hasReExport)
+                    && !PackageImageSourceBridgeAppendConst(sink, "export "))
+                {
+                    return false;
+                }
+
+                if (!PackageImageSourceBridgeAppendConst(sink, "import ")
+                    || !PackageImageSourceBridgeAppend(sink, importName)
+                    || !PackageImageSourceBridgeAppendConst(sink, "\n"))
+                {
+                    return false;
+                }
+
+                importIndex = importIndex + 1;
+            }
+
+            stack mut u32[0 max] reExportIndex = 0;
+            while willexit (reExportIndex < reExportCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] reExportNode = 0;
+                stack mut u64[0 2 ** 63 - 1] reExportNameNode = 0;
+                if (!document.TryChildAt(
+                        reExportsNode,
+                        (u64[0 2 ** 63 - 1])reExportIndex,
+                        reExportNode)
+                    || document.KindAt(reExportNode) != JsonKind.Object
+                    || !document.TryFindMember(reExportNode, "ModuleName", reExportNameNode)
+                    || document.KindAt(reExportNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(reExportNameNode)) == 0)
+                {
+                    return false;
+                }
+
+                stack ascii reExportName = document.TextAt(reExportNameNode);
+                if (!LogicalPackageImageJsonImportListHasModuleName(
+                        document,
+                        importsNode,
+                        importCount,
+                        reExportName)
+                    && (!PackageImageSourceBridgeAppendConst(sink, "export import ")
+                        || !PackageImageSourceBridgeAppend(sink, reExportName)
+                        || !PackageImageSourceBridgeAppendConst(sink, "\n")))
+                {
+                    return false;
+                }
+
+                reExportIndex = reExportIndex + 1;
+            }
+
+            if ((importCount > 0 || reExportCount > 0)
+                && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut u64[0 2 ** 63 - 1] moduleBackendNode = 0;
+            stack mut bool hasCompilerFacts = false;
+            stack mut bool hasModuleBackend = false;
+            if (!PackageImageSourceBridgeEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    hasCompilerFacts)
+                || (hasCompilerFacts
+                    && !PackageImageSourceBridgeOptionalTextMemberNode(
+                        document,
+                        compilerFactsNode,
+                        "BackendOptimizationMode",
+                        moduleBackendNode,
+                        hasModuleBackend))
+                || (hasModuleBackend
+                    && document.TextAt(moduleBackendNode) != "speed"
+                    && document.TextAt(moduleBackendNode) != "opaque"))
+            {
+                return false;
+            }
+
+            if (hasModuleBackend
+                && document.TextAt(moduleBackendNode) == "opaque"
+                && !PackageImageSourceBridgeAppendConst(sink, "[Backend(Opaque)]\n"))
+            {
+                return false;
+            }
+
+            if (!PackageImageSourceBridgeAppendConst(sink, "module ")
+                || !PackageImageSourceBridgeAppend(sink, document.TextAt(moduleNameNode))
+                || !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] typeAliasesNode = 0;
+            stack mut u32[0 max] typeAliasCount = 0;
+            if (!LogicalPackageImageJsonSourceSurfaceTypeAliasNodes(
+                    document,
+                    moduleNode,
+                    typeAliasesNode,
+                    typeAliasCount))
+            {
+                return false;
+            }
+
+            if (typeAliasCount != 0
+                && !PackageImageSourceBridgeAppendConst(sink, "\n"))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] typeAliasIndex = 0;
+            while willexit (typeAliasIndex < typeAliasCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+                stack mut u64[0 2 ** 63 - 1] aliasNameNode = 0;
+                stack mut u64[0 2 ** 63 - 1] visibilityNode = 0;
+                stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+                stack mut u64[0 2 ** 63 - 1] genericParametersNode = 0;
+                stack mut u32[0 max] genericParameterCount = 0;
+                stack mut u64[0 2 ** 63 - 1] comptimeParametersNode = 0;
+                stack mut u32[0 max] comptimeParameterCount = 0;
+                if (!document.TryChildAt(
+                        typeAliasesNode,
+                        (u64[0 2 ** 63 - 1])typeAliasIndex,
+                        typeAliasNode)
+                    || document.KindAt(typeAliasNode) != JsonKind.Object
+                    || !document.TryFindMember(typeAliasNode, "Name", aliasNameNode)
+                    || document.KindAt(aliasNameNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(aliasNameNode)) == 0
+                    || !document.TryFindMember(typeAliasNode, "Visibility", visibilityNode)
+                    || document.KindAt(visibilityNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(visibilityNode)) == 0
+                    || !document.TryFindMember(typeAliasNode, "TargetType", targetTypeNode)
+                    || document.KindAt(targetTypeNode) != JsonKind.Text
+                    || AsciiLength(document.TextAt(targetTypeNode)) == 0
+                    || !LogicalPackageImageJsonOptionalArrayMember(
+                        document,
+                        typeAliasNode,
+                        "GenericParameters",
+                        genericParametersNode,
+                        genericParameterCount)
+                    || !LogicalPackageImageJsonOptionalArrayMember(
+                        document,
+                        typeAliasNode,
+                        "ComptimeGenericParameters",
+                        comptimeParametersNode,
+                        comptimeParameterCount))
+                {
+                    return false;
+                }
+
+                if (!PackageImageSourceBridgeAppend(sink, document.TextAt(visibilityNode))
+                    || !PackageImageSourceBridgeAppendConst(sink, " alias ")
+                    || !PackageImageSourceBridgeAppend(sink, document.TextAt(aliasNameNode)))
+                {
+                    return false;
+                }
+
+                if (comptimeParameterCount > (u32[0 max])(2 ** 32 - 1) - genericParameterCount)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] totalParameterCount = genericParameterCount + comptimeParameterCount;
+                if (totalParameterCount != 0
+                    && !PackageImageSourceBridgeAppendConst(sink, "<"))
+                {
+                    return false;
+                }
+
+                stack mut u32[0 max] parameterIndex = 0;
+                while willexit (parameterIndex < genericParameterCount)
+                {
+                    stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+                    if (!document.TryChildAt(
+                            genericParametersNode,
+                            (u64[0 2 ** 63 - 1])parameterIndex,
+                            parameterNode)
+                        || document.KindAt(parameterNode) != JsonKind.Text
+                        || AsciiLength(document.TextAt(parameterNode)) == 0
+                        || (parameterIndex != 0
+                            && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                        || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNode)))
+                    {
+                        return false;
+                    }
+
+                    parameterIndex = parameterIndex + 1;
+                }
+
+                stack mut u32[0 max] comptimeIndex = 0;
+                while willexit (comptimeIndex < comptimeParameterCount)
+                {
+                    stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+                    stack mut u64[0 2 ** 63 - 1] parameterNameNode = 0;
+                    stack mut u64[0 2 ** 63 - 1] parameterTypeNode = 0;
+                    stack mut u64[0 2 ** 63 - 1] parameterTypeKindNode = 0;
+                    if (!document.TryChildAt(
+                            comptimeParametersNode,
+                            (u64[0 2 ** 63 - 1])comptimeIndex,
+                            parameterNode)
+                        || document.KindAt(parameterNode) != JsonKind.Object
+                        || !document.TryFindMember(parameterNode, "Name", parameterNameNode)
+                        || document.KindAt(parameterNameNode) != JsonKind.Text
+                        || AsciiLength(document.TextAt(parameterNameNode)) == 0
+                        || !document.TryFindMember(parameterNode, "Type", parameterTypeNode)
+                        || document.KindAt(parameterTypeNode) != JsonKind.Object
+                        || !document.TryFindMember(parameterTypeNode, "Kind", parameterTypeKindNode)
+                        || document.KindAt(parameterTypeKindNode) != JsonKind.Text
+                        || AsciiLength(document.TextAt(parameterTypeKindNode)) == 0
+                        || ((genericParameterCount != 0 || comptimeIndex != 0)
+                            && !PackageImageSourceBridgeAppendConst(sink, ", "))
+                        || !PackageImageSourceBridgeAppendConst(sink, "comptime ")
+                        || !PackageImageSourceBridgeAppend(
+                            sink,
+                            document.TextAt(parameterTypeKindNode))
+                        || !PackageImageSourceBridgeAppendConst(sink, " ")
+                        || !PackageImageSourceBridgeAppend(sink, document.TextAt(parameterNameNode)))
+                    {
+                        return false;
+                    }
+
+                    comptimeIndex = comptimeIndex + 1;
+                }
+
+                if ((totalParameterCount != 0
+                        && !PackageImageSourceBridgeAppendConst(sink, ">"))
+                    || !PackageImageSourceBridgeAppendConst(sink, " = ")
+                    || !PackageImageSourceBridgeAppend(sink, document.TextAt(targetTypeNode))
+                    || !PackageImageSourceBridgeAppendConst(sink, ";\n"))
+                {
+                    return false;
+                }
+
+                typeAliasIndex = typeAliasIndex + 1;
+            }
+
+            return PackageImageSourceBridgeRenderTypes(
+                    document,
+                    moduleNode,
+                    templateContext,
+                    overloadKeyScratch,
+                    typedBodyScratch,
+                    sink)
+                && PackageImageSourceBridgeRenderGlobals(document, moduleNode, sink)
+                && PackageImageSourceBridgeRenderFunctions(
+                    document,
+                    moduleNode,
+                    templateContext,
+                    overloadKeyScratch,
+                    typedBodyScratch,
+                    sink);
+    }
+}
+// Builds the Stage1-owned compatibility source document in one MANF parse and
+// one source parse. Syntax diagnostics reject the document; callers must use
+// the separately loaded typed-interface/compiler/template graphs for all
+// backend-visible facts rather than treating this parse tree as canonical.
+public unsafe fn bool TryBuildLogicalPackageLoadedSourceDocument(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    out LogicalPackageLoadedSourceDocument loadedDocument)
+{
+    loadedDocument = new();
+    stack mut OwnedAscii sourceText = new();
+    if (!TryRenderLogicalPackageSourceBridgePrefix(manifestJson, moduleOrdinal, sourceText))
+    {
+        return false;
+    }
+
+    switch (ParseCompilationUnit(sourceText.View()))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var parseError):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var syntax):
+            if (!syntax.Succeeded())
+            {
+                return false;
+            }
+
+            loadedDocument.ModuleOrdinalValue = moduleOrdinal;
+            loadedDocument.SourceTextValue = sourceText;
+            loadedDocument.SyntaxValue = syntax;
+            return true;
+    }
+}

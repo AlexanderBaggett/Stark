@@ -1,0 +1,483 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Ir
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.LayoutHelpers
+import System.Memory
+module Compiler.Binding.CLayoutAggregates
+
+public struct CLayoutAggregateTable
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic CAbiAggregateCarrierFacts Facts;
+
+    CLayoutAggregateTable()
+    {
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.Facts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CLayoutAggregateTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] KeywordTokenAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
+    public law CAbiAggregateCarrierFacts FactsAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateCarrierFacts facts = new();
+        if (index < self.Facts.Length)
+        {
+            facts = self.Facts[index];
+        }
+
+        return facts;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow CLayoutAggregateTable self, u32[0 max] nameToken, u32[0 max] keywordToken, CAbiAggregateCarrierFacts facts)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.Facts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = keywordToken;
+        init self.Facts[self.Facts.Length] = facts;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal enum CAbiStorageKind
+{
+    Unknown,
+    Integer,
+    Sse,
+}
+
+internal struct CAbiFieldInfo
+{
+    bool Known;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignBytes;
+    CAbiStorageKind Kind;
+
+    CAbiFieldInfo()
+    {
+        self.Known = false;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.Kind = CAbiStorageKind.Unknown;
+    }
+}
+
+internal struct CAbiStorageUnitList
+{
+    internal dynamic u32[0 max] Offsets;
+    internal dynamic u32[0 max] Sizes;
+    internal dynamic CAbiStorageKind Kinds;
+
+    CAbiStorageUnitList()
+    {
+        self.Offsets = new();
+        self.Sizes = new();
+        self.Kinds = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow CAbiStorageUnitList self)
+    {
+        return self.Offsets.Length;
+    }
+
+    internal law u32[0 max] OffsetAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] offset = 0;
+        if (index < self.Offsets.Length)
+        {
+            offset = self.Offsets[index];
+        }
+
+        return offset;
+    }
+
+    internal law u32[0 max] SizeAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] size = 0;
+        if (index < self.Sizes.Length)
+        {
+            size = self.Sizes[index];
+        }
+
+        return size;
+    }
+
+    internal law CAbiStorageKind KindAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiStorageKind kind = CAbiStorageKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow CAbiStorageUnitList self, u32[0 max] offset, u32[0 max] size, CAbiStorageKind kind)
+    {
+        if (!self.Offsets.TryReserve(1)
+            || !self.Sizes.TryReserve(1)
+            || !self.Kinds.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Offsets[self.Offsets.Length] = offset;
+        init self.Sizes[self.Sizes.Length] = size;
+        init self.Kinds[self.Kinds.Length] = kind;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law CAbiFieldInfo KnownCAbiField(u32[0 max] sizeBytes, u32[0 max] alignBytes, CAbiStorageKind kind)
+{
+    stack mut CAbiFieldInfo info = new();
+    info.Known = true;
+    info.SizeBytes = sizeBytes;
+    info.AlignBytes = alignBytes;
+    info.Kind = kind;
+    return info;
+}
+
+internal finite law CAbiFieldInfo ClassifyCAbiScalarField(ascii source, borrow TokenStream stream, u32[0 max] typeToken)
+    where overlap(source, stream)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return KnownCAbiField(1, 1, CAbiStorageKind.Integer);
+    }
+
+    if (kind == TokenKind.Rawptr || kind == TokenKind.Rawmutptr || kind == TokenKind.Fnptr)
+    {
+        return KnownCAbiField(8, 8, CAbiStorageKind.Integer);
+    }
+
+    if (kind == TokenKind.FloatType)
+    {
+        if (TokenTextEquals(source, stream, typeToken, "f32"))
+        {
+            return KnownCAbiField(4, 4, CAbiStorageKind.Sse);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "f64"))
+        {
+            return KnownCAbiField(8, 8, CAbiStorageKind.Sse);
+        }
+    }
+
+    if (kind == TokenKind.IntegerType)
+    {
+        if (TokenTextEquals(source, stream, typeToken, "i8") || TokenTextEquals(source, stream, typeToken, "u8"))
+        {
+            return KnownCAbiField(1, 1, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i16") || TokenTextEquals(source, stream, typeToken, "u16"))
+        {
+            return KnownCAbiField(2, 2, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i32") || TokenTextEquals(source, stream, typeToken, "u32"))
+        {
+            return KnownCAbiField(4, 4, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i64") || TokenTextEquals(source, stream, typeToken, "u64"))
+        {
+            return KnownCAbiField(8, 8, CAbiStorageKind.Integer);
+        }
+    }
+
+    stack mut CAbiFieldInfo unknown = new();
+    return unknown;
+}
+
+internal finite law AbiCarrierKind IntegerCarrierForSize(u32[0 max] sizeBytes)
+{
+    if (sizeBytes <= 1)
+    {
+        return AbiCarrierKind.I8;
+    }
+
+    if (sizeBytes <= 2)
+    {
+        return AbiCarrierKind.I16;
+    }
+
+    if (sizeBytes <= 4)
+    {
+        return AbiCarrierKind.I32;
+    }
+
+    if (sizeBytes <= 8)
+    {
+        return AbiCarrierKind.I64;
+    }
+
+    return AbiCarrierKind.None;
+}
+
+internal finite law AbiCarrierKind SlotCarrierForUnits(borrow CAbiStorageUnitList units, u32[0 max] slotStart, u32[0 max] slotSize)
+{
+    stack mut bool any = false;
+    stack mut bool anyInteger = false;
+    stack mut u32[0 max] sseCount = 0;
+    stack mut u32[0 max] firstOffset = 0;
+    stack mut u32[0 max] firstSize = 0;
+    stack mut u32[0 max] secondOffset = 0;
+    stack mut u32[0 max] secondSize = 0;
+    stack u32[0 max] slotEnd = (u32[0 max])(slotStart + slotSize);
+    stack u64[0 2 ** 63 - 1] count = units.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] unitOffset = units.OffsetAt(index);
+        stack u32[0 max] unitSize = units.SizeAt(index);
+        stack u32[0 max] unitEnd = (u32[0 max])(unitOffset + unitSize);
+        if (unitOffset < slotEnd && unitEnd > slotStart)
+        {
+            any = true;
+            if (unitOffset < slotStart || unitEnd > slotEnd)
+            {
+                return AbiCarrierKind.None;
+            }
+
+            if (units.KindAt(index) == CAbiStorageKind.Integer)
+            {
+                anyInteger = true;
+            }
+            else if (units.KindAt(index) == CAbiStorageKind.Sse)
+            {
+                if (sseCount == 0)
+                {
+                    firstOffset = unitOffset;
+                    firstSize = unitSize;
+                }
+                else if (sseCount == 1)
+                {
+                    secondOffset = unitOffset;
+                    secondSize = unitSize;
+                }
+
+                sseCount = (u32[0 max])(sseCount + 1);
+            }
+        }
+    }
+
+    if (!any || anyInteger)
+    {
+        return IntegerCarrierForSize(slotSize);
+    }
+
+    if (sseCount == 1)
+    {
+        if (firstOffset == slotStart && firstSize == 4)
+        {
+            return AbiCarrierKind.F32;
+        }
+
+        if (firstOffset == slotStart && firstSize == 8)
+        {
+            return AbiCarrierKind.F64;
+        }
+    }
+
+    if (sseCount == 2
+        && firstOffset == slotStart
+        && secondOffset == (u32[0 max])(slotStart + 4)
+        && firstSize == 4
+        && secondSize == 4)
+    {
+        return AbiCarrierKind.Vector2F32;
+    }
+
+    return AbiCarrierKind.None;
+}
+
+internal fn System.Memory.MemoryStatus ClassifyCLayoutAggregate(ascii source, borrow TokenStream stream, u32[0 max] structKeyword, mut borrow CAbiAggregateCarrierFacts facts)
+    where overlap(source, stream)
+{
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var parsed):
+            fields = parsed;
+    }
+
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    if (fieldCount == 0)
+    {
+        facts.SetUnsupported();
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut CAbiStorageUnitList units = new();
+    stack mut u32[0 max] offset = 0;
+    stack mut u32[0 max] maxAlign = 1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < fieldCount; index += 1)
+    {
+        stack CAbiFieldInfo info = ClassifyCAbiScalarField(source, stream, fields.TypePrimaryAt(index));
+        if (!info.Known)
+        {
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        offset = AlignUp(offset, info.AlignBytes);
+        if (info.AlignBytes > maxAlign)
+        {
+            maxAlign = info.AlignBytes;
+        }
+
+        switch (units.Append(offset, info.SizeBytes, info.Kind))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        offset = (u32[0 max])(offset + info.SizeBytes);
+    }
+
+    stack u32[0 max] sizeBytes = AlignUp(offset, maxAlign);
+    if (sizeBytes == 0)
+    {
+        facts.SetUnsupported();
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (sizeBytes > 16)
+    {
+        facts.SetIndirect(sizeBytes, maxAlign);
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] carrierCount = 0;
+    stack mut AbiCarrierKind carrier0 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier1 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier2 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier3 = AbiCarrierKind.None;
+    stack mut u32[0 max] slotStart = 0;
+    while willexit (slotStart < sizeBytes)
+    {
+        stack mut u32[0 max] slotSize = 8;
+        if ((u32[0 max])(sizeBytes - slotStart) < 8)
+        {
+            slotSize = (u32[0 max])(sizeBytes - slotStart);
+        }
+
+        stack AbiCarrierKind carrier = SlotCarrierForUnits(units, slotStart, slotSize);
+        if (carrier == AbiCarrierKind.None)
+        {
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        switch (carrierCount)
+        {
+            case 0:
+                carrier0 = carrier;
+            case 1:
+                carrier1 = carrier;
+            case 2:
+                carrier2 = carrier;
+            case 3:
+                carrier3 = carrier;
+            default:
+                facts.SetUnsupported();
+                return System.Memory.MemoryStatus.Ok;
+        }
+
+        carrierCount = (u32[0 max])(carrierCount + 1);
+        slotStart = (u32[0 max])(slotStart + 8);
+    }
+
+    facts.SetDirect(sizeBytes, maxAlign, carrierCount, carrier0, carrier1, carrier2, carrier3);
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<CLayoutAggregateTable> BuildCLayoutAggregateTable(ascii source, borrow TokenStream stream, borrow DeclarationList decls)
+    where overlap(source, stream), overlap(source, decls), overlap(stream, decls)
+{
+    stack mut CLayoutAggregateTable table = new();
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if ((item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+            && item.NameToken != 0
+            && DeclarationHasStructLayoutCAttribute(source, stream, item))
+        {
+            stack mut CAbiAggregateCarrierFacts facts = new();
+            switch (ClassifyCLayoutAggregate(source, stream, item.KeywordToken, facts))
+            {
+                case System.Memory.MemoryStatus.Err(var classifyError):
+                    return BindResult<CLayoutAggregateTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (table.Append(item.NameToken, item.KeywordToken, facts))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<CLayoutAggregateTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<CLayoutAggregateTable>.Ok(table);
+}
+
+internal fn u32[0 max] LookupCLayoutAggregateByTypeToken(borrow CLayoutAggregateTable table, ascii source, borrow TokenStream stream, u32[0 max] typeToken)
+    where overlap(source, stream)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), typeToken))
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}

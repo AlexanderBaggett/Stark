@@ -17,6 +17,216 @@ internal sealed partial class LlvmFunctionBodyEmitter
             instruction.LoopAccessGroups);
     }
 
+    private void EmitTailCallTerminator(SsaTerminator terminator)
+    {
+        if (_abiFunction.ReturnsIndirect)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail-callable function '{_function.Name}' cannot use an indirect return ABI shape.");
+        }
+
+        if (!_abiFunction.UsesTailCallingConvention)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail-call terminator in '{_function.Name}' requires the caller to lower with tailcc.");
+        }
+
+        if (terminator.TailDirectCall is { } directCall)
+        {
+            var abiCallee = _resolveCallAbi(_function.Name, directCall.FunctionName)
+                ?? throw new UnsupportedBodyEmissionException($"Missing ABI lowering for tail-call target '{directCall.FunctionName}'.");
+            EmitTailCall(
+                abiCallee,
+                RenderCallTarget(abiCallee),
+                directCall,
+                ResolveCallParameterEffects(directCall.FunctionName),
+                ResolveCallMemoryEffects(directCall.FunctionName),
+                callSiteAttributeSuffix: string.Empty,
+                calleesMetadataSuffix: string.Empty);
+            return;
+        }
+
+        if (terminator.TailIndirectCall is { } indirectCall)
+        {
+            var abiCallee = BuildIndirectCallAbi(indirectCall);
+            var callSiteAttributes = _attributeBuilder.BuildFunctionPointerCallSiteAttributes(
+                abiCallee,
+                indirectCall.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            var callSiteAttributeSuffix = string.IsNullOrWhiteSpace(callSiteAttributes)
+                ? string.Empty
+                : $" {callSiteAttributes}";
+            var parameterEffects = BuildIndirectCallParameterEffects(abiCallee, indirectCall.Target.Type);
+            EmitTailCall(
+                abiCallee,
+                FormatValue(indirectCall.Target),
+                indirectCall,
+                parameterEffects,
+                BuildIndirectCallMemoryEffects(parameterEffects, indirectCall.Target.Type),
+                callSiteAttributeSuffix,
+                GetKnownCalleesMetadataSuffix(indirectCall.Target));
+            return;
+        }
+
+        throw new UnsupportedBodyEmissionException("SSA tail-call terminator is missing its call operation.");
+    }
+
+    private void EmitTailCall(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        ISsaDirectCallOperation call,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        FunctionMemoryEffectSummary? memoryEffects,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix)
+    {
+        ValidateMustTailAbi(abiCallee, call.Text);
+        var renderedArguments = RenderMustTailArguments(abiCallee, call.Arguments, parameterEffects);
+        var callMetadataSuffix = GetCallInstructionMetadataSuffix(
+            abiCallee,
+            call.Arguments,
+            call.IndirectArgumentAddresses,
+            call.IndirectArgumentLocalNames,
+            parameterEffects,
+            memoryEffects,
+            scopedNoAliasGroups: null,
+            loopAccessGroups: null);
+        EmitMustTailCallAndReturn(
+            abiCallee,
+            callTarget,
+            renderedArguments,
+            callSiteAttributeSuffix,
+            calleesMetadataSuffix,
+            callMetadataSuffix);
+    }
+
+    private void EmitTailCall(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        ISsaIndirectCallOperation call,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        FunctionMemoryEffectSummary? memoryEffects,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix)
+    {
+        ValidateMustTailAbi(abiCallee, call.Text);
+        var renderedArguments = RenderMustTailArguments(abiCallee, call.Arguments, parameterEffects);
+        var callMetadataSuffix = GetCallInstructionMetadataSuffix(
+            abiCallee,
+            call.Arguments,
+            call.IndirectArgumentAddresses,
+            call.IndirectArgumentLocalNames,
+            parameterEffects,
+            memoryEffects,
+            scopedNoAliasGroups: null,
+            loopAccessGroups: null);
+        EmitMustTailCallAndReturn(
+            abiCallee,
+            callTarget,
+            renderedArguments,
+            callSiteAttributeSuffix,
+            calleesMetadataSuffix,
+            callMetadataSuffix);
+    }
+
+    private void ValidateMustTailAbi(AbiFunctionSignature abiCallee, string callText)
+    {
+        if (!abiCallee.UsesTailCallingConvention)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets a function that did not lower with tailcc.");
+        }
+
+        if (abiCallee.IsFfi || abiCallee.IsVarargs || abiCallee.FfiAbi is not null)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an FFI or varargs ABI, which cannot satisfy Stark's guaranteed tail-call contract.");
+        }
+
+        if (abiCallee.ReturnsIndirect)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an indirect-return ABI shape.");
+        }
+
+        if (abiCallee.UserParameters.Any(IsUnsupportedMustTailParameter))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an ABI shape with indirect parameters.");
+        }
+
+        if (MapType(abiCallee.LlvmReturnType) != MapType(_abiFunction.LlvmReturnType))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' return ABI '{abiCallee.LlvmReturnType.DisplayName}' does not match caller return ABI '{_abiFunction.LlvmReturnType.DisplayName}'.");
+        }
+
+        var callerParameters = _abiFunction.UserParameters;
+        var calleeParameters = abiCallee.UserParameters;
+        if (callerParameters.Count != calleeParameters.Count)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' has {calleeParameters.Count} ABI parameter(s), but caller '{_function.Name}' has {callerParameters.Count}.");
+        }
+
+        for (var index = 0; index < callerParameters.Count; index++)
+        {
+            if (MapType(callerParameters[index].LlvmType) != MapType(calleeParameters[index].LlvmType))
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Tail call '{callText}' ABI parameter {index + 1} type '{calleeParameters[index].LlvmType.DisplayName}' does not match caller parameter type '{callerParameters[index].LlvmType.DisplayName}'.");
+            }
+        }
+    }
+
+    private static bool IsUnsupportedMustTailParameter(AbiParameterSymbol parameter)
+    {
+        return parameter.Kind != AbiParameterKind.Direct
+            && (parameter.Kind != AbiParameterKind.IndirectIn
+                || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter));
+    }
+
+    private string RenderMustTailArguments(
+        AbiFunctionSignature abiCallee,
+        IReadOnlyList<SsaValue> arguments,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        var userParameters = abiCallee.UserParameters;
+        if (userParameters.Count != arguments.Count)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"ABI parameter count mismatch for tail call '{abiCallee.DisplaySourceName}': expected {userParameters.Count}, got {arguments.Count}.");
+        }
+
+        var rendered = new List<string>(arguments.Count);
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            rendered.AddRange(RenderDirectArguments(abiCallee, userParameters[index], arguments[index], parameterEffects, includeContractAttributes: true));
+        }
+
+        return string.Join(", ", rendered);
+    }
+
+    private void EmitMustTailCallAndReturn(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        string renderedArguments,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix,
+        string callMetadataSuffix)
+    {
+        var strictFpCallSuffix = GetStrictFpCallSuffix();
+        if (_function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            AppendLine($"  musttail call tailcc void {callTarget}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+            AppendLine("  ret void");
+            return;
+        }
+
+        var result = $"%{EscapeIdentifier(CreateAbiTempName("musttail"))}";
+        AppendLine($"  {result} = musttail call tailcc {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+        AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {result}");
+    }
+
     private void EmitCall(
         string? resultName,
         string? result,
@@ -88,7 +298,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(abiCallee, parameter, argument, calleeParameterEffects, includeContractAttributes: true));
+                arguments.AddRange(RenderDirectArguments(abiCallee, parameter, argument, calleeParameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -97,6 +307,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
+                if (TryRenderForwardedPointerBackedBorrowAddress(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        indirectArgumentAddress,
+                        calleeParameterEffects,
+                        out var forwardedBorrowAddressArgument))
+                {
+                    arguments.Add(forwardedBorrowAddressArgument);
+                    continue;
+                }
+
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, FormatValue(indirectArgumentAddress), calleeParameterEffects, includeContractAttributes: true));
                 continue;
             }
@@ -106,6 +328,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (!string.IsNullOrWhiteSpace(promotedLocal))
             {
+                if (TryRenderForwardedPointerBackedBorrowArgument(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        promotedLocal!,
+                        calleeParameterEffects,
+                        out var forwardedBorrowArgument))
+                {
+                    arguments.Add(forwardedBorrowArgument);
+                    continue;
+                }
+
                 var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
                     candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
                 if (promotedParameter is not null)
@@ -128,16 +362,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
-            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+            if ((StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+                    || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, forwardedSourceAddress, calleeParameterEffects, includeContractAttributes: true));
                 continue;
             }
 
+            var tempSlotType = GetIndirectArgumentTemporaryStorageType(parameter.SourceType);
             var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"callarg_{parameter.SourceName}"))}";
-            QueueStaticAlloca(tempSlot, parameter.SourceType);
-            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
+            QueueStaticAlloca(tempSlot, tempSlotType);
+            EmitValueToAddress(tempSlot, tempSlotType, argument, GetStackObjectAlignmentBytes(tempSlotType));
 
             arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, tempSlot, calleeParameterEffects, includeContractAttributes: true));
         }
@@ -164,9 +400,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
             callPrefixSegments.Add("fast");
         }
 
-        if (abiCallee.UsesFastCallingConvention)
+        if (abiCallee.UsesTailCallingConvention)
+        {
+            callPrefixSegments.Add("tailcc");
+        }
+        else if (abiCallee.UsesFastCallingConvention)
         {
             callPrefixSegments.Add("fastcc");
+        }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiCallee.FfiAbi) is { } callingConvention)
+        {
+            callPrefixSegments.Add(callingConvention);
         }
 
         var callPrefix = string.Join(" ", callPrefixSegments);
@@ -179,7 +423,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             calleeParameterEffects,
             calleeMemoryEffects,
             scopedNoAliasGroups,
-            loopAccessGroups);
+            loopAccessGroups,
+            abiCallee.ReturnsIndirect && resultName is not null
+                ? CreateScopedAliasFreshResultRootKey(resultName)
+                : null);
 
         if (abiCallee.ReturnsIndirect)
         {
@@ -205,6 +452,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (resultName is null || result is null)
         {
             AppendLine($"  {callPrefix} {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callMetadataSuffix}");
+            return;
+        }
+
+        if (CAbiAggregateClassifier.IsCarrierType(abiCallee.SourceReturnType, abiCallee.LlvmReturnType))
+        {
+            var carrierResult = $"%{EscapeIdentifier(CreateAbiTempName("ffi_ret_carrier"))}";
+            AppendLine($"  {carrierResult} = {callPrefix} {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callMetadataSuffix}");
+            MaterializeSourceValueFromCAbiCarrier(
+                carrierResult,
+                abiCallee.LlvmReturnType,
+                sourceReturnType,
+                resultName,
+                "ffi_ret");
             return;
         }
 
@@ -242,24 +502,53 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 return false;
             }
 
-            if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var value))
+            if (IsSupportedDictionaryKeyScalarType(keyType))
             {
-                return false;
+                if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var value))
+                {
+                    return false;
+                }
+
+                EmitDictionaryKeyHashValue(result, keyType, value);
+                return true;
             }
 
-            EmitDictionaryKeyHashValue(result, keyType, value);
-            return true;
+            if (IsSupportedDictionaryKeyTextType(keyType)
+                && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[0], 0, keyType, out var textValue))
+            {
+                EmitDictionaryKeyTextHashValue(result, keyType, textValue);
+                return true;
+            }
+
+            return false;
         }
 
-        if (call.Type.Kind != StarkTypeKind.Bool
-            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var left)
-            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[1], 1, keyType, out var right))
+        if (call.Type.Kind != StarkTypeKind.Bool)
         {
             return false;
         }
 
-        AppendLine($"  {result} = icmp eq {MapType(keyType)} {left}, {right}");
-        return true;
+        if (IsSupportedDictionaryKeyScalarType(keyType))
+        {
+            if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var left)
+                || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[1], 1, keyType, out var right))
+            {
+                return false;
+            }
+
+            AppendLine($"  {result} = icmp eq {MapType(keyType)} {left}, {right}");
+            return true;
+        }
+
+        if (IsSupportedDictionaryKeyTextType(keyType)
+            && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[0], 0, keyType, out var leftText)
+            && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[1], 1, keyType, out var rightText))
+        {
+            EmitDictionaryKeyTextEqualsValue(result, keyType, leftText, rightText);
+            return true;
+        }
+
+        return false;
     }
 
     private static DictionaryKeyCallSiteOperation? TryResolveDictionaryKeyCallSiteOperation(
@@ -327,7 +616,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         var firstParameterType = NormalizeDictionaryKeyType(userParameters[0].SourceType);
         if (userParameters[0].SourceType.BorrowKind != StarkBorrowKind.None
-            && IsSupportedDictionaryKeyScalarType(firstParameterType))
+            && IsSupportedDictionaryKeyBuiltinType(firstParameterType))
         {
             keyType = firstParameterType;
         }
@@ -340,7 +629,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         {
             var parameterType = NormalizeDictionaryKeyType(userParameters[index].SourceType);
             if (userParameters[index].SourceType.BorrowKind != StarkBorrowKind.None
-                && IsSupportedDictionaryKeyScalarType(parameterType))
+                && IsSupportedDictionaryKeyBuiltinType(parameterType))
             {
                 if (parameterType != keyType)
                 {
@@ -366,7 +655,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         out StarkTypeSymbol keyType)
     {
         keyType = NormalizeDictionaryKeyType(call.Arguments[argumentIndex].Type);
-        if (IsSupportedDictionaryKeyScalarType(keyType))
+        if (IsSupportedDictionaryKeyBuiltinType(keyType))
         {
             return true;
         }
@@ -377,7 +666,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (indirectArgumentAddress?.Type is { Kind: StarkTypeKind.RawPointer, ElementType: not null } pointerType)
         {
             keyType = NormalizeDictionaryKeyType(pointerType.ElementType);
-            return IsSupportedDictionaryKeyScalarType(keyType);
+            return IsSupportedDictionaryKeyBuiltinType(keyType);
         }
 
         keyType = StarkTypeSymbols.Error;
@@ -481,6 +770,98 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return loaded;
     }
 
+    private bool TryMaterializeDictionaryKeyAggregateArgument(
+        SsaCallRValue call,
+        AbiParameterSymbol parameter,
+        int argumentIndex,
+        StarkTypeSymbol keyType,
+        out string value)
+    {
+        value = string.Empty;
+        var argument = call.Arguments[argumentIndex];
+        if (parameter.Kind == AbiParameterKind.Direct)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        if (parameter.Kind != AbiParameterKind.IndirectIn)
+        {
+            return false;
+        }
+
+        var llvmType = MapType(keyType);
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress is not null)
+        {
+            value = LoadDictionaryKeyAggregateValue(
+                llvmType,
+                FormatValue(indirectArgumentAddress),
+                GetKnownPointerAlignmentSuffix(indirectArgumentAddress, keyType),
+                $"dict_key_text_arg_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        var promotedLocal = call.IndirectArgumentLocalNames is not null && argumentIndex < call.IndirectArgumentLocalNames.Count
+            ? call.IndirectArgumentLocalNames[argumentIndex]
+            : null;
+        if (!string.IsNullOrWhiteSpace(promotedLocal))
+        {
+            var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
+                candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
+            if (promotedParameter is not null)
+            {
+                if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
+                {
+                    value = LoadDictionaryKeyAggregateValue(
+                        llvmType,
+                        $"%{EscapeIdentifier(promotedParameter.LlvmName)}",
+                        GetTypeAlignmentSuffix(keyType),
+                        $"dict_key_text_param_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                    return true;
+                }
+
+                EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
+                value = LoadDictionaryKeyAggregateValue(
+                    llvmType,
+                    $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}",
+                    GetStackObjectAlignmentSuffix(keyType),
+                    $"dict_key_text_param_slot_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                return true;
+            }
+
+            EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
+            value = LoadDictionaryKeyAggregateValue(
+                llvmType,
+                GetLocalSlotPointer(promotedLocal!),
+                GetLocalSlotAlignmentSuffix(promotedLocal!, keyType),
+                $"dict_key_text_local_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        if (argument.Type.BorrowKind == StarkBorrowKind.None
+            && NormalizeDictionaryKeyType(argument.Type) == keyType)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        return false;
+    }
+
+    private string LoadDictionaryKeyAggregateValue(
+        string llvmType,
+        string address,
+        string alignmentSuffix,
+        string tempPrefix)
+    {
+        var loaded = $"%{EscapeIdentifier(CreateAbiTempName(tempPrefix))}";
+        AppendLine($"  {loaded} = load {llvmType}, ptr {address}{alignmentSuffix}");
+        return loaded;
+    }
+
     private void EmitDictionaryKeyHashValue(string result, StarkTypeSymbol keyType, string value)
     {
         var llvmType = MapType(keyType);
@@ -501,6 +882,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
         AppendLine($"  {result} = {opcode} {llvmType} {value} to i64");
     }
 
+    private void EmitDictionaryKeyTextHashValue(string result, StarkTypeSymbol keyType, string value)
+    {
+        var helperName = keyType.Kind == StarkTypeKind.Ascii
+            ? AsciiHashHelperName
+            : UnicodeHashHelperName;
+        AppendLine($"  {result} = call i64 @{EscapeIdentifier(helperName)}({MapType(keyType)} {value})");
+    }
+
+    private void EmitDictionaryKeyTextEqualsValue(string result, StarkTypeSymbol keyType, string left, string right)
+    {
+        var helperName = keyType.Kind == StarkTypeKind.Ascii
+            ? AsciiEqualityHelperName
+            : UnicodeEqualityHelperName;
+        AppendLine($"  {result} = call i1 @{EscapeIdentifier(helperName)}({MapType(keyType)} {left}, {MapType(keyType)} {right})");
+    }
+
     private static StarkTypeSymbol NormalizeDictionaryKeyType(StarkTypeSymbol type)
     {
         return StarkTypeSymbols.WithQualifiers(
@@ -514,6 +911,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private static bool IsSupportedDictionaryKeyScalarType(StarkTypeSymbol type)
     {
         return type.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
+    }
+
+    private static bool IsSupportedDictionaryKeyTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private static bool IsSupportedDictionaryKeyBuiltinType(StarkTypeSymbol type)
+    {
+        return IsSupportedDictionaryKeyScalarType(type)
+            || IsSupportedDictionaryKeyTextType(type);
     }
 
     private bool TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(
@@ -874,7 +1282,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return escapedName;
         }
 
-        var parameterTypes = abiCallee.Parameters
+        var parameterTypes = abiCallee.LlvmParameters
             .Select(parameter => MapType(parameter.LlvmType))
             .Append("...");
         return $"({string.Join(", ", parameterTypes)}) {escapedName}";
@@ -949,7 +1357,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(abiCallee, parameter, argument, parameterEffects, includeContractAttributes: true));
+                arguments.AddRange(RenderDirectArguments(abiCallee, parameter, argument, parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -958,6 +1366,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
+                if (TryRenderForwardedPointerBackedBorrowAddress(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        indirectArgumentAddress,
+                        parameterEffects,
+                        out var forwardedBorrowAddressArgument))
+                {
+                    arguments.Add(forwardedBorrowAddressArgument);
+                    continue;
+                }
+
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, FormatValue(indirectArgumentAddress), parameterEffects, includeContractAttributes: true));
                 continue;
             }
@@ -967,6 +1387,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (!string.IsNullOrWhiteSpace(promotedLocal))
             {
+                if (TryRenderForwardedPointerBackedBorrowArgument(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        promotedLocal!,
+                        parameterEffects,
+                        out var forwardedBorrowArgument))
+                {
+                    arguments.Add(forwardedBorrowArgument);
+                    continue;
+                }
+
                 var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
                     candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
                 if (promotedParameter is not null)
@@ -989,16 +1421,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
-            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+            if ((StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+                    || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, forwardedSourceAddress, parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
+            var tempSlotType = GetIndirectArgumentTemporaryStorageType(parameter.SourceType);
             var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"indirect_callarg_{parameter.SourceName}"))}";
-            QueueStaticAlloca(tempSlot, parameter.SourceType);
-            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
+            QueueStaticAlloca(tempSlot, tempSlotType);
+            EmitValueToAddress(tempSlot, tempSlotType, argument, GetStackObjectAlignmentBytes(tempSlotType));
 
             arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, tempSlot, parameterEffects, includeContractAttributes: true));
         }
@@ -1009,7 +1443,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
             callPrefixSegments.Add("fast");
         }
 
-        callPrefixSegments.Add("fastcc");
+        if (abiCallee.UsesTailCallingConvention)
+        {
+            callPrefixSegments.Add("tailcc");
+        }
+        else if (abiCallee.UsesFastCallingConvention)
+        {
+            callPrefixSegments.Add("fastcc");
+        }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiCallee.FfiAbi) is { } callingConvention)
+        {
+            callPrefixSegments.Add(callingConvention);
+        }
         var callPrefix = string.Join(" ", callPrefixSegments);
         var renderedArguments = string.Join(", ", arguments);
         var strictFpCallSuffix = GetStrictFpCallSuffix();
@@ -1028,7 +1473,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             parameterEffects,
             BuildIndirectCallMemoryEffects(parameterEffects, call.Target.Type),
             scopedNoAliasGroups,
-            loopAccessGroups);
+            loopAccessGroups,
+            abiCallee.ReturnsIndirect && resultName is not null
+                ? CreateScopedAliasFreshResultRootKey(resultName)
+                : null);
 
         if (abiCallee.ReturnsIndirect)
         {
@@ -1057,6 +1505,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
+        if (CAbiAggregateClassifier.IsCarrierType(abiCallee.SourceReturnType, abiCallee.LlvmReturnType))
+        {
+            var carrierResult = $"%{EscapeIdentifier(CreateAbiTempName("indirect_ffi_ret_carrier"))}";
+            AppendLine($"  {carrierResult} = {callPrefix} {RenderCallResultType(abiCallee)} {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+            MaterializeSourceValueFromCAbiCarrier(
+                carrierResult,
+                abiCallee.LlvmReturnType,
+                sourceReturnType,
+                resultName,
+                "indirect_ffi_ret");
+            return;
+        }
+
         AppendLine($"  {result} = {callPrefix} {RenderCallResultType(abiCallee)} {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}{calleesMetadataSuffix}{callMetadataSuffix}");
     }
 
@@ -1070,7 +1531,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var targets = new SortedSet<string>(StringComparer.Ordinal);
         return TryCollectKnownFunctionPointerTargets(target, targets, new HashSet<string>(StringComparer.Ordinal))
             && targets.Count > 1
-            ? $", !callees {_context.GetMetadataTupleRef(targets.Select(static name => $"ptr @{EscapeIdentifier(name)}").ToArray())}"
+            ? $", !callees {_context.GetMetadataTupleRef(targets.Select(name => $"ptr @{EscapeIdentifier(ResolveFunctionAddressSymbolName(name))}").ToArray())}"
             : string.Empty;
     }
 
@@ -1284,7 +1745,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return new FunctionMemoryEffectSummary(
             ReadsArgumentMemory: parameters.Any(static parameter => parameter.Reads),
             WritesArgumentMemory: parameters.Any(static parameter => parameter.Writes),
-            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None));
+            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
+            InitializesArgumentMemory: parameters.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
+            HasPointeeDeadOnReturnArgument: parameters.Any(static parameter => parameter.PointeeDeadOnReturn));
     }
 
     private string GetCallInstructionMetadataSuffix(
@@ -1295,7 +1758,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyList<ScopedNoAliasGroup>? scopedNoAliasGroups,
-        IReadOnlyList<string>? loopAccessGroups)
+        IReadOnlyList<string>? loopAccessGroups,
+        string? indirectResultRootKey = null)
     {
         if (memoryEffects is null
             || !CanAttachCallMemoryMetadata(memoryEffects))
@@ -1312,6 +1776,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 parameterEffects,
                 memoryEffects,
                 scopedNoAliasGroups,
+                indirectResultRootKey,
                 out var rootKeys))
         {
             suffix += GetCallScopedNoAliasMetadataSuffix(rootKeys, scopedNoAliasGroups);
@@ -1337,10 +1802,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         FunctionMemoryEffectSummary memoryEffects,
         IReadOnlyList<ScopedNoAliasGroup>? scopedNoAliasGroups,
+        string? indirectResultRootKey,
         out IReadOnlySet<string> rootKeys)
     {
         var collected = new HashSet<string>(StringComparer.Ordinal);
         var allowedRootKeys = BuildScopedNoAliasRootSet(scopedNoAliasGroups);
+
+        // An indirect (sret) return is a WRITE by the callee into the result
+        // slot. The slot's fresh scope must sit in the call's alias.scope, or
+        // the slot reload after the call — which claims exactly that scope —
+        // is provably independent of the call and LLVM forwards the stale
+        // pre-call bytes (the enum-owner scan folded to `ret false` this way).
+        // The fresh-result root lives in the function-scoped registry; keys
+        // unknown to either ref builder are ignored, so add unconditionally.
+        if (indirectResultRootKey is not null)
+        {
+            collected.Add(indirectResultRootKey);
+        }
+
         var userParameters = abiCallee.UserParameters;
         for (var index = 0; index < userParameters.Count; index++)
         {
@@ -1559,6 +2038,206 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
     }
 
+    private bool TryRenderForwardedPointerBackedBorrowArgument(
+        AbiFunctionSignature abiCallee,
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        string? promotedLocalName,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out string renderedArgument)
+    {
+        renderedArgument = string.Empty;
+        if (promotedLocalName is { Length: > 0 }
+            && TryResolveSingleStoreLocalValue(promotedLocalName, out var storedValue)
+            && StarkTypeSymbols.IsPointerBackedBorrowType(storedValue.Type)
+            && TryResolveAggregateSourceAddress(storedValue, storedValue.Type, out var promotedSourceAddress))
+        {
+            renderedArgument = RenderIndirectArgumentPointer(
+                abiCallee,
+                parameter,
+                promotedSourceAddress,
+                parameterEffects,
+                includeContractAttributes: true);
+            return true;
+        }
+
+        if (!TryGetPointerBackedBorrowArgumentType(parameter, argument, out var borrowType))
+        {
+            return false;
+        }
+
+        if (!TryResolveAggregateSourceAddress(argument, borrowType, out var forwardedSourceAddress))
+        {
+            return false;
+        }
+
+        renderedArgument = RenderIndirectArgumentPointer(
+            abiCallee,
+            parameter,
+            forwardedSourceAddress,
+            parameterEffects,
+            includeContractAttributes: true);
+        return true;
+    }
+
+    private static StarkTypeSymbol GetIndirectArgumentTemporaryStorageType(StarkTypeSymbol parameterSourceType)
+    {
+        return StarkTypeSymbols.IsPointerBackedBorrowType(parameterSourceType)
+            ? StarkTypeSymbols.BorrowReturnValueType(parameterSourceType)
+            : parameterSourceType;
+    }
+
+    private bool TryRenderForwardedPointerBackedBorrowAddress(
+        AbiFunctionSignature abiCallee,
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        SsaValue indirectArgumentAddress,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out string renderedArgument)
+    {
+        renderedArgument = string.Empty;
+        if (TryGetPointerBackedBorrowArgumentType(parameter, argument, out var borrowType)
+            && TryResolvePointerBackedBorrowIndirectAddress(
+                indirectArgumentAddress,
+                borrowType,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var forwardedSourceAddress))
+        {
+            renderedArgument = RenderIndirectArgumentPointer(
+                abiCallee,
+                parameter,
+                forwardedSourceAddress,
+                parameterEffects,
+                includeContractAttributes: true);
+            return true;
+        }
+
+        if (!TryResolveLocalAddressRoot(indirectArgumentAddress, out var localName))
+        {
+            return false;
+        }
+
+        return TryRenderForwardedPointerBackedBorrowArgument(
+            abiCallee,
+            parameter,
+            argument,
+            localName,
+            parameterEffects,
+            out renderedArgument);
+    }
+
+    private bool TryResolvePointerBackedBorrowIndirectAddress(
+        SsaValue address,
+        StarkTypeSymbol borrowType,
+        ISet<string> visitedValueNames,
+        out string sourceAddress)
+    {
+        sourceAddress = string.Empty;
+        if (address is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name)
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolvePointerBackedBorrowIndirectAddress(
+                    use.Value,
+                    borrowType,
+                    visitedValueNames,
+                    out sourceAddress);
+            case SsaAddressOfParameterRValue addressOfParameter
+                when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfParameter.PointeeType)
+                     && _abiFunction.UserParameters.Any(parameter =>
+                         string.Equals(parameter.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal)
+                         && StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)):
+                sourceAddress = FormatValue(reference);
+                return true;
+            case SsaAddressOfLocalRValue addressOfLocal
+                when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfLocal.PointeeType):
+                if ((TryResolveSingleStoreLocalValue(addressOfLocal.LocalName, out var storedValue)
+                        || TryResolveCurrentStoredLocalValue(addressOfLocal.LocalName, out storedValue))
+                    && TryResolveStoredPointerBackedBorrowSource(storedValue, borrowType, out var storedSourceAddress))
+                {
+                    sourceAddress = storedSourceAddress;
+                    return true;
+                }
+
+                EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+                sourceAddress = EmitPointerBackedBorrowSlotLoad(
+                    GetLocalSlotPointer(addressOfLocal.LocalName),
+                    GetLocalSlotAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool TryResolveCurrentStoredLocalValue(string localName, out SsaValue value)
+    {
+        value = null!;
+        if (_currentBlock is null || _currentInstructionIndex <= 0)
+        {
+            return false;
+        }
+
+        for (var index = _currentInstructionIndex - 1; index >= 0; index--)
+        {
+            var instruction = _currentBlock.Instructions[index];
+            if (instruction is SsaStoreLocalInstruction storeLocal
+                && string.Equals(storeLocal.LocalName, localName, StringComparison.Ordinal))
+            {
+                value = storeLocal.Value;
+                return true;
+            }
+
+            if (InstructionMayOverwriteLocalStorage(instruction, localName, index))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryResolveStoredPointerBackedBorrowSource(
+        SsaValue storedValue,
+        StarkTypeSymbol borrowType,
+        out string sourceAddress)
+    {
+        if (storedValue is SsaValueReference storedReference
+            && _valueAliases.TryGetValue(storedReference.Name, out var alias))
+        {
+            sourceAddress = alias;
+            return true;
+        }
+
+        return TryResolveAggregateSourceAddress(storedValue, borrowType, out sourceAddress);
+    }
+
+    private static bool TryGetPointerBackedBorrowArgumentType(
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        out StarkTypeSymbol borrowType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType))
+        {
+            borrowType = parameter.SourceType;
+            return true;
+        }
+
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(argument.Type))
+        {
+            borrowType = argument.Type;
+            return true;
+        }
+
+        borrowType = StarkTypeSymbols.Error;
+        return false;
+    }
+
     private AbiFunctionSignature BuildIndirectCallAbi(ISsaIndirectCallOperation call)
     {
         if (call.Target.Type.FunctionPointerReturnType is not { } returnType
@@ -1579,18 +2258,25 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         index)))
                 .ToArray(),
             Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: call.Target.Type.FunctionPointerIsTailCallable,
+            FfiAbi: call.Target.Type.FunctionPointerAbi,
             DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
+            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: call.Target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
+        var isFfi = call.Target.Type.FunctionPointerAbi is not null;
         return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
             "$indirect",
-            isFfi: false,
+            isFfi,
             _context.TypeModel.NamedTypes,
-            _context.EnumLayouts);
+            _context.EnumLayouts,
+            ffiAbi: call.Target.Type.FunctionPointerAbi,
+            targetInfo: _context.TargetInfo,
+            publishedConcreteLayouts: _publishedConcreteLayouts);
     }
 
-    private static IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
         AbiFunctionSignature abiCallee,
         StarkTypeSymbol functionPointerType)
     {
@@ -1610,10 +2296,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 static parameter => parameter.SourceName,
                 parameter =>
                 {
+                    var pointeeDeadOnReturn = functionPointerType.FunctionPointerPointeeDeadOnReturnParameterNames?.Contains(parameter.SourceName, StringComparer.Ordinal) == true;
                     var guaranteedReadOnly = DeriveIndirectCallParameterReadOnly(parameter.SourceType);
                     var guaranteedWriteOnly = parameter.SourceType.InitializationKind != StarkInitializationKind.None;
                     var reads = !guaranteedWriteOnly;
                     var writes = guaranteedWriteOnly || !guaranteedReadOnly;
+                    var initializationRanges = TryGetFunctionPointerParameterInitializationRanges(parameter.SourceType);
                     return new ParameterMemoryEffectSummary(
                         parameter.SourceName,
                         parameter.SourceType.DisplayName,
@@ -1630,9 +2318,44 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         AlignmentBytes: null,
                         Reads: reads,
                         Writes: writes,
-                        CaptureKind: ParameterCaptureKind.Escape);
+                        CaptureKind: ParameterCaptureKind.Escape,
+                        InitializationRanges: initializationRanges,
+                        PointeeDeadOnReturn: pointeeDeadOnReturn);
                 },
                 StringComparer.Ordinal);
+    }
+
+    private IReadOnlyList<ParameterInitializationRangeSummary>? TryGetFunctionPointerParameterInitializationRanges(
+        StarkTypeSymbol type)
+    {
+        if (type.InitializationKind == StarkInitializationKind.None)
+        {
+            return null;
+        }
+
+        var storageType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? StarkTypeSymbols.BorrowReturnValueType(type)
+            : type;
+        if (type.InitializationKind == StarkInitializationKind.Init
+            && storageType.Kind == StarkTypeKind.Slice)
+        {
+            return null;
+        }
+
+        if (storageType.BorrowKind != StarkBorrowKind.None
+            || storageType.InitializationKind != StarkInitializationKind.None)
+        {
+            storageType = StarkTypeSymbols.WithQualifiers(
+                storageType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+        }
+
+        return TryGetConcreteTypeLayout(storageType) is { SizeBytes: > 0 } layout
+            ? [new ParameterInitializationRangeSummary(0, layout.SizeBytes)]
+            : null;
     }
 
     private static bool IsFunctionPointerParameterNoAliasAgainstAll(

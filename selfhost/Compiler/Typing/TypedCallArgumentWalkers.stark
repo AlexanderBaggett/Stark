@@ -1,0 +1,246 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallArgumentLookup
+import Compiler.Typing.TypedCallArgumentSourceFacts
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+module Compiler.Typing.TypedCallArgumentWalkers
+
+internal fn void TypedCallArgumentFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow ExprTree tree,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut u32[0 max] current = node;
+    stack mut u32[0 max] fallback = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(tree.Count() + 1);
+    while willexit (guard > 0 && current != 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = tree.NodeKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] identifierIndexPlusOne = TypedCallIdentifierIndexForNode(
+                identifiers,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromIdentifier(identifiers, identifierIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] callIndexPlusOne = TypedCallPriorCallIndexForNode(
+                calls,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromCallReturn(calls, callIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            TypedCallFactsFromTypeSpan(source, stream, (u32[0 max])(tree.TokenAt(current) + 1), tree.AuxAt(current), facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.New)
+        {
+            stack u32[0 max] typeNode = tree.LeftAt(current);
+            if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                TypedCallFactsFromNewTypeToken(tree.TokenAt(typeNode), facts);
+            }
+
+            return;
+        }
+
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            stack u32[0 max] literalIndexPlusOne = TypedCallLiteralIndexForNode(
+                literals,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromLiteral(literals, literalIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(current));
+            if (TypedCallOperatorYieldsBool(op))
+            {
+                TypedCallBoolFacts(tree.TokenAt(current), facts);
+                return;
+            }
+
+            fallback = tree.RightAt(current);
+            current = tree.LeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(current)) == TokenKind.Bang)
+            {
+                TypedCallBoolFacts(tree.TokenAt(current), facts);
+                return;
+            }
+
+            current = tree.LeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Conditional || kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            current = tree.RightAt(current);
+        }
+        else if (fallback != 0)
+        {
+            current = fallback;
+            fallback = 0;
+        }
+        else
+        {
+            current = 0;
+        }
+    }
+}
+
+internal fn void TypedCallArgumentFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow StatementList body,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut u32[0 max] current = node;
+    stack mut u32[0 max] fallback = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ExprNodeCount() + 1);
+    while willexit (guard > 0 && current != 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] identifierIndexPlusOne = TypedCallIdentifierIndexForNode(
+                identifiers,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromIdentifier(identifiers, identifierIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] callIndexPlusOne = TypedCallPriorCallIndexForNode(
+                calls,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromCallReturn(calls, callIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            TypedCallFactsFromTypeSpan(source, stream, (u32[0 max])(body.ExprTokenAt(current) + 1), body.ExprAuxAt(current), facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.New)
+        {
+            stack u32[0 max] typeNode = body.ExprLeftAt(current);
+            if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                TypedCallFactsFromNewTypeToken(body.ExprTokenAt(typeNode), facts);
+            }
+
+            return;
+        }
+
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            stack u32[0 max] literalIndexPlusOne = TypedCallLiteralIndexForNode(
+                literals,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromLiteral(literals, literalIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current));
+            if (TypedCallOperatorYieldsBool(op))
+            {
+                TypedCallBoolFacts(body.ExprTokenAt(current), facts);
+                return;
+            }
+
+            fallback = body.ExprRightAt(current);
+            current = body.ExprLeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current)) == TokenKind.Bang)
+            {
+                TypedCallBoolFacts(body.ExprTokenAt(current), facts);
+                return;
+            }
+
+            current = body.ExprLeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Conditional || kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            current = body.ExprRightAt(current);
+        }
+        else if (fallback != 0)
+        {
+            current = fallback;
+            fallback = 0;
+        }
+        else
+        {
+            current = 0;
+        }
+    }
+}

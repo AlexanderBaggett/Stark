@@ -1,0 +1,304 @@
+{
+  "llvmVersion": "22.1.8",
+  "releaseTag": "llvmorg-22.1.8",
+  "releaseUrl": "https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8",
+  "sourceArchive": {
+    "name": "llvm-project-22.1.8.src.tar.xz",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz",
+    "sha256": "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888",
+    "size": 167061596,
+    "signature": {
+      "name": "llvm-project-22.1.8.src.tar.xz.sig",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz.sig",
+      "sha256": "052eeebd58a2df67db066c6defb3ae67572bdf098d3064b8ed111b5385d45910",
+      "size": 119
+    },
+    "attestation": {
+      "name": "llvm-project-22.1.8.src.tar.xz.jsonl",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz.jsonl",
+      "sha256": "dd4aa06bd73706743090631300c02a6d8a3df43d41d85c627ec438d5a13b3739",
+      "size": 11234
+    }
+  },
+  "copiedRoots": [
+    "bin",
+    "lib",
+    "include",
+    "share"
+  ],
+  "licenseFilePatterns": [
+    "LICENSE*",
+    "COPYRIGHT*",
+    "NOTICE*"
+  ],
+  "platforms": {
+    "linux-x64": {
+      "runtimeIdentifier": "linux-x64",
+      "archive": {
+        "name": "LLVM-22.1.8-Linux-X64.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz",
+        "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384",
+        "size": 1938859476,
+        "signature": {
+          "name": "LLVM-22.1.8-Linux-X64.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz.sig",
+          "sha256": "957277dbcae172168934e1398b7d8af561d6b86dfb38e9f96853c53483804826",
+          "size": 119
+        },
+        "attestation": {
+          "name": "LLVM-22.1.8-Linux-X64.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz.jsonl",
+          "sha256": "715503628897858c7740563f83930dab29494b4946e0213dce9191cad6401aed",
+          "size": 11109
+        }
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [
+        "lib/libLLVM*"
+      ]
+    },
+    "linux-arm64": {
+      "runtimeIdentifier": "linux-arm64",
+      "archive": {
+        "name": "LLVM-22.1.8-Linux-ARM64.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz",
+        "sha256": "805efad2bb91cb4967fa569e0881d10c0f69c04461cf671cccbae19f547acc34",
+        "size": 1771004928,
+        "signature": {
+          "name": "LLVM-22.1.8-Linux-ARM64.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz.sig",
+          "sha256": "c50a5c6a6369d9ff454404327683bcc4ab5ea0dfd320bfe36e281bc93905021d",
+          "size": 119
+        },
+        "attestation": {
+          "name": "LLVM-22.1.8-Linux-ARM64.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-ARM64.tar.xz.jsonl",
+          "sha256": "c5c1c6cff134da1a651e32f4c0e0645c8beff53d418186d3849427d062d161a2",
+          "size": 10741
+        }
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [
+        "lib/libLLVM*"
+      ]
+    },
+    "windows-x64": {
+      "runtimeIdentifier": "win-x64",
+      "archive": {
+        "name": "clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz",
+        "sha256": "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234",
+        "size": 862053924,
+        "signature": {
+          "name": "clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz.sig",
+          "sha256": "1fdf8cb3e730d7e2769b0301a24f059d6845e1023732e231092f7d00d502fc09",
+          "size": 119
+        },
+        "attestation": {
+          "name": "clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz.jsonl",
+          "sha256": "cf5e958a316021d1c1f66b9a9ac10367aa471adee01b3d6a3f8f27af0400d4be",
+          "size": 11207
+        }
+      },
+      "requiredTools": [
+        "bin/clang.exe",
+        "bin/clang++.exe",
+        "bin/lld-link.exe",
+        "bin/lld.exe",
+        "bin/llvm-ar.exe",
+        "bin/llvm-lib.exe",
+        "bin/llvm-ranlib.exe"
+      ],
+      "requiredPatterns": [
+        "bin/LLVM*.dll",
+        "lib/LLVM*.lib"
+      ]
+    },
+    "windows-arm64": {
+      "runtimeIdentifier": "win-arm64",
+      "archive": {
+        "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz",
+        "sha256": "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1",
+        "size": 737955068,
+        "signature": {
+          "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.sig",
+          "sha256": "dfa38469129d9a4f7148a8a585867127dc3af0b56b63b42a9af9fb469aef0d4d",
+          "size": 119
+        },
+        "attestation": {
+          "name": "clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz.jsonl",
+          "sha256": "2fd9ded42558d54766a667971fa9a50f60acb6e9d1458b7a88e1f36e20002b4b",
+          "size": 11297
+        }
+      },
+      "requiredTools": [
+        "bin/clang.exe",
+        "bin/clang++.exe",
+        "bin/lld-link.exe",
+        "bin/lld.exe",
+        "bin/llvm-ar.exe",
+        "bin/llvm-lib.exe",
+        "bin/llvm-ranlib.exe"
+      ],
+      "requiredPatterns": [
+        "bin/LLVM*.dll",
+        "lib/LLVM*.lib"
+      ]
+    },
+    "macos-x64": {
+      "runtimeIdentifier": "osx-x64",
+      "sourceBuild": {
+        "hostOperatingSystem": "macos",
+        "hostArchitecture": "x64",
+        "minimumDeploymentTarget": "11.0",
+        "generator": "Ninja",
+        "configuration": "Release",
+        "optimization": "O3",
+        "lto": "Thin",
+        "cmakeVersion": "3.31.6",
+        "ninjaVersion": "1.12.1",
+        "sourceSubdirectory": "llvm",
+        "projects": [
+          "clang",
+          "lld"
+        ],
+        "targetsToBuild": [
+          "AArch64",
+          "X86"
+        ],
+        "buildTarget": "install/strip",
+        "sourceDateEpoch": 0,
+        "maxParallelCompileJobs": 8,
+        "parallelLinkJobs": 1,
+        "cmakeOptions": [
+          "-DBUILD_SHARED_LIBS=OFF",
+          "-DCLANG_INCLUDE_DOCS=OFF",
+          "-DCLANG_INCLUDE_TESTS=OFF",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_OSX_ARCHITECTURES=x86_64",
+          "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+          "-DLLVM_APPEND_VC_REV=OFF",
+          "-DLLVM_BUILD_BENCHMARKS=OFF",
+          "-DLLVM_BUILD_EXAMPLES=OFF",
+          "-DLLVM_BUILD_LLVM_DYLIB=OFF",
+          "-DLLVM_BUILD_TESTS=OFF",
+          "-DLLVM_ENABLE_ASSERTIONS=OFF",
+          "-DLLVM_ENABLE_BINDINGS=OFF",
+          "-DLLVM_ENABLE_CURL=OFF",
+          "-DLLVM_ENABLE_EH=OFF",
+          "-DLLVM_ENABLE_LIBEDIT=OFF",
+          "-DLLVM_ENABLE_LIBXML2=OFF",
+          "-DLLVM_ENABLE_LTO=Thin",
+          "-DLLVM_ENABLE_PIC=ON",
+          "-DLLVM_ENABLE_RTTI=OFF",
+          "-DLLVM_ENABLE_ZLIB=OFF",
+          "-DLLVM_ENABLE_ZSTD=OFF",
+          "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+          "-DLLVM_INCLUDE_DOCS=OFF",
+          "-DLLVM_INCLUDE_EXAMPLES=OFF",
+          "-DLLVM_INCLUDE_TESTS=OFF",
+          "-DLLVM_LINK_LLVM_DYLIB=OFF"
+        ]
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/ld64.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [],
+      "hardlinkAliases": [
+        {
+          "path": "bin/clang++",
+          "target": "bin/clang"
+        },
+        {
+          "path": "bin/ld.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/ld64.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/llvm-ranlib",
+          "target": "bin/llvm-ar"
+        }
+      ]
+    },
+    "macos-arm64": {
+      "runtimeIdentifier": "osx-arm64",
+      "copiedRoots": [
+        "lib/clang"
+      ],
+      "archive": {
+        "name": "LLVM-22.1.8-macOS-ARM64.tar.xz",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-macOS-ARM64.tar.xz",
+        "sha256": "f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f",
+        "size": 1479903744,
+        "signature": {
+          "name": "LLVM-22.1.8-macOS-ARM64.tar.xz.sig",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-macOS-ARM64.tar.xz.sig",
+          "sha256": "97037f6ff96753758f63bc35c7a53f754e488a4bab4a648bfdf842582ea02e69",
+          "size": 119
+        },
+        "attestation": {
+          "name": "LLVM-22.1.8-macOS-ARM64.tar.xz.jsonl",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-macOS-ARM64.tar.xz.jsonl",
+          "sha256": "9fe592796c37997c71930b352b9923347980dc7b7ded8128f750b5d576920300",
+          "size": 10925
+        }
+      },
+      "requiredTools": [
+        "bin/clang",
+        "bin/clang++",
+        "bin/ld.lld",
+        "bin/ld64.lld",
+        "bin/lld",
+        "bin/llvm-ar",
+        "bin/llvm-ranlib"
+      ],
+      "requiredPatterns": [],
+      "hardlinkAliases": [
+        {
+          "path": "bin/clang++",
+          "target": "bin/clang"
+        },
+        {
+          "path": "bin/ld.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/ld64.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/llvm-ranlib",
+          "target": "bin/llvm-ar"
+        }
+      ]
+    }
+  }
+}

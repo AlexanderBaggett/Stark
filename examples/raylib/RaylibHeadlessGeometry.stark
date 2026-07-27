@@ -1,0 +1,32 @@
+import Raylib
+module RaylibHeadlessGeometry
+
+export fn i32[min max] main() {
+    stack Color color = RAYWHITE();
+    stack Vector2 point = Vec2(1.0f, 2.0f);
+    stack Rectangle left = Rect(0.0f, 0.0f, 10.0f, 10.0f);
+    stack Rectangle right = Rect(5.0f, 5.0f, 10.0f, 10.0f);
+
+    if (KEY_LEFT != 263) {
+        return 1;
+    }
+
+    if (color.A != (u8[0 max])255) {
+        return 2;
+    }
+
+    if (point.X != 1.0f) {
+        return 3;
+    }
+
+    if (!CheckCollisionRecs(left, right)) {
+        return 4;
+    }
+
+    stack Color faded = Fade(color, 0.5f);
+    if (faded.A == (u8[0 max])255) {
+        return 5;
+    }
+
+    return 0;
+}

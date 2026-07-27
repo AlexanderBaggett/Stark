@@ -1,0 +1,63 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedComparisonChainIntegrationTests
+
+// Ported from PackageImageTypedComparisonChainIntegrationTests.ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    // Covers manifest-backed comparison-chain bodies from package image through runtime execution.
+    return CompileAndRunTypedOnlyPackage(
+        "pkgimg-typed-comparison-chain-manifest-backed",
+        raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    if (!Facade.ObserveOrdered(tag))
+    {
+        return 1;
+    }
+
+    if (!Facade.ObserveEquality(tag))
+    {
+        return 2;
+    }
+
+    return 11;
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public static mut i32[min max] OrderedCalls = 0;
+public static mut i32[min max] EqualityCalls = 0;
+
+public fn i32[min max] NextOrdered()
+{
+    OrderedCalls += 1;
+    return 1;
+}
+
+public fn i32[min max] NextEquality()
+{
+    EqualityCalls += 1;
+    return 1;
+}
+
+public fn bool ObserveOrdered<T>(T tag)
+{
+    return 0 < NextOrdered() < 3;
+}
+
+public fn bool ObserveEquality<T>(T tag)
+{
+    return 1 == NextEquality() == 1;
+}
+""",
+        "Facade.ObserveOrdered",
+        "Facade.ObserveEquality",
+        11);
+}

@@ -1,0 +1,41 @@
+import Vendor.SDL3
+module SDL3BundledSmoke
+
+export fn i32[min max] main()
+{
+    stack Version version = GetVersion();
+    if (version.Major != 3 || version.Minor != 4 || version.Patch != 10)
+    {
+        return 10;
+    }
+
+    switch (Initialize(InitEvents))
+    {
+        case LibraryResult.Err(var error):
+            return 20;
+        case LibraryResult.Ok(var library):
+            if ((WasInitialized(InitEvents) & InitEvents) != InitEvents)
+            {
+                return 21;
+            }
+
+            switch (PushQuitEvent())
+            {
+                case SdlStatus.Err(var error):
+                    return 22;
+                case SdlStatus.Ok:
+                    switch (PollEvent())
+                    {
+                        case EventPollResult.None:
+                            return 23;
+                        case EventPollResult.Some(var event):
+                            if (event.Kind != SdlEventKind.Quit || event.Type != EventQuit)
+                            {
+                                return 24;
+                            }
+                    }
+            }
+
+            return 0;
+    }
+}

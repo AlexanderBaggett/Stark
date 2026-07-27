@@ -1,0 +1,691 @@
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedReturnModel
+
+public enum TypedReturnContext
+{
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedReturnValueKind
+{
+    None,
+    Identifier,
+    Member,
+    Call,
+    Index,
+    Literal,
+    New,
+    Conversion,
+    Assignment,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedReturnFlagHasValue()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedReturnFlagBare()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedReturnFlagExpectedResolved()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedReturnFlagValueResolved()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedReturnFlagExpectedVoid()
+{
+    return 16;
+}
+
+internal inline finite law bool TypedReturnFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+public struct TypedReturnExpressionTable
+{
+    internal dynamic TypedReturnContext Contexts;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] ReturnTokens;
+    internal dynamic u32[0 max] ValueNodes;
+    internal dynamic TypedReturnValueKind ValueKinds;
+    internal dynamic TypedSignatureTypeKind ExpectedTypeKinds;
+    internal dynamic u32[0 max] ExpectedTypeHeadTokens;
+    internal dynamic u32[0 max] ExpectedTypePrimaryTokens;
+    internal dynamic u32[0 max] ExpectedTypeStartTokens;
+    internal dynamic u32[0 max] ExpectedTypeEndTokens;
+    internal dynamic u32[0 max] ExpectedRangeStartTokens;
+    internal dynamic u32[0 max] ExpectedRangeEndTokens;
+    internal dynamic u32[0 max] ExpectedElementCountStartTokens;
+    internal dynamic u32[0 max] ExpectedElementCountEndTokens;
+    internal dynamic u32[0 max] ExpectedBitWidths;
+    internal dynamic u32[0 max] ExpectedTypeArgumentCounts;
+    internal dynamic u32[0 max] ExpectedComptimeArgumentCounts;
+    internal dynamic u32[0 max] ExpectedTypeFlags;
+    internal dynamic TypedSignatureTypeKind ValueTypeKinds;
+    internal dynamic u32[0 max] ValueTypeHeadTokens;
+    internal dynamic u32[0 max] ValueTypePrimaryTokens;
+    internal dynamic u32[0 max] ValueTypeStartTokens;
+    internal dynamic u32[0 max] ValueTypeEndTokens;
+    internal dynamic u32[0 max] ValueRangeStartTokens;
+    internal dynamic u32[0 max] ValueRangeEndTokens;
+    internal dynamic u32[0 max] ValueElementCountStartTokens;
+    internal dynamic u32[0 max] ValueElementCountEndTokens;
+    internal dynamic u32[0 max] ValueBitWidths;
+    internal dynamic u32[0 max] ValueTypeArgumentCounts;
+    internal dynamic u32[0 max] ValueComptimeArgumentCounts;
+    internal dynamic u32[0 max] ValueTypeFlags;
+    internal dynamic u32[0 max] ReturnFlags;
+
+    TypedReturnExpressionTable()
+    {
+        self.Contexts = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.ReturnTokens = new();
+        self.ValueNodes = new();
+        self.ValueKinds = new();
+        self.ExpectedTypeKinds = new();
+        self.ExpectedTypeHeadTokens = new();
+        self.ExpectedTypePrimaryTokens = new();
+        self.ExpectedTypeStartTokens = new();
+        self.ExpectedTypeEndTokens = new();
+        self.ExpectedRangeStartTokens = new();
+        self.ExpectedRangeEndTokens = new();
+        self.ExpectedElementCountStartTokens = new();
+        self.ExpectedElementCountEndTokens = new();
+        self.ExpectedBitWidths = new();
+        self.ExpectedTypeArgumentCounts = new();
+        self.ExpectedComptimeArgumentCounts = new();
+        self.ExpectedTypeFlags = new();
+        self.ValueTypeKinds = new();
+        self.ValueTypeHeadTokens = new();
+        self.ValueTypePrimaryTokens = new();
+        self.ValueTypeStartTokens = new();
+        self.ValueTypeEndTokens = new();
+        self.ValueRangeStartTokens = new();
+        self.ValueRangeEndTokens = new();
+        self.ValueElementCountStartTokens = new();
+        self.ValueElementCountEndTokens = new();
+        self.ValueBitWidths = new();
+        self.ValueTypeArgumentCounts = new();
+        self.ValueComptimeArgumentCounts = new();
+        self.ValueTypeFlags = new();
+        self.ReturnFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedReturnExpressionTable self)
+    {
+        return self.ReturnTokens.Length;
+    }
+
+    public law TypedReturnContext ContextAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedReturnContext context = TypedReturnContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ReturnTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ReturnTokens.Length)
+        {
+            token = self.ReturnTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueNodeAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ValueNodes.Length)
+        {
+            node = self.ValueNodes[index];
+        }
+
+        return node;
+    }
+
+    public law TypedReturnValueKind ValueKindAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedReturnValueKind kind = TypedReturnValueKind.Unknown;
+        if (index < self.ValueKinds.Length)
+        {
+            kind = self.ValueKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedSignatureTypeKind ExpectedTypeKindAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.ExpectedTypeKinds.Length)
+        {
+            kind = self.ExpectedTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ExpectedTypeHeadTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedTypeHeadTokens.Length)
+        {
+            token = self.ExpectedTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedTypePrimaryTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedTypePrimaryTokens.Length)
+        {
+            token = self.ExpectedTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedTypeStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedTypeStartTokens.Length)
+        {
+            token = self.ExpectedTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedTypeEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedTypeEndTokens.Length)
+        {
+            token = self.ExpectedTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedRangeStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedRangeStartTokens.Length)
+        {
+            token = self.ExpectedRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedRangeEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedRangeEndTokens.Length)
+        {
+            token = self.ExpectedRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedElementCountStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedElementCountStartTokens.Length)
+        {
+            token = self.ExpectedElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedElementCountEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ExpectedElementCountEndTokens.Length)
+        {
+            token = self.ExpectedElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ExpectedBitWidthAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.ExpectedBitWidths.Length)
+        {
+            width = self.ExpectedBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] ExpectedTypeArgumentCountAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ExpectedTypeArgumentCounts.Length)
+        {
+            count = self.ExpectedTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ExpectedComptimeArgumentCountAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ExpectedComptimeArgumentCounts.Length)
+        {
+            count = self.ExpectedComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ExpectedTypeFlagsAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ExpectedTypeFlags.Length)
+        {
+            flags = self.ExpectedTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law TypedSignatureTypeKind ValueTypeKindAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.ValueTypeKinds.Length)
+        {
+            kind = self.ValueTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ValueTypeHeadTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeHeadTokens.Length)
+        {
+            token = self.ValueTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypePrimaryTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypePrimaryTokens.Length)
+        {
+            token = self.ValueTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypeStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeStartTokens.Length)
+        {
+            token = self.ValueTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueTypeEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueTypeEndTokens.Length)
+        {
+            token = self.ValueTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueRangeStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueRangeStartTokens.Length)
+        {
+            token = self.ValueRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueRangeEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueRangeEndTokens.Length)
+        {
+            token = self.ValueRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueElementCountStartTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueElementCountStartTokens.Length)
+        {
+            token = self.ValueElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueElementCountEndTokenAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ValueElementCountEndTokens.Length)
+        {
+            token = self.ValueElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ValueBitWidthAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.ValueBitWidths.Length)
+        {
+            width = self.ValueBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] ValueTypeArgumentCountAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ValueTypeArgumentCounts.Length)
+        {
+            count = self.ValueTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ValueComptimeArgumentCountAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ValueComptimeArgumentCounts.Length)
+        {
+            count = self.ValueComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ValueTypeFlagsAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ValueTypeFlags.Length)
+        {
+            flags = self.ValueTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] ReturnFlagsAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ReturnFlags.Length)
+        {
+            flags = self.ReturnFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool HasValueAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedReturnFlagPresent(self.ReturnFlagsAt(index), TypedReturnFlagHasValue());
+    }
+
+    public law bool IsBareAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedReturnFlagPresent(self.ReturnFlagsAt(index), TypedReturnFlagBare());
+    }
+
+    public law bool ExpectedResolvedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedReturnFlagPresent(self.ReturnFlagsAt(index), TypedReturnFlagExpectedResolved());
+    }
+
+    public law bool ValueResolvedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedReturnFlagPresent(self.ReturnFlagsAt(index), TypedReturnFlagValueResolved());
+    }
+
+    public law bool ExpectedVoidAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedReturnFlagPresent(self.ReturnFlagsAt(index), TypedReturnFlagExpectedVoid());
+    }
+
+    public law bool ExpectedIsIntegerSignedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ExpectedTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool ExpectedIsIntegerUnsignedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ExpectedTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool ExpectedHasIntegerRangeAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ExpectedTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool ValueIsIntegerSignedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool ValueIsIntegerUnsignedAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool ValueHasIntegerRangeAt(borrow TypedReturnExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.ValueTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    internal fn System.Memory.MemoryStatus AppendReturn(
+        mut borrow TypedReturnExpressionTable self,
+        TypedReturnContext context,
+        u32[0 max] ownerDeclarationIndex,
+        u32[0 max] ownerNameToken,
+        u32[0 max] functionNameToken,
+        u32[0 max] statementIndexPlusOne,
+        u32[0 max] returnToken,
+        u32[0 max] valueNode,
+        TypedReturnValueKind valueKind,
+        TypedSignatureTypeKind expectedTypeKind,
+        u32[0 max] expectedTypeHeadToken,
+        u32[0 max] expectedTypePrimaryToken,
+        u32[0 max] expectedTypeStartToken,
+        u32[0 max] expectedTypeEndToken,
+        u32[0 max] expectedRangeStartToken,
+        u32[0 max] expectedRangeEndToken,
+        u32[0 max] expectedElementCountStartToken,
+        u32[0 max] expectedElementCountEndToken,
+        u32[0 max] expectedBitWidth,
+        u32[0 max] expectedTypeArgumentCount,
+        u32[0 max] expectedComptimeArgumentCount,
+        u32[0 max] expectedTypeFlags,
+        TypedSignatureTypeKind valueTypeKind,
+        u32[0 max] valueTypeHeadToken,
+        u32[0 max] valueTypePrimaryToken,
+        u32[0 max] valueTypeStartToken,
+        u32[0 max] valueTypeEndToken,
+        u32[0 max] valueRangeStartToken,
+        u32[0 max] valueRangeEndToken,
+        u32[0 max] valueElementCountStartToken,
+        u32[0 max] valueElementCountEndToken,
+        u32[0 max] valueBitWidth,
+        u32[0 max] valueTypeArgumentCount,
+        u32[0 max] valueComptimeArgumentCount,
+        u32[0 max] valueTypeFlags,
+        u32[0 max] returnFlags)
+    {
+        if (!self.Contexts.TryReserve(1)
+            || !self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.StatementIndices.TryReserve(1)
+            || !self.ReturnTokens.TryReserve(1)
+            || !self.ValueNodes.TryReserve(1)
+            || !self.ValueKinds.TryReserve(1)
+            || !self.ExpectedTypeKinds.TryReserve(1)
+            || !self.ExpectedTypeHeadTokens.TryReserve(1)
+            || !self.ExpectedTypePrimaryTokens.TryReserve(1)
+            || !self.ExpectedTypeStartTokens.TryReserve(1)
+            || !self.ExpectedTypeEndTokens.TryReserve(1)
+            || !self.ExpectedRangeStartTokens.TryReserve(1)
+            || !self.ExpectedRangeEndTokens.TryReserve(1)
+            || !self.ExpectedElementCountStartTokens.TryReserve(1)
+            || !self.ExpectedElementCountEndTokens.TryReserve(1)
+            || !self.ExpectedBitWidths.TryReserve(1)
+            || !self.ExpectedTypeArgumentCounts.TryReserve(1)
+            || !self.ExpectedComptimeArgumentCounts.TryReserve(1)
+            || !self.ExpectedTypeFlags.TryReserve(1)
+            || !self.ValueTypeKinds.TryReserve(1)
+            || !self.ValueTypeHeadTokens.TryReserve(1)
+            || !self.ValueTypePrimaryTokens.TryReserve(1)
+            || !self.ValueTypeStartTokens.TryReserve(1)
+            || !self.ValueTypeEndTokens.TryReserve(1)
+            || !self.ValueRangeStartTokens.TryReserve(1)
+            || !self.ValueRangeEndTokens.TryReserve(1)
+            || !self.ValueElementCountStartTokens.TryReserve(1)
+            || !self.ValueElementCountEndTokens.TryReserve(1)
+            || !self.ValueBitWidths.TryReserve(1)
+            || !self.ValueTypeArgumentCounts.TryReserve(1)
+            || !self.ValueComptimeArgumentCounts.TryReserve(1)
+            || !self.ValueTypeFlags.TryReserve(1)
+            || !self.ReturnFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Contexts[self.Contexts.Length] = context;
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.StatementIndices[self.StatementIndices.Length] = statementIndexPlusOne;
+        init self.ReturnTokens[self.ReturnTokens.Length] = returnToken;
+        init self.ValueNodes[self.ValueNodes.Length] = valueNode;
+        init self.ValueKinds[self.ValueKinds.Length] = valueKind;
+        init self.ExpectedTypeKinds[self.ExpectedTypeKinds.Length] = expectedTypeKind;
+        init self.ExpectedTypeHeadTokens[self.ExpectedTypeHeadTokens.Length] = expectedTypeHeadToken;
+        init self.ExpectedTypePrimaryTokens[self.ExpectedTypePrimaryTokens.Length] = expectedTypePrimaryToken;
+        init self.ExpectedTypeStartTokens[self.ExpectedTypeStartTokens.Length] = expectedTypeStartToken;
+        init self.ExpectedTypeEndTokens[self.ExpectedTypeEndTokens.Length] = expectedTypeEndToken;
+        init self.ExpectedRangeStartTokens[self.ExpectedRangeStartTokens.Length] = expectedRangeStartToken;
+        init self.ExpectedRangeEndTokens[self.ExpectedRangeEndTokens.Length] = expectedRangeEndToken;
+        init self.ExpectedElementCountStartTokens[self.ExpectedElementCountStartTokens.Length] = expectedElementCountStartToken;
+        init self.ExpectedElementCountEndTokens[self.ExpectedElementCountEndTokens.Length] = expectedElementCountEndToken;
+        init self.ExpectedBitWidths[self.ExpectedBitWidths.Length] = expectedBitWidth;
+        init self.ExpectedTypeArgumentCounts[self.ExpectedTypeArgumentCounts.Length] = expectedTypeArgumentCount;
+        init self.ExpectedComptimeArgumentCounts[self.ExpectedComptimeArgumentCounts.Length] = expectedComptimeArgumentCount;
+        init self.ExpectedTypeFlags[self.ExpectedTypeFlags.Length] = expectedTypeFlags;
+        init self.ValueTypeKinds[self.ValueTypeKinds.Length] = valueTypeKind;
+        init self.ValueTypeHeadTokens[self.ValueTypeHeadTokens.Length] = valueTypeHeadToken;
+        init self.ValueTypePrimaryTokens[self.ValueTypePrimaryTokens.Length] = valueTypePrimaryToken;
+        init self.ValueTypeStartTokens[self.ValueTypeStartTokens.Length] = valueTypeStartToken;
+        init self.ValueTypeEndTokens[self.ValueTypeEndTokens.Length] = valueTypeEndToken;
+        init self.ValueRangeStartTokens[self.ValueRangeStartTokens.Length] = valueRangeStartToken;
+        init self.ValueRangeEndTokens[self.ValueRangeEndTokens.Length] = valueRangeEndToken;
+        init self.ValueElementCountStartTokens[self.ValueElementCountStartTokens.Length] = valueElementCountStartToken;
+        init self.ValueElementCountEndTokens[self.ValueElementCountEndTokens.Length] = valueElementCountEndToken;
+        init self.ValueBitWidths[self.ValueBitWidths.Length] = valueBitWidth;
+        init self.ValueTypeArgumentCounts[self.ValueTypeArgumentCounts.Length] = valueTypeArgumentCount;
+        init self.ValueComptimeArgumentCounts[self.ValueComptimeArgumentCounts.Length] = valueComptimeArgumentCount;
+        init self.ValueTypeFlags[self.ValueTypeFlags.Length] = valueTypeFlags;
+        init self.ReturnFlags[self.ReturnFlags.Length] = returnFlags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}

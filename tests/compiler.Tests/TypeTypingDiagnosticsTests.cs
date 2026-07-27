@@ -5,6 +5,78 @@ namespace compiler.Tests;
 public sealed class TypeTypingDiagnosticsTests
 {
     [Fact]
+    public void RangePatternRequiresIntegerTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(bool flag)
+            {
+                switch (flag)
+                {
+                    case 0..1:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '0..1' requires an integer target", "bool");
+    }
+
+    [Fact]
+    public void RangePatternRejectsLowerBoundGreaterThanUpperBound()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(u8[0 10] value)
+            {
+                switch (value)
+                {
+                    case 10..0:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '10..0' has lower bound 10 greater than upper bound 0");
+    }
+
+    [Fact]
+    public void RangePatternRejectsNonOverlappingIntegerDomain()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(u8[0 3] value)
+            {
+                switch (value)
+                {
+                    case 10..20:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '10..20' cannot match 'u8[0 3]'", "[0, 3]");
+    }
+
+    [Fact]
     public void VarargsModifierRequiresFfiDeclaration()
     {
         var result = Compile(
@@ -36,6 +108,58 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3009", "Extra argument 2", "f32", "Cast f32 to f64");
+    }
+
+    [Fact]
+    public void FfiVarargsRejectsStarkTextForPercentSFormatArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+
+            fn i32[min max] Run(ascii name)
+            {
+                return printf("name=%s", name);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3009",
+            "C varargs '%s' argument 2",
+            "must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>",
+            "System.C.FromAscii");
+    }
+
+    [Fact]
+    public void FfiVarargsRejectsStarkTextForPercentSConstFormatArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const ascii Format = "name=%s";
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+
+            fn i32[min max] Run(ascii name)
+            {
+                return printf(Format, name);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3009",
+            "C varargs '%s' argument 2",
+            "must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>",
+            "System.C.FromAscii");
     }
 
     [Fact]
@@ -327,6 +451,27 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void FfiAbiModifiersRejectUnsupportedTargetsDuringCompilation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(stdcall) fn void Bad();
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => (diagnostic.Code == "STK2111" || diagnostic.Code == "STK3046")
+                && diagnostic.Message.Contains("stdcall", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("is not supported for target", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AsmFunctionsRejectUnsupportedParameterAndReturnTypes()
     {
         var result = Compile(
@@ -582,6 +727,122 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3008", "Field 'Text'", "cannot currently be captured", "scalar and text-view field types");
+    }
+
+    [Fact]
+    public void FixedArrayListSwitchPatternsRejectWrongLength()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max][2] values)
+            {
+                switch (values)
+                {
+                    case [1]:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "expects exactly 2 element subpatterns", "found 1");
+    }
+
+    [Fact]
+    public void SwitchOrPatternsRejectInconsistentSharedCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                Flag(bool),
+                End,
+            }
+
+            fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(var value) | Token.End:
+                        return 1;
+                    case Token.Flag(_):
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3008",
+            "Switch labels that share a body must bind the same capture names with the same types",
+            "Earlier label binds 'value: i32'",
+            "this label binds no captures");
+    }
+
+    [Fact]
+    public void GuardlessEmptySwitchLabelsPermitInconsistentUnusedCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(var value):
+                    case Token.End:
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Switch labels that share a body", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SwitchPatternsRejectDuplicateCapturesInOneAlternative()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+
+            fn i32[min max] Run(Pair pair)
+            {
+                switch (pair)
+                {
+                    case Pair(var value, var value):
+                        return value;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Switch pattern capture 'value' is bound more than once in the same pattern");
     }
 
     [Fact]
@@ -2403,7 +2664,7 @@ public sealed class TypeTypingDiagnosticsTests
 
                 fn void Run()
                 {
-                    stack mut dynamic i32[min max] values = new();
+                    stack fnptr<fn void()> values = null;
                     switch (values)
                     {
                         default:
@@ -2412,7 +2673,7 @@ public sealed class TypeTypingDiagnosticsTests
                 }
                 """,
                 "STK3008",
-                ["Switch expression type 'dynamic i32'", "not a valid switch domain"]),
+                ["Switch expression type 'fnptr<fn void()>'", "not a valid switch domain"]),
             (
                 "non-concrete type layout expression",
                 """
@@ -2456,7 +2717,7 @@ public sealed class TypeTypingDiagnosticsTests
         {
             var result = Compile(source);
 
-            Assert.False(result.Succeeded);
+            Assert.False(result.Succeeded, name);
             AssertDiagnostic(result, diagnosticCode, messageFragments);
             Assert.DoesNotContain(result.Logs, IsLoweringOrBackendFallbackLog);
         }

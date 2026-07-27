@@ -1,0 +1,605 @@
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Models
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Shared.TypeCodec
+
+// Stable one-byte encoding for MIR value types in legacy package sections.
+
+internal fn u8[0 max] MirTypeToByte(MirType t)
+{
+    switch (t)
+    {
+        case MirType.I1: return 0;
+        case MirType.I32: return 1;
+        case MirType.I64: return 2;
+        case MirType.Ptr: return 3;
+        case MirType.I8: return 4;
+        case MirType.I16: return 5;
+        case MirType.EnumValue: return 6;
+        case MirType.F32: return 7;
+        case MirType.F64: return 8;
+    }
+}
+
+internal fn MirType MirTypeFromByte(u8[0 max] b)
+{
+    switch (b)
+    {
+        case 0: return MirType.I1;
+        case 1: return MirType.I32;
+        case 3: return MirType.Ptr;
+        case 4: return MirType.I8;
+        case 5: return MirType.I16;
+        case 6: return MirType.EnumValue;
+        case 7: return MirType.F32;
+        case 8: return MirType.F64;
+        default: return MirType.I64;
+    }
+}
+
+// Durable logical type-reference graph storage and lookup helpers.
+
+internal fn bool LogicalPackageTypeReferenceGraphAddTextRowWithId(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageTypeReferenceGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageTypeReferenceTextRow row = new LogicalPackageTypeReferenceTextRow()
+            {
+                TypeReferenceRowValue = typeReferenceRow,
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddTextRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text)
+{
+    stack mut u32[0 max] textRow = 0;
+    return LogicalPackageTypeReferenceGraphAddTextRowWithId(
+        graph,
+        typeReferenceRow,
+        textKind,
+        textOrdinal,
+        text,
+        textRow);
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphSetComptimeValueArgumentTypeChild(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] parentRow,
+    u32[0 max] childOrdinal,
+    u32[0 max] childRow)
+{
+    if (!graph.TypeReferenceRows.Contains(parentRow)
+        || !graph.TypeReferenceRows.Contains(childRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceRow parent = graph.TypeReferenceRows.Get(parentRow);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < parent.ComptimeValueArgumentRowCountValue)
+    {
+        stack u32[0 max] argumentRowIndex = parent.FirstComptimeValueArgumentRowValue + offset;
+        if (!graph.ComptimeValueArgumentRows.Contains(argumentRowIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageTypeReferenceComptimeValueArgumentRow argument =
+            graph.ComptimeValueArgumentRows.Get(argumentRowIndex);
+        if (argument.ArgumentOrdinalValue == childOrdinal)
+        {
+            argument.TypeChildTypeReferenceRowValue = childRow;
+            return graph.ComptimeValueArgumentRows.Replace(argumentRowIndex, argument);
+        }
+
+        offset = offset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddChildRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] parentRow,
+    u32[0 max] childRow,
+    LogicalPackageTypeReferenceChildKind childKind,
+    u32[0 max] childOrdinal)
+{
+    if (!graph.TypeReferenceRows.Contains(parentRow)
+        || !graph.TypeReferenceRows.Contains(childRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceChildRow child = new LogicalPackageTypeReferenceChildRow()
+    {
+        ParentTypeReferenceRowValue = parentRow,
+        ChildTypeReferenceRowValue = childRow,
+        ChildKindValue = childKind,
+        ChildOrdinalValue = childOrdinal
+    };
+    stack u32[0 max] childLinkRow = graph.ChildRows.Add(child);
+    if (childLinkRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceRow parent = graph.TypeReferenceRows.Get(parentRow);
+    if (parent.ChildRowCountValue == 0)
+    {
+        parent.FirstChildRowValue = childLinkRow;
+    }
+    else if (childLinkRow != parent.FirstChildRowValue + parent.ChildRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ChildRowCountValue = parent.ChildRowCountValue + 1;
+    if (!graph.TypeReferenceRows.Replace(parentRow, parent))
+    {
+        return false;
+    }
+
+    if (childKind == LogicalPackageTypeReferenceChildKind.ComptimeValueArgumentType)
+    {
+        return LogicalPackageTypeReferenceGraphSetComptimeValueArgumentTypeChild(
+            graph,
+            parentRow,
+            childOrdinal,
+            childRow);
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddComptimeValueArgumentRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] argumentOrdinal,
+    u32[0 max] parameterNameTextRow,
+    u32[0 max] integerValueTextRow,
+    bool isSymbolic,
+    bool hasSymbolicSourceName,
+    u32[0 max] symbolicSourceNameTextRow,
+    out u32[0 max] argumentRow)
+{
+    argumentRow = 0;
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || !graph.TextRows.Contains(integerValueTextRow)
+        || (hasSymbolicSourceName && !graph.TextRows.Contains(symbolicSourceNameTextRow)))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceComptimeValueArgumentRow row =
+        new LogicalPackageTypeReferenceComptimeValueArgumentRow()
+    {
+        TypeReferenceRowValue = typeReferenceRow,
+        ArgumentOrdinalValue = argumentOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        IntegerValueTextRowValue = integerValueTextRow,
+        SymbolicSourceNameTextRowValue = symbolicSourceNameTextRow,
+        IsSymbolicValue = isSymbolic,
+        HasSymbolicSourceNameValue = hasSymbolicSourceName
+    };
+    stack u32[0 max] addedArgumentRow = graph.ComptimeValueArgumentRows.Add(row);
+    if (addedArgumentRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceRow parent = graph.TypeReferenceRows.Get(typeReferenceRow);
+    if (parent.ComptimeValueArgumentRowCountValue == 0)
+    {
+        parent.FirstComptimeValueArgumentRowValue = addedArgumentRow;
+    }
+    else if (addedArgumentRow != parent.FirstComptimeValueArgumentRowValue + parent.ComptimeValueArgumentRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ComptimeValueArgumentRowCountValue = parent.ComptimeValueArgumentRowCountValue + 1;
+    if (!graph.TypeReferenceRows.Replace(typeReferenceRow, parent))
+    {
+        return false;
+    }
+
+    argumentRow = addedArgumentRow;
+    return true;
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddParameterGroupRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] groupOrdinal,
+    out u32[0 max] groupRow)
+{
+    groupRow = 0;
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceParameterGroupRow row = new LogicalPackageTypeReferenceParameterGroupRow()
+    {
+        TypeReferenceRowValue = typeReferenceRow,
+        GroupKindValue = groupKind,
+        GroupOrdinalValue = groupOrdinal
+    };
+    stack u32[0 max] addedGroupRow = graph.ParameterGroupRows.Add(row);
+    if (addedGroupRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceRow parent = graph.TypeReferenceRows.Get(typeReferenceRow);
+    if (parent.ParameterGroupRowCountValue == 0)
+    {
+        parent.FirstParameterGroupRowValue = addedGroupRow;
+    }
+    else if (addedGroupRow != parent.FirstParameterGroupRowValue + parent.ParameterGroupRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ParameterGroupRowCountValue = parent.ParameterGroupRowCountValue + 1;
+    if (!graph.TypeReferenceRows.Replace(typeReferenceRow, parent))
+    {
+        return false;
+    }
+
+    groupRow = addedGroupRow;
+    return true;
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddParameterGroupNameRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    out u32[0 max] nameRow)
+{
+    nameRow = 0;
+    if (!graph.ParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceParameterGroupNameRow row =
+        new LogicalPackageTypeReferenceParameterGroupNameRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedNameRow = graph.ParameterGroupNameRows.Add(row);
+    if (addedNameRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceParameterGroupRow group = graph.ParameterGroupRows.Get(parameterGroupRow);
+    if (group.NameRowCountValue == 0)
+    {
+        group.FirstNameRowValue = addedNameRow;
+    }
+    else if (addedNameRow != group.FirstNameRowValue + group.NameRowCountValue)
+    {
+        return false;
+    }
+
+    group.NameRowCountValue = group.NameRowCountValue + 1;
+    if (!graph.ParameterGroupRows.Replace(parameterGroupRow, group))
+    {
+        return false;
+    }
+
+    nameRow = addedNameRow;
+    return true;
+}
+
+internal fn bool LogicalPackageTypeReferenceGraphAddParameterGroupRegionRow(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] regionOrdinal,
+    u32[0 max] parameterNameTextRow,
+    bool hasStartExpression,
+    u32[0 max] startExpressionTextRow,
+    bool hasCountExpression,
+    u32[0 max] countExpressionTextRow,
+    out u32[0 max] regionRow)
+{
+    regionRow = 0;
+    if (!graph.ParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || (hasStartExpression && !graph.TextRows.Contains(startExpressionTextRow))
+        || (hasCountExpression && !graph.TextRows.Contains(countExpressionTextRow)))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceParameterGroupRegionRow row =
+        new LogicalPackageTypeReferenceParameterGroupRegionRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        RegionOrdinalValue = regionOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        StartExpressionTextRowValue = startExpressionTextRow,
+        CountExpressionTextRowValue = countExpressionTextRow,
+        HasStartExpressionValue = hasStartExpression,
+        HasCountExpressionValue = hasCountExpression
+    };
+    stack u32[0 max] addedRegionRow = graph.ParameterGroupRegionRows.Add(row);
+    if (addedRegionRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceParameterGroupRow group = graph.ParameterGroupRows.Get(parameterGroupRow);
+    if (group.RegionRowCountValue == 0)
+    {
+        group.FirstRegionRowValue = addedRegionRow;
+    }
+    else if (addedRegionRow != group.FirstRegionRowValue + group.RegionRowCountValue)
+    {
+        return false;
+    }
+
+    group.RegionRowCountValue = group.RegionRowCountValue + 1;
+    if (!graph.ParameterGroupRows.Replace(parameterGroupRow, group))
+    {
+        return false;
+    }
+
+    regionRow = addedRegionRow;
+    return true;
+}
+
+internal fn MemoryStatus LogicalPackageTypeReferenceGraphAppendText(
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength < 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    if (signedLength == 0)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageTypeReferenceText(
+    borrow LogicalPackageTypeReferenceGraph graph,
+    LogicalPackageTypeReferenceTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn bool TryAppendLogicalPackageTypeReferenceText(
+    borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow OwnedAscii sink)
+{
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceRow row = graph.TypeReferenceRows.Get(typeReferenceRow);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < row.TextRowCountValue)
+    {
+        stack u32[0 max] textRowIndex = row.FirstTextRowValue + offset;
+        if (!graph.TextRows.Contains(textRowIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypeReferenceTextRow textRow = graph.TextRows.Get(textRowIndex);
+        if (textRow.TextKindValue == textKind
+            && textRow.TextOrdinalValue == textOrdinal)
+        {
+            return AppendLogicalPackageTypeReferenceText(graph, textRow, sink) == MemoryStatus.Ok;
+        }
+
+        offset = offset + 1;
+    }
+
+    return false;
+}
+
+public fn bool TryFindLogicalPackageTypeReferenceChild(
+    borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] parentTypeReferenceRow,
+    LogicalPackageTypeReferenceChildKind childKind,
+    u32[0 max] childOrdinal,
+    out u32[0 max] childTypeReferenceRow)
+{
+    childTypeReferenceRow = 0;
+    if (!graph.TypeReferenceRows.Contains(parentTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceRow row = graph.TypeReferenceRows.Get(parentTypeReferenceRow);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < row.ChildRowCountValue)
+    {
+        stack u32[0 max] childRowIndex = row.FirstChildRowValue + offset;
+        if (!graph.ChildRows.Contains(childRowIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypeReferenceChildRow child = graph.ChildRows.Get(childRowIndex);
+        if (child.ChildKindValue == childKind
+            && child.ChildOrdinalValue == childOrdinal)
+        {
+            stack u32[0 max] foundChildRow = child.ChildTypeReferenceRowValue;
+            if (!graph.TypeReferenceRows.Contains(foundChildRow))
+            {
+                return false;
+            }
+
+            childTypeReferenceRow = foundChildRow;
+            return true;
+        }
+
+        offset = offset + 1;
+    }
+
+    return false;
+}
+
+public fn bool TryFindLogicalPackageTypeReferenceComptimeValueArgument(
+    borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] argumentOrdinal,
+    out u32[0 max] argumentRow)
+{
+    argumentRow = 0;
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceRow row = graph.TypeReferenceRows.Get(typeReferenceRow);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < row.ComptimeValueArgumentRowCountValue)
+    {
+        stack u32[0 max] argumentRowIndex = row.FirstComptimeValueArgumentRowValue + offset;
+        if (!graph.ComptimeValueArgumentRows.Contains(argumentRowIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypeReferenceComptimeValueArgumentRow argument =
+            graph.ComptimeValueArgumentRows.Get(argumentRowIndex);
+        if (argument.ArgumentOrdinalValue == argumentOrdinal)
+        {
+            argumentRow = argumentRowIndex;
+            return true;
+        }
+
+        offset = offset + 1;
+    }
+
+    return false;
+}
+
+public fn bool TryFindLogicalPackageTypeReferenceParameterGroup(
+    borrow LogicalPackageTypeReferenceGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] groupOrdinal,
+    out u32[0 max] groupRow)
+{
+    groupRow = 0;
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceRow row = graph.TypeReferenceRows.Get(typeReferenceRow);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < row.ParameterGroupRowCountValue)
+    {
+        stack u32[0 max] groupRowIndex = row.FirstParameterGroupRowValue + offset;
+        if (!graph.ParameterGroupRows.Contains(groupRowIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypeReferenceParameterGroupRow group = graph.ParameterGroupRows.Get(groupRowIndex);
+        if (group.GroupKindValue == groupKind
+            && group.GroupOrdinalValue == groupOrdinal)
+        {
+            groupRow = groupRowIndex;
+            return true;
+        }
+
+        offset = offset + 1;
+    }
+
+    return false;
+}
