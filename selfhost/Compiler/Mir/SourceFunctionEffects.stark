@@ -1,0 +1,996 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.ModuleResolution
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.TypedModuleSymbols
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmInstructions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceFunctionContext
+module Compiler.Mir.SourceFunctionEffects
+
+// Allocation-free MIR effect scans and fixed-point source-function proofs that
+// preserve law, finite, recursion, memory, and explicit backend modifier facts.
+
+internal fn bool BuildSourceTypedFunctionEffectSummaries(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    out TypedFunctionEffectSummaryTable summaries)
+{
+    summaries = new();
+    stack mut CompilationUnitHeader header = new();
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
+            header = parsedHeader;
+    }
+
+    stack mut TypedModuleSymbolTable moduleSymbols = new();
+    switch (BuildTypedModuleSymbols(sourceText, stream, header, declarations, ModuleOrigin.Source, 0))
+    {
+        case BindResult<TypedModuleSymbolTable>.Err(var moduleError):
+            return false;
+        case BindResult<TypedModuleSymbolTable>.Ok(var builtModuleSymbols):
+            moduleSymbols = builtModuleSymbols;
+    }
+
+    stack mut TypedDeclarationSymbolTable typedDeclarations = new();
+    switch (BuildTypedDeclarationSymbols(sourceText, stream, declarations, moduleSymbols))
+    {
+        case BindResult<TypedDeclarationSymbolTable>.Err(var declarationError):
+            return false;
+        case BindResult<TypedDeclarationSymbolTable>.Ok(var builtDeclarations):
+            typedDeclarations = builtDeclarations;
+    }
+
+    stack mut TypedMemberSymbolTable typedMembers = new();
+    switch (BuildTypedMemberAndMethodSymbols(sourceText, stream, typedDeclarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            typedMembers = builtMembers;
+    }
+
+    switch (BuildTypedFunctionEffectSummaries(sourceText, stream, typedDeclarations, typedMembers))
+    {
+        case BindResult<TypedFunctionEffectSummaryTable>.Err(var effectError):
+            return false;
+        case BindResult<TypedFunctionEffectSummaryTable>.Ok(var builtSummaries):
+            summaries = builtSummaries;
+            return true;
+    }
+}
+
+internal law bool TypedFunctionEffectSummaryMatchesTopLevelFunction(
+    borrow TypedFunctionEffectSummaryTable summaries,
+    u64[0 2 ** 63 - 1] summaryIndex,
+    u32[0 max] fnKeyword)
+{
+    return summaryIndex < summaries.Count()
+        && summaries.OwnerKindAt(summaryIndex) == TypedFunctionEffectOwnerKind.Declaration
+        && summaries.KeywordTokenAt(summaryIndex) == fnKeyword;
+}
+
+internal fn bool ApplyTypedFunctionBackendEffectFacts(
+    borrow TypedFunctionEffectSummaryTable summaries,
+    u64[0 2 ** 63 - 1] summaryIndex,
+    u32[0 max] fnKeyword,
+    mut borrow FunctionEffectFacts facts)
+{
+    if (!TypedFunctionEffectSummaryMatchesTopLevelFunction(summaries, summaryIndex, fnKeyword))
+    {
+        return false;
+    }
+
+    facts.NoSync = summaries.NoSyncAt(summaryIndex);
+    facts.NoFree = summaries.NoFreeAt(summaryIndex);
+    facts.NoUnwind = summaries.NoUnwindAt(summaryIndex);
+    facts.WillReturn = summaries.WillReturnAt(summaryIndex);
+    facts.MustProgress = summaries.MustProgressAt(summaryIndex);
+    facts.IsNoRecurse = summaries.NoRecurseAt(summaryIndex);
+    facts.IsHot = summaries.IsHotAt(summaryIndex);
+    facts.IsCold = summaries.IsColdAt(summaryIndex);
+    facts.IsStrictFp = summaries.IsStrictFpAt(summaryIndex);
+    facts.BackendIsOpaque = summaries.BackendOptimizationModeAt(summaryIndex)
+        == TypedFunctionBackendOptimizationMode.Opaque;
+
+    switch (summaries.InlinePreferenceAt(summaryIndex))
+    {
+        case TypedFunctionInlinePreference.InlineHint:
+            facts.InlinePreference = FunctionInlinePreference.InlineHint;
+        case TypedFunctionInlinePreference.Inline:
+            facts.InlinePreference = FunctionInlinePreference.Inline;
+        case TypedFunctionInlinePreference.NoInline:
+            facts.InlinePreference = FunctionInlinePreference.NoInline;
+    }
+
+    if (facts.BackendIsOpaque)
+    {
+        facts.InlinePreference = FunctionInlinePreference.NoInline;
+    }
+
+    return true;
+}
+
+internal fn bool ApplyTypedFunctionCallingConventionFacts(
+    borrow TypedFunctionEffectSummaryTable summaries,
+    u64[0 2 ** 63 - 1] summaryIndex,
+    u32[0 max] fnKeyword,
+    mut borrow FunctionCallingConventionFacts facts)
+{
+    if (!TypedFunctionEffectSummaryMatchesTopLevelFunction(summaries, summaryIndex, fnKeyword))
+    {
+        return false;
+    }
+
+    if (summaries.UseFastCallingConventionAt(summaryIndex))
+    {
+        SetFastCallingConvention(facts);
+    }
+
+    return true;
+}
+
+internal fn bool MirInstructionRangeHasCall(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirOpIsAnyCall(instr.Opcode()))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeReadsMemory(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.LoadGlobal || instr.Opcode() == MirOp.LoadPtr || instr.Opcode() == MirOp.LoadEnumPtr || MirOpIsAnyCall(instr.Opcode()) || MirInstructionIsArenaRuntime(instr) || MirInstructionIsHeapRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeWritesMemory(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.StoreGlobal || instr.Opcode() == MirOp.StorePtr || instr.Opcode() == MirOp.StoreEnumPtr || MirInstructionIsArenaRuntime(instr) || MirInstructionIsHeapRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesHaveCall(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeHasCall(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesReadMemory(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeReadsMemory(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesWriteMemory(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeWritesMemory(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool FunctionIdFlagIsSet(borrow IrTable<u32[0 max]> flags, u32[0 max] functionId)
+{
+    if (functionId == 0 || !flags.Contains(functionId))
+    {
+        return false;
+    }
+
+    return flags.Get(functionId) != 0;
+}
+
+internal fn bool MirInstructionRangeCallsOnlyFlaggedFunctions(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, borrow IrTable<u32[0 max]> flags)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirOpIsAnyCall(instr.Opcode()))
+            {
+                if (!FunctionIdFlagIsSet(flags, (u32[0 max])instr.Immediate()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return true;
+}
+
+internal fn bool FunctionIdLawMayReadMemory(borrow IrTable<FunctionEffectFacts> functionEffectFacts, u32[0 max] functionId)
+{
+    if (functionId == 0 || !functionEffectFacts.Contains(functionId))
+    {
+        return true;
+    }
+
+    stack FunctionEffectFacts facts = functionEffectFacts.Get(functionId);
+    return !facts.IsLaw || facts.LawMayReadMemory;
+}
+
+internal fn bool MirInstructionRangeReadsMemoryWithFunctionEffects(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.LoadGlobal || instr.Opcode() == MirOp.LoadPtr || instr.Opcode() == MirOp.LoadEnumPtr || MirInstructionIsArenaRuntime(instr) || MirInstructionIsHeapRuntime(instr))
+            {
+                return true;
+            }
+
+            if (MirOpIsAnyCall(instr.Opcode()))
+            {
+                if (FunctionIdLawMayReadMemory(functionEffectFacts, (u32[0 max])instr.Immediate()))
+                {
+                    return true;
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeCallsAnyLawMayReadMemory(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, borrow IrTable<FunctionEffectFacts> functionEffectFacts)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirOpIsAnyCall(instr.Opcode()))
+            {
+                if (FunctionIdLawMayReadMemory(functionEffectFacts, (u32[0 max])instr.Immediate()))
+                {
+                    return true;
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesReadMemoryWithFunctionEffects(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeReadsMemoryWithFunctionEffects(instrs, ranges.Get(i).First, ranges.Get(i).Count, functionEffectFacts))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesCallOnlyFlaggedFunctions(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges, borrow IrTable<u32[0 max]> flags)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (!MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, ranges.Get(i).First, ranges.Get(i).Count, flags))
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool MirInstructionRangesCallAnyLawMayReadMemory(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges, borrow IrTable<FunctionEffectFacts> functionEffectFacts)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeCallsAnyLawMayReadMemory(instrs, ranges.Get(i).First, ranges.Get(i).Count, functionEffectFacts))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBody(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    bool hasCall,
+    bool readsMemory,
+    bool writesMemory,
+    bool callsOnlyLaw,
+    bool callsAnyLawMayReadMemory,
+    bool callsOnlyFinite,
+    bool callsOnlyNoRecurse)
+{
+    stack mut FunctionEffectFacts facts = new();
+    if (signature.LawKind() && !writesMemory && (!hasCall || callsOnlyLaw))
+    {
+        facts.IsLaw = true;
+        facts.LawMayReadMemory = readsMemory || callsAnyLawMayReadMemory;
+    }
+
+    if (signature.FiniteKind() && (!hasCall || callsOnlyFinite))
+    {
+        facts.IsFinite = true;
+    }
+
+    if ((signature.FiniteKind() || signature.LawKind()) && (!hasCall || callsOnlyNoRecurse))
+    {
+        facts.IsNoRecurse = true;
+    }
+
+    return facts;
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndInstructionRange(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount)
+{
+    stack mut IrTable<u32[0 max]> noProofFlags = new();
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangeHasCall(instrs, firstInstr, instrCount),
+        MirInstructionRangeReadsMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeWritesMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags),
+        MirInstructionRangeHasCall(instrs, firstInstr, instrCount),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndInstructionRangeWithProofs(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<u32[0 max]> lawProofFlags,
+    borrow IrTable<u32[0 max]> finiteProofFlags,
+    borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangeHasCall(instrs, firstInstr, instrCount),
+        MirInstructionRangeReadsMemoryWithFunctionEffects(instrs, firstInstr, instrCount, functionEffectFacts),
+        MirInstructionRangeWritesMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, lawProofFlags),
+        MirInstructionRangeCallsAnyLawMayReadMemory(instrs, firstInstr, instrCount, functionEffectFacts),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, finiteProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noRecurseProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBlockRanges(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges)
+{
+    stack mut IrTable<u32[0 max]> noProofFlags = new();
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangesHaveCall(instrs, ranges),
+        MirInstructionRangesReadMemory(instrs, ranges),
+        MirInstructionRangesWriteMemory(instrs, ranges),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags),
+        MirInstructionRangesHaveCall(instrs, ranges),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBlockRangesWithProofs(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<u32[0 max]> lawProofFlags,
+    borrow IrTable<u32[0 max]> finiteProofFlags,
+    borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangesHaveCall(instrs, ranges),
+        MirInstructionRangesReadMemoryWithFunctionEffects(instrs, ranges, functionEffectFacts),
+        MirInstructionRangesWriteMemory(instrs, ranges),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, lawProofFlags),
+        MirInstructionRangesCallAnyLawMayReadMemory(instrs, ranges, functionEffectFacts),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, finiteProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noRecurseProofFlags));
+}
+
+internal fn bool AppendFunctionEffectProofFlags(
+    FunctionEffectFacts effects,
+    mut borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    mut borrow IrTable<u32[0 max]> lawProofFlags,
+    mut borrow IrTable<u32[0 max]> finiteProofFlags,
+    mut borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    if (functionEffectFacts.Add(effects) == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] lawFlag = 0;
+    if (effects.IsLaw)
+    {
+        lawFlag = 1;
+    }
+
+    stack mut u32[0 max] finiteFlag = 0;
+    if (effects.IsFinite)
+    {
+        finiteFlag = 1;
+    }
+
+    stack mut u32[0 max] noRecurseFlag = 0;
+    if (effects.IsNoRecurse)
+    {
+        noRecurseFlag = 1;
+    }
+
+    if (lawProofFlags.Add(lawFlag) == 0)
+    {
+        return false;
+    }
+
+    if (finiteProofFlags.Add(finiteFlag) == 0)
+    {
+        return false;
+    }
+
+    if (noRecurseProofFlags.Add(noRecurseFlag) == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn bool AddBoolFlag(mut borrow IrTable<u32[0 max]> flags, bool value)
+{
+    stack mut u32[0 max] flag = 0;
+    if (value)
+    {
+        flag = 1;
+    }
+
+    return flags.Add(flag) != 0;
+}
+
+internal fn bool CopyFlagTable(borrow IrTable<u32[0 max]> source, out IrTable<u32[0 max]> destination)
+{
+    stack mut IrTable<u32[0 max]> built = new();
+    stack u64[0 2 ** 63 - 1] total = source.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack u32[0 max] sourceRow = source.Get(i);
+        if (built.Add(sourceRow) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    destination = built;
+    return true;
+}
+
+internal fn bool BuildModuleEffectCandidateFlags(
+    borrow TokenStream stream,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    mut borrow IrTable<u32[0 max]> lawCandidates,
+    mut borrow IrTable<u32[0 max]> finiteCandidates,
+    mut borrow IrTable<u32[0 max]> noRecurseCandidates)
+{
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut u32[0 max] functionNumber = 0;
+    stack mut u64[0 2 ** 63 - 1] f = 0;
+    while willexit (f < tokenCount)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            functionNumber = functionNumber + 1;
+            if (!funcs.Contains(functionNumber))
+            {
+                return false;
+            }
+
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])f, signature))
+            {
+                return false;
+            }
+
+            stack MirFunction func = funcs.Get(functionNumber);
+            stack bool writesMemory = MirInstructionRangeWritesMemory(instrs, func.FirstInstrIndex(), func.OwnedInstrCount());
+            if (!AddBoolFlag(lawCandidates, signature.LawKind() && !writesMemory))
+            {
+                return false;
+            }
+
+            if (!AddBoolFlag(finiteCandidates, signature.FiniteKind()))
+            {
+                return false;
+            }
+
+            if (!AddBoolFlag(noRecurseCandidates, signature.FiniteKind() || signature.LawKind()))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return (u64[0 2 ** 63 - 1])functionNumber == funcs.Count();
+}
+
+internal fn bool BuildNextDecreasingCallProofFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> candidates,
+    borrow IrTable<u32[0 max]> current,
+    out IrTable<u32[0 max]> next,
+    out bool changed)
+{
+    stack mut IrTable<u32[0 max]> built = new();
+    changed = false;
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] functionId = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionId <= total)
+    {
+        stack MirFunction func = funcs.Get(functionId);
+        stack bool value = FunctionIdFlagIsSet(candidates, functionId)
+            && MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, func.FirstInstrIndex(), func.OwnedInstrCount(), current);
+        if (!AddBoolFlag(built, value))
+        {
+            return false;
+        }
+
+        if (FunctionIdFlagIsSet(current, functionId) != value)
+        {
+            changed = true;
+        }
+
+        functionId = functionId + 1;
+    }
+
+    next = built;
+    return true;
+}
+
+internal fn bool BuildNextIncreasingCallProofFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> candidates,
+    borrow IrTable<u32[0 max]> current,
+    out IrTable<u32[0 max]> next,
+    out bool changed)
+{
+    stack mut IrTable<u32[0 max]> built = new();
+    changed = false;
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] functionId = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionId <= total)
+    {
+        stack MirFunction func = funcs.Get(functionId);
+        stack bool value = FunctionIdFlagIsSet(current, functionId)
+            || (FunctionIdFlagIsSet(candidates, functionId)
+                && MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, func.FirstInstrIndex(), func.OwnedInstrCount(), current));
+        if (!AddBoolFlag(built, value))
+        {
+            return false;
+        }
+
+        if (FunctionIdFlagIsSet(current, functionId) != value)
+        {
+            changed = true;
+        }
+
+        functionId = functionId + 1;
+    }
+
+    next = built;
+    return true;
+}
+
+internal fn bool ComputeDecreasingCallProofFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> candidates,
+    out IrTable<u32[0 max]> flags)
+{
+    stack mut IrTable<u32[0 max]> current = new();
+    if (!CopyFlagTable(candidates, current))
+    {
+        return false;
+    }
+
+    stack mut bool changed = true;
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u64[0 2 ** 63 - 1] iteration = 0;
+    while willexit (changed && iteration <= total)
+    {
+        stack mut IrTable<u32[0 max]> next = new();
+        if (!BuildNextDecreasingCallProofFlags(instrs, funcs, candidates, current, next, changed))
+        {
+            return false;
+        }
+
+        current = next;
+        iteration = iteration + 1;
+    }
+
+    if (changed)
+    {
+        return false;
+    }
+
+    flags = current;
+    return true;
+}
+
+internal fn bool ComputeIncreasingCallProofFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> candidates,
+    out IrTable<u32[0 max]> flags)
+{
+    stack mut IrTable<u32[0 max]> current = new();
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] seed = 1;
+    while willexit ((u64[0 2 ** 63 - 1])seed <= total)
+    {
+        if (!AddBoolFlag(current, false))
+        {
+            return false;
+        }
+
+        seed = seed + 1;
+    }
+
+    stack mut bool changed = true;
+    stack mut u64[0 2 ** 63 - 1] iteration = 0;
+    while willexit (changed && iteration <= total)
+    {
+        stack mut IrTable<u32[0 max]> next = new();
+        if (!BuildNextIncreasingCallProofFlags(instrs, funcs, candidates, current, next, changed))
+        {
+            return false;
+        }
+
+        current = next;
+        iteration = iteration + 1;
+    }
+
+    if (changed)
+    {
+        return false;
+    }
+
+    flags = current;
+    return true;
+}
+
+internal fn bool FunctionIdLawMayReadMemoryFromFlags(
+    borrow IrTable<u32[0 max]> lawFlags,
+    borrow IrTable<u32[0 max]> lawMayReadFlags,
+    u32[0 max] functionId)
+{
+    if (!FunctionIdFlagIsSet(lawFlags, functionId))
+    {
+        return true;
+    }
+
+    return FunctionIdFlagIsSet(lawMayReadFlags, functionId);
+}
+
+internal fn bool MirInstructionRangeReadsMemoryWithLawMayReadFlags(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    borrow IrTable<u32[0 max]> lawFlags,
+    borrow IrTable<u32[0 max]> lawMayReadFlags)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.LoadGlobal || instr.Opcode() == MirOp.LoadPtr || instr.Opcode() == MirOp.LoadEnumPtr || MirInstructionIsArenaRuntime(instr) || MirInstructionIsHeapRuntime(instr))
+            {
+                return true;
+            }
+
+            if (MirOpIsAnyCall(instr.Opcode()))
+            {
+                if (FunctionIdLawMayReadMemoryFromFlags(lawFlags, lawMayReadFlags, (u32[0 max])instr.Immediate()))
+                {
+                    return true;
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool BuildNextLawMayReadFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> lawFlags,
+    borrow IrTable<u32[0 max]> current,
+    out IrTable<u32[0 max]> next,
+    out bool changed)
+{
+    stack mut IrTable<u32[0 max]> built = new();
+    changed = false;
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] functionId = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionId <= total)
+    {
+        stack mut bool value = false;
+        if (FunctionIdFlagIsSet(lawFlags, functionId))
+        {
+            stack MirFunction func = funcs.Get(functionId);
+            value = MirInstructionRangeReadsMemoryWithLawMayReadFlags(
+                instrs,
+                func.FirstInstrIndex(),
+                func.OwnedInstrCount(),
+                lawFlags,
+                current);
+        }
+
+        if (!AddBoolFlag(built, value))
+        {
+            return false;
+        }
+
+        if (FunctionIdFlagIsSet(current, functionId) != value)
+        {
+            changed = true;
+        }
+
+        functionId = functionId + 1;
+    }
+
+    next = built;
+    return true;
+}
+
+internal fn bool ComputeLawMayReadFlags(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> lawFlags,
+    out IrTable<u32[0 max]> flags)
+{
+    stack mut IrTable<u32[0 max]> current = new();
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] seed = 1;
+    while willexit ((u64[0 2 ** 63 - 1])seed <= total)
+    {
+        if (!AddBoolFlag(current, false))
+        {
+            return false;
+        }
+
+        seed = seed + 1;
+    }
+
+    stack mut bool changed = true;
+    stack mut u64[0 2 ** 63 - 1] iteration = 0;
+    while willexit (changed && iteration <= total)
+    {
+        stack mut IrTable<u32[0 max]> next = new();
+        if (!BuildNextLawMayReadFlags(instrs, funcs, lawFlags, current, next, changed))
+        {
+            return false;
+        }
+
+        current = next;
+        iteration = iteration + 1;
+    }
+
+    if (changed)
+    {
+        return false;
+    }
+
+    flags = current;
+    return true;
+}
+
+internal fn bool BuildFunctionEffectFactsFromFlags(
+    borrow TokenStream stream,
+    ascii sourceText,
+    borrow TypedFunctionEffectSummaryTable typedFunctionEffects,
+    bool importTypedBackendDefaults,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u32[0 max]> lawFlags,
+    borrow IrTable<u32[0 max]> lawMayReadFlags,
+    borrow IrTable<u32[0 max]> finiteFlags,
+    borrow IrTable<u32[0 max]> noRecurseFlags,
+    out IrTable<FunctionEffectFacts> functionEffectFacts)
+{
+    stack mut IrTable<FunctionEffectFacts> built = new();
+    stack u64[0 2 ** 63 - 1] total = funcs.Count();
+    stack mut u32[0 max] functionId = 1;
+    stack mut u64[0 2 ** 63 - 1] functionToken = 0;
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    while willexit ((u64[0 2 ** 63 - 1])functionId <= total)
+    {
+        while willexit (functionToken < tokenCount
+            && stream.KindAt(functionToken) != TokenKind.Fn)
+        {
+            functionToken = functionToken + 1;
+        }
+
+        if (functionToken >= tokenCount)
+        {
+            return false;
+        }
+
+        stack mut FunctionEffectFacts facts = new();
+        facts.IsLaw = FunctionIdFlagIsSet(lawFlags, functionId);
+        facts.LawMayReadMemory = facts.IsLaw && FunctionIdFlagIsSet(lawMayReadFlags, functionId);
+        facts.IsFinite = FunctionIdFlagIsSet(finiteFlags, functionId);
+        facts.IsNoRecurse = FunctionIdFlagIsSet(noRecurseFlags, functionId);
+        if (importTypedBackendDefaults
+            && !ApplyTypedFunctionBackendEffectFacts(
+                typedFunctionEffects,
+                (u64[0 2 ** 63 - 1])(functionId - 1),
+                (u32[0 max])functionToken,
+                facts))
+        {
+            return false;
+        }
+
+        ApplySourceFunctionBackendEffectFacts(
+            sourceText,
+            stream,
+            (u32[0 max])functionToken,
+            facts);
+        if (built.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        functionToken = functionToken + 1;
+        functionId = functionId + 1;
+    }
+
+    functionEffectFacts = built;
+    return true;
+}

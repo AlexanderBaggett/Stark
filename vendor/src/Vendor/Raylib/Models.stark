@@ -1,0 +1,680 @@
+import Vendor.Raylib.Types
+export import Vendor.Raylib.Types
+module Vendor.Raylib.Models
+
+internal unsafe inline finite law rawptr<i8[min max]> ReadI8OrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<Matrix> ReadMatricesOrNull(borrow Matrix[] values)
+{
+    if (values.Length == 0)
+    {
+        return null;
+    }
+
+    return &values[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
+[LinkName("DrawLine3D")]
+internal unsafe ffi fn void stark_raylib_DrawLine3D(Vector3 startPos, Vector3 endPos, Color color);
+public fn void DrawLine3D(Vector3 startPos, Vector3 endPos, Color color) {
+    unsafe {
+        stark_raylib_DrawLine3D(startPos, endPos, color);
+    }
+    return;
+}
+
+[LinkName("DrawPoint3D")]
+internal unsafe ffi fn void stark_raylib_DrawPoint3D(Vector3 position, Color color);
+public fn void DrawPoint3D(Vector3 position, Color color) {
+    unsafe {
+        stark_raylib_DrawPoint3D(position, color);
+    }
+    return;
+}
+
+[LinkName("DrawCircle3D")]
+internal unsafe ffi fn void stark_raylib_DrawCircle3D(Vector3 center, f32 radius, Vector3 rotationAxis, f32 rotationAngle, Color color);
+public fn void DrawCircle3D(Vector3 center, f32 radius, Vector3 rotationAxis, f32 rotationAngle, Color color) {
+    unsafe {
+        stark_raylib_DrawCircle3D(center, radius, rotationAxis, rotationAngle, color);
+    }
+    return;
+}
+
+[LinkName("DrawTriangle3D")]
+internal unsafe ffi fn void stark_raylib_DrawTriangle3D(Vector3 v1, Vector3 v2, Vector3 v3, Color color);
+public fn void DrawTriangle3D(Vector3 v1, Vector3 v2, Vector3 v3, Color color) {
+    unsafe {
+        stark_raylib_DrawTriangle3D(v1, v2, v3, color);
+    }
+    return;
+}
+
+[LinkName("DrawTriangleStrip3D")]
+internal unsafe ffi fn void stark_raylib_DrawTriangleStrip3D(rawptr<Vector3> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus DrawTriangleStrip3D(borrow Vector3[] points, Color color) {
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_DrawTriangleStrip3D(&points[0], (i32[min max])points.Length, color);
+    }
+    return RaylibStatus.Ok;
+}
+
+[LinkName("DrawCube")]
+internal unsafe ffi fn void stark_raylib_DrawCube(Vector3 position, f32 width, f32 height, f32 length, Color color);
+public fn void DrawCube(Vector3 position, f32 width, f32 height, f32 length, Color color) {
+    unsafe {
+        stark_raylib_DrawCube(position, width, height, length, color);
+    }
+    return;
+}
+
+[LinkName("DrawCubeV")]
+internal unsafe ffi fn void stark_raylib_DrawCubeV(Vector3 position, Vector3 size, Color color);
+public fn void DrawCubeV(Vector3 position, Vector3 size, Color color) {
+    unsafe {
+        stark_raylib_DrawCubeV(position, size, color);
+    }
+    return;
+}
+
+[LinkName("DrawCubeWires")]
+internal unsafe ffi fn void stark_raylib_DrawCubeWires(Vector3 position, f32 width, f32 height, f32 length, Color color);
+public fn void DrawCubeWires(Vector3 position, f32 width, f32 height, f32 length, Color color) {
+    unsafe {
+        stark_raylib_DrawCubeWires(position, width, height, length, color);
+    }
+    return;
+}
+
+[LinkName("DrawCubeWiresV")]
+internal unsafe ffi fn void stark_raylib_DrawCubeWiresV(Vector3 position, Vector3 size, Color color);
+public fn void DrawCubeWiresV(Vector3 position, Vector3 size, Color color) {
+    unsafe {
+        stark_raylib_DrawCubeWiresV(position, size, color);
+    }
+    return;
+}
+
+[LinkName("DrawSphere")]
+internal unsafe ffi fn void stark_raylib_DrawSphere(Vector3 centerPos, f32 radius, Color color);
+public fn void DrawSphere(Vector3 centerPos, f32 radius, Color color) {
+    unsafe {
+        stark_raylib_DrawSphere(centerPos, radius, color);
+    }
+    return;
+}
+
+[LinkName("DrawSphereEx")]
+internal unsafe ffi fn void stark_raylib_DrawSphereEx(Vector3 centerPos, f32 radius, i32[min max] rings, i32[min max] slices, Color color);
+public fn void DrawSphereEx(Vector3 centerPos, f32 radius, i32[min max] rings, i32[min max] slices, Color color) {
+    unsafe {
+        stark_raylib_DrawSphereEx(centerPos, radius, rings, slices, color);
+    }
+    return;
+}
+
+[LinkName("DrawSphereWires")]
+internal unsafe ffi fn void stark_raylib_DrawSphereWires(Vector3 centerPos, f32 radius, i32[min max] rings, i32[min max] slices, Color color);
+public fn void DrawSphereWires(Vector3 centerPos, f32 radius, i32[min max] rings, i32[min max] slices, Color color) {
+    unsafe {
+        stark_raylib_DrawSphereWires(centerPos, radius, rings, slices, color);
+    }
+    return;
+}
+
+[LinkName("DrawCylinder")]
+internal unsafe ffi fn void stark_raylib_DrawCylinder(Vector3 position, f32 radiusTop, f32 radiusBottom, f32 height, i32[min max] slices, Color color);
+public fn void DrawCylinder(Vector3 position, f32 radiusTop, f32 radiusBottom, f32 height, i32[min max] slices, Color color) {
+    unsafe {
+        stark_raylib_DrawCylinder(position, radiusTop, radiusBottom, height, slices, color);
+    }
+    return;
+}
+
+[LinkName("DrawCylinderEx")]
+internal unsafe ffi fn void stark_raylib_DrawCylinderEx(Vector3 startPos, Vector3 endPos, f32 startRadius, f32 endRadius, i32[min max] sides, Color color);
+public fn void DrawCylinderEx(Vector3 startPos, Vector3 endPos, f32 startRadius, f32 endRadius, i32[min max] sides, Color color) {
+    unsafe {
+        stark_raylib_DrawCylinderEx(startPos, endPos, startRadius, endRadius, sides, color);
+    }
+    return;
+}
+
+[LinkName("DrawCylinderWires")]
+internal unsafe ffi fn void stark_raylib_DrawCylinderWires(Vector3 position, f32 radiusTop, f32 radiusBottom, f32 height, i32[min max] slices, Color color);
+public fn void DrawCylinderWires(Vector3 position, f32 radiusTop, f32 radiusBottom, f32 height, i32[min max] slices, Color color) {
+    unsafe {
+        stark_raylib_DrawCylinderWires(position, radiusTop, radiusBottom, height, slices, color);
+    }
+    return;
+}
+
+[LinkName("DrawCylinderWiresEx")]
+internal unsafe ffi fn void stark_raylib_DrawCylinderWiresEx(Vector3 startPos, Vector3 endPos, f32 startRadius, f32 endRadius, i32[min max] sides, Color color);
+public fn void DrawCylinderWiresEx(Vector3 startPos, Vector3 endPos, f32 startRadius, f32 endRadius, i32[min max] sides, Color color) {
+    unsafe {
+        stark_raylib_DrawCylinderWiresEx(startPos, endPos, startRadius, endRadius, sides, color);
+    }
+    return;
+}
+
+[LinkName("DrawCapsule")]
+internal unsafe ffi fn void stark_raylib_DrawCapsule(Vector3 startPos, Vector3 endPos, f32 radius, i32[min max] slices, i32[min max] rings, Color color);
+public fn void DrawCapsule(Vector3 startPos, Vector3 endPos, f32 radius, i32[min max] slices, i32[min max] rings, Color color) {
+    unsafe {
+        stark_raylib_DrawCapsule(startPos, endPos, radius, slices, rings, color);
+    }
+    return;
+}
+
+[LinkName("DrawCapsuleWires")]
+internal unsafe ffi fn void stark_raylib_DrawCapsuleWires(Vector3 startPos, Vector3 endPos, f32 radius, i32[min max] slices, i32[min max] rings, Color color);
+public fn void DrawCapsuleWires(Vector3 startPos, Vector3 endPos, f32 radius, i32[min max] slices, i32[min max] rings, Color color) {
+    unsafe {
+        stark_raylib_DrawCapsuleWires(startPos, endPos, radius, slices, rings, color);
+    }
+    return;
+}
+
+[LinkName("DrawPlane")]
+internal unsafe ffi fn void stark_raylib_DrawPlane(Vector3 centerPos, Vector2 size, Color color);
+public fn void DrawPlane(Vector3 centerPos, Vector2 size, Color color) {
+    unsafe {
+        stark_raylib_DrawPlane(centerPos, size, color);
+    }
+    return;
+}
+
+[LinkName("DrawRay")]
+internal unsafe ffi fn void stark_raylib_DrawRay(Ray ray, Color color);
+public fn void DrawRay(Ray ray, Color color) {
+    unsafe {
+        stark_raylib_DrawRay(ray, color);
+    }
+    return;
+}
+
+[LinkName("DrawGrid")]
+internal unsafe ffi fn void stark_raylib_DrawGrid(i32[min max] slices, f32 spacing);
+public fn void DrawGrid(i32[min max] slices, f32 spacing) {
+    unsafe {
+        stark_raylib_DrawGrid(slices, spacing);
+    }
+    return;
+}
+[LinkName("LoadModel")]
+internal unsafe ffi fn Model stark_raylib_LoadModel(ascii fileName);
+public fn Model LoadModel(ascii fileName) {
+    unsafe {
+        return stark_raylib_LoadModel(fileName);
+    }
+}
+
+[LinkName("LoadModelFromMesh")]
+internal unsafe ffi fn Model stark_raylib_LoadModelFromMesh(Mesh mesh);
+public fn Model LoadModelFromMesh(Mesh mesh) {
+    unsafe {
+        return stark_raylib_LoadModelFromMesh(mesh);
+    }
+}
+
+[LinkName("IsModelValid")]
+internal unsafe ffi fn bool stark_raylib_IsModelValid(Model model);
+public fn bool IsModelValid(Model model) {
+    unsafe {
+        return stark_raylib_IsModelValid(model);
+    }
+}
+
+[LinkName("UnloadModel")]
+internal unsafe ffi fn void stark_raylib_UnloadModel(Model model);
+public fn void UnloadModel(Model model) {
+    unsafe {
+        stark_raylib_UnloadModel(model);
+    }
+    return;
+}
+
+[LinkName("GetModelBoundingBox")]
+internal unsafe ffi fn BoundingBox stark_raylib_GetModelBoundingBox(Model model);
+public fn BoundingBox GetModelBoundingBox(Model model) {
+    unsafe {
+        return stark_raylib_GetModelBoundingBox(model);
+    }
+}
+
+[LinkName("DrawModel")]
+internal unsafe ffi fn void stark_raylib_DrawModel(Model model, Vector3 position, f32 scale, Color tint);
+public fn void DrawModel(Model model, Vector3 position, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModel(model, position, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawModelEx")]
+internal unsafe ffi fn void stark_raylib_DrawModelEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint);
+public fn void DrawModelEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModelEx(model, position, rotationAxis, rotationAngle, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawModelWires")]
+internal unsafe ffi fn void stark_raylib_DrawModelWires(Model model, Vector3 position, f32 scale, Color tint);
+public fn void DrawModelWires(Model model, Vector3 position, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModelWires(model, position, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawModelWiresEx")]
+internal unsafe ffi fn void stark_raylib_DrawModelWiresEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint);
+public fn void DrawModelWiresEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModelWiresEx(model, position, rotationAxis, rotationAngle, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawModelPoints")]
+internal unsafe ffi fn void stark_raylib_DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint);
+public fn void DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModelPoints(model, position, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawModelPointsEx")]
+internal unsafe ffi fn void stark_raylib_DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint);
+public fn void DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawModelPointsEx(model, position, rotationAxis, rotationAngle, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawBoundingBox")]
+internal unsafe ffi fn void stark_raylib_DrawBoundingBox(BoundingBox box, Color color);
+public fn void DrawBoundingBox(BoundingBox box, Color color) {
+    unsafe {
+        stark_raylib_DrawBoundingBox(box, color);
+    }
+    return;
+}
+
+[LinkName("DrawBillboard")]
+internal unsafe ffi fn void stark_raylib_DrawBillboard(Camera camera, Texture2D texture, Vector3 position, f32 scale, Color tint);
+public fn void DrawBillboard(Camera camera, Texture2D texture, Vector3 position, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawBillboard(camera, texture, position, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawBillboardRec")]
+internal unsafe ffi fn void stark_raylib_DrawBillboardRec(Camera camera, Texture2D texture, Rectangle source, Vector3 position, Vector2 size, Color tint);
+public fn void DrawBillboardRec(Camera camera, Texture2D texture, Rectangle source, Vector3 position, Vector2 size, Color tint) {
+    unsafe {
+        stark_raylib_DrawBillboardRec(camera, texture, source, position, size, tint);
+    }
+    return;
+}
+
+[LinkName("DrawBillboardPro")]
+internal unsafe ffi fn void stark_raylib_DrawBillboardPro(Camera camera, Texture2D texture, Rectangle source, Vector3 position, Vector3 up, Vector2 size, Vector2 origin, f32 rotation, Color tint);
+public fn void DrawBillboardPro(Camera camera, Texture2D texture, Rectangle source, Vector3 position, Vector3 up, Vector2 size, Vector2 origin, f32 rotation, Color tint) {
+    unsafe {
+        stark_raylib_DrawBillboardPro(camera, texture, source, position, up, size, origin, rotation, tint);
+    }
+    return;
+}
+
+[LinkName("UploadMesh")]
+internal unsafe ffi fn void stark_raylib_UploadMesh(rawmutptr<Mesh> mesh, bool isDynamic);
+public fn Mesh UploadMesh(Mesh mesh, bool isDynamic) {
+    stack mut Mesh result = mesh;
+    unsafe {
+        stark_raylib_UploadMesh(&result, isDynamic);
+    }
+    return result;
+}
+
+[LinkName("UpdateMeshBuffer")]
+internal unsafe ffi fn void stark_raylib_UpdateMeshBuffer(Mesh mesh, i32[min max] index, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset);
+public fn RaylibStatus UpdateMeshBuffer(Mesh mesh, i32[min max] index, borrow i8[min max][] data, i32[min max] offset) {
+    if (TooManyForI32(data.Length))
+    {
+        return RaylibStatus.TooManyItems;
+    }
+
+    unsafe {
+        stark_raylib_UpdateMeshBuffer(mesh, index, ReadI8OrNull(data), (i32[min max])data.Length, offset);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+[LinkName("UnloadMesh")]
+internal unsafe ffi fn void stark_raylib_UnloadMesh(Mesh mesh);
+public fn void UnloadMesh(Mesh mesh) {
+    unsafe {
+        stark_raylib_UnloadMesh(mesh);
+    }
+    return;
+}
+
+[LinkName("DrawMesh")]
+internal unsafe ffi fn void stark_raylib_DrawMesh(Mesh mesh, Material material, Matrix transform);
+public fn void DrawMesh(Mesh mesh, Material material, Matrix transform) {
+    unsafe {
+        stark_raylib_DrawMesh(mesh, material, transform);
+    }
+    return;
+}
+
+[LinkName("DrawMeshInstanced")]
+internal unsafe ffi fn void stark_raylib_DrawMeshInstanced(Mesh mesh, Material material, rawptr<Matrix> transforms, i32[min max] instances);
+public fn RaylibStatus DrawMeshInstanced(Mesh mesh, Material material, borrow Matrix[] transforms) {
+    if (TooManyForI32(transforms.Length))
+    {
+        return RaylibStatus.TooManyItems;
+    }
+
+    unsafe {
+        stark_raylib_DrawMeshInstanced(mesh, material, ReadMatricesOrNull(transforms), (i32[min max])transforms.Length);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+[LinkName("GetMeshBoundingBox")]
+internal unsafe ffi fn BoundingBox stark_raylib_GetMeshBoundingBox(Mesh mesh);
+public fn BoundingBox GetMeshBoundingBox(Mesh mesh) {
+    unsafe {
+        return stark_raylib_GetMeshBoundingBox(mesh);
+    }
+}
+
+[LinkName("GenMeshTangents")]
+internal unsafe ffi fn void stark_raylib_GenMeshTangents(rawmutptr<Mesh> mesh);
+public fn Mesh GenMeshTangents(Mesh mesh) {
+    stack mut Mesh result = mesh;
+    unsafe {
+        stark_raylib_GenMeshTangents(&result);
+    }
+    return result;
+}
+
+[LinkName("ExportMesh")]
+internal unsafe ffi fn bool stark_raylib_ExportMesh(Mesh mesh, ascii fileName);
+public fn bool ExportMesh(Mesh mesh, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportMesh(mesh, fileName);
+    }
+}
+
+[LinkName("ExportMeshAsCode")]
+internal unsafe ffi fn bool stark_raylib_ExportMeshAsCode(Mesh mesh, ascii fileName);
+public fn bool ExportMeshAsCode(Mesh mesh, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportMeshAsCode(mesh, fileName);
+    }
+}
+
+[LinkName("GenMeshPoly")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshPoly(i32[min max] sides, f32 radius);
+public fn Mesh GenMeshPoly(i32[min max] sides, f32 radius) {
+    unsafe {
+        return stark_raylib_GenMeshPoly(sides, radius);
+    }
+}
+
+[LinkName("GenMeshPlane")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshPlane(f32 width, f32 length, i32[min max] resX, i32[min max] resZ);
+public fn Mesh GenMeshPlane(f32 width, f32 length, i32[min max] resX, i32[min max] resZ) {
+    unsafe {
+        return stark_raylib_GenMeshPlane(width, length, resX, resZ);
+    }
+}
+
+[LinkName("GenMeshCube")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshCube(f32 width, f32 height, f32 length);
+public fn Mesh GenMeshCube(f32 width, f32 height, f32 length) {
+    unsafe {
+        return stark_raylib_GenMeshCube(width, height, length);
+    }
+}
+
+[LinkName("GenMeshSphere")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshSphere(f32 radius, i32[min max] rings, i32[min max] slices);
+public fn Mesh GenMeshSphere(f32 radius, i32[min max] rings, i32[min max] slices) {
+    unsafe {
+        return stark_raylib_GenMeshSphere(radius, rings, slices);
+    }
+}
+
+[LinkName("GenMeshHemiSphere")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshHemiSphere(f32 radius, i32[min max] rings, i32[min max] slices);
+public fn Mesh GenMeshHemiSphere(f32 radius, i32[min max] rings, i32[min max] slices) {
+    unsafe {
+        return stark_raylib_GenMeshHemiSphere(radius, rings, slices);
+    }
+}
+
+[LinkName("GenMeshCylinder")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshCylinder(f32 radius, f32 height, i32[min max] slices);
+public fn Mesh GenMeshCylinder(f32 radius, f32 height, i32[min max] slices) {
+    unsafe {
+        return stark_raylib_GenMeshCylinder(radius, height, slices);
+    }
+}
+
+[LinkName("GenMeshCone")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshCone(f32 radius, f32 height, i32[min max] slices);
+public fn Mesh GenMeshCone(f32 radius, f32 height, i32[min max] slices) {
+    unsafe {
+        return stark_raylib_GenMeshCone(radius, height, slices);
+    }
+}
+
+[LinkName("GenMeshTorus")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshTorus(f32 radius, f32 size, i32[min max] radSeg, i32[min max] sides);
+public fn Mesh GenMeshTorus(f32 radius, f32 size, i32[min max] radSeg, i32[min max] sides) {
+    unsafe {
+        return stark_raylib_GenMeshTorus(radius, size, radSeg, sides);
+    }
+}
+
+[LinkName("GenMeshKnot")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshKnot(f32 radius, f32 size, i32[min max] radSeg, i32[min max] sides);
+public fn Mesh GenMeshKnot(f32 radius, f32 size, i32[min max] radSeg, i32[min max] sides) {
+    unsafe {
+        return stark_raylib_GenMeshKnot(radius, size, radSeg, sides);
+    }
+}
+
+[LinkName("GenMeshHeightmap")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshHeightmap(Image heightmap, Vector3 size);
+public fn Mesh GenMeshHeightmap(Image heightmap, Vector3 size) {
+    unsafe {
+        return stark_raylib_GenMeshHeightmap(heightmap, size);
+    }
+}
+
+[LinkName("GenMeshCubicmap")]
+internal unsafe ffi fn Mesh stark_raylib_GenMeshCubicmap(Image cubicmap, Vector3 cubeSize);
+public fn Mesh GenMeshCubicmap(Image cubicmap, Vector3 cubeSize) {
+    unsafe {
+        return stark_raylib_GenMeshCubicmap(cubicmap, cubeSize);
+    }
+}
+
+[LinkName("LoadMaterials")]
+internal unsafe ffi fn rawmutptr<Material> LoadMaterials(ascii fileName, rawmutptr<i32[min max]> materialCount);
+[LinkName("LoadMaterialDefault")]
+internal unsafe ffi fn Material stark_raylib_LoadMaterialDefault();
+public fn Material LoadMaterialDefault() {
+    unsafe {
+        return stark_raylib_LoadMaterialDefault();
+    }
+}
+
+[LinkName("IsMaterialValid")]
+internal unsafe ffi fn bool stark_raylib_IsMaterialValid(Material material);
+public fn bool IsMaterialValid(Material material) {
+    unsafe {
+        return stark_raylib_IsMaterialValid(material);
+    }
+}
+
+[LinkName("UnloadMaterial")]
+internal unsafe ffi fn void stark_raylib_UnloadMaterial(Material material);
+public fn void UnloadMaterial(Material material) {
+    unsafe {
+        stark_raylib_UnloadMaterial(material);
+    }
+    return;
+}
+
+[LinkName("SetMaterialTexture")]
+internal unsafe ffi fn void stark_raylib_SetMaterialTexture(rawmutptr<Material> material, i32[min max] mapType, Texture2D texture);
+public fn Material SetMaterialTexture(Material material, i32[min max] mapType, Texture2D texture) {
+    stack mut Material result = material;
+    unsafe {
+        stark_raylib_SetMaterialTexture(&result, mapType, texture);
+    }
+    return result;
+}
+
+public fn Material SetMaterialTexture(Material material, MaterialMapIndex mapType, Texture2D texture) {
+    return SetMaterialTexture(material, MaterialMapIndexNative(mapType), texture);
+}
+
+[LinkName("SetModelMeshMaterial")]
+internal unsafe ffi fn void stark_raylib_SetModelMeshMaterial(rawmutptr<Model> model, i32[min max] meshId, i32[min max] materialId);
+public fn Model SetModelMeshMaterial(Model model, i32[min max] meshId, i32[min max] materialId) {
+    stack mut Model result = model;
+    unsafe {
+        stark_raylib_SetModelMeshMaterial(&result, meshId, materialId);
+    }
+    return result;
+}
+
+[LinkName("LoadModelAnimations")]
+internal unsafe ffi fn rawmutptr<ModelAnimation> LoadModelAnimations(ascii fileName, rawmutptr<i32[min max]> animCount);
+[LinkName("UpdateModelAnimation")]
+internal unsafe ffi fn void stark_raylib_UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame);
+public fn void UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame) {
+    unsafe {
+        stark_raylib_UpdateModelAnimation(model, anim, frame);
+    }
+    return;
+}
+
+[LinkName("UpdateModelAnimationEx")]
+internal unsafe ffi fn void stark_raylib_UpdateModelAnimationEx(Model model, ModelAnimation animA, f32 frameA, ModelAnimation animB, f32 frameB, f32 blend);
+public fn void UpdateModelAnimationEx(Model model, ModelAnimation animA, f32 frameA, ModelAnimation animB, f32 frameB, f32 blend) {
+    unsafe {
+        stark_raylib_UpdateModelAnimationEx(model, animA, frameA, animB, frameB, blend);
+    }
+    return;
+}
+
+[LinkName("UnloadModelAnimations")]
+internal unsafe ffi fn void UnloadModelAnimations(rawmutptr<ModelAnimation> animations, i32[min max] animCount);
+[LinkName("IsModelAnimationValid")]
+internal unsafe ffi fn bool stark_raylib_IsModelAnimationValid(Model model, ModelAnimation anim);
+public fn bool IsModelAnimationValid(Model model, ModelAnimation anim) {
+    unsafe {
+        return stark_raylib_IsModelAnimationValid(model, anim);
+    }
+}
+
+[LinkName("CheckCollisionSpheres")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionSpheres(Vector3 center1, f32 radius1, Vector3 center2, f32 radius2);
+public fn bool CheckCollisionSpheres(Vector3 center1, f32 radius1, Vector3 center2, f32 radius2) {
+    unsafe {
+        return stark_raylib_CheckCollisionSpheres(center1, radius1, center2, radius2);
+    }
+}
+
+[LinkName("CheckCollisionBoxes")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionBoxes(BoundingBox box1, BoundingBox box2);
+public fn bool CheckCollisionBoxes(BoundingBox box1, BoundingBox box2) {
+    unsafe {
+        return stark_raylib_CheckCollisionBoxes(box1, box2);
+    }
+}
+
+[LinkName("CheckCollisionBoxSphere")]
+internal unsafe ffi fn bool stark_raylib_CheckCollisionBoxSphere(BoundingBox box, Vector3 center, f32 radius);
+public fn bool CheckCollisionBoxSphere(BoundingBox box, Vector3 center, f32 radius) {
+    unsafe {
+        return stark_raylib_CheckCollisionBoxSphere(box, center, radius);
+    }
+}
+
+[LinkName("GetRayCollisionSphere")]
+internal unsafe ffi fn RayCollision stark_raylib_GetRayCollisionSphere(Ray ray, Vector3 center, f32 radius);
+public fn RayCollision GetRayCollisionSphere(Ray ray, Vector3 center, f32 radius) {
+    unsafe {
+        return stark_raylib_GetRayCollisionSphere(ray, center, radius);
+    }
+}
+
+[LinkName("GetRayCollisionBox")]
+internal unsafe ffi fn RayCollision stark_raylib_GetRayCollisionBox(Ray ray, BoundingBox box);
+public fn RayCollision GetRayCollisionBox(Ray ray, BoundingBox box) {
+    unsafe {
+        return stark_raylib_GetRayCollisionBox(ray, box);
+    }
+}
+
+[LinkName("GetRayCollisionMesh")]
+internal unsafe ffi fn RayCollision stark_raylib_GetRayCollisionMesh(Ray ray, Mesh mesh, Matrix transform);
+public fn RayCollision GetRayCollisionMesh(Ray ray, Mesh mesh, Matrix transform) {
+    unsafe {
+        return stark_raylib_GetRayCollisionMesh(ray, mesh, transform);
+    }
+}
+
+[LinkName("GetRayCollisionTriangle")]
+internal unsafe ffi fn RayCollision stark_raylib_GetRayCollisionTriangle(Ray ray, Vector3 p1, Vector3 p2, Vector3 p3);
+public fn RayCollision GetRayCollisionTriangle(Ray ray, Vector3 p1, Vector3 p2, Vector3 p3) {
+    unsafe {
+        return stark_raylib_GetRayCollisionTriangle(ray, p1, p2, p3);
+    }
+}
+
+[LinkName("GetRayCollisionQuad")]
+internal unsafe ffi fn RayCollision stark_raylib_GetRayCollisionQuad(Ray ray, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 p4);
+public fn RayCollision GetRayCollisionQuad(Ray ray, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 p4) {
+    unsafe {
+        return stark_raylib_GetRayCollisionQuad(ray, p1, p2, p3, p4);
+    }
+}

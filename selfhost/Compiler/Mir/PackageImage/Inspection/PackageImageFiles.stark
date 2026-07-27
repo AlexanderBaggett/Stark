@@ -1,0 +1,186 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Builder.LegacyMirSectionWriter
+import Compiler.Mir.PackageImage.Inspection.PackageImageInspection
+import Compiler.Mir.PackageImage.Loader.LegacyMirSectionLoader
+import Compiler.Mir.PackageImage.Models
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Runtime.Buffer
+import System.Text
+module Compiler.Mir.PackageImage.Inspection.PackageImageFiles
+
+// === Bridge to the stdlib byte buffer (toward on-disk package images, #32) ===
+// `System.IO.File.WriteAllBytes`/`ReadAllBytes` consume/produce a
+// `System.Runtime.Buffer.DynamicByteBuffer`, so a package image (an `IrTable<u8>`)
+// converts to/from that type. Bytes are u8 here and i8 in the buffer; the modular
+// cast preserves the bit pattern. With these, persisting an image is a thin wrapper:
+// `SerializePackageImage` -> `ImageToByteBuffer` -> `File.WriteAllBytes`, and the
+// reverse for loading.
+
+// Copies every byte of the image `src` into the byte buffer `dst`.
+public fn bool ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow DynamicByteBuffer dst)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack System.Memory.MemoryStatus ws = dst.WriteByte((i8[min max])b);
+        if (ws != System.Memory.MemoryStatus.Ok)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Copies the readable bytes of `src` into the image `dst`.
+public fn bool ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTable<u8[0 max]> dst)
+{
+    stack i8[min max][] bytes = src.ReadSlice();
+    stack u64[0 2 ** 63 - 1] len = src.Readable();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < len)
+    {
+        stack i8[min max] sb = bytes[i];
+        stack u32[0 max] w = dst.Add((u8[0 max])sb);
+        if (w == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// === On-disk package image (#32, end-to-end file round-trip) ===
+// Serializes a module to a package image, writes it to a temp file via System.IO.File,
+// reads it back, and deserializes — exercising the full on-disk path. All filesystem +
+// dynamic-buffer work stays in this module (a [Fact] only builds inputs + checks the
+// bool). Switch arms are all non-empty (the empty `case Ok:` arm crashes host lower-mir
+// for cross-package stdlib-enum switches).
+
+internal fn bool WriteImageFile(ascii path, borrow DynamicByteBuffer dbuf)
+{
+    switch (System.IO.File.WriteAllBytes(path, dbuf))
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+    }
+}
+
+internal fn bool ReadImageFile(ascii path, mut borrow IrTable<u8[0 max]> outBuf)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            return ImageFromByteBuffer(contents, outBuf);
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+public fn bool WritePackageImageBufferFile(ascii path, borrow IrTable<u8[0 max]> image)
+{
+    stack mut DynamicByteBuffer dbuf = new();
+    if (!ImageToByteBuffer(image, dbuf))
+    {
+        return false;
+    }
+
+    return WriteImageFile(path, dbuf);
+}
+
+public fn bool ReadPackageImageBufferFile(ascii path, mut borrow IrTable<u8[0 max]> outImage)
+{
+    return ReadImageFile(path, outImage);
+}
+
+public fn bool WritePackageImageFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool WritePackageImageWithAsmFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool LoadPackageImageFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImage(image, outInstrs, outBlocks, outFuncs, outGlobals);
+}
+
+public fn bool LoadPackageImageWithAsmFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImageWithAsm(image, outInstrs, outBlocks, outFuncs, outGlobals, outAsmMetadata);
+}
+
+public fn bool InspectPackageImageFile(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Text, sink);
+}
+
+public fn bool InspectPackageImageFileJson(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Json, sink);
+}
+
+public fn bool RenderPackageImageInspectionFile(ascii path, PackageImageInspectionFormat format, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadImageFile(path, image))
+    {
+        return false;
+    }
+
+    return RenderPackageImageInspection(image, format, sink);
+}

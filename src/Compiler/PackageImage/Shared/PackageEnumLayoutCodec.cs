@@ -2,6 +2,20 @@ namespace Stark.Compiler;
 
 internal static partial class PackageImageBuilder
 {
+    /// <summary>
+    /// Renders the `[Ok]`/`[Err]` propagation role of an enum variant for the package
+    /// image so imported enums stay `try`-propagatable across the package boundary.
+    /// </summary>
+    private static string? RenderEnumVariantRole(EnumVariantRole role)
+    {
+        return role switch
+        {
+            EnumVariantRole.Ok => "ok",
+            EnumVariantRole.Err => "err",
+            _ => null
+        };
+    }
+
     private static StarkPackageEnumLayoutManifest BuildEnumLayoutManifest(
         LoadedModuleDocument module,
         string qualifiedTypeName,
@@ -38,6 +52,21 @@ internal static partial class PackageImageBuilder
 
 internal static partial class PackageImageLoader
 {
+    /// <summary>
+    /// Parses the published `[Ok]`/`[Err]` propagation role of an imported enum variant.
+    /// Unknown or absent values load as <see cref="EnumVariantRole.None"/> so older
+    /// package images stay loadable.
+    /// </summary>
+    private static EnumVariantRole ParseEnumVariantRole(string? role)
+    {
+        return role switch
+        {
+            "ok" => EnumVariantRole.Ok,
+            "err" => EnumVariantRole.Err,
+            _ => EnumVariantRole.None
+        };
+    }
+
     private static bool TryBuildEnumLayoutSymbol(
         StarkPackageEnumLayoutManifest enumLayout,
         out EnumLayoutSymbol layout)

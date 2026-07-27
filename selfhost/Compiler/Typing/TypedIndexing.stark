@@ -1,0 +1,461 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallMemberDependencies
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexHelpers
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedSignatures
+import System.Memory
+import System.Text
+module Compiler.Typing.TypedIndexing
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexExpression(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    TypedIndexContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] indexNode,
+    u32[0 max] receiverNode,
+    u32[0 max] indexToken,
+    u32[0 max] startNode,
+    u32[0 max] lengthNode,
+    borrow TypedMemberTypeFacts receiver)
+{
+    stack mut TypedIndexOperationKind operationKind = TypedIndexOperationKind.Index;
+    if (lengthNode != 0)
+    {
+        operationKind = TypedIndexOperationKind.Slice;
+    }
+
+    stack TypedIndexReceiverKind receiverKind = TypedIndexReceiverKindForType(receiver.TypeKind);
+    stack TypedIndexAccessKind accessKind = TypedIndexAccessKindForReceiver(receiverKind, operationKind);
+    stack mut TypedMemberTypeFacts result = new();
+    TypedIndexResultFactsFromReceiver(source, stream, declarations, receiver, operationKind, receiverKind, result);
+
+    stack mut u32[0 max] flags = 0;
+    if (receiverKind != TypedIndexReceiverKind.Unknown)
+    {
+        flags = flags | TypedIndexFlagReceiverResolved();
+    }
+
+    if (result.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedIndexFlagResultResolved();
+    }
+
+    if (operationKind == TypedIndexOperationKind.Slice)
+    {
+        flags = flags | TypedIndexFlagSlice();
+    }
+
+    if (receiverKind == TypedIndexReceiverKind.Text)
+    {
+        flags = flags | TypedIndexFlagText();
+    }
+
+    if (receiverKind == TypedIndexReceiverKind.RawPointer)
+    {
+        flags = flags | TypedIndexFlagRawPointer();
+    }
+
+    return table.AppendIndex(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        indexNode,
+        receiverNode,
+        indexToken,
+        startNode,
+        lengthNode,
+        operationKind,
+        accessKind,
+        receiverKind,
+        receiver.DeclarationIndex,
+        receiver.NameToken,
+        receiver.TypeKind,
+        receiver.TypeHeadToken,
+        receiver.TypePrimaryToken,
+        receiver.TypeStartToken,
+        receiver.TypeEndToken,
+        receiver.RangeStartToken,
+        receiver.RangeEndToken,
+        receiver.ElementCountStartToken,
+        receiver.ElementCountEndToken,
+        receiver.BitWidth,
+        receiver.TypeArgumentCount,
+        receiver.ComptimeArgumentCount,
+        receiver.TypeFlags,
+        result.TypeKind,
+        result.TypeHeadToken,
+        result.TypePrimaryToken,
+        result.TypeStartToken,
+        result.TypeEndToken,
+        result.RangeStartToken,
+        result.RangeEndToken,
+        result.ElementCountStartToken,
+        result.ElementCountEndToken,
+        result.BitWidth,
+        result.TypeArgumentCount,
+        result.ComptimeArgumentCount,
+        result.TypeFlags,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexesFromGlobalDeclaration(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    if (!TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] assignToken = TypedGlobalFindAssignToken(stream, item);
+    if (assignToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] ownerNameToken = TypedGlobalFindNameToken(stream, item);
+    stack ExprTree tree = ParseExpression(stream, (u32[0 max])(assignToken + 1));
+    stack u64[0 2 ** 63 - 1] count = tree.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])index;
+        if (tree.NodeKindAt(node) == Compiler.Parsing.ExprKind.Index)
+        {
+            stack mut TypedMemberTypeFacts receiver = new();
+            stack u32[0 max] receiverNode = tree.LeftAt(node);
+            TypedIndexReceiverFactsFromTreeNode(
+                source,
+                stream,
+                declarations,
+                identifiers,
+                calls,
+                members,
+                table,
+                tree,
+                TypedIndexContext.GlobalInitializer,
+                declarationIndex,
+                ownerNameToken,
+                0,
+                0,
+                receiverNode,
+                receiver);
+            switch (AppendTypedIndexExpression(
+                table,
+                source,
+                stream,
+                declarations,
+                TypedIndexContext.GlobalInitializer,
+                declarationIndex,
+                ownerNameToken,
+                0,
+                0,
+                node,
+                receiverNode,
+                tree.TokenAt(node),
+                tree.RightAt(node),
+                tree.AuxAt(node),
+                receiver))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexesFromBodyStatement(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack u32[0 max] start = (u32[0 max])(body.ExprStartAt(statementIndex) + 1);
+    stack mut u32[0 max] end = (u32[0 max])body.ExprNodeCount();
+    if (statementIndex + 1 < statementCount)
+    {
+        end = body.ExprStartAt((u64[0 2 ** 63 - 1])(statementIndex + 1));
+    }
+
+    if (start > end)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] statementIndexPlusOne = (u32[0 max])(statementIndex + 1);
+    stack u64[0 2 ** 63 - 1] endIndex = (u64[0 2 ** 63 - 1])end;
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])start; nodeIndex <= endIndex; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Index)
+        {
+            stack mut TypedMemberTypeFacts receiver = new();
+            stack u32[0 max] receiverNode = body.ExprLeftAt(node);
+            TypedIndexReceiverFactsFromBodyNode(
+                source,
+                stream,
+                declarations,
+                identifiers,
+                calls,
+                members,
+                table,
+                body,
+                TypedIndexContext.FunctionBody,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                receiverNode,
+                receiver);
+            switch (AppendTypedIndexExpression(
+                table,
+                source,
+                stream,
+                declarations,
+                TypedIndexContext.FunctionBody,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                node,
+                receiverNode,
+                body.ExprTokenAt(node),
+                body.ExprRightAt(node),
+                body.ExprAuxAt(node),
+                receiver))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexesFromBody(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedIndexesFromBodyStatement(
+            table,
+            source,
+            stream,
+            declarations,
+            identifiers,
+            calls,
+            members,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexesForFunction(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    return AppendTypedIndexesFromBody(
+        table,
+        source,
+        stream,
+        declarations,
+        identifiers,
+        calls,
+        members,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIndexesForMemberFunctions(
+    mut borrow TypedIndexExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedIndexesForFunction(table, source, stream, declarations, identifiers, calls, members, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn ParseResult<TypedIndexExpressionTable> BuildTypedIndexExpressionsFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members)
+{
+    stack mut TypedIndexExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedIndexesFromGlobalDeclaration(
+            table,
+            source,
+            stream,
+            declarations,
+            identifiers,
+            calls,
+            members,
+            item,
+            (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedIndexesForFunction(table, source, stream, declarations, identifiers, calls, members, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedIndexesForMemberFunctions(table, source, stream, declarations, identifiers, calls, members, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberFunctionError):
+                    return ParseResult<TypedIndexExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedIndexExpressionTable>.Ok(table);
+}

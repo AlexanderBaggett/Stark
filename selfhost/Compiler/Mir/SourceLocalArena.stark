@@ -1,0 +1,398 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedTypeResolution
+import System.Text
+import Compiler.Mir.SourceLocalLowering
+module Compiler.Mir.SourceLocalArena
+
+internal fn bool TryParseArenaSelectorAllocation(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    sizeBytes = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] size = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, size))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] alignment = NaturalAlignmentForByteExtent(size);
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, alignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (!IsPowerOfTwoU32(alignment))
+            {
+                return false;
+            }
+
+            sizeBytes = size;
+            alignBytes = alignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseArenaSelectorCapacity(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] capacity,
+    out u32[0 max] alignBytes)
+{
+    capacity = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] parsedCapacity = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, parsedCapacity))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] parsedAlignment = 0;
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, parsedAlignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (parsedAlignment != 0 && !IsPowerOfTwoU32(parsedAlignment))
+            {
+                return false;
+            }
+
+            capacity = parsedCapacity;
+            alignBytes = parsedAlignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTargetTypedObjectConstructor(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u64[0 2 ** 63 - 1] assignToken,
+    u64[0 2 ** 63 - 1] end)
+{
+    if (typeToken == 0 || assignToken + 3 > end)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(assignToken + 1) != TokenKind.New)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = assignToken + 2;
+    if (stream.KindAt(cursor) == TokenKind.Identifier)
+    {
+        if (!TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])cursor, typeToken))
+        {
+            return false;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    if (cursor + 2 != end)
+    {
+        return false;
+    }
+
+    return stream.KindAt(cursor) == TokenKind.LParen
+        && stream.KindAt(cursor + 1) == TokenKind.RParen;
+}
+
+internal fn bool TryParseTargetTypedObjectConstructorShape(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u64[0 2 ** 63 - 1] assignToken,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] bodyOpen,
+    out u32[0 max] bodyClose)
+{
+    bodyOpen = 0;
+    bodyClose = 0;
+    if (typeToken == 0 || assignToken + 3 > end)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(assignToken + 1) != TokenKind.New)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = assignToken + 2;
+    if (stream.KindAt(cursor) == TokenKind.Identifier)
+    {
+        if (!TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])cursor, typeToken))
+        {
+            return false;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.LParen || stream.KindAt(cursor + 1) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    cursor = cursor + 2;
+    if (cursor == end)
+    {
+        return true;
+    }
+
+    if (cursor >= end || stream.KindAt(cursor) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u32[0 max] close = MatchingBraceForMirLowering(stream, (u32[0 max])cursor);
+    if (close == (u32[0 max])cursor || (u64[0 2 ** 63 - 1])(close + 1) != end)
+    {
+        return false;
+    }
+
+    bodyOpen = (u32[0 max])cursor;
+    bodyClose = close;
+    return true;
+}
+
+internal fn bool TryParseTargetTypedPositionalRecordConstructorShape(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u64[0 2 ** 63 - 1] assignToken,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] argsOpen,
+    out u32[0 max] argsClose)
+{
+    argsOpen = 0;
+    argsClose = 0;
+    if (typeToken == 0 || assignToken + 4 > end)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(assignToken + 1) != TokenKind.New)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = assignToken + 2;
+    if (stream.KindAt(cursor) == TokenKind.Identifier)
+    {
+        if (!TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])cursor, typeToken))
+        {
+            return false;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] close = MatchingParenForMirLowering(stream, (u32[0 max])cursor);
+    if (close == (u32[0 max])cursor || (u64[0 2 ** 63 - 1])(close + 1) != end)
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])close == cursor + 1)
+    {
+        return false;
+    }
+
+    argsOpen = (u32[0 max])cursor;
+    argsClose = close;
+    return true;
+}
+
+internal fn u32[0 max] FindSelfHostedDynamicElementTypeToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack u32[0 max] typeToken = FindSelfHostedLocalTypeToken(stream, start, end);
+    if (typeToken == 0)
+    {
+        return 0;
+    }
+
+    stack TokenKind typeKind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (typeKind != TokenKind.Dynamic && typeKind != TokenKind.Dyn)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] elementToken = (u64[0 2 ** 63 - 1])typeToken + 1;
+    if (elementToken >= end || !TokenCanStartSelfHostedType(stream.KindAt(elementToken)))
+    {
+        return 0;
+    }
+
+    return (u32[0 max])elementToken;
+}
+
+internal struct ArenaDynamicLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] StorageValue;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+
+    ArenaDynamicLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.StorageValue = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+    }
+}
+
+internal fn bool TryFindArenaDynamicLocal(borrow IrTable<ArenaDynamicLocal> locals, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length, out ArenaDynamicLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack ArenaDynamicLocal local = locals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryLowerArenaDynamicReserveStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ArenaDynamicLocal> arenaDynamicLocals,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    if (start + 6 != end
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.Dot
+        || stream.KindAt(start + 2) != TokenKind.Identifier
+        || stream.KindAt(start + 3) != TokenKind.LParen
+        || stream.KindAt(start + 5) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] amount = 0;
+    if (!TryReadNonNegativeIntegerToken(stream, source, start + 4, amount))
+    {
+        return false;
+    }
+
+    stack mut ArenaDynamicLocal local = new();
+    if (!TryFindArenaDynamicLocal(arenaDynamicLocals, source, stream.StartAt(start), stream.LengthAt(start), local))
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = (u32[0 max])(start + 2);
+    stack MirValueId storage = MirValueIdOf(local.StorageValue);
+    if (TokenTextIsReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveCapacityName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserveCapacity(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    return false;
+}

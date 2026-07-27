@@ -126,12 +126,60 @@ internal static class ArtifactTextRenderer
         return builder.ToString().TrimEnd();
     }
 
+    public static string Render(EnumLayoutModel enumLayout, TypeCheckModel? typeModel = null)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"enum-layout module {enumLayout.ModuleName}");
+        builder.AppendLine();
+
+        foreach (var layout in enumLayout.Layouts
+                     .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+                     .Select(static pair => pair.Value))
+        {
+            builder.AppendLine($"enum {layout.EnumName}");
+            builder.AppendLine($"  kind: {layout.Kind}");
+            builder.AppendLine($"  tag: {FormatEnumLayoutField(layout.TagField, typeModel, enumLayout)}");
+            var enumTypeLayout = FormatConcreteTypeLayout(StarkTypeSymbols.Named(layout.EnumName), typeModel, enumLayout);
+            if (!string.IsNullOrEmpty(enumTypeLayout))
+            {
+                builder.AppendLine($"  layout: {enumTypeLayout}");
+            }
+
+            builder.AppendLine("  fields:");
+            foreach (var field in layout.OrderedFields)
+            {
+                builder.AppendLine($"    {FormatEnumLayoutField(field, typeModel, enumLayout)}");
+            }
+
+            builder.AppendLine("  variants:");
+            foreach (var variant in layout.Variants
+                         .OrderBy(static pair => pair.Value.TagValue)
+                         .Select(static pair => pair.Value))
+            {
+                builder.AppendLine($"    {variant.Name}: tag={variant.TagValue}");
+                foreach (var field in variant.Fields.OrderBy(static field => field.StorageFieldIndex))
+                {
+                    var sourceName = string.IsNullOrWhiteSpace(field.SourceFieldName)
+                        ? string.Empty
+                        : $" source={field.SourceFieldName}";
+                    builder.AppendLine($"      field {field.SourcePosition}: storage={field.StorageFieldName}#{field.StorageFieldIndex} type={field.Type.DisplayName}{sourceName}");
+                }
+            }
+
+            builder.AppendLine();
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private static string Render(MidLevelIrStatement statement)
     {
         var rendered = statement.Kind switch
         {
             MidLevelIrStatementKind.StorageLive => $"storage-live {statement.TargetName}",
             MidLevelIrStatementKind.StorageDead => $"storage-dead {statement.TargetName}",
+            MidLevelIrStatementKind.ArenaFrameEnter => "arena-frame.enter",
+            MidLevelIrStatementKind.ArenaFrameLeave => "arena-frame.leave",
             MidLevelIrStatementKind.Assign => statement.WriteKind == MemoryWriteKind.Initialization
                 ? $"init {statement.Text}"
                 : statement.Text,
@@ -142,7 +190,7 @@ internal static class ArtifactTextRenderer
             _ => statement.Text
         };
 
-        return rendered + FormatLocationSuffix(statement.Location);
+        return rendered + FormatMirRValueSuffix(statement.Value) + FormatLocationSuffix(statement.Location);
     }
 
     private static IReadOnlyList<string> Render(MidLevelIrTerminator terminator)
@@ -152,12 +200,19 @@ internal static class ArtifactTextRenderer
             MidLevelIrTerminatorKind.Goto => [$"goto bb{terminator.Targets[0]}"],
             MidLevelIrTerminatorKind.Branch => [$"branch {terminator.ConditionText ?? terminator.Condition?.Text ?? "<cond>"} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             MidLevelIrTerminatorKind.Switch => RenderMirSwitch(terminator),
-            MidLevelIrTerminatorKind.Return => [$"return {terminator.ValueText ?? string.Empty}".TrimEnd()],
+            MidLevelIrTerminatorKind.Return => [RenderMirReturn(terminator)],
+            MidLevelIrTerminatorKind.TailCall => [$"tailcall {terminator.TailCall?.Text ?? terminator.ValueText ?? string.Empty}".TrimEnd()],
             MidLevelIrTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
 
         return rendered.Select(line => line + FormatLocationSuffix(terminator.Location)).ToArray();
+    }
+
+    private static string RenderMirReturn(MidLevelIrTerminator terminator)
+    {
+        return $"return {terminator.ValueText ?? string.Empty}".TrimEnd()
+            + FormatMirOperandSuffix(terminator.Value);
     }
 
     private static IReadOnlyList<string> RenderMirSwitch(MidLevelIrTerminator terminator)
@@ -178,6 +233,60 @@ internal static class ArtifactTextRenderer
         return lines;
     }
 
+    private static string FormatMirRValueSuffix(MidLevelIrRValue? value)
+    {
+        return value switch
+        {
+            MidLevelIrUseRValue { Operand: MidLevelIrObjectConstructionOperand construction } => FormatMirObjectConstructionSuffix(construction),
+            MidLevelIrUnaryRValue unary => $" [rvalue: unary {unary.Operator} {unary.Type.DisplayName}]",
+            MidLevelIrBinaryRValue binary => $" [rvalue: binary {binary.Operator} {binary.Type.DisplayName}{FormatMirBinaryOperandFacts(binary)}]",
+            MidLevelIrConvertRValue convert => $" [rvalue: convert {convert.Operand.Type.DisplayName}->{convert.Type.DisplayName}]",
+            MidLevelIrExtractFieldRValue extractField => $" [rvalue: extract-field {extractField.FieldName} {extractField.FieldIndex} {extractField.Type.DisplayName}]",
+            MidLevelIrInsertFieldRValue insertField => $" [rvalue: insert-field {insertField.FieldName} {insertField.FieldIndex} {insertField.Type.DisplayName}]",
+            MidLevelIrExtractIndexRValue extractIndex => $" [rvalue: extract-index {extractIndex.OperationFamily} {extractIndex.ElementIndex} {extractIndex.Type.DisplayName}]",
+            MidLevelIrInsertIndexRValue insertIndex => $" [rvalue: insert-index {insertIndex.OperationFamily} {insertIndex.ElementIndex} {insertIndex.Type.DisplayName}]",
+            _ => string.Empty
+        };
+    }
+
+    private static string FormatMirObjectConstructionSuffix(MidLevelIrObjectConstructionOperand construction)
+    {
+        var hasConstructorBody = !string.IsNullOrWhiteSpace(construction.Facts.ConstructorBodyKey);
+        return $" [rvalue: object-construction {construction.Facts.Kind} {construction.Facts.TypeName} constructor-body:{hasConstructorBody.ToString().ToLowerInvariant()}]";
+    }
+
+    private static string FormatMirBinaryOperandFacts(MidLevelIrBinaryRValue binary)
+    {
+        return FormatMirConstantOperandFact("left", binary.Left)
+            + FormatMirConstantOperandFact("right", binary.Right);
+    }
+
+    private static string FormatMirConstantOperandFact(string name, MidLevelIrOperand operand)
+    {
+        return operand switch
+        {
+            MidLevelIrIntegerConstantOperand integer => $" {name}:int {integer.Value} {integer.Type.DisplayName}",
+            MidLevelIrFloatConstantOperand floating => $" {name}:float {floating.LiteralText} {floating.Type.DisplayName}",
+            MidLevelIrStringConstantOperand text => $" {name}:text {text.LiteralText} {text.Type.DisplayName}",
+            MidLevelIrBoolConstantOperand boolean => $" {name}:bool {(boolean.Value ? "true" : "false")}",
+            MidLevelIrNullOperand nullValue => $" {name}:null {nullValue.Type.DisplayName}",
+            _ => string.Empty
+        };
+    }
+
+    private static string FormatMirOperandSuffix(MidLevelIrOperand? operand)
+    {
+        return operand switch
+        {
+            MidLevelIrIntegerConstantOperand integer => $" [value: int {integer.Value} {integer.Type.DisplayName}]",
+            MidLevelIrFloatConstantOperand floating => $" [value: float {floating.LiteralText} {floating.Type.DisplayName}]",
+            MidLevelIrStringConstantOperand text => $" [value: text {text.LiteralText} {text.Type.DisplayName}]",
+            MidLevelIrBoolConstantOperand boolean => $" [value: bool {(boolean.Value ? "true" : "false")}]",
+            MidLevelIrNullOperand nullValue => $" [value: null {nullValue.Type.DisplayName}]",
+            _ => string.Empty
+        };
+    }
+
     private static string Render(SsaInstruction instruction)
     {
         var rendered = instruction switch
@@ -193,6 +302,8 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaDeallocateLocalInstruction deallocateLocal => $"dealloc[{deallocateLocal.StorageClass}] {deallocateLocal.LocalName}",
+            SsaArenaFrameEnterInstruction => "arena-frame.enter",
+            SsaArenaFrameLeaveInstruction => "arena-frame.leave",
             SsaStoreLocalInstruction storeLocal => storeLocal.WriteKind == MemoryWriteKind.Initialization
                 ? $"init-store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}"
                 : $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
@@ -215,6 +326,7 @@ internal static class ArtifactTextRenderer
             SsaTerminatorKind.Branch => [$"branch {FormatSsaValue(terminator.Condition)} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             SsaTerminatorKind.Switch => RenderSsaSwitch(terminator),
             SsaTerminatorKind.Return => [$"return {FormatSsaValue(terminator.Value)}"],
+            SsaTerminatorKind.TailCall => [$"tailcall {terminator.TailDirectCall?.Text ?? terminator.TailIndirectCall?.Text ?? string.Empty}".TrimEnd()],
             SsaTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
@@ -258,6 +370,31 @@ internal static class ArtifactTextRenderer
         };
     }
 
+    private static string FormatEnumLayoutField(
+        FieldSymbol field,
+        TypeCheckModel? typeModel,
+        EnumLayoutModel enumLayout)
+    {
+        var concreteLayout = FormatConcreteTypeLayout(field.Type, typeModel, enumLayout);
+        return string.IsNullOrEmpty(concreteLayout)
+            ? $"{field.Name}: {field.Type.DisplayName}"
+            : $"{field.Name}: {field.Type.DisplayName} {concreteLayout}";
+    }
+
+    private static string FormatConcreteTypeLayout(
+        StarkTypeSymbol type,
+        TypeCheckModel? typeModel,
+        EnumLayoutModel enumLayout)
+    {
+        if (typeModel is null
+            || ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, typeModel.NamedTypes, enumLayout.Layouts) is not { } layout)
+        {
+            return string.Empty;
+        }
+
+        return $"size={layout.SizeBytes} align={layout.AlignmentBytes}";
+    }
+
     private static SourceLocation? GetInstructionLocation(SsaInstruction instruction)
     {
         return instruction switch
@@ -269,6 +406,8 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
             SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
+            SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter.Location,
+            SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave.Location,
             SsaStoreLocalInstruction storeLocal => storeLocal.Location,
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,

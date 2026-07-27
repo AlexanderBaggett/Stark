@@ -1,0 +1,37 @@
+module ProgressHang
+
+// Timeout fixture for `stark test --test-timeout` (T30.5): the second fact
+// hangs forever behind an opaque syscall so no optimizer can fold the loop,
+// which makes `run HangsForever` the last progress line before the driver's
+// deadline kill. Never run this project without --test-timeout.
+
+unsafe ffi fn i32[min max] getppid();
+
+fn i32[min max] OpaqueParentPid()
+{
+    unsafe
+    {
+        return getppid();
+    }
+}
+
+[Fact]
+fn bool CompletesQuickly()
+{
+    return true;
+}
+
+[Fact]
+fn bool HangsForever()
+{
+    stack mut i64[min max] witness = 0;
+    while willexit (witness >= 0)
+    {
+        if (OpaqueParentPid() < 0)
+        {
+            witness = -1;
+        }
+    }
+
+    return witness == 0;
+}

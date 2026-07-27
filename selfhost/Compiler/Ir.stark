@@ -1,0 +1,2563 @@
+import Compiler.AsmFacts
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Ir
+
+// The self-hosted compiler's IR memory model: typed handle indices into dense
+// tables (docs/Internals/IrMemoryAndFactModel.md). Each IR id is a DISTINCT value type wrapping a
+// compact 1-based index (0 is the invalid/null sentinel), so a `MirValueId` can
+// never be passed where a `TypeId` is expected — handles are not interchangeable
+// integers. They are small Copyable values, freely copied and stored in fact side
+// tables. A no-reuse dense `IrTable<T>` owns the rows; use the generational
+// `System.Collections.Arena.Arena<T>` only for tables that need deletion/reuse.
+
+// A type-table row id.
+public struct TypeId
+{
+    u32[0 max] Value;
+
+    TypeId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow TypeId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow TypeId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow TypeId self, TypeId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+// The `TypeId` for the 1-based row index `index` (0 = the invalid id).
+public fn TypeId TypeIdOf(u32[0 max] index)
+{
+    stack mut TypeId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A symbol-table row id.
+public struct SymbolId
+{
+    u32[0 max] Value;
+
+    SymbolId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SymbolId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SymbolId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow SymbolId self, SymbolId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn SymbolId SymbolIdOf(u32[0 max] index)
+{
+    stack mut SymbolId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR value (SSA-like instruction result / operand) id.
+public struct MirValueId
+{
+    u32[0 max] Value;
+
+    MirValueId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirValueId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirValueId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirValueId self, MirValueId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirValueId MirValueIdOf(u32[0 max] index)
+{
+    stack mut MirValueId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR basic-block id.
+public struct MirBlockId
+{
+    u32[0 max] Value;
+
+    MirBlockId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirBlockId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirBlockId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirBlockId self, MirBlockId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirBlockId MirBlockIdOf(u32[0 max] index)
+{
+    stack mut MirBlockId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR function id (the unit a backend pass lowers).
+public struct MirFuncId
+{
+    u32[0 max] Value;
+
+    MirFuncId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirFuncId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirFuncId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirFuncId self, MirFuncId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirFuncId MirFuncIdOf(u32[0 max] index)
+{
+    stack mut MirFuncId id = new();
+    id.Value = index;
+    return id;
+}
+
+// An SSA value id.
+public struct SsaValueId
+{
+    u32[0 max] Value;
+
+    SsaValueId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SsaValueId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SsaValueId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow SsaValueId self, SsaValueId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn SsaValueId SsaValueIdOf(u32[0 max] index)
+{
+    stack mut SsaValueId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A package id (for cross-package fact imports).
+public struct PackageId
+{
+    u32[0 max] Value;
+
+    PackageId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow PackageId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow PackageId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow PackageId self, PackageId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn PackageId PackageIdOf(u32[0 max] index)
+{
+    stack mut PackageId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A dense IR table: rows owned in insertion order, addressed by a 1-based index
+// (0 stays the invalid sentinel, so a freshly default handle never aliases row 0).
+// Prefer this no-reuse table inside a phase for speed and simpler diagnostics;
+// reach for `Arena<T>` only where deletion/reuse is proven necessary (doc 24 §3).
+public struct IrTable<T>
+{
+    internal System.Collections.List<T> Rows;
+
+    IrTable()
+    {
+        self.Rows = new();
+    }
+
+    // The number of rows (also the largest valid 1-based index).
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow IrTable<T> self)
+    {
+        return self.Rows.Count();
+    }
+
+    public inline finite law bool IsEmpty(borrow IrTable<T> self)
+    {
+        return self.Rows.Count() == 0;
+    }
+
+    public fn MemoryStatus Reserve(mut borrow IrTable<T> self, u64[0 2 ** 63 - 1] additional)
+    {
+        return self.Rows.Reserve(additional);
+    }
+
+    // Appends `row`, returning its 1-based index (never 0). Returns 0 — the invalid
+    // sentinel — when the backing allocation fails.
+    public fn u32[0 max] Add(mut borrow IrTable<T> self, T row)
+    {
+        switch (self.Rows.Push(row))
+        {
+            case MemoryStatus.Ok:
+                return (u32[0 max])self.Rows.Count();
+            case MemoryStatus.Err(var error):
+                return 0;
+        }
+    }
+
+    // True when `index` is a live 1-based row index.
+    public inline finite law bool Contains(borrow IrTable<T> self, u32[0 max] index)
+    {
+        return index != 0 && (u64[0 2 ** 63 - 1])index <= self.Rows.Count();
+    }
+
+    // Borrows the row at the 1-based `index`; the caller must ensure `Contains`.
+    public finite law retborrow T Get(borrow IrTable<T> self, u32[0 max] index)
+    {
+        return self.Rows.Get((u64[0 2 ** 63 - 1])(index - 1));
+    }
+
+    public finite bool Replace(mut borrow IrTable<T> self, u32[0 max] index, T row)
+    {
+        if (!self.Contains(index))
+        {
+            return false;
+        }
+
+        self.Rows.GetMut((u64[0 2 ** 63 - 1])(index - 1)) = row;
+        return true;
+    }
+}
+
+// === Fact categories (doc 24 §4) ===
+// Concrete per-value fact records a pass attaches to a handle. These are plain
+// Copyable value types using bool presence flags + raw values (NOT `Option`), so
+// they instantiate cleanly across packages (a generic `Option<CompilerType>` value
+// in a body materialized from a downstream package currently crashes the host
+// `lower-mir`). The "one record per value" layout (`ValueFacts`) is the doc's form.
+
+// The calling/ABI convention of a callable value (doc 24 §4 `CallingAbi`).
+public enum AbiKind
+{
+    StarkAbi,
+    CAbi,
+    PlatformAbi,
+}
+
+public enum CAbiAggregatePassKind
+{
+    None,
+    Direct,
+    Indirect,
+    Unsupported,
+}
+
+public enum AbiCarrierKind
+{
+    None,
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+    Vector2F32,
+}
+
+public struct CAbiAggregateCarrierFacts
+{
+    bool HasFact;
+    CAbiAggregatePassKind PassKind;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignBytes;
+    u32[0 max] CarrierCount;
+    bool ReturnUsesLlvmStruct;
+    AbiCarrierKind Carrier0;
+    AbiCarrierKind Carrier1;
+    AbiCarrierKind Carrier2;
+    AbiCarrierKind Carrier3;
+
+    CAbiAggregateCarrierFacts()
+    {
+        self.HasFact = false;
+        self.PassKind = CAbiAggregatePassKind.None;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+
+    public inline finite law bool Present(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact;
+    }
+
+    public inline finite law CAbiAggregatePassKind Kind(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.PassKind;
+    }
+
+    public inline finite law bool IsDirect(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact && self.PassKind == CAbiAggregatePassKind.Direct;
+    }
+
+    public inline finite law bool IsIndirect(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact && self.PassKind == CAbiAggregatePassKind.Indirect;
+    }
+
+    public inline finite law u32[0 max] ByteSize(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.SizeBytes;
+    }
+
+    public inline finite law u32[0 max] ByteAlignment(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.AlignBytes;
+    }
+
+    public inline finite law u32[0 max] LlvmParameterCarrierCount(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.CarrierCount;
+    }
+
+    public inline finite law bool ReturnCarrierIsLlvmStruct(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.ReturnUsesLlvmStruct;
+    }
+
+    public finite law AbiCarrierKind CarrierKindAt(borrow CAbiAggregateCarrierFacts self, u32[0 max] index)
+    {
+        switch (index)
+        {
+            case 0:
+                return self.Carrier0;
+            case 1:
+                return self.Carrier1;
+            case 2:
+                return self.Carrier2;
+            case 3:
+                return self.Carrier3;
+            default:
+                return AbiCarrierKind.None;
+        }
+    }
+
+    public fn void SetDirect(
+        mut borrow CAbiAggregateCarrierFacts self,
+        u32[0 max] sizeBytes,
+        u32[0 max] alignBytes,
+        u32[0 max] carrierCount,
+        AbiCarrierKind carrier0,
+        AbiCarrierKind carrier1,
+        AbiCarrierKind carrier2,
+        AbiCarrierKind carrier3)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Direct;
+        self.SizeBytes = sizeBytes;
+        self.AlignBytes = alignBytes;
+        self.CarrierCount = carrierCount;
+        self.ReturnUsesLlvmStruct = carrierCount > 1;
+        self.Carrier0 = carrier0;
+        self.Carrier1 = carrier1;
+        self.Carrier2 = carrier2;
+        self.Carrier3 = carrier3;
+    }
+
+    public fn void SetIndirect(mut borrow CAbiAggregateCarrierFacts self, u32[0 max] sizeBytes, u32[0 max] alignBytes)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Indirect;
+        self.SizeBytes = sizeBytes;
+        self.AlignBytes = alignBytes;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+
+    public fn void SetUnsupported(mut borrow CAbiAggregateCarrierFacts self)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Unsupported;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+}
+
+public finite law CAbiAggregateCarrierFacts CAbiAggregateCarrierFactsAtIndex(borrow IrTable<CAbiAggregateCarrierFacts> facts, u32[0 max] index)
+{
+    stack mut CAbiAggregateCarrierFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+// The optimization/backend facts attached to one MIR/SSA value (doc 24 §4). A fact
+// is present when its `Has*` flag is set; absent facts read as 0/false/`StarkAbi`.
+// `InheritFrom` is the lowering fact-transfer primitive (doc 24 §5): a lowered value
+// carries forward each PRESENT fact of the value it derives from, and an absent
+// source fact leaves the destination's own fact untouched.
+public struct ValueFacts
+{
+    bool HasAlign;
+    u32[0 max] AlignBytes;
+    bool HasAbi;
+    AbiKind Abi;
+    bool NoAlias;
+    bool IsVolatile;
+    bool HasRange;
+    i64[min max] RangeLower;
+    i64[min max] RangeUpperExclusive;
+    bool IsKnownNullValue;
+    bool IsKnownNonNullValue;
+    bool HasTextLiteralConstant;
+    u32[0 max] TextConstantRow;
+    u32[0 max] TextPayloadStart;
+    u32[0 max] TextPayloadBytes;
+    u32[0 max] TextCodePoints;
+    u32[0 max] TextEncoding;
+
+    ValueFacts()
+    {
+        self.HasAlign = false;
+        self.AlignBytes = 0;
+        self.HasAbi = false;
+        self.Abi = AbiKind.StarkAbi;
+        self.NoAlias = false;
+        self.IsVolatile = false;
+        self.HasRange = false;
+        self.RangeLower = 0;
+        self.RangeUpperExclusive = 0;
+        self.IsKnownNullValue = false;
+        self.IsKnownNonNullValue = false;
+        self.HasTextLiteralConstant = false;
+        self.TextConstantRow = 0;
+        self.TextPayloadStart = 0;
+        self.TextPayloadBytes = 0;
+        self.TextCodePoints = 0;
+        self.TextEncoding = 0;
+    }
+
+    public inline finite law bool HasAlignment(borrow ValueFacts self)
+    {
+        return self.HasAlign;
+    }
+
+    // The known alignment in bytes (0 when no alignment fact is attached).
+    public inline finite law u32[0 max] AlignmentBytes(borrow ValueFacts self)
+    {
+        return self.AlignBytes;
+    }
+
+    public inline finite law bool HasCallingAbi(borrow ValueFacts self)
+    {
+        return self.HasAbi;
+    }
+
+    // The calling ABI (defaults to `StarkAbi` when no ABI fact is attached).
+    public inline finite law AbiKind CallingAbi(borrow ValueFacts self)
+    {
+        return self.Abi;
+    }
+
+    public inline finite law bool HasNoAlias(borrow ValueFacts self)
+    {
+        return self.NoAlias;
+    }
+
+    public inline finite law bool Volatile(borrow ValueFacts self)
+    {
+        return self.IsVolatile;
+    }
+
+    public inline finite law bool HasIntegerRange(borrow ValueFacts self)
+    {
+        return self.HasRange;
+    }
+
+    public inline finite law i64[min max] IntegerRangeLower(borrow ValueFacts self)
+    {
+        return self.RangeLower;
+    }
+
+    public inline finite law i64[min max] IntegerRangeUpperExclusive(borrow ValueFacts self)
+    {
+        return self.RangeUpperExclusive;
+    }
+
+    public inline finite law bool HasNullability(borrow ValueFacts self)
+    {
+        return self.IsKnownNullValue || self.IsKnownNonNullValue;
+    }
+
+    public inline finite law bool KnownNull(borrow ValueFacts self)
+    {
+        return self.IsKnownNullValue;
+    }
+
+    public inline finite law bool KnownNonNull(borrow ValueFacts self)
+    {
+        return self.IsKnownNonNullValue;
+    }
+
+    public inline finite law bool HasTextConstant(borrow ValueFacts self)
+    {
+        return self.HasTextLiteralConstant;
+    }
+
+    public inline finite law u32[0 max] TextConstantRowIndex(borrow ValueFacts self)
+    {
+        return self.TextConstantRow;
+    }
+
+    public inline finite law u32[0 max] TextConstantPayloadStart(borrow ValueFacts self)
+    {
+        return self.TextPayloadStart;
+    }
+
+    public inline finite law u32[0 max] TextConstantPayloadByteLength(borrow ValueFacts self)
+    {
+        return self.TextPayloadBytes;
+    }
+
+    public inline finite law u32[0 max] TextConstantCodePointLength(borrow ValueFacts self)
+    {
+        return self.TextCodePoints;
+    }
+
+    public inline finite law u32[0 max] TextConstantStorageEncodingCode(borrow ValueFacts self)
+    {
+        return self.TextEncoding;
+    }
+
+    public fn void SetAlignment(mut borrow ValueFacts self, u32[0 max] bytes)
+    {
+        self.HasAlign = true;
+        self.AlignBytes = bytes;
+    }
+
+    public fn void SetCallingAbi(mut borrow ValueFacts self, AbiKind abi)
+    {
+        self.HasAbi = true;
+        self.Abi = abi;
+    }
+
+    public fn void MarkNoAlias(mut borrow ValueFacts self)
+    {
+        self.NoAlias = true;
+    }
+
+    public fn void MarkVolatile(mut borrow ValueFacts self)
+    {
+        self.IsVolatile = true;
+    }
+
+    public fn void SetIntegerRange(mut borrow ValueFacts self, i64[min max] lower, i64[min max] upperExclusive)
+    {
+        self.HasRange = true;
+        self.RangeLower = lower;
+        self.RangeUpperExclusive = upperExclusive;
+    }
+
+    public fn void MarkKnownNull(mut borrow ValueFacts self)
+    {
+        self.IsKnownNullValue = true;
+        self.IsKnownNonNullValue = false;
+    }
+
+    public fn void MarkKnownNonNull(mut borrow ValueFacts self)
+    {
+        self.IsKnownNullValue = false;
+        self.IsKnownNonNullValue = true;
+    }
+
+    public fn void SetTextConstant(
+        mut borrow ValueFacts self,
+        u32[0 max] rowIndex,
+        u32[0 max] payloadStart,
+        u32[0 max] payloadByteLength,
+        u32[0 max] codePointLength,
+        u32[0 max] storageEncoding)
+    {
+        self.HasTextLiteralConstant = true;
+        self.TextConstantRow = rowIndex;
+        self.TextPayloadStart = payloadStart;
+        self.TextPayloadBytes = payloadByteLength;
+        self.TextCodePoints = codePointLength;
+        self.TextEncoding = storageEncoding;
+    }
+
+    // Carries each PRESENT fact of `src` onto `self`; an absent source fact leaves
+    // `self`'s value untouched (the doc 24 §5 `Inherit`/`preserve` contract).
+    public fn void InheritFrom(mut borrow ValueFacts self, ValueFacts src)
+    {
+        if (src.HasAlign)
+        {
+            self.HasAlign = true;
+            self.AlignBytes = src.AlignBytes;
+        }
+
+        if (src.HasAbi)
+        {
+            self.HasAbi = true;
+            self.Abi = src.Abi;
+        }
+
+        if (src.NoAlias)
+        {
+            self.NoAlias = true;
+        }
+
+        if (src.IsVolatile)
+        {
+            self.IsVolatile = true;
+        }
+
+        if (src.HasRange)
+        {
+            self.HasRange = true;
+            self.RangeLower = src.RangeLower;
+            self.RangeUpperExclusive = src.RangeUpperExclusive;
+        }
+
+        if (src.IsKnownNullValue)
+        {
+            self.IsKnownNullValue = true;
+            self.IsKnownNonNullValue = false;
+        }
+
+        if (src.IsKnownNonNullValue)
+        {
+            self.IsKnownNullValue = false;
+            self.IsKnownNonNullValue = true;
+        }
+
+        if (src.HasTextLiteralConstant)
+        {
+            self.HasTextLiteralConstant = true;
+            self.TextConstantRow = src.TextConstantRow;
+            self.TextPayloadStart = src.TextPayloadStart;
+            self.TextPayloadBytes = src.TextPayloadBytes;
+            self.TextCodePoints = src.TextCodePoints;
+            self.TextEncoding = src.TextEncoding;
+        }
+    }
+}
+
+// Reads the fact row attached to a 1-based value index. Missing/invalid rows read as
+// empty facts so callers can stay branch-light in hot lowering/emission paths.
+public finite law ValueFacts ValueFactsAtIndex(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+{
+    stack mut ValueFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+// Reads the fact row attached to a MIR value handle. Invalid handles read as empty.
+public finite law ValueFacts ValueFactsForMirValue(borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return ValueFactsAtIndex(facts, value.Index());
+}
+
+// Appends `row` as the fact record for `value`, filling any skipped earlier value
+// rows with empty facts. Existing rows are never overwritten; a stale/duplicate
+// handle returns false so phase validation can report the compiler bug.
+public fn bool RecordValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts row)
+{
+    stack u32[0 max] targetIndex = value.Index();
+    if (targetIndex == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] targetBefore = (u64[0 2 ** 63 - 1])(targetIndex - 1);
+    while willexit (facts.Count() < targetBefore)
+    {
+        stack mut ValueFacts empty = new();
+        if (facts.Add(empty) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (facts.Count() != targetBefore)
+    {
+        return false;
+    }
+
+    return facts.Add(row) == targetIndex;
+}
+
+// Records an empty fact row for builders whose result has no inherited facts or
+// whose facts must be recomputed by a later analysis pass.
+public fn bool RecordEmptyValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForMirValue(facts, value, empty);
+}
+
+// Records facts generated directly by the builder, such as constants, loads, or
+// allocations with known alignment/range/alias facts.
+public fn bool RecordGeneratedValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts generated)
+{
+    return RecordValueFactsForMirValue(facts, value, generated);
+}
+
+// Preserves facts from a source value onto an equivalent lowered value. Use this
+// only for value-preserving builders such as casts/projections/moves; arithmetic
+// builders should recompute or provide translated facts instead.
+public fn bool PreserveValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, MirValueId source)
+{
+    return RecordValueFactsForMirValue(facts, value, ValueFactsForMirValue(facts, source));
+}
+
+// Records facts that were intentionally translated to the new value/phase shape.
+public fn bool TranslateValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts translated)
+{
+    return RecordValueFactsForMirValue(facts, value, translated);
+}
+
+// Records the recompute policy: old facts are intentionally invalidated and a
+// later analysis must derive any new range/alias/layout facts.
+public fn bool RecomputeValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Records the consume policy: the fact was used by the builder and does not
+// survive as a value fact after this handle.
+public fn bool ConsumeValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Records the debug-only policy: debug/inspection facts may disappear from this
+// value without changing optimized backend behavior.
+public fn bool DropDebugOnlyValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Imports a fact row from a non-value side table into the MIR value-fact table.
+public fn bool ImportValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> sourceFacts,
+    u32[0 max] sourceIndex)
+{
+    return RecordValueFactsForMirValue(facts, value, ValueFactsAtIndex(sourceFacts, sourceIndex));
+}
+
+// Parameters are keyed by their 0-based source parameter index but stored in
+// 1-based fact rows.
+public fn bool ImportParameterValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> parameterFacts,
+    u32[0 max] parameterIndex)
+{
+    return ImportValueFactsForMirValue(facts, value, parameterFacts, parameterIndex + 1);
+}
+
+// Globals and function returns are already keyed by their 1-based MIR handles.
+public fn bool ImportGlobalValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> globalFacts,
+    u32[0 max] globalId)
+{
+    return ImportValueFactsForMirValue(facts, value, globalFacts, globalId);
+}
+
+public fn bool ImportFunctionReturnValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirFuncId callee)
+{
+    return ImportValueFactsForMirValue(facts, value, functionReturnFacts, callee.Index());
+}
+
+// SSA uses the same dense, 1-based fact-table discipline as MIR. Rewrite passes
+// must choose an explicit transfer policy instead of dropping optimizer facts
+// and asking ABI/LLVM lowering to rediscover them.
+public finite law ValueFacts ValueFactsForSsaValue(
+    borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    return ValueFactsAtIndex(facts, value.Index());
+}
+
+public fn bool RecordValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts row)
+{
+    stack u32[0 max] targetIndex = value.Index();
+    if (targetIndex == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] targetBefore = (u64[0 2 ** 63 - 1])(targetIndex - 1);
+    while willexit (facts.Count() < targetBefore)
+    {
+        stack mut ValueFacts empty = new();
+        if (facts.Add(empty) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (facts.Count() != targetBefore)
+    {
+        return false;
+    }
+
+    return facts.Add(row) == targetIndex;
+}
+
+public fn bool RecordGeneratedValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts generated)
+{
+    return RecordValueFactsForSsaValue(facts, value, generated);
+}
+
+public fn bool RecordEmptyValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool PreserveValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    SsaValueId source)
+{
+    return RecordValueFactsForSsaValue(facts, value, ValueFactsForSsaValue(facts, source));
+}
+
+public fn bool TranslateValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts translated)
+{
+    return RecordValueFactsForSsaValue(facts, value, translated);
+}
+
+public fn bool RecomputeValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool ConsumeValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool DropDebugOnlyValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool ImportValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> sourceFacts,
+    u32[0 max] sourceIndex)
+{
+    return RecordValueFactsForSsaValue(facts, value, ValueFactsAtIndex(sourceFacts, sourceIndex));
+}
+
+public fn bool ImportParameterValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> parameterFacts,
+    u32[0 max] parameterIndex)
+{
+    if (parameterIndex == (u32[0 max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    return ImportValueFactsForSsaValue(facts, value, parameterFacts, parameterIndex + 1);
+}
+
+public fn bool ImportGlobalValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> globalFacts,
+    u32[0 max] globalId)
+{
+    return ImportValueFactsForSsaValue(facts, value, globalFacts, globalId);
+}
+
+public fn bool ImportFunctionReturnValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirFuncId callee)
+{
+    return ImportValueFactsForSsaValue(facts, value, functionReturnFacts, callee.Index());
+}
+
+public enum IrFactCategory
+{
+    Unknown,
+    ValueAlignment,
+    ValueAliasClass,
+    ValueNoAlias,
+    ValueVolatile,
+    ValueIntegerRange,
+    CallableAbi,
+    CAbiAggregateCarrier,
+    TypeLayout,
+    StructLayout,
+    EnumLayout,
+    FieldLayout,
+    OwnershipDrop,
+    AliasProofCarrier,
+    FunctionEffect,
+    PackageCompatibility,
+    DiagnosticSourceLocation,
+    ValueNullability,
+    ValueTextConstant,
+}
+
+public enum IrFactAttachPoint
+{
+    Unknown,
+    Value,
+    Block,
+    Function,
+    Type,
+    Symbol,
+    Package,
+    Diagnostic,
+    AliasProof,
+}
+
+public enum IrFactPhaseOwner
+{
+    Unknown,
+    Syntax,
+    Hir,
+    Mir,
+    Ssa,
+    Backend,
+    Package,
+    Tooling,
+}
+
+public enum IrFactDurability
+{
+    Unknown,
+    Transient,
+    Recomputable,
+    Durable,
+}
+
+public enum IrFactProducer
+{
+    Unknown,
+    Parser,
+    Binder,
+    TypeResolver,
+    TypeChecker,
+    SemanticValidator,
+    BorrowValidator,
+    HirLowering,
+    MirLowering,
+    SsaLowering,
+    SsaOptimizer,
+    AbiLowering,
+    BackendLowering,
+    PackageLoader,
+    Tooling,
+}
+
+public enum IrFactConsumer
+{
+    Unknown,
+    Binder,
+    TypeChecker,
+    BorrowValidator,
+    MirLowering,
+    DropLowering,
+    SsaLowering,
+    SsaOptimizer,
+    AbiLowering,
+    LlvmEmission,
+    PackageWriter,
+    PackageLoader,
+    Diagnostics,
+    Tooling,
+}
+
+public enum IrFactValidationRule
+{
+    Unknown,
+    HandleLive,
+    Preserve,
+    Translate,
+    Consume,
+    Recompute,
+    ForbidDrop,
+    PackageRoundTrip,
+    DiagnosticLocation,
+    AliasProofRoot,
+    LayoutRequired,
+}
+
+public enum IrFactLoweringPolicy
+{
+    Unknown,
+    Preserve,
+    Translate,
+    Consume,
+    Recompute,
+    ForbidDrop,
+    DebugOnly,
+}
+
+public struct IrFactCategoryDescriptor
+{
+    IrFactCategory CategoryValue;
+    IrFactAttachPoint AttachPointValue;
+    IrFactPhaseOwner PhaseOwnerValue;
+    IrFactDurability DurabilityValue;
+    IrFactProducer ProducerValue;
+    IrFactConsumer ConsumerValue;
+    IrFactValidationRule ValidationRuleValue;
+    IrFactLoweringPolicy LoweringPolicyValue;
+
+    IrFactCategoryDescriptor()
+    {
+        self.CategoryValue = IrFactCategory.Unknown;
+        self.AttachPointValue = IrFactAttachPoint.Unknown;
+        self.PhaseOwnerValue = IrFactPhaseOwner.Unknown;
+        self.DurabilityValue = IrFactDurability.Unknown;
+        self.ProducerValue = IrFactProducer.Unknown;
+        self.ConsumerValue = IrFactConsumer.Unknown;
+        self.ValidationRuleValue = IrFactValidationRule.Unknown;
+        self.LoweringPolicyValue = IrFactLoweringPolicy.Unknown;
+    }
+
+    public inline finite law IrFactCategory Category(borrow IrFactCategoryDescriptor self)
+    {
+        return self.CategoryValue;
+    }
+
+    public inline finite law IrFactAttachPoint AttachPoint(borrow IrFactCategoryDescriptor self)
+    {
+        return self.AttachPointValue;
+    }
+
+    public inline finite law IrFactPhaseOwner PhaseOwner(borrow IrFactCategoryDescriptor self)
+    {
+        return self.PhaseOwnerValue;
+    }
+
+    public inline finite law IrFactDurability Durability(borrow IrFactCategoryDescriptor self)
+    {
+        return self.DurabilityValue;
+    }
+
+    public inline finite law IrFactProducer Producer(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ProducerValue;
+    }
+
+    public inline finite law IrFactConsumer Consumer(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ConsumerValue;
+    }
+
+    public inline finite law IrFactValidationRule ValidationRule(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ValidationRuleValue;
+    }
+
+    public inline finite law IrFactLoweringPolicy LoweringPolicy(borrow IrFactCategoryDescriptor self)
+    {
+        return self.LoweringPolicyValue;
+    }
+}
+
+internal finite law IrFactCategoryDescriptor MakeIrFactDescriptor(
+    IrFactCategory category,
+    IrFactAttachPoint attachPoint,
+    IrFactPhaseOwner phaseOwner,
+    IrFactDurability durability,
+    IrFactProducer producer,
+    IrFactConsumer consumer,
+    IrFactValidationRule validationRule,
+    IrFactLoweringPolicy loweringPolicy)
+{
+    stack mut IrFactCategoryDescriptor descriptor = new();
+    descriptor.CategoryValue = category;
+    descriptor.AttachPointValue = attachPoint;
+    descriptor.PhaseOwnerValue = phaseOwner;
+    descriptor.DurabilityValue = durability;
+    descriptor.ProducerValue = producer;
+    descriptor.ConsumerValue = consumer;
+    descriptor.ValidationRuleValue = validationRule;
+    descriptor.LoweringPolicyValue = loweringPolicy;
+    return descriptor;
+}
+
+public inline finite law u32[0 max] IrConcreteFactCategoryCount()
+{
+    return 18;
+}
+
+public finite law IrFactCategory IrFactCategoryAt(u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0: return IrFactCategory.ValueAlignment;
+        case 1: return IrFactCategory.ValueAliasClass;
+        case 2: return IrFactCategory.ValueNoAlias;
+        case 3: return IrFactCategory.ValueVolatile;
+        case 4: return IrFactCategory.ValueIntegerRange;
+        case 5: return IrFactCategory.CallableAbi;
+        case 6: return IrFactCategory.CAbiAggregateCarrier;
+        case 7: return IrFactCategory.TypeLayout;
+        case 8: return IrFactCategory.StructLayout;
+        case 9: return IrFactCategory.EnumLayout;
+        case 10: return IrFactCategory.FieldLayout;
+        case 11: return IrFactCategory.OwnershipDrop;
+        case 12: return IrFactCategory.AliasProofCarrier;
+        case 13: return IrFactCategory.FunctionEffect;
+        case 14: return IrFactCategory.PackageCompatibility;
+        case 15: return IrFactCategory.DiagnosticSourceLocation;
+        case 16: return IrFactCategory.ValueNullability;
+        case 17: return IrFactCategory.ValueTextConstant;
+        default: return IrFactCategory.Unknown;
+    }
+}
+
+public inline finite law bool IrFactCategoryIsConcrete(IrFactCategory category)
+{
+    return category != IrFactCategory.Unknown;
+}
+
+public inline finite law bool IrFactDurabilityRequiresPackageSerialization(IrFactDurability durability)
+{
+    return durability == IrFactDurability.Durable;
+}
+
+public finite law bool IrFactCategoryRequiresPackageSerialization(IrFactCategory category)
+{
+    stack IrFactCategoryDescriptor descriptor = DescribeIrFactCategory(category);
+    return IrFactDurabilityRequiresPackageSerialization(descriptor.Durability());
+}
+
+public finite law IrFactCategoryDescriptor DescribeIrFactCategory(IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.ValueAliasClass:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.SsaLowering,
+                IrFactConsumer.SsaOptimizer,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueNoAlias:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.BorrowValidator,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueVolatile:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Transient,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.ForbidDrop,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueIntegerRange:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.Recompute,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.ValueNullability:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.Recompute,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.ValueTextConstant:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.MirLowering,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.Recompute,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.CallableAbi:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Function,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.CAbiAggregateCarrier:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.AbiLowering,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.Translate);
+        case IrFactCategory.TypeLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.AbiLowering,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.StructLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.PackageWriter,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.EnumLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.PackageWriter,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.FieldLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Symbol,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.OwnershipDrop:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Transient,
+                IrFactProducer.BorrowValidator,
+                IrFactConsumer.DropLowering,
+                IrFactValidationRule.ForbidDrop,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.AliasProofCarrier:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.AliasProof,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.SsaLowering,
+                IrFactConsumer.SsaOptimizer,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.Consume);
+        case IrFactCategory.FunctionEffect:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Function,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.PackageCompatibility:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Package,
+                IrFactPhaseOwner.Package,
+                IrFactDurability.Durable,
+                IrFactProducer.PackageLoader,
+                IrFactConsumer.PackageLoader,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.DiagnosticSourceLocation:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Diagnostic,
+                IrFactPhaseOwner.Tooling,
+                IrFactDurability.Transient,
+                IrFactProducer.Parser,
+                IrFactConsumer.Diagnostics,
+                IrFactValidationRule.DiagnosticLocation,
+                IrFactLoweringPolicy.DebugOnly);
+        default:
+            return new IrFactCategoryDescriptor();
+    }
+}
+
+public enum IrFactValidationStatus
+{
+    Ok,
+    UnknownCategory,
+    StaleHandle,
+    MismatchedPreservedFact,
+    DroppedForbidDropFact,
+    MissingAbiFact,
+    MissingAliasFact,
+    MissingLayoutFact,
+    MissingDurablePackageFact,
+    MissingRequiredFact,
+}
+
+public finite law ascii IrFactValidationStatusName(IrFactValidationStatus status)
+{
+    switch (status)
+    {
+        case IrFactValidationStatus.Ok:
+            return "ok";
+        case IrFactValidationStatus.UnknownCategory:
+            return "unknown-category";
+        case IrFactValidationStatus.StaleHandle:
+            return "stale-handle";
+        case IrFactValidationStatus.MismatchedPreservedFact:
+            return "mismatched-preserved-fact";
+        case IrFactValidationStatus.DroppedForbidDropFact:
+            return "dropped-forbid-drop-fact";
+        case IrFactValidationStatus.MissingAbiFact:
+            return "missing-abi-fact";
+        case IrFactValidationStatus.MissingAliasFact:
+            return "missing-alias-fact";
+        case IrFactValidationStatus.MissingLayoutFact:
+            return "missing-layout-fact";
+        case IrFactValidationStatus.MissingDurablePackageFact:
+            return "missing-durable-package-fact";
+        case IrFactValidationStatus.MissingRequiredFact:
+            return "missing-required-fact";
+    }
+}
+
+public inline finite law IrFactValidationStatus ValidateTypeHandle<T>(borrow IrTable<T> table, TypeId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateSymbolHandle<T>(borrow IrTable<T> table, SymbolId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirValueHandle<T>(borrow IrTable<T> table, MirValueId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirBlockHandle<T>(borrow IrTable<T> table, MirBlockId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirFunctionHandle<T>(borrow IrTable<T> table, MirFuncId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateSsaValueHandle<T>(borrow IrTable<T> table, SsaValueId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidatePackageHandle<T>(borrow IrTable<T> table, PackageId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public finite law bool IrFactCategoryIsAbiFact(IrFactCategory category)
+{
+    return category == IrFactCategory.CallableAbi
+        || category == IrFactCategory.CAbiAggregateCarrier;
+}
+
+public finite law bool IrFactCategoryIsAliasFact(IrFactCategory category)
+{
+    return category == IrFactCategory.ValueAliasClass
+        || category == IrFactCategory.ValueNoAlias
+        || category == IrFactCategory.AliasProofCarrier;
+}
+
+public finite law bool IrFactCategoryIsLayoutFact(IrFactCategory category)
+{
+    return category == IrFactCategory.ValueAlignment
+        || category == IrFactCategory.TypeLayout
+        || category == IrFactCategory.StructLayout
+        || category == IrFactCategory.EnumLayout
+        || category == IrFactCategory.FieldLayout;
+}
+
+public finite law IrFactValidationStatus MissingFactStatusForCategory(IrFactCategory category)
+{
+    if (!IrFactCategoryIsConcrete(category))
+    {
+        return IrFactValidationStatus.UnknownCategory;
+    }
+
+    if (IrFactCategoryIsAbiFact(category))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    if (IrFactCategoryIsAliasFact(category))
+    {
+        return IrFactValidationStatus.MissingAliasFact;
+    }
+
+    if (IrFactCategoryIsLayoutFact(category))
+    {
+        return IrFactValidationStatus.MissingLayoutFact;
+    }
+
+    stack IrFactCategoryDescriptor descriptor = DescribeIrFactCategory(category);
+    if (descriptor.Durability() == IrFactDurability.Durable)
+    {
+        return IrFactValidationStatus.MissingDurablePackageFact;
+    }
+
+    if (descriptor.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop
+        || descriptor.ValidationRule() == IrFactValidationRule.ForbidDrop)
+    {
+        return IrFactValidationStatus.DroppedForbidDropFact;
+    }
+
+    return IrFactValidationStatus.MissingRequiredFact;
+}
+
+public finite law IrFactValidationStatus ValidateRequiredFactCategory(IrFactCategory category, bool present)
+{
+    if (present)
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return MissingFactStatusForCategory(category);
+}
+
+public finite law bool ValueFactsContainCategory(borrow ValueFacts facts, IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return facts.HasAlignment();
+        case IrFactCategory.ValueNoAlias:
+            return facts.HasNoAlias();
+        case IrFactCategory.ValueVolatile:
+            return facts.Volatile();
+        case IrFactCategory.ValueIntegerRange:
+            return facts.HasIntegerRange();
+        case IrFactCategory.ValueNullability:
+            return facts.HasNullability();
+        case IrFactCategory.ValueTextConstant:
+            return facts.HasTextConstant();
+        case IrFactCategory.CallableAbi:
+            return facts.HasCallingAbi();
+        default:
+            return false;
+    }
+}
+
+public fn IrFactValidationStatus ValidateMirValueFactAtBoundary<T>(
+    borrow IrTable<T> valueDefinitions,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirValueId value,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateMirValueHandle<T>(valueDefinitions, value);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!valueFacts.Contains(value.Index()))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(valueFacts, value.Index());
+    return ValidateRequiredFactCategory(category, ValueFactsContainCategory(row, category));
+}
+
+public fn IrFactValidationStatus ValidateSsaValueFactAtBoundary<T>(
+    borrow IrTable<T> valueDefinitions,
+    borrow IrTable<ValueFacts> valueFacts,
+    SsaValueId value,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateSsaValueHandle<T>(valueDefinitions, value);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!valueFacts.Contains(value.Index()))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(valueFacts, value.Index());
+    return ValidateRequiredFactCategory(category, ValueFactsContainCategory(row, category));
+}
+
+public finite law bool ValueFactsCategoryMatches(
+    borrow ValueFacts source,
+    borrow ValueFacts target,
+    IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return source.HasAlignment()
+                && target.HasAlignment()
+                && source.AlignmentBytes() == target.AlignmentBytes();
+        case IrFactCategory.ValueNoAlias:
+            return source.HasNoAlias() && target.HasNoAlias();
+        case IrFactCategory.ValueVolatile:
+            return source.Volatile() && target.Volatile();
+        case IrFactCategory.ValueIntegerRange:
+            return source.HasIntegerRange()
+                && target.HasIntegerRange()
+                && source.IntegerRangeLower() == target.IntegerRangeLower()
+                && source.IntegerRangeUpperExclusive() == target.IntegerRangeUpperExclusive();
+        case IrFactCategory.ValueNullability:
+            return source.HasNullability()
+                && target.HasNullability()
+                && source.KnownNull() == target.KnownNull()
+                && source.KnownNonNull() == target.KnownNonNull();
+        case IrFactCategory.ValueTextConstant:
+            return source.HasTextConstant()
+                && target.HasTextConstant()
+                && source.TextConstantRowIndex() == target.TextConstantRowIndex()
+                && source.TextConstantPayloadStart() == target.TextConstantPayloadStart()
+                && source.TextConstantPayloadByteLength() == target.TextConstantPayloadByteLength()
+                && source.TextConstantCodePointLength() == target.TextConstantCodePointLength()
+                && source.TextConstantStorageEncodingCode()
+                    == target.TextConstantStorageEncodingCode();
+        case IrFactCategory.CallableAbi:
+            return source.HasCallingAbi()
+                && target.HasCallingAbi()
+                && source.CallingAbi() == target.CallingAbi();
+        default:
+            return false;
+    }
+}
+
+// Rewrite passes call this for every fact category whose transfer policy is
+// Preserve. Missing facts use the category-specific diagnostic; changed facts
+// are distinguished from drops so optimizer defects cannot reach ABI/LLVM as
+// merely less-optimized IR.
+public fn IrFactValidationStatus ValidateSsaValueFactPreservedAtRewriteBoundary<
+    TSourceDefinition,
+    TTargetDefinition>(
+    borrow IrTable<TSourceDefinition> sourceDefinitions,
+    borrow IrTable<ValueFacts> sourceFacts,
+    SsaValueId sourceValue,
+    borrow IrTable<TTargetDefinition> targetDefinitions,
+    borrow IrTable<ValueFacts> targetFacts,
+    SsaValueId targetValue,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus sourceStatus = ValidateSsaValueFactAtBoundary<TSourceDefinition>(
+        sourceDefinitions,
+        sourceFacts,
+        sourceValue,
+        category);
+    if (sourceStatus != IrFactValidationStatus.Ok)
+    {
+        return sourceStatus;
+    }
+
+    stack IrFactValidationStatus targetStatus = ValidateSsaValueFactAtBoundary<TTargetDefinition>(
+        targetDefinitions,
+        targetFacts,
+        targetValue,
+        category);
+    if (targetStatus != IrFactValidationStatus.Ok)
+    {
+        return targetStatus;
+    }
+
+    stack ValueFacts source = ValueFactsForSsaValue(sourceFacts, sourceValue);
+    stack ValueFacts target = ValueFactsForSsaValue(targetFacts, targetValue);
+    if (!ValueFactsCategoryMatches(source, target, category))
+    {
+        return IrFactValidationStatus.MismatchedPreservedFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+// Checks every backend value fact that is present on the source value. This is
+// the default optimizer rewrite gate: fixed cost, no temporary collections,
+// and no category can be forgotten by an individual pass.
+public fn IrFactValidationStatus ValidateAllPresentSsaValueFactsPreservedAtRewriteBoundary<
+    TSourceDefinition,
+    TTargetDefinition>(
+    borrow IrTable<TSourceDefinition> sourceDefinitions,
+    borrow IrTable<ValueFacts> sourceFacts,
+    SsaValueId sourceValue,
+    borrow IrTable<TTargetDefinition> targetDefinitions,
+    borrow IrTable<ValueFacts> targetFacts,
+    SsaValueId targetValue)
+{
+    if (ValidateSsaValueHandle<TSourceDefinition>(sourceDefinitions, sourceValue)
+            != IrFactValidationStatus.Ok
+        || ValidateSsaValueHandle<TTargetDefinition>(targetDefinitions, targetValue)
+            != IrFactValidationStatus.Ok)
+    {
+        return IrFactValidationStatus.StaleHandle;
+    }
+
+    if (!sourceFacts.Contains(sourceValue.Index())
+        || !targetFacts.Contains(targetValue.Index()))
+    {
+        return IrFactValidationStatus.MissingRequiredFact;
+    }
+
+    stack ValueFacts source = ValueFactsForSsaValue(sourceFacts, sourceValue);
+    stack ValueFacts target = ValueFactsForSsaValue(targetFacts, targetValue);
+    if (source.HasAlignment())
+    {
+        if (!target.HasAlignment())
+        {
+            return IrFactValidationStatus.MissingLayoutFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueAlignment))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasCallingAbi())
+    {
+        if (!target.HasCallingAbi())
+        {
+            return IrFactValidationStatus.MissingAbiFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.CallableAbi))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasNoAlias())
+    {
+        if (!target.HasNoAlias())
+        {
+            return IrFactValidationStatus.MissingAliasFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueNoAlias))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.Volatile())
+    {
+        if (!target.Volatile())
+        {
+            return IrFactValidationStatus.DroppedForbidDropFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueVolatile))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasIntegerRange())
+    {
+        if (!target.HasIntegerRange())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueIntegerRange))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasNullability())
+    {
+        if (!target.HasNullability())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueNullability))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasTextConstant())
+    {
+        if (!target.HasTextConstant())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueTextConstant))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+public fn IrFactValidationStatus ValidateCallableAbiFactAtBoundary<T>(
+    borrow IrTable<T> functionDefinitions,
+    borrow IrTable<ValueFacts> callableFacts,
+    MirFuncId function)
+{
+    stack IrFactValidationStatus handleStatus = ValidateMirFunctionHandle<T>(functionDefinitions, function);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!callableFacts.Contains(function.Index()))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(callableFacts, function.Index());
+    return ValidateRequiredFactCategory(IrFactCategory.CallableAbi, row.HasCallingAbi());
+}
+
+public fn IrFactValidationStatus ValidateCAbiAggregateCarrierFactAtBoundary<T>(
+    borrow IrTable<T> typeDefinitions,
+    borrow IrTable<CAbiAggregateCarrierFacts> carrierFacts,
+    TypeId type)
+{
+    stack IrFactValidationStatus handleStatus = ValidateTypeHandle<T>(typeDefinitions, type);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!carrierFacts.Contains(type.Index()))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    stack CAbiAggregateCarrierFacts row = CAbiAggregateCarrierFactsAtIndex(carrierFacts, type.Index());
+    if (!row.Present())
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+public finite law IrFactValidationStatus ValidateLayoutFactAtBoundary<TDefinition, TLayout>(
+    borrow IrTable<TDefinition> definitions,
+    borrow IrTable<TLayout> layoutFacts,
+    TypeId type,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateTypeHandle<TDefinition>(definitions, type);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!IrFactCategoryIsLayoutFact(category))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    if (!layoutFacts.Contains(type.Index()))
+    {
+        return IrFactValidationStatus.MissingLayoutFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+public finite law IrFactValidationStatus ValidateDurablePackageFactAtBoundary(IrFactCategory category, bool serialized)
+{
+    if (!IrFactCategoryRequiresPackageSerialization(category))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    if (serialized)
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.MissingDurablePackageFact;
+}
+
+// An inline-assembly metadata row id. These rows describe source `unsafe ffi asm`
+// declarations after parsing/binding, independent of the parser's token stream.
+public struct AsmFunctionId
+{
+    u32[0 max] Value;
+
+    AsmFunctionId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow AsmFunctionId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow AsmFunctionId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow AsmFunctionId self, AsmFunctionId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn AsmFunctionId AsmFunctionIdOf(u32[0 max] index)
+{
+    stack mut AsmFunctionId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A byte range in `AsmMetadataTable.TextBytes`. Ranges are 0-based internally so
+// they copy directly from slices and serialize without sentinel adjustment.
+public struct AsmTextRange
+{
+    u32[0 max] StartByte;
+    u32[0 max] ByteCount;
+
+    AsmTextRange()
+    {
+        self.StartByte = 0;
+        self.ByteCount = 0;
+    }
+
+    public inline finite law u32[0 max] Start(borrow AsmTextRange self)
+    {
+        return self.StartByte;
+    }
+
+    public inline finite law u32[0 max] Length(borrow AsmTextRange self)
+    {
+        return self.ByteCount;
+    }
+
+    public inline finite law bool IsEmpty(borrow AsmTextRange self)
+    {
+        return self.ByteCount == 0;
+    }
+}
+
+public fn AsmTextRange AsmTextRangeOf(u32[0 max] start, u32[0 max] length)
+{
+    stack mut AsmTextRange range = new();
+    range.StartByte = start;
+    range.ByteCount = length;
+    return range;
+}
+
+public struct AsmInputOperand
+{
+    AsmTextRange RegisterText;
+    AsmTextRange ValueText;
+
+    AsmInputOperand()
+    {
+        self.RegisterText = new();
+        self.ValueText = new();
+    }
+
+    public inline finite law AsmTextRange Register(borrow AsmInputOperand self)
+    {
+        return self.RegisterText;
+    }
+
+    public inline finite law AsmTextRange Value(borrow AsmInputOperand self)
+    {
+        return self.ValueText;
+    }
+}
+
+public struct AsmOutputOperand
+{
+    AsmTextRange RegisterText;
+    AsmTextRange ValueText;
+    bool ReturnBinding;
+
+    AsmOutputOperand()
+    {
+        self.RegisterText = new();
+        self.ValueText = new();
+        self.ReturnBinding = false;
+    }
+
+    public inline finite law AsmTextRange Register(borrow AsmOutputOperand self)
+    {
+        return self.RegisterText;
+    }
+
+    public inline finite law AsmTextRange Value(borrow AsmOutputOperand self)
+    {
+        return self.ValueText;
+    }
+
+    public inline finite law bool BindsReturn(borrow AsmOutputOperand self)
+    {
+        return self.ReturnBinding;
+    }
+}
+
+public struct AsmFunctionMetadata
+{
+    MirFuncId MirFunction;
+    u32[0 max] ArchitectureCode;
+    AsmTextRange TemplateText;
+    u32[0 max] FirstInputRow;
+    u32[0 max] InputRowCount;
+    u32[0 max] FirstOutputRow;
+    u32[0 max] OutputRowCount;
+    u32[0 max] FirstClobberRow;
+    u32[0 max] ClobberRowCount;
+
+    AsmFunctionMetadata()
+    {
+        self.MirFunction = new();
+        self.ArchitectureCode = 0;
+        self.TemplateText = new();
+        self.FirstInputRow = 0;
+        self.InputRowCount = 0;
+        self.FirstOutputRow = 0;
+        self.OutputRowCount = 0;
+        self.FirstClobberRow = 0;
+        self.ClobberRowCount = 0;
+    }
+
+    public inline finite law MirFuncId Function(borrow AsmFunctionMetadata self)
+    {
+        return self.MirFunction;
+    }
+
+    public inline finite law Compiler.AsmFacts.StarkAsmArchitecture Architecture(borrow AsmFunctionMetadata self)
+    {
+        return AsmArchitectureFromStorageCode(self.ArchitectureCode);
+    }
+
+    public inline finite law AsmTextRange Template(borrow AsmFunctionMetadata self)
+    {
+        return self.TemplateText;
+    }
+
+    public inline finite law u32[0 max] FirstInput(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstInputRow;
+    }
+
+    public inline finite law u32[0 max] InputCount(borrow AsmFunctionMetadata self)
+    {
+        return self.InputRowCount;
+    }
+
+    public inline finite law u32[0 max] FirstOutput(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstOutputRow;
+    }
+
+    public inline finite law u32[0 max] OutputCount(borrow AsmFunctionMetadata self)
+    {
+        return self.OutputRowCount;
+    }
+
+    public inline finite law u32[0 max] FirstClobber(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstClobberRow;
+    }
+
+    public inline finite law u32[0 max] ClobberCount(borrow AsmFunctionMetadata self)
+    {
+        return self.ClobberRowCount;
+    }
+}
+
+internal inline finite law u32[0 max] AsmArchitectureStorageCode(Compiler.AsmFacts.StarkAsmArchitecture architecture)
+{
+    switch (architecture)
+    {
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86_64: return 1;
+        case Compiler.AsmFacts.StarkAsmArchitecture.AArch64: return 2;
+        case Compiler.AsmFacts.StarkAsmArchitecture.RiscV64: return 3;
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86: return 4;
+        case Compiler.AsmFacts.StarkAsmArchitecture.Arm32: return 5;
+        default: return 0;
+    }
+}
+
+internal inline finite law Compiler.AsmFacts.StarkAsmArchitecture AsmArchitectureFromStorageCode(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1: return Compiler.AsmFacts.StarkAsmArchitecture.X86_64;
+        case 2: return Compiler.AsmFacts.StarkAsmArchitecture.AArch64;
+        case 3: return Compiler.AsmFacts.StarkAsmArchitecture.RiscV64;
+        case 4: return Compiler.AsmFacts.StarkAsmArchitecture.X86;
+        case 5: return Compiler.AsmFacts.StarkAsmArchitecture.Arm32;
+        default: return Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+    }
+}
+
+// Dense append-only metadata for source assembly declarations. Textual facts live
+// in one byte pool and all cross-references are fixed-width row/range values, so
+// later package-image serialization is a straight linear write.
+public struct AsmMetadataTable
+{
+    internal dynamic i8[min max] TextBytes;
+    internal dynamic u32[0 max] InputRows;
+    internal dynamic u32[0 max] OutputRows;
+    internal dynamic u32[0 max] ClobberRows;
+    internal dynamic u32[0 max] FunctionRows;
+
+    AsmMetadataTable()
+    {
+        self.TextBytes = new();
+        self.InputRows = new();
+        self.OutputRows = new();
+        self.ClobberRows = new();
+        self.FunctionRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(borrow AsmMetadataTable self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] InputCount(borrow AsmMetadataTable self)
+    {
+        return self.InputRows.Length / 4;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] OutputCount(borrow AsmMetadataTable self)
+    {
+        return self.OutputRows.Length / 5;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ClobberCount(borrow AsmMetadataTable self)
+    {
+        return self.ClobberRows.Length / 2;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionCount(borrow AsmMetadataTable self)
+    {
+        return self.FunctionRows.Length / 10;
+    }
+
+    internal inline finite law u32[0 max] InputWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.InputRows.Length)
+        {
+            return self.InputRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] OutputWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.OutputRows.Length)
+        {
+            return self.OutputRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] ClobberWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.ClobberRows.Length)
+        {
+            return self.ClobberRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] FunctionWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.FunctionRows.Length)
+        {
+            return self.FunctionRows[index];
+        }
+
+        return 0;
+    }
+
+    public fn MemoryStatus AppendText(mut borrow AsmMetadataTable self, ascii text, out AsmTextRange range)
+    {
+        range = new();
+        stack i64[min max] signedLength = System.Text.AsciiLength(text);
+        if (signedLength < 0)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        range.StartByte = (u32[0 max])self.TextBytes.Length;
+        range.ByteCount = (u32[0 max])signedLength;
+        if (signedLength == 0)
+        {
+            return MemoryStatus.Ok;
+        }
+
+        unsafe
+        {
+            stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+            if (data == null)
+            {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            if (!self.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+            {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+            {
+                init self.TextBytes[self.TextBytes.Length] = *(&data[index]);
+            }
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendTextByte(mut borrow AsmMetadataTable self, i8[min max] value)
+    {
+        if (!self.TextBytes.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.TextBytes[self.TextBytes.Length] = value;
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendInputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText)
+    {
+        if (!self.InputRows.TryReserve(4))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.InputRows[self.InputRows.Length] = registerText.Start();
+        init self.InputRows[self.InputRows.Length] = registerText.Length();
+        init self.InputRows[self.InputRows.Length] = valueText.Start();
+        init self.InputRows[self.InputRows.Length] = valueText.Length();
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendOutputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText, bool bindsReturn)
+    {
+        if (!self.OutputRows.TryReserve(5))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.OutputRows[self.OutputRows.Length] = registerText.Start();
+        init self.OutputRows[self.OutputRows.Length] = registerText.Length();
+        init self.OutputRows[self.OutputRows.Length] = valueText.Start();
+        init self.OutputRows[self.OutputRows.Length] = valueText.Length();
+        if (bindsReturn)
+        {
+            init self.OutputRows[self.OutputRows.Length] = 1;
+        }
+        else
+        {
+            init self.OutputRows[self.OutputRows.Length] = 0;
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendClobber(mut borrow AsmMetadataTable self, AsmTextRange registerText)
+    {
+        if (!self.ClobberRows.TryReserve(2))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.ClobberRows[self.ClobberRows.Length] = registerText.Start();
+        init self.ClobberRows[self.ClobberRows.Length] = registerText.Length();
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendFunction(
+        mut borrow AsmMetadataTable self,
+        MirFuncId functionId,
+        Compiler.AsmFacts.StarkAsmArchitecture architecture,
+        AsmTextRange templateText,
+        u32[0 max] firstInput,
+        u32[0 max] inputCount,
+        u32[0 max] firstOutput,
+        u32[0 max] outputCount,
+        u32[0 max] firstClobber,
+        u32[0 max] clobberCount,
+        out AsmFunctionId asmFunctionId)
+    {
+        asmFunctionId = new();
+        if (!self.FunctionRows.TryReserve(10))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack u32[0 max] nextIndex = (u32[0 max])self.FunctionCount() + 1;
+        stack u32[0 max] architectureCode = AsmArchitectureStorageCode(architecture);
+        init self.FunctionRows[self.FunctionRows.Length] = functionId.Index();
+        init self.FunctionRows[self.FunctionRows.Length] = architectureCode;
+        init self.FunctionRows[self.FunctionRows.Length] = templateText.Start();
+        init self.FunctionRows[self.FunctionRows.Length] = templateText.Length();
+        init self.FunctionRows[self.FunctionRows.Length] = firstInput;
+        init self.FunctionRows[self.FunctionRows.Length] = inputCount;
+        init self.FunctionRows[self.FunctionRows.Length] = firstOutput;
+        init self.FunctionRows[self.FunctionRows.Length] = outputCount;
+        init self.FunctionRows[self.FunctionRows.Length] = firstClobber;
+        init self.FunctionRows[self.FunctionRows.Length] = clobberCount;
+        asmFunctionId = AsmFunctionIdOf(nextIndex);
+        return MemoryStatus.Ok;
+    }
+
+    public law AsmFunctionMetadata FunctionAt(borrow AsmMetadataTable self, AsmFunctionId id)
+    {
+        if (id.Index() != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(id.Index() - 1) * 10;
+            if (index + 9 < self.FunctionRows.Length)
+            {
+                stack mut AsmFunctionMetadata row = new();
+                row.MirFunction = MirFuncIdOf(self.FunctionWordAt(index));
+                row.ArchitectureCode = self.FunctionWordAt(index + 1);
+                row.TemplateText = AsmTextRangeOf(self.FunctionWordAt(index + 2), self.FunctionWordAt(index + 3));
+                row.FirstInputRow = self.FunctionWordAt(index + 4);
+                row.InputRowCount = self.FunctionWordAt(index + 5);
+                row.FirstOutputRow = self.FunctionWordAt(index + 6);
+                row.OutputRowCount = self.FunctionWordAt(index + 7);
+                row.FirstClobberRow = self.FunctionWordAt(index + 8);
+                row.ClobberRowCount = self.FunctionWordAt(index + 9);
+                return row;
+            }
+        }
+
+        return new AsmFunctionMetadata();
+    }
+
+    public law AsmInputOperand InputAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 4;
+            if (index + 3 < self.InputRows.Length)
+            {
+                stack mut AsmInputOperand row = new();
+                row.RegisterText = AsmTextRangeOf(self.InputWordAt(index), self.InputWordAt(index + 1));
+                row.ValueText = AsmTextRangeOf(self.InputWordAt(index + 2), self.InputWordAt(index + 3));
+                return row;
+            }
+        }
+
+        return new AsmInputOperand();
+    }
+
+    public law AsmOutputOperand OutputAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 5;
+            if (index + 4 < self.OutputRows.Length)
+            {
+                stack mut AsmOutputOperand row = new();
+                row.RegisterText = AsmTextRangeOf(self.OutputWordAt(index), self.OutputWordAt(index + 1));
+                row.ValueText = AsmTextRangeOf(self.OutputWordAt(index + 2), self.OutputWordAt(index + 3));
+                row.ReturnBinding = self.OutputWordAt(index + 4) != 0;
+                return row;
+            }
+        }
+
+        return new AsmOutputOperand();
+    }
+
+    public law AsmTextRange ClobberAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 2;
+            if (index + 1 < self.ClobberRows.Length)
+            {
+                return AsmTextRangeOf(self.ClobberWordAt(index), self.ClobberWordAt(index + 1));
+            }
+        }
+
+        return new AsmTextRange();
+    }
+
+    public finite law i8[min max] TextByteAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.TextBytes.Length)
+        {
+            return self.TextBytes[index];
+        }
+
+        return 0;
+    }
+
+    public finite law bool TextRangeEquals(borrow AsmMetadataTable self, AsmTextRange range, ascii expected)
+        where overlap(self, expected)
+    {
+        unsafe
+        {
+            stack i64[min max] signedLength = System.Text.AsciiLength(expected);
+            if (signedLength < 0 || (u32[0 max])signedLength != range.Length())
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])range.Start();
+            stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])range.Length();
+            if (start + length > self.TextBytes.Length)
+            {
+                return false;
+            }
+
+            if (length == 0)
+            {
+                return true;
+            }
+
+            stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+            if (expectedData == null)
+            {
+                return false;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+            {
+                stack u64[0 2 ** 63 - 1] byteIndex = start + index;
+                if (self.TextBytes[byteIndex] != *(&expectedData[(i64[min max])index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+}

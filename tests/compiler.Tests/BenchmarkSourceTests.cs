@@ -53,7 +53,6 @@ public sealed class BenchmarkSourceTests
             new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
                     new FileSystemModuleResolver(sourceRoot),
@@ -177,10 +176,16 @@ public sealed class BenchmarkSourceTests
             "define internal dso_local fastcc noundef i64 @__stark_inline_clone_System_Runtime_Platform_Linux_WriteSocketVector2(",
             "Expected Linux write-vector inline clone to be emitted.");
         Assert.Contains("%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }", scatterGather, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxReadvSyscallNumber", scatterReadVectorClone, StringComparison.Ordinal);
+        // LinuxReadvSyscallNumber / LinuxWritevSyscallNumber are comptime `const`s in
+        // System.Runtime.Platform.Linux. Now that imported source-module bodies are
+        // type-checked in the consuming build (cross-module monomorphization fix), the
+        // consts fold to their literal syscall numbers (readv = 19, writev = 20) here
+        // instead of an external global load. Preserve both the folded values and their
+        // exact one-value range facts on the imported inline-clone calls.
+        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 19, 20) 19,", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxWritevSyscallNumber", scatterWriteVectorClone, StringComparison.Ordinal);
+        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 20, 21) 20,", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterWriteVectorClone, StringComparison.Ordinal);
     }
@@ -556,7 +561,6 @@ public sealed class BenchmarkSourceTests
             new CompilationInput(source, sourcePath),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
                     new FileSystemModuleResolver(sourceRoot),

@@ -1,0 +1,81 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.AsmFacts
+import Compiler.Ir
+import System.Text
+import System.Memory
+export import Compiler.Binding.Diagnostics
+export import Compiler.Binding.Declarations
+export import Compiler.Binding.LinkNameValidation
+export import Compiler.Binding.InlineLayoutValidation
+export import Compiler.Binding.EnumValidation
+export import Compiler.Binding.ExpressionValidation
+export import Compiler.Binding.BindingPipeline
+export import Compiler.Binding.Scopes
+export import Compiler.Binding.References
+export import Compiler.Binding.TypeResolution
+export import Compiler.Binding.ExpressionTypeHelpers
+export import Compiler.Binding.GenericUseSites
+export import Compiler.Binding.ModuleResolution
+export import Compiler.Binding.DeclarationPrelude
+export import Compiler.Binding.TokenHelpers
+export import Compiler.Binding.AttributeHelpers
+export import Compiler.Binding.FfiAbiHelpers
+export import Compiler.Binding.LayoutHelpers
+export import Compiler.Binding.LayoutValidation
+export import Compiler.Binding.LayoutTypeInfo
+export import Compiler.Binding.CLayoutAggregates
+export import Compiler.Binding.CAbiBoundaries
+export import Compiler.Binding.ExportedSurfaces
+export import Compiler.Binding.ControlFlowValidation
+export import Compiler.Binding.RecursionValidation
+export import Compiler.Binding.BecomeValidation
+export import Compiler.Binding.LawValidation
+export import Compiler.Binding.FunctionKindValidation
+export import Compiler.Binding.DestructorValidation
+export import Compiler.Binding.ConstructorFieldState
+export import Compiler.Binding.ConstructorFieldFacts
+export import Compiler.Binding.ConstructorExpressionReads
+export import Compiler.Binding.ConstructorStatementTraversal
+export import Compiler.Binding.ConstructorSwitchCoverage
+export import Compiler.Binding.ConstructorValidation
+export import Compiler.Binding.OwnershipInitialization
+export import Compiler.Binding.OwnershipMove
+export import Compiler.Binding.OwnershipBorrow
+export import Compiler.Binding.OwnershipArena
+export import Compiler.Binding.OwnershipDeadOnReturn
+export import Compiler.Binding.ReceiverTokenHelpers
+export import Compiler.Binding.AssociatedTypes
+export import Compiler.Binding.TypedModuleSymbols
+export import Compiler.Binding.TypedDeclarations
+export import Compiler.Binding.TypedMembers
+export import Compiler.Binding.TypedLocals
+export import Compiler.Binding.TypedGenerics
+export import Compiler.Binding.TypedGenericInstantiations
+export import Compiler.Binding.CallableCandidates
+export import Compiler.Binding.ReceiverCandidates
+export import Compiler.Binding.FunctionEffects
+export import Compiler.Binding.TraitConformance
+export import Compiler.Binding.CopyabilityModel
+export import Compiler.Binding.CopyabilityTypeFacts
+export import Compiler.Binding.Copyability
+export import Compiler.Binding.ThreadSafetyModel
+export import Compiler.Binding.ThreadSafetyLawNames
+export import Compiler.Binding.ThreadSafetyAtomicFacts
+export import Compiler.Binding.ThreadSafetyTypeFacts
+export import Compiler.Binding.ThreadSafetyPredicates
+export import Compiler.Binding.ThreadSafety
+export import Compiler.Binding.SignatureHelpers
+export import Compiler.Binding.AssemblyBinding
+module Compiler.Binding
+
+// Stage 1 self-hosted binder (name resolution). This first slice builds a
+// top-level declaration symbol table from a parsed `DeclarationList` and answers
+// name lookups and redefinition checks. Later slices resolve type/value
+// references and build scoped symbol tables for function bodies.
+//
+// Names are compared by their source text via `Compiler.Lexing.TokenTextOf`, so
+// the binder is given the source alongside the token stream. Storage uses
+// `dynamic` columns, matching the parser (and avoiding the cross-package
+// `List<T>` drop gap noted in ROADMAP.md).

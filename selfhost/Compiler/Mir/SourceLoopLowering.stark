@@ -1,0 +1,1858 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceLoopLowering
+
+// The token index of the first IntegerLiteral in `stream`, or -1 if none.
+internal fn i64[min max] FirstIntLiteralIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.IntegerLiteral)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+internal fn MirType LoopIntegerTypeFromDeclaredReturn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature)
+{
+    stack mut MirType declaredReturnType = MirType.I64;
+    if (MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType)
+        && MirTypeIsIntegerScalar(declaredReturnType))
+    {
+        return declaredReturnType;
+    }
+
+    return MirType.I64;
+}
+
+// True when `stream` contains any identifier token (so the function takes a parameter).
+
+// Lowers a counting loop `var <i> = <init>; while <i> <cmp> <bound> { <i> = <i> <op>
+// <step> } return <i>` to a four-block loop CFG (preheader, header with an induction
+// phi, body, exit). The loop variable is single-assignment in SSA: its preheader value
+// feeds one phi incoming, its body update (`<i> <op> <step>`) the other (back-edge).
+internal fn bool LowerCountingLoopStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] whileIdx = FirstTokenOfKind(stream, TokenKind.While);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] initIdx = FirstIntLiteralIndex(stream);
+    if (whileIdx < 0 || cmpIdx < 0 || initIdx < 0)
+    {
+        return false;
+    }
+
+    // The `=` inside the body follows `while`; its RHS is `<i> <op> <step>`.
+    stack i64[min max] bodyAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])whileIdx);
+    if (bodyAssign < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind updateOp = stream.KindAt((u64[0 2 ** 63 - 1])bodyAssign + 2);
+    stack i64[min max] loopInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])initIdx), stream.LengthAt((u64[0 2 ** 63 - 1])initIdx));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])bodyAssign + 3), stream.LengthAt((u64[0 2 ** 63 - 1])bodyAssign + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Preheader constants (%v1..%v3); all loop-invariant.
+    stack MirValueId initConst = MirConstInt(instrs, loopInit);
+    stack MirValueId boundConst = MirConstInt(instrs, bound);
+    stack MirValueId stepConst = MirConstInt(instrs, step);
+    // Header: induction phi (%v4) — [ init, preheader(b1) ], [ iNext(%v6), body(b3) ] —
+    // then the comparison (%v5). iNext is forward-referenced (it lives in the body).
+    stack MirValueId iVar = MirPhi2(instrs, initConst, MirBlockIdOf(1), MirValueIdOf(6), MirBlockIdOf(3));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    // Body: the update (%v6).
+    stack MirValueId iNext = LowerBinOp(instrs, updateOp, iVar, stepConst);
+
+    // Blocks: entry(b1), header(b2), body(b3), exit(b4).
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 0, entry.Index(), 1, 3, header.Index(), 4, 2, body.Index(), 6, 1, exit.Index(), 8, 0, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a counting-loop program to a branching LLVM `@main` function.
+
+// Lexes and lowers a counting-loop program to a branching LLVM `@main` function.
+public fn bool LowerCountingLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerCountingLoopStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers a TWO-variable accumulator loop with a multi-statement body — the canonical
+// shape `var i = <iInit>; var s = <sInit>; while i < <bound> { s = s <op> i; i = i
+// <op2> <step> } return s` — to the four-block loop CFG whose header carries TWO
+// induction phis (counter `i` and accumulator `s`), each fed by the preheader and a
+// body back-edge. The two body statements feed the two phis; `s`'s update reads both
+// loop variables. Operators (`<op>`, `<op2>`) and all four literals come from source;
+// the structure (which var is counter vs accumulator, condition uses the counter) is
+// the fixed canonical layout. Both updates are single-assignment in SSA.
+
+// Lowers a TWO-variable accumulator loop with a multi-statement body — the canonical
+// shape `var i = <iInit>; var s = <sInit>; while i < <bound> { s = s <op> i; i = i
+// <op2> <step> } return s` — to the four-block loop CFG whose header carries TWO
+// induction phis (counter `i` and accumulator `s`), each fed by the preheader and a
+// body back-edge. The two body statements feed the two phis; `s`'s update reads both
+// loop variables. Operators (`<op>`, `<op2>`) and all four literals come from source;
+// the structure (which var is counter vs accumulator, condition uses the counter) is
+// the fixed canonical layout. Both updates are single-assignment in SSA.
+internal fn bool LowerAccumulatorLoopStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] whileIdx = FirstTokenOfKind(stream, TokenKind.While);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] iInitIdx = FirstIntLiteralIndex(stream);
+    stack i64[min max] firstAssign = FirstTokenOfKind(stream, TokenKind.Assign);
+    stack i64[min max] lbraceIdx = FirstTokenOfKind(stream, TokenKind.LBrace);
+    if (whileIdx < 0 || cmpIdx < 0 || iInitIdx < 0 || firstAssign < 0 || lbraceIdx < 0)
+    {
+        return false;
+    }
+
+    // Second `var` init `s = <sInit>`: the `=` after the first, its operand the literal.
+    stack i64[min max] secondAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])firstAssign);
+    // Body assignments: `s = s <op> i` then `i = i <op2> <step>` (both after `{`).
+    stack i64[min max] accAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])lbraceIdx);
+    if (secondAssign < 0 || accAssign < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] countAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])accAssign);
+    if (countAssign < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind accOp = stream.KindAt((u64[0 2 ** 63 - 1])accAssign + 2);
+    stack TokenKind countOp = stream.KindAt((u64[0 2 ** 63 - 1])countAssign + 2);
+    stack i64[min max] iInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])iInitIdx), stream.LengthAt((u64[0 2 ** 63 - 1])iInitIdx));
+    stack i64[min max] sInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])secondAssign + 1), stream.LengthAt((u64[0 2 ** 63 - 1])secondAssign + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])countAssign + 3), stream.LengthAt((u64[0 2 ** 63 - 1])countAssign + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Preheader constants (%v1..%v4).
+    stack MirValueId iInitConst = MirConstInt(instrs, iInit);
+    stack MirValueId sInitConst = MirConstInt(instrs, sInit);
+    stack MirValueId boundConst = MirConstInt(instrs, bound);
+    stack MirValueId stepConst = MirConstInt(instrs, step);
+    // Header: i-phi (%v5) back-edges iNext(%v9); s-phi (%v6) back-edges sNext(%v8).
+    stack MirValueId iVar = MirPhi2(instrs, iInitConst, MirBlockIdOf(1), MirValueIdOf(9), MirBlockIdOf(3));
+    stack MirValueId sVar = MirPhi2(instrs, sInitConst, MirBlockIdOf(1), MirValueIdOf(8), MirBlockIdOf(3));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    // Body: sNext = s <op> i (%v8) ; iNext = i <op2> step (%v9).
+    stack MirValueId sNext = LowerBinOp(instrs, accOp, sVar, iVar);
+    stack MirValueId iNext = LowerBinOp(instrs, countOp, iVar, stepConst);
+
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, sVar);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 4));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), 5, 3));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(body.Index(), 8, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), 10, 0));
+
+    switch (EmitLlvmBlocks(instrs, blocks, "sum", 0, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a two-variable accumulator loop to a branching LLVM `@sum`.
+
+// Lexes and lowers a two-variable accumulator loop to a branching LLVM `@sum`.
+public fn bool LowerAccumulatorLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerAccumulatorLoopStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers a SELF-RECURSIVE single-parameter function `fn <name>(<p>) { if <p> <cmp>
+// <a> return <base> else return <p> <op> <name>(<p> <op2> <step>) }` to the recursive
+// `@f1` — an entry block branching on the comparison to a base-case return or a
+// recursive block that decrements the parameter, calls the function's OWN id, combines
+// with the parameter, and returns. The single parameter is referenced directly as
+// `%p0` throughout; literals/operators come from source, the structure is the fixed
+// factorial shape. (Demonstrates source -> recursion end to end.)
+
+
+
+
+
+internal fn bool FunctionBodyStartsWithCountingWhileLoop(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] localStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (localStart >= limit || stream.KindAt(localStart) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localEnd = localStart;
+    if (!FindSelfHostedStatementEnd(stream, localStart, limit, localEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, localStart, localEnd);
+    if (localNameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+    if (!FindSelfHostedStatementAssign(stream, localStart, localEnd, assignToken)
+        || stream.KindAt(assignToken + 1) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] whileIndex = localEnd + 1;
+    if (whileIndex + 4 >= limit
+        || stream.KindAt(whileIndex) != TokenKind.While
+        || stream.KindAt(whileIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(whileIndex + 1))
+        || !IsComparisonToken(stream.KindAt(whileIndex + 2))
+        || stream.KindAt(whileIndex + 3) != TokenKind.IntegerLiteral
+        || stream.KindAt(whileIndex + 4) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])(whileIndex + 4));
+    if (closeBrace == (u32[0 max])(whileIndex + 4))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = whileIndex + 5;
+    if (stream.KindAt(bodyStart) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])bodyStart)
+        || stream.KindAt(bodyStart + 1) != TokenKind.Assign
+        || stream.KindAt(bodyStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(bodyStart + 2))
+        || !IsAddSubToken(stream.KindAt(bodyStart + 3))
+        || stream.KindAt(bodyStart + 4) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterUpdate = bodyStart + 5;
+    if (stream.KindAt(afterUpdate) == TokenKind.Semi)
+    {
+        afterUpdate = afterUpdate + 1;
+    }
+
+    if (afterUpdate != (u64[0 2 ** 63 - 1])closeBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = (u64[0 2 ** 63 - 1])closeBrace + 1;
+    if (stream.KindAt(returnIndex) != TokenKind.Return
+        || stream.KindAt(returnIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(returnIndex + 1)))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterReturn = returnIndex + 2;
+    if (stream.KindAt(afterReturn) == TokenKind.Semi)
+    {
+        afterReturn = afterReturn + 1;
+    }
+
+    return stream.KindAt(afterReturn) == TokenKind.RBrace;
+}
+
+
+internal fn bool LowerModuleCountingLoopFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithCountingWhileLoop(stream, source, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] localStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] localEnd = localStart;
+    if (!FindSelfHostedStatementEnd(stream, localStart, stream.Count(), localEnd))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+    if (!FindSelfHostedStatementAssign(stream, localStart, localEnd, assignToken))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] whileIndex = localEnd + 1;
+    stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])(whileIndex + 4));
+    stack u64[0 2 ** 63 - 1] bodyStart = whileIndex + 5;
+
+    stack i64[min max] loopInit = ParseDigitSpan(source, stream.StartAt(assignToken + 1), stream.LengthAt(assignToken + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt(whileIndex + 3), stream.LengthAt(whileIndex + 3));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt(bodyStart + 4), stream.LengthAt(bodyStart + 4));
+    stack TokenKind cmpOp = stream.KindAt(whileIndex + 2);
+    stack TokenKind updateOp = stream.KindAt(bodyStart + 3);
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
+
+    stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
+    stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
+
+    stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+    stack MirBlockId loopBody = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), headerFirst, headerCount));
+        stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(loopBody.Index(), bodyFirst, bodyCount));
+        stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), exitFirst, 0));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = cond.Index();
+    body.ThenValue = iNext.Index();
+    body.ElseValue = iVar.Index();
+    return true;
+}
+
+
+internal fn bool FunctionBodyStartsWithCountingForLoop(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] localStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (localStart >= limit || stream.KindAt(localStart) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localEnd = localStart;
+    if (!FindSelfHostedStatementEnd(stream, localStart, limit, localEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, localStart, localEnd);
+    if (localNameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+    if (!FindSelfHostedStatementAssign(stream, localStart, localEnd, assignToken)
+        || stream.KindAt(assignToken + 1) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] forIndex = localEnd + 1;
+    stack mut u64[0 2 ** 63 - 1] headerOpen = forIndex + 2;
+    if (stream.KindAt(headerOpen) == TokenKind.Independent)
+    {
+        headerOpen = headerOpen + 1;
+    }
+
+    if (headerOpen + 6 >= limit
+        || stream.KindAt(forIndex) != TokenKind.For
+        || stream.KindAt(forIndex + 1) != TokenKind.Willexit
+        || stream.KindAt(headerOpen) != TokenKind.LParen
+        || stream.KindAt(headerOpen + 1) != TokenKind.Semi
+        || stream.KindAt(headerOpen + 2) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(headerOpen + 2))
+        || !IsComparisonToken(stream.KindAt(headerOpen + 3))
+        || stream.KindAt(headerOpen + 4) != TokenKind.IntegerLiteral
+        || stream.KindAt(headerOpen + 5) != TokenKind.Semi)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] iterStart = headerOpen + 6;
+    stack mut u64[0 2 ** 63 - 1] headerClose = 0;
+    if (stream.KindAt(iterStart) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])iterStart)
+        && (stream.KindAt(iterStart + 1) == TokenKind.AddAssign || stream.KindAt(iterStart + 1) == TokenKind.SubAssign)
+        && stream.KindAt(iterStart + 2) == TokenKind.IntegerLiteral)
+    {
+        headerClose = iterStart + 3;
+    }
+    else if (stream.KindAt(iterStart) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])iterStart)
+        && stream.KindAt(iterStart + 1) == TokenKind.Assign
+        && stream.KindAt(iterStart + 2) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(iterStart + 2))
+        && IsAddSubToken(stream.KindAt(iterStart + 3))
+        && stream.KindAt(iterStart + 4) == TokenKind.IntegerLiteral)
+    {
+        headerClose = iterStart + 5;
+    }
+    else
+    {
+        return false;
+    }
+
+    if (stream.KindAt(headerClose) != TokenKind.RParen
+        || stream.KindAt(headerClose + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])(headerClose + 1));
+    if (closeBrace != (u32[0 max])(headerClose + 2))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = (u64[0 2 ** 63 - 1])closeBrace + 1;
+    if (stream.KindAt(returnIndex) != TokenKind.Return
+        || stream.KindAt(returnIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(returnIndex + 1)))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterReturn = returnIndex + 2;
+    if (stream.KindAt(afterReturn) == TokenKind.Semi)
+    {
+        afterReturn = afterReturn + 1;
+    }
+
+    return stream.KindAt(afterReturn) == TokenKind.RBrace;
+}
+
+
+internal fn bool FindCountingForHeaderParts(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] headerOpen,
+    u64[0 2 ** 63 - 1] limit,
+    out u64[0 2 ** 63 - 1] firstSemi,
+    out u64[0 2 ** 63 - 1] secondSemi,
+    out u64[0 2 ** 63 - 1] headerClose)
+{
+    firstSemi = 0;
+    secondSemi = 0;
+    headerClose = 0;
+    if (stream.KindAt(headerOpen) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] scan = headerOpen + 1;
+    stack mut u32[0 max] parenDepth = 1;
+    stack mut u32[0 max] bracketDepth = 0;
+    while willexit (scan < limit && stream.KindAt(scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen)
+        {
+            parenDepth = parenDepth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (parenDepth == 0)
+            {
+                return false;
+            }
+
+            parenDepth = parenDepth - 1;
+            if (parenDepth == 0)
+            {
+                headerClose = scan;
+                return firstSemi != 0 && secondSemi != 0;
+            }
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = bracketDepth + 1;
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = bracketDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.Semi && parenDepth == 1 && bracketDepth == 0)
+        {
+            if (firstSemi == 0)
+            {
+                firstSemi = scan;
+            }
+            else if (secondSemi == 0)
+            {
+                secondSemi = scan;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+
+internal fn bool FunctionBodyStartsWithHeaderCountingForLoop(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] forIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] headerOpen = forIndex + 2;
+    if (stream.KindAt(headerOpen) == TokenKind.Independent)
+    {
+        headerOpen = headerOpen + 1;
+    }
+
+    if (headerOpen >= limit
+        || stream.KindAt(forIndex) != TokenKind.For
+        || stream.KindAt(forIndex + 1) != TokenKind.Willexit
+        || stream.KindAt(headerOpen) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] firstSemi = 0;
+    stack mut u64[0 2 ** 63 - 1] secondSemi = 0;
+    stack mut u64[0 2 ** 63 - 1] headerClose = 0;
+    if (!FindCountingForHeaderParts(stream, headerOpen, limit, firstSemi, secondSemi, headerClose))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] initStart = headerOpen + 1;
+    stack TokenKind initStorage = stream.KindAt(initStart);
+    if (initStorage != TokenKind.Var && initStorage != TokenKind.Stack && initStorage != TokenKind.Register)
+    {
+        return false;
+    }
+
+    if (initStorage != TokenKind.Var && stream.KindAt(initStart + 1) != TokenKind.Mut)
+    {
+        return false;
+    }
+
+    stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, initStart, firstSemi);
+    if (localNameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignToken = firstSemi;
+    if (!FindSelfHostedStatementAssign(stream, initStart, firstSemi, assignToken)
+        || stream.KindAt(assignToken + 1) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] conditionStart = firstSemi + 1;
+    if (conditionStart + 3 != secondSemi
+        || stream.KindAt(conditionStart) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])conditionStart)
+        || !IsComparisonToken(stream.KindAt(conditionStart + 1))
+        || stream.KindAt(conditionStart + 2) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] iterStart = secondSemi + 1;
+    if (stream.KindAt(iterStart) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])iterStart)
+        && (stream.KindAt(iterStart + 1) == TokenKind.AddAssign || stream.KindAt(iterStart + 1) == TokenKind.SubAssign)
+        && stream.KindAt(iterStart + 2) == TokenKind.IntegerLiteral)
+    {
+        if (iterStart + 3 != headerClose)
+        {
+            return false;
+        }
+    }
+    else if (stream.KindAt(iterStart) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])iterStart)
+        && stream.KindAt(iterStart + 1) == TokenKind.Assign
+        && stream.KindAt(iterStart + 2) == TokenKind.Identifier
+        && TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(iterStart + 2))
+        && IsAddSubToken(stream.KindAt(iterStart + 3))
+        && stream.KindAt(iterStart + 4) == TokenKind.IntegerLiteral)
+    {
+        if (iterStart + 5 != headerClose)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    if (stream.KindAt(headerClose + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])(headerClose + 1));
+    if (closeBrace != (u32[0 max])(headerClose + 2))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = (u64[0 2 ** 63 - 1])closeBrace + 1;
+    if (stream.KindAt(returnIndex) != TokenKind.Return
+        || stream.KindAt(returnIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, localNameToken, (u32[0 max])(returnIndex + 1)))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterReturn = returnIndex + 2;
+    if (stream.KindAt(afterReturn) == TokenKind.Semi)
+    {
+        afterReturn = afterReturn + 1;
+    }
+
+    return stream.KindAt(afterReturn) == TokenKind.RBrace;
+}
+
+
+internal fn bool LowerModuleCountingForLoopFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithCountingForLoop(stream, source, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] localStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] localEnd = localStart;
+    if (!FindSelfHostedStatementEnd(stream, localStart, stream.Count(), localEnd))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+    if (!FindSelfHostedStatementAssign(stream, localStart, localEnd, assignToken))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] forIndex = localEnd + 1;
+    stack mut u64[0 2 ** 63 - 1] headerOpen = forIndex + 2;
+    stack bool independentLoop = stream.KindAt(headerOpen) == TokenKind.Independent;
+    if (independentLoop)
+    {
+        headerOpen = headerOpen + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] iterStart = headerOpen + 6;
+
+    stack i64[min max] loopInit = ParseDigitSpan(source, stream.StartAt(assignToken + 1), stream.LengthAt(assignToken + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt(headerOpen + 4), stream.LengthAt(headerOpen + 4));
+    stack mut TokenKind updateOp = TokenKind.Plus;
+    stack mut u64[0 2 ** 63 - 1] stepToken = iterStart + 2;
+    if (stream.KindAt(iterStart + 1) == TokenKind.SubAssign)
+    {
+        updateOp = TokenKind.Minus;
+    }
+    else if (stream.KindAt(iterStart + 1) == TokenKind.Assign)
+    {
+        updateOp = stream.KindAt(iterStart + 3);
+        stepToken = iterStart + 4;
+    }
+
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt(stepToken), stream.LengthAt(stepToken));
+    stack TokenKind cmpOp = stream.KindAt(headerOpen + 3);
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
+
+    stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
+    stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
+
+    stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+    stack mut MirBlockId loopBody = MirBlockIdOf(0);
+    if (independentLoop)
+    {
+        loopBody = MirIndependentLoopBackedgeBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    }
+    else
+    {
+        loopBody = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    }
+
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), headerFirst, headerCount));
+        stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(loopBody.Index(), bodyFirst, bodyCount));
+        stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), exitFirst, 0));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = cond.Index();
+    body.ThenValue = iNext.Index();
+    body.ElseValue = iVar.Index();
+    return true;
+}
+
+
+internal fn bool LowerModuleHeaderCountingForLoopFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithHeaderCountingForLoop(stream, source, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] forIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] headerOpen = forIndex + 2;
+    stack bool independentLoop = stream.KindAt(headerOpen) == TokenKind.Independent;
+    if (independentLoop)
+    {
+        headerOpen = headerOpen + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] firstSemi = 0;
+    stack mut u64[0 2 ** 63 - 1] secondSemi = 0;
+    stack mut u64[0 2 ** 63 - 1] headerClose = 0;
+    if (!FindCountingForHeaderParts(stream, headerOpen, stream.Count(), firstSemi, secondSemi, headerClose))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] initStart = headerOpen + 1;
+    stack mut u64[0 2 ** 63 - 1] assignToken = firstSemi;
+    if (!FindSelfHostedStatementAssign(stream, initStart, firstSemi, assignToken))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] conditionStart = firstSemi + 1;
+    stack u64[0 2 ** 63 - 1] iterStart = secondSemi + 1;
+    stack i64[min max] loopInit = ParseDigitSpan(source, stream.StartAt(assignToken + 1), stream.LengthAt(assignToken + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt(conditionStart + 2), stream.LengthAt(conditionStart + 2));
+    stack mut TokenKind updateOp = TokenKind.Plus;
+    stack mut u64[0 2 ** 63 - 1] stepToken = iterStart + 2;
+    if (stream.KindAt(iterStart + 1) == TokenKind.SubAssign)
+    {
+        updateOp = TokenKind.Minus;
+    }
+    else if (stream.KindAt(iterStart + 1) == TokenKind.Assign)
+    {
+        updateOp = stream.KindAt(iterStart + 3);
+        stepToken = iterStart + 4;
+    }
+
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt(stepToken), stream.LengthAt(stepToken));
+    stack TokenKind cmpOp = stream.KindAt(conditionStart + 1);
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
+
+    stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
+    stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
+
+    stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+    stack mut MirBlockId loopBody = MirBlockIdOf(0);
+    if (independentLoop)
+    {
+        loopBody = MirIndependentLoopBackedgeBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    }
+    else
+    {
+        loopBody = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    }
+
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), headerFirst, headerCount));
+        stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(loopBody.Index(), bodyFirst, bodyCount));
+        stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), exitFirst, 0));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = cond.Index();
+    body.ThenValue = iNext.Index();
+    body.ElseValue = iVar.Index();
+    return true;
+}
+
+
+internal fn bool FunctionBodyStartsWithAccumulatorWhileLoop(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] counterLocalStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (counterLocalStart >= limit || stream.KindAt(counterLocalStart) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] counterLocalEnd = counterLocalStart;
+    if (!FindSelfHostedStatementEnd(stream, counterLocalStart, limit, counterLocalEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] counterNameToken = FindSelfHostedLocalNameToken(stream, counterLocalStart, counterLocalEnd);
+    if (counterNameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] counterAssignToken = counterLocalEnd;
+    if (!FindSelfHostedStatementAssign(stream, counterLocalStart, counterLocalEnd, counterAssignToken)
+        || stream.KindAt(counterAssignToken + 1) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] accumulatorLocalStart = counterLocalEnd + 1;
+    if (accumulatorLocalStart >= limit || stream.KindAt(accumulatorLocalStart) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] accumulatorLocalEnd = accumulatorLocalStart;
+    if (!FindSelfHostedStatementEnd(stream, accumulatorLocalStart, limit, accumulatorLocalEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] accumulatorNameToken = FindSelfHostedLocalNameToken(stream, accumulatorLocalStart, accumulatorLocalEnd);
+    if (accumulatorNameToken == 0 || TokenTextEqualsAsciiSpan(stream, source, counterNameToken, accumulatorNameToken))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] accumulatorAssignToken = accumulatorLocalEnd;
+    if (!FindSelfHostedStatementAssign(stream, accumulatorLocalStart, accumulatorLocalEnd, accumulatorAssignToken)
+        || stream.KindAt(accumulatorAssignToken + 1) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] whileIndex = accumulatorLocalEnd + 1;
+    if (whileIndex + 4 >= limit
+        || stream.KindAt(whileIndex) != TokenKind.While
+        || stream.KindAt(whileIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, counterNameToken, (u32[0 max])(whileIndex + 1))
+        || !IsComparisonToken(stream.KindAt(whileIndex + 2))
+        || stream.KindAt(whileIndex + 3) != TokenKind.IntegerLiteral
+        || stream.KindAt(whileIndex + 4) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])(whileIndex + 4));
+    if (closeBrace == (u32[0 max])(whileIndex + 4))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] accUpdateStart = whileIndex + 5;
+    stack TokenKind accOp = stream.KindAt(accUpdateStart + 3);
+    if (stream.KindAt(accUpdateStart) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, accumulatorNameToken, (u32[0 max])accUpdateStart)
+        || stream.KindAt(accUpdateStart + 1) != TokenKind.Assign
+        || stream.KindAt(accUpdateStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, accumulatorNameToken, (u32[0 max])(accUpdateStart + 2))
+        || (!IsAddSubToken(accOp) && !IsProductOpToken(accOp))
+        || stream.KindAt(accUpdateStart + 4) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, counterNameToken, (u32[0 max])(accUpdateStart + 4))
+        || stream.KindAt(accUpdateStart + 5) != TokenKind.Semi)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] counterUpdateStart = accUpdateStart + 6;
+    if (stream.KindAt(counterUpdateStart) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, counterNameToken, (u32[0 max])counterUpdateStart)
+        || stream.KindAt(counterUpdateStart + 1) != TokenKind.Assign
+        || stream.KindAt(counterUpdateStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, counterNameToken, (u32[0 max])(counterUpdateStart + 2))
+        || !IsAddSubToken(stream.KindAt(counterUpdateStart + 3))
+        || stream.KindAt(counterUpdateStart + 4) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterCounterUpdate = counterUpdateStart + 5;
+    if (stream.KindAt(afterCounterUpdate) == TokenKind.Semi)
+    {
+        afterCounterUpdate = afterCounterUpdate + 1;
+    }
+
+    if (afterCounterUpdate != (u64[0 2 ** 63 - 1])closeBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = (u64[0 2 ** 63 - 1])closeBrace + 1;
+    if (stream.KindAt(returnIndex) != TokenKind.Return
+        || stream.KindAt(returnIndex + 1) != TokenKind.Identifier
+        || !TokenTextEqualsAsciiSpan(stream, source, accumulatorNameToken, (u32[0 max])(returnIndex + 1)))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterReturn = returnIndex + 2;
+    if (stream.KindAt(afterReturn) == TokenKind.Semi)
+    {
+        afterReturn = afterReturn + 1;
+    }
+
+    return stream.KindAt(afterReturn) == TokenKind.RBrace;
+}
+
+
+internal fn bool LowerModuleAccumulatorLoopFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithAccumulatorWhileLoop(stream, source, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] counterLocalStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut u64[0 2 ** 63 - 1] counterLocalEnd = counterLocalStart;
+    if (!FindSelfHostedStatementEnd(stream, counterLocalStart, stream.Count(), counterLocalEnd))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] counterAssignToken = counterLocalEnd;
+    if (!FindSelfHostedStatementAssign(stream, counterLocalStart, counterLocalEnd, counterAssignToken))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] accumulatorLocalStart = counterLocalEnd + 1;
+    stack mut u64[0 2 ** 63 - 1] accumulatorLocalEnd = accumulatorLocalStart;
+    if (!FindSelfHostedStatementEnd(stream, accumulatorLocalStart, stream.Count(), accumulatorLocalEnd))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] accumulatorAssignToken = accumulatorLocalEnd;
+    if (!FindSelfHostedStatementAssign(stream, accumulatorLocalStart, accumulatorLocalEnd, accumulatorAssignToken))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] whileIndex = accumulatorLocalEnd + 1;
+    stack u64[0 2 ** 63 - 1] accUpdateStart = whileIndex + 5;
+    stack u64[0 2 ** 63 - 1] counterUpdateStart = accUpdateStart + 6;
+
+    stack i64[min max] counterInit = ParseDigitSpan(source, stream.StartAt(counterAssignToken + 1), stream.LengthAt(counterAssignToken + 1));
+    stack i64[min max] accumulatorInit = ParseDigitSpan(source, stream.StartAt(accumulatorAssignToken + 1), stream.LengthAt(accumulatorAssignToken + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt(whileIndex + 3), stream.LengthAt(whileIndex + 3));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt(counterUpdateStart + 4), stream.LengthAt(counterUpdateStart + 4));
+    stack TokenKind cmpOp = stream.KindAt(whileIndex + 2);
+    stack TokenKind accOp = stream.KindAt(accUpdateStart + 3);
+    stack TokenKind counterOp = stream.KindAt(counterUpdateStart + 3);
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId counterInitConst = MirConstIntTyped(instrs, loopType, counterInit);
+    stack MirValueId accumulatorInitConst = MirConstIntTyped(instrs, loopType, accumulatorInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId accumulatorBackEdgeValue = MirValueIdOf(headerFirst + 3);
+    stack MirValueId counterBackEdgeValue = MirValueIdOf(headerFirst + 4);
+    stack MirValueId counterVar = MirPhi2Typed(instrs, loopType, counterInitConst, MirBlockIdOf(firstBlock), counterBackEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId accumulatorVar = MirPhi2Typed(instrs, loopType, accumulatorInitConst, MirBlockIdOf(firstBlock), accumulatorBackEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, counterVar, boundConst);
+    stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
+
+    stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId accumulatorNext = LowerBinOpTyped(instrs, accOp, loopType, accumulatorVar, counterVar);
+    stack MirValueId counterNext = LowerBinOpTyped(instrs, counterOp, loopType, counterVar, stepConst);
+    stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
+
+    stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+    stack MirBlockId loopBody = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 1));
+    stack MirBlockId exit = MirReturnBlock(blocks, accumulatorVar);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), headerFirst, headerCount));
+        stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(loopBody.Index(), bodyFirst, bodyCount));
+        stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), exitFirst, 0));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = cond.Index();
+    body.ThenValue = accumulatorNext.Index();
+    body.ElseValue = accumulatorVar.Index();
+    return true;
+}
+
+
+
+
+
+
+// Lowers ONE function body through the AST path into caller-owned `instrs`/`blocks`,
+// returning the entry block + declared parameter count. Scalar `var` locals lower to SSA
+// overrides; storage-class locals that this MIR subset cannot read as integers occupy the
+// same name space but type as non-scalar, so accidental scalar use is rejected. Arena locals
+// additionally emit frame/allocator MIR side effects before the return path.
+
+
+
+
+
+
+internal fn bool EmitModuleCountingLoopFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleCountingLoopFunctionToBlocks(
+        stream,
+        source,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+
+internal fn bool EmitModuleAccumulatorLoopFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleAccumulatorLoopFunctionToBlocks(
+        stream,
+        source,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+
+internal fn bool EmitModuleCountingForLoopFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleCountingForLoopFunctionToBlocks(
+        stream,
+        source,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+
+internal fn bool EmitModuleHeaderCountingForLoopFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleHeaderCountingForLoopFunctionToBlocks(
+        stream,
+        source,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+
+// Parses + lowers ONE function of a module through the AST path and emits
+// `define i64 @f<functionNumber>(…) { … }` with per-function value numbering. A function
+// whose body begins with `if` is a BRANCH-bodied function (`if … return … else return …`,
+// which may RECURSE) and routes to `EmitModuleIfReturnFunction`; otherwise it is the shared
+// `var`-locals-then-`return` body. Returns false on any malformed/ill-typed/invalid function.
+
+// Lowers a counting `while` loop `var i = <init>; while i < <bound> { i = i <op> <step> }
+// return i` to a back-edge loop CFG through the AST path. The loop variable `i` is an
+// induction phi (its preheader value and its body update are the two incomings); the
+// condition, body update, and bound are full parsed expressions. The phi FORWARD-references
+// its body update, whose instruction index is not known until the body is lowered — so the
+// condition and body are first lowered into SCRATCH tables to COUNT their instructions
+// (the loop variable resolves through an override either way, so the counts match), the
+// update's future index is computed, the phi is built with that forward reference, and the
+// real condition/body are lowered in place.
+public fn bool CompileWhileLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] varIndex = FirstTokenOfKind(stream, TokenKind.Var);
+            stack i64[min max] whileIndex = FirstTokenOfKind(stream, TokenKind.While);
+            stack i64[min max] braceIndex = FirstTokenOfKind(stream, TokenKind.LBrace);
+            stack i64[min max] returnIndex = FirstTokenOfKind(stream, TokenKind.Return);
+            if (varIndex < 0 || whileIndex < 0 || braceIndex < 0 || returnIndex < 0)
+            {
+                return false;
+            }
+
+            stack i64[min max] bodyAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])braceIndex);
+            if (bodyAssign < 0)
+            {
+                return false;
+            }
+
+            // Parse the four sub-expressions: the init, the condition, the body update
+            // (the right side of `i = …`), and the return. The loop variable `i` is the
+            // first name resolved, so it takes index 0.
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ExprParseResult initResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])varIndex + 3);
+            stack u32[0 max] loopVarIndex = ResolveParam(params, sourceBytes, stream.StartAt((u64[0 2 ** 63 - 1])varIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])varIndex + 1));
+            stack ExprParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])whileIndex + 1);
+            if (TypeOfNode(nodes, condResult.NodeId) == ExprType.BoolType)
+            {
+                // A boolean loop condition; continue.
+            }
+            else
+            {
+                return false;
+            }
+
+            stack ExprParseResult updateResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])bodyAssign + 1);
+            stack ExprParseResult retResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
+
+            // The supported shape is a SELF-CONTAINED counting loop: the only name anywhere
+            // (init, condition, update, return) is the loop variable. That guarantees the
+            // loop variable is index 0 (so the override binds it, not a name the init pulled
+            // in first) AND that no free name/parameter is referenced (which would emit an
+            // undeclared `%pK`, since `@main` is declared with no parameters).
+            if (params.Count() != 1)
+            {
+                return false;
+            }
+
+            // The body must assign to the loop variable, as a SINGLE statement: the token
+            // after `{` is the loop variable, and the update expression ends at `}`.
+            if (SpanEquals(sourceBytes, stream.StartAt((u64[0 2 ** 63 - 1])braceIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])braceIndex + 1), stream.StartAt((u64[0 2 ** 63 - 1])varIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])varIndex + 1)))
+            {
+                // The body assigns to the loop variable; continue.
+            }
+            else
+            {
+                return false;
+            }
+
+            if (stream.KindAt(updateResult.Next) != TokenKind.RBrace)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+
+            // Preheader: lower the initializer (no reference to the loop variable yet).
+            stack mut IrTable<u32[0 max]> noOverride = new();
+            stack MirValueId initValue = LowerExprNodeWithLocals(nodes, initResult.NodeId, instrs, noOverride);
+            stack u32[0 max] initCount = (u32[0 max])instrs.Count();
+
+            // Measure the condition and body instruction counts in scratch tables (the loop
+            // variable resolves through an override, so the count is independent of it).
+            stack mut IrTable<u32[0 max]> measureOverride = new();
+            stack u32[0 max] measureSlot = measureOverride.Add(initValue.Index());
+            stack mut IrTable<MirInstruction> scratchCond = new();
+            stack MirValueId scratchCondValue = LowerExprNodeWithLocals(nodes, condResult.NodeId, scratchCond, measureOverride);
+            stack u32[0 max] condCount = (u32[0 max])scratchCond.Count();
+            stack mut IrTable<MirInstruction> scratchBody = new();
+            stack MirValueId scratchBodyValue = LowerExprNodeWithLocals(nodes, updateResult.NodeId, scratchBody, measureOverride);
+            stack u32[0 max] bodyCount = (u32[0 max])scratchBody.Count();
+
+            // The body update's value lands at this index: init + the phi + cond + body.
+            stack u32[0 max] updateIndex = initCount + 1 + condCount + bodyCount;
+
+            // Header phi: `i = phi [ init, preheader(b1) ], [ update(forward), body(b3) ]`.
+            stack MirValueId loopPhi = MirPhi2(instrs, initValue, MirBlockIdOf(1), MirValueIdOf(updateIndex), MirBlockIdOf(3));
+            stack mut IrTable<u32[0 max]> loopOverride = new();
+            stack u32[0 max] loopSlot = loopOverride.Add(loopPhi.Index());
+
+            // Header: the condition (referencing the phi). Body: the update (referencing it).
+            stack MirValueId condValue = LowerExprNodeWithLocals(nodes, condResult.NodeId, instrs, loopOverride);
+            stack u32[0 max] headerEnd = (u32[0 max])instrs.Count();
+            stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+            stack MirValueId updateValue = LowerExprNodeWithLocals(nodes, updateResult.NodeId, instrs, loopOverride);
+            stack u32[0 max] bodyEnd = (u32[0 max])instrs.Count();
+
+            // Blocks: preheader(b1) → header(b2); header cond-branches to body(b3)/exit(b4);
+            // body branches back to the header; exit returns the loop variable.
+            stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+            stack MirBlockId header = MirCondBlock(blocks, condValue, MirBlockIdOf(3), MirBlockIdOf(4));
+            stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+            stack MirBlockId exit = MirReturnBlock(blocks, loopPhi);
+
+            stack mut IrTable<BlockEmit> ranges = new();
+            stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, initCount));
+            stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), initCount + 1, headerEnd - initCount));
+            stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(body.Index(), bodyFirst, bodyEnd - bodyFirst + 1));
+            stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), bodyEnd + 1, 0));
+
+            switch (EmitLlvmBlocks(instrs, blocks, "main", 0, ranges, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lexes and lowers a `(fn <name>() { return <body> })+` program to an LLVM module.

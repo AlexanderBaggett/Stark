@@ -1,0 +1,264 @@
+import LlvmTestSupport
+import System.Testing
+module V1LoweringContractTests
+
+// Ported slice of tests/compiler.Tests/V1LoweringContractTests.cs, running
+// against the current C# host compiler through the host test protocol. Each
+// Impl compiles a source program, requests the rendered `llvm` artifact, and
+// asserts on raw LLVM-IR substrings with System.Testing text helpers. The
+// embedded Stark programs are kept verbatim from the C# raw string literals.
+
+// Ported from V1LoweringContractTests.InternalScalarFunctionsUseFastccAndDirectScalarAbi.
+internal fn bool InternalScalarFunctionsUseFastccAndDirectScalarAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-internal-scalar-fastcc",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @Add(i32 noundef %arg_left, i32 noundef %arg_right)")
+        && DoesNotContain(llvm, "define i32 @Add(");
+}
+
+// Ported from V1LoweringContractTests.InternalTextAndSliceValuesKeepConcretePtrLengthAbi.
+internal fn bool InternalTextAndSliceValuesKeepConcretePtrLengthAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-text-slice-ptr-length",
+        raw"""
+module Demo
+
+unsafe fn ascii Echo(ascii text)
+{
+    return text;
+}
+
+unsafe fn unicode Wide(unicode text)
+{
+    return text;
+}
+
+unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index)
+{
+    return view[index];
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%stark_ascii = type { ptr, i64 }")
+        && Contains(llvm, "%stark_unicode = type { ptr, i64 }")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)")
+        && Contains(llvm, "define fastcc noundef %stark_unicode @Wide(%stark_unicode noundef %arg_text)")
+        && Contains(llvm, "define fastcc noundef i32 @Read({ ptr, i64 } noundef %arg_view, i32 noundef %arg_index)");
+}
+
+// Ported from V1LoweringContractTests.FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbi.
+internal fn bool FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-ffi-ascii-pointer-abi",
+        raw"""
+module Demo
+
+unsafe ffi fn i32[min max] puts(ascii text);
+
+export unsafe fn i32[min max] main()
+{
+    puts("Hello");
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare i32 @puts(ptr readonly)")
+        && Contains(llvm, "i32 @main()")
+        && DoesNotContain(llvm, "declare fastcc i32 @puts(")
+        && DoesNotContain(llvm, "define fastcc i32 @main()");
+}
+
+// Ported from V1LoweringContractTests.SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConvention.
+internal fn bool SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConventionImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-safe-exported-main-native",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define noundef i32 @main()")
+        && DoesNotContain(llvm, "define fastcc noundef i32 @main()");
+}
+
+// Ported from V1LoweringContractTests.ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafe.
+internal fn bool ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafeImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-exported-stark-native",
+        raw"""
+module Demo
+
+export fn i32[min max] AddOne(i32[min max] value)
+{
+    return value + 1;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "i32 @AddOne(i32 noundef %arg_value)")
+        && DoesNotContain(llvm, "define fastcc");
+}
+
+// Ported from V1LoweringContractTests.BorrowedAggregatesRemainIndirectWithReadonlyFacts.
+internal fn bool BorrowedAggregatesRemainIndirectWithReadonlyFactsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-borrowed-aggregate-indirect",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i8[min max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn void Inspect(borrow Pair pair)
+{
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Inspect(ptr noundef nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)")
+        && DoesNotContain(llvm, "define fastcc void @Inspect(%Pair %arg_pair)");
+}
+
+// Ported from V1LoweringContractTests.SixteenByteAggregatesStayDirectByValue.
+internal fn bool SixteenByteAggregatesStayDirectByValueImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-sixteen-byte-direct",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i64[min max] Left;
+    i64[min max] Right;
+}
+
+unsafe fn Pair Step(Pair value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Pair = type { i64, i64 }")
+        && Contains(llvm, "define fastcc noundef %Pair @Step(%Pair noundef %arg_value)")
+        && DoesNotContain(llvm, "sret(%Pair)")
+        && DoesNotContain(llvm, "byval(%Pair)");
+}
+
+// Ported from V1LoweringContractTests.AggregatesLargerThanSixteenBytesUseIndirectAbi.
+internal fn bool AggregatesLargerThanSixteenBytesUseIndirectAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-large-aggregate-indirect",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+unsafe fn Big Step(Big value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Big = type { i64, i64, i64 }")
+        && Contains(llvm, "define fastcc void @Step(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8 %arg_value)")
+        && DoesNotContain(llvm, "define fastcc %Big @Step(%Big %arg_value)");
+}
+
+// Ported from V1LoweringContractTests.FixedArraysFollowTheSameSixteenByteThreshold.
+internal fn bool FixedArraysFollowTheSameSixteenByteThresholdImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "v1-lowering-fixed-array-sixteen-byte",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Read4(i32[min max][4] values)
+{
+    return values[0];
+}
+
+unsafe fn i32[min max] Read5(i32[min max][5] values)
+{
+    return values[0];
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @Read4([4 x i32] noundef %arg_values)")
+        && DoesNotContain(llvm, "byval([4 x i32])")
+        && Contains(llvm, "define fastcc noundef i32 @Read5(")
+        && Contains(llvm, "ptr noundef nonnull byval([5 x i32]) noalias readonly captures(none) dereferenceable(20) align 4 %arg_values")
+        && DoesNotContain(llvm, "define fastcc i32 @Read5([5 x i32] %arg_values)");
+}

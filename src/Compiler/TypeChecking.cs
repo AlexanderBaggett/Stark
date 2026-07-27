@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using Antlr4.Runtime;
 using Antlr4.Runtime.Tree;
@@ -12,28 +13,45 @@ internal sealed class TypeChecker
     private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
     private const string BoolTrueCoverageKey = "bool:true";
     private const string BoolFalseCoverageKey = "bool:false";
+    private const string IntegerCoverageKeyPrefix = "int:";
+
+    /// <summary>
+    /// Switches proven exhaustive by <see cref="AnalyzeSwitchCoverage"/>: every possible
+    /// scrutinee value matches some non-guarded label. Consumed by the definite-return
+    /// analysis (<see cref="StatementGuaranteesFunctionExit"/>) so an exhaustive switch
+    /// whose sections all return counts as returning on all paths.
+    /// </summary>
+    private readonly HashSet<StarkParser.SwitchStatementContext> _exhaustiveSwitches = [];
 
     private enum SwitchCoveragePatternKind
     {
         MatchAll,
         Literal,
+        Range,
         Aggregate,
-        EnumCase
+        EnumCase,
+        List
     }
 
     private enum AggregateCoverageFieldKind
     {
         Wildcard,
         Literal,
+        Range,
         NestedAggregate,
-        NestedEnum
+        NestedEnum,
+        NestedList
     }
+
+    private readonly record struct RangeCoverageInterval(BigInteger Min, BigInteger Max);
 
     private sealed record AggregateCoverageField(
         AggregateCoverageFieldKind Kind,
         string? LiteralKey,
         AggregateCoveragePattern? NestedAggregatePattern,
-        EnumCoveragePattern? NestedEnumPattern);
+        EnumCoveragePattern? NestedEnumPattern,
+        RangeCoverageInterval? RangeInterval = null,
+        ListCoveragePattern? NestedListPattern = null);
 
     private sealed record AggregateCoveragePattern(
         string TypeName,
@@ -44,13 +62,21 @@ internal sealed class TypeChecker
         string VariantName,
         IReadOnlyList<AggregateCoverageField> Fields);
 
+    private sealed record ListCoveragePattern(
+        StarkTypeSymbol ListType,
+        int Length,
+        bool CanBeExhaustiveForTarget,
+        IReadOnlyList<AggregateCoverageField> Elements);
+
     private sealed record SwitchCoveragePattern(
         SwitchCoveragePatternKind Kind,
         string LabelText,
         ParserRuleContext Context,
         string? LiteralKey,
         AggregateCoveragePattern? AggregatePattern,
-        EnumCoveragePattern? EnumPattern);
+        EnumCoveragePattern? EnumPattern,
+        RangeCoverageInterval? RangeInterval = null,
+        ListCoveragePattern? ListPattern = null);
 
     private readonly record struct SwitchSourceShape(
         int SectionCount,
@@ -74,8 +100,10 @@ internal sealed class TypeChecker
     private readonly Dictionary<string, TypeAliasResolutionSource> _typeAliasSources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<ConstructorShape>> _constructors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionSyntaxByQualifiedName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<TypedFunctionSignature>> _functionOverloads = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functionInstantiationCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<TypedFunctionSignature>> _compileTimeMethodSignatureCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VariableSymbol> _globals = new(StringComparer.Ordinal);
     private readonly List<LiteralTypingRecord> _literals = [];
     private readonly List<EnumConstructorTypingRecord> _enumConstructors = [];
@@ -86,6 +114,7 @@ internal sealed class TypeChecker
     private readonly List<LocalDeclarationTypingRecord> _localDeclarations = [];
     private readonly List<LocalStorageCapacityTypingRecord> _localStorageCapacities = [];
     private readonly List<ConversionTypingRecord> _conversions = [];
+    private readonly List<TryPropagationTypingRecord> _tryPropagations = [];
     private readonly List<DirectCallTypingRecord> _directCalls = [];
     private readonly List<FunctionPointerPromotionTypingRecord> _functionPointerPromotions = [];
     private readonly List<ClosureFunctionPromotionTypingRecord> _closureFunctionPromotions = [];
@@ -96,6 +125,7 @@ internal sealed class TypeChecker
     private readonly List<LambdaTypingRecord> _lambdas = [];
     private readonly List<ClosureLambdaTypingRecord> _closureLambdas = [];
     private readonly List<LambdaCaptureTypingRecord> _lambdaCaptures = [];
+    private readonly List<FunctionGlobalReference> _functionGlobalReferences = [];
     private readonly List<FieldAccessTypingRecord> _fieldAccesses = [];
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
@@ -108,6 +138,7 @@ internal sealed class TypeChecker
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
     private readonly List<TypeInstantiationTriggerRecord> _typeInstantiationTriggers = [];
+    private readonly List<(StarkTypeSymbol Type, SourceLocation? Location)> _pendingDictionaryKeyConstraintValidations = [];
     private readonly HashSet<StarkParser.AdditiveExpressionContext> _fixedTextStorageConcatExpressions = [];
     private readonly HashSet<StarkParser.LiteralContext> _fixedTextStorageInterpolatedLiterals = [];
     private readonly HashSet<string> _functionInstantiationKeys = new(StringComparer.Ordinal);
@@ -115,12 +146,22 @@ internal sealed class TypeChecker
     private readonly HashSet<string> _deferredTypeInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _typeInstantiationKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _dictionaryKeyConstraintFailures = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, IReadOnlyList<StarkTypeSymbol>> _genericInstantiationArguments = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ConcreteGenericTypeArguments> _genericInstantiationArguments = new(StringComparer.Ordinal);
     private readonly HashSet<string> _refreshingConcreteTypes = new(StringComparer.Ordinal);
     private StarkTypeResolver? _typeResolver;
     private ISet<string>? _currentFunctionGenericParameters;
+    private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
+    private bool _allowCompileTimeOnlyStructuralFactCalls;
+    private IReadOnlyList<TypeParameterConstraint> _currentFunctionConstraints = [];
+    private IReadOnlyList<ThreadSafetyLawPredicateSymbol> _currentFunctionThreadSafetyLaws = [];
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
+    // Diagnostics-only file-path override for non-root module bodies. Location()
+    // must keep stamping the root input path (package-image template records
+    // match by location — see the note in Location()), so only the diagnostic
+    // funnels apply this override.
+    private string? _currentDiagnosticFilePath;
+    private StarkTypeSymbol? _currentFunctionReturnType;
     private bool _insideConstructorBody;
     private int _unsafeDepth;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
@@ -144,6 +185,10 @@ internal sealed class TypeChecker
     private IReadOnlyDictionary<StarkParser.PostfixPartContext, int>? _currentImportedTemplateFieldAccessOrdinals;
     private IReadOnlyDictionary<int, TypedFunctionSignature>? _currentImportedTemplateMemberCalls;
     private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _currentImportedTemplateMemberCallOrdinals;
+    private CompileTimeFunctionEvaluator? _compileTimeFunctionEvaluator;
+    private IReadOnlyDictionary<string, EnumLayoutSymbol>? _compileTimeEnumLayouts;
+    private ThreadSafetyLawEvaluator? _threadSafetyLawEvaluator;
+    private bool _canValidateDictionaryKeyConstraints;
 
     public TypeChecker(
         CompilerPassContext context,
@@ -165,16 +210,26 @@ internal sealed class TypeChecker
 
     public TypeCheckModel Check()
     {
+        _typeResolver = new StarkTypeResolver(_context, "type-check", _moduleGraph, _namedTypes, _typeAliases, _typeAliasSources);
         SeedNamedTypes();
         CollectTypeAliasSources();
-        _typeResolver = new StarkTypeResolver(_context, "type-check", _moduleGraph, _namedTypes, _typeAliases, _typeAliasSources);
         CheckTypeAliasDeclarations();
         PopulateNamedTypeFields();
+        ValidateNamedTypeInlineLayoutCycles();
         BuildConstructorShapes();
         BuildFunctionSignatures();
+        _canValidateDictionaryKeyConstraints = true;
+        ValidatePendingDictionaryKeyConstraints();
+        SeedCompilerKnownCGlobals();
         CheckGlobalDeclarations();
         CheckConstructorBodies();
         CheckFunctionBodies();
+        CheckImportedModuleNameAmbiguities();
+        MaterializeImportedSourceInstantiations();
+        ValidateThreadEntryMutableStaticReferences();
+
+        var threadSafetyLawFacts = ComputeThreadSafetyLawFacts();
+        ValidateCopyableAssertions();
 
         return new TypeCheckModel(
             _syntaxModel.ModuleName,
@@ -222,7 +277,89 @@ internal sealed class TypeChecker
             _dynamicStorageOperations,
             _switches,
             _closureFunctionPromotions,
-            _boundOperations);
+            _boundOperations,
+            _tryPropagations,
+            threadSafetyLawFacts,
+            _constructors.ToDictionary(
+                static pair => pair.Key,
+                static pair => (IReadOnlyList<TypedConstructorShape>)pair.Value
+                    .Select(static shape => new TypedConstructorShape(
+                        shape.Name,
+                        shape.Parameters,
+                        shape.IsPrimaryShape,
+                        shape.BodyKey))
+                    .ToArray(),
+                StringComparer.Ordinal));
+    }
+
+    // [Copyable] on a struct, record, or enum asserts structural copyability
+    // at the definition, so adding an owning field or a destructor later
+    // errors here instead of at every downstream copy site.
+    private void ValidateCopyableAssertions()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                string? typeName = null;
+                Antlr4.Runtime.IToken? nameToken = null;
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    nameToken = structDeclaration.Identifier().Symbol;
+                    typeName = structDeclaration.Identifier().GetText();
+                }
+                else if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    nameToken = recordDeclaration.Identifier().Symbol;
+                    typeName = recordDeclaration.Identifier().GetText();
+                }
+                else if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    nameToken = enumDeclaration.Identifier().Symbol;
+                    typeName = enumDeclaration.Identifier().GetText();
+                }
+
+                if (typeName is null
+                    || !declaration.attributeList().Any(static list => list.attribute().Any(static attribute =>
+                        attribute.attributeArgument().Length == 0
+                        && string.Equals(attribute.qualifiedName().GetText(), ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))))
+                {
+                    continue;
+                }
+
+                var qualifiedName = QualifyName(module, typeName);
+                if (!_namedTypes.ContainsKey(qualifiedName))
+                {
+                    continue;
+                }
+
+                var type = StarkTypeSymbols.Named(qualifiedName);
+                var fact = GetThreadSafetyLawEvaluator().Evaluate(ThreadSafetyLawNames.Copyable, type);
+                if (fact.Holds)
+                {
+                    continue;
+                }
+
+                var failure = fact.FailureReasons.FirstOrDefault();
+                var reason = failure?.Message ?? $"Type '{typeName}' is not structurally Copyable.";
+                var fieldChain = failure?.Path is { Count: > 0 } path
+                    ? $" Responsible field chain: {typeName}.{string.Join(".", path)}."
+                    : string.Empty;
+                ReportError(
+                    "STK3051",
+                    $"[Copyable] assertion failed: {reason}{fieldChain}",
+                    Location(nameToken!));
+            }
+        }
+    }
+
+    private IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ComputeThreadSafetyLawFacts()
+    {
+        var evaluator = new ThreadSafetyLawEvaluator(
+            _namedTypes,
+            _syntaxModel.ModuleName,
+            (code, message) => ReportError(code, message, SourceLocation.Synthetic()));
+        return evaluator.ComputeNamedTypeFacts();
     }
 
     private void CollectTypeAliasSources()
@@ -262,6 +399,10 @@ internal sealed class TypeChecker
                     declarationModel.Visibility,
                     module.Reference.IsExternal,
                     declarationModel.TypeAlias.GenericParameters,
+                    GetComptimeGenericParameters(
+                        typeAliasDeclaration.typeParameterList(),
+                        declarationModel.TypeAlias.GenericParameters.ToHashSet(StringComparer.Ordinal),
+                        module.SyntaxModel.ModuleName),
                     typeAliasDeclaration.type_(),
                     typeAliasDeclaration.Identifier().Symbol);
             }
@@ -274,6 +415,27 @@ internal sealed class TypeChecker
         {
             _typeResolver!.TryResolveDeclaredTypeAlias(source.LookupName, source.ModuleName, out _);
         }
+    }
+
+    private void SeedCompilerKnownCGlobals()
+    {
+        if (!StarkCDataModelFacts.TryResolve(_context.Options.TargetInfo, out var cDataModel))
+        {
+            return;
+        }
+
+        _globals[StarkCDataModelFacts.CCharIsSignedGlobalName] = new VariableSymbol(
+            StarkCDataModelFacts.CCharIsSignedGlobalName,
+            StarkTypeSymbols.Bool,
+            IsMutable: false,
+            IsConstant: true,
+            BindingKind: GlobalBindingKind.Const,
+            ConstantValue: CompileTimeConstant.Bool(cDataModel.CharIsSigned),
+            HasConstProvenance: true,
+            ConstantInitializer: new TypedConstantInitializer(
+                TypedConstantInitializerKind.Bool,
+                StarkTypeSymbols.Bool,
+                BoolValue: cDataModel.CharIsSigned));
     }
 
     private void SeedNamedTypes()
@@ -298,13 +460,102 @@ internal sealed class TypeChecker
                 }
 
                 var name = QualifyName(module, declaration.Name);
+                var seedGenericParameters = GetSeedTypeGenericParameters(module, declaration);
                 _namedTypes[name] = new NamedTypeSymbol(
                     name,
                     declaration.Kind,
                     new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                    []);
+                    [],
+                    GenericParameterNames: seedGenericParameters.GenericParameterNames?.ToList(),
+                    ComptimeGenericParameterNames: seedGenericParameters.ComptimeGenericParameters.Count == 0
+                        ? null
+                        : seedGenericParameters.ComptimeGenericParameters.ToArray(),
+                    IsDynTrait: IsDynTraitDeclaration(module, declaration),
+                    DeclaringModuleName: module.SyntaxModel.ModuleName,
+                    Visibility: declaration.Visibility);
             }
         }
+    }
+
+    private (HashSet<string>? GenericParameterNames, IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParameters) GetSeedTypeGenericParameters(
+        LoadedModuleDocument module,
+        TopLevelDeclarationModel declaration)
+    {
+        var typeParameterList = FindTypeParameterList(module, declaration);
+        if (typeParameterList is null)
+        {
+            return (null, []);
+        }
+
+        var genericParameterNames = GetGenericParameterNames(typeParameterList);
+        return (
+            genericParameterNames,
+            GetComptimeGenericParameters(typeParameterList, genericParameterNames, module.SyntaxModel.ModuleName));
+    }
+
+    private static StarkParser.TypeParameterListContext? FindTypeParameterList(
+        LoadedModuleDocument module,
+        TopLevelDeclarationModel declaration)
+    {
+        foreach (var topLevel in module.ParseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.Kind == DeclarationKind.Struct
+                && topLevel.structDeclaration() is { } structDeclaration
+                && string.Equals(structDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return structDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Record
+                && topLevel.recordDeclaration() is { } recordDeclaration
+                && string.Equals(recordDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return recordDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Enum
+                && topLevel.enumDeclaration() is { } enumDeclaration
+                && string.Equals(enumDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return enumDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Trait
+                && topLevel.traitDeclaration() is { } traitDeclaration
+                && string.Equals(traitDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return traitDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Doctrine
+                && topLevel.doctrineDeclaration() is { } doctrineDeclaration
+                && string.Equals(doctrineDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return doctrineDeclaration.typeParameterList();
+            }
+        }
+
+        return null;
+    }
+
+    private bool IsDynTraitDeclaration(LoadedModuleDocument module, TopLevelDeclarationModel declaration)
+    {
+        if (declaration.Kind != DeclarationKind.Trait)
+        {
+            return false;
+        }
+
+        if (!module.Reference.IsRoot
+            && module.PackageImageFacts?.NamedTypes.TryGetValue(QualifyName(module, declaration.Name), out var packagedType) == true)
+        {
+            return packagedType.IsDynTrait;
+        }
+
+        return module.ParseResult.Root.topLevelDeclaration()
+            .Select(static topLevel => topLevel.traitDeclaration())
+            .Any(traitDeclaration => traitDeclaration is not null
+                && string.Equals(traitDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal)
+                && traitDeclaration.DYN() is not null);
     }
 
     private void PopulateNamedTypeFields()
@@ -349,15 +600,26 @@ internal sealed class TypeChecker
 
                     var typeName = QualifyName(module, structDeclaration.Identifier().GetText());
                     var structGenericParams = GetGenericParameterNames(structDeclaration.typeParameterList());
+                    var structComptimeParams = GetComptimeGenericParameters(
+                        structDeclaration.typeParameterList(),
+                        structGenericParams,
+                        module.SyntaxModel.ModuleName);
+                    var implementedTraits = ResolveBaseTraits(
+                        structDeclaration.baseTraitList(),
+                        structGenericParams,
+                        module.SyntaxModel.ModuleName);
                     _namedTypes[typeName] = BuildStructLikeNamedType(
                         typeName,
                         DeclarationKind.Struct,
-                        structDeclaration.structBody().structMember()
-                            .Select(static member => member.fieldDeclaration())
-                            .Where(static field => field is not null)!,
+                        structDeclaration.structBody().structMember(),
                         module.SyntaxModel.ModuleName,
                         declarationModel.Visibility,
-                        structGenericParams);
+                        structGenericParams,
+                        structComptimeParams,
+                        implementedTraits.Names,
+                        implementedTraits.Types,
+                        ResolveStructLayoutMetadata(typeName, declaration.attributeList()),
+                        declaration.attributeList());
                     continue;
                 }
 
@@ -374,12 +636,21 @@ internal sealed class TypeChecker
                     var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
                     var orderedFields = new List<FieldSymbol>();
                     var genericParameters = GetGenericParameterNames(recordDeclaration.typeParameterList());
+                    var comptimeParameters = GetComptimeGenericParameters(
+                        recordDeclaration.typeParameterList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
+                    var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameters);
+                    var implementedTraits = ResolveBaseTraits(
+                        recordDeclaration.baseTraitList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
 
                     if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
                     {
                         foreach (var parameter in primaryConstructor.parameterList().parameter())
                         {
-                            var fieldType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName);
+                            var fieldType = ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, comptimeParameterMap);
                             var fieldName = parameter.Identifier().GetText();
                             AddField(
                                 fields,
@@ -395,11 +666,22 @@ internal sealed class TypeChecker
                         }
                     }
 
-                    foreach (var field in recordDeclaration.recordBody().recordMember()
-                                 .Select(static member => member.fieldDeclaration())
-                                 .Where(static field => field is not null)!)
+                    foreach (var member in recordDeclaration.recordBody().recordMember())
                     {
-                        AddFields(fields, orderedFields, field, genericParameters, module.SyntaxModel.ModuleName, recordName, declarationModel.Visibility);
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFields(
+                                fields,
+                                orderedFields,
+                                field,
+                                member.attributeList(),
+                                genericParameters,
+                                module.SyntaxModel.ModuleName,
+                                recordName,
+                                declarationModel.Visibility,
+                                containingLayout: null,
+                                comptimeGenericParameters: comptimeParameterMap);
+                        }
                     }
 
                     _namedTypes[recordName] = new NamedTypeSymbol(
@@ -407,7 +689,25 @@ internal sealed class TypeChecker
                         DeclarationKind.Record,
                         fields,
                         orderedFields,
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        ComptimeGenericParameterNames: comptimeParameters.Count == 0 ? null : comptimeParameters.ToArray(),
+                        ImplementedTraitNames: implementedTraits.Names,
+                        ImplementedTraitTypeSymbols: implementedTraits.Types,
+                        AssociatedTypeMembers: BuildRecordAssociatedTypes(
+                            recordName,
+                            recordDeclaration.recordBody().recordMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            requireTargetType: true),
+                        ThreadSafetyLawAttributes: ResolveThreadSafetyLawAttributes(
+                            declaration.attributeList(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeParameterMap),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility,
+                        HasDestructor: recordDeclaration.recordBody().recordMember()
+                            .Any(static member => member.destructorDeclaration() is not null));
                     continue;
                 }
 
@@ -422,11 +722,18 @@ internal sealed class TypeChecker
 
                     var enumName = QualifyName(module, enumDeclaration.Identifier().GetText());
                     var genericParameters = GetGenericParameterNames(enumDeclaration.typeParameterList());
+                    var comptimeParameters = GetComptimeGenericParameters(
+                        enumDeclaration.typeParameterList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
                     _namedTypes[enumName] = BuildEnumNamedType(
                         enumName,
                         enumDeclaration.enumBody().enumVariantDeclaration(),
                         genericParameters,
-                        module.SyntaxModel.ModuleName);
+                        comptimeParameters,
+                        module.SyntaxModel.ModuleName,
+                        declaration.attributeList(),
+                        declarationModel.Visibility);
                     continue;
                 }
 
@@ -441,12 +748,25 @@ internal sealed class TypeChecker
 
                     var traitName = QualifyName(module, traitDeclaration.Identifier().GetText());
                     var genericParameters = GetGenericParameterNames(traitDeclaration.typeParameterList());
+                    var comptimeParameters = GetComptimeGenericParameters(
+                        traitDeclaration.typeParameterList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
                     _namedTypes[traitName] = new NamedTypeSymbol(
                         traitName,
                         DeclarationKind.Trait,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                         [],
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        ComptimeGenericParameterNames: comptimeParameters.Count == 0 ? null : comptimeParameters.ToArray(),
+                        AssociatedTypeMembers: BuildTraitAssociatedTypes(
+                            traitName,
+                            traitDeclaration.traitBody().traitMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName),
+                        IsDynTrait: traitDeclaration.DYN() is not null,
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility);
                     continue;
                 }
 
@@ -461,54 +781,991 @@ internal sealed class TypeChecker
 
                     var doctrineName = QualifyName(module, doctrineDeclaration.Identifier().GetText());
                     var genericParameters = GetGenericParameterNames(doctrineDeclaration.typeParameterList());
+                    var comptimeParameters = GetComptimeGenericParameters(
+                        doctrineDeclaration.typeParameterList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
                     _namedTypes[doctrineName] = new NamedTypeSymbol(
                         doctrineName,
                         DeclarationKind.Doctrine,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                         [],
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        ComptimeGenericParameterNames: comptimeParameters.Count == 0 ? null : comptimeParameters.ToArray(),
+                        AssociatedTypeMembers: BuildDoctrineAssociatedTypes(
+                            doctrineName,
+                            doctrineDeclaration.doctrineBody().doctrineMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility);
                 }
             }
         }
     }
 
+    private sealed record InlineLayoutTypeFrame(string TypeKey, string DisplayName);
+
+    private sealed record InlineLayoutMemberFrame(string DisplayName, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutMember(string DisplayName, StarkTypeSymbol Type, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutCycle(
+        IReadOnlyList<string> TypePath,
+        IReadOnlyList<string> MemberPath,
+        ParserRuleContext? Context);
+
+    private void ValidateNamedTypeInlineLayoutCycles()
+    {
+        var memberContexts = BuildInlineLayoutMemberContextMap();
+        var knownFiniteTypes = new HashSet<string>(StringComparer.Ordinal);
+        var reportedCycles = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (typeKey, namedType) in _namedTypes.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (!IsInlineLayoutAggregateKind(namedType.Kind))
+            {
+                continue;
+            }
+
+            var activeTypes = new List<InlineLayoutTypeFrame>();
+            var activeTypeIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+            var memberPath = new List<InlineLayoutMemberFrame>();
+
+            if (!TryFindInlineLayoutCycleInNamedType(
+                    typeKey,
+                    namedType,
+                    typeSubstitution: null,
+                    valueSubstitution: null,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out var cycle))
+            {
+                continue;
+            }
+
+            var cycleKey = BuildInlineLayoutCycleKey(cycle);
+            if (!reportedCycles.Add(cycleKey))
+            {
+                continue;
+            }
+
+            var typePath = string.Join(" -> ", cycle.TypePath);
+            var memberPathText = cycle.MemberPath.Count == 0
+                ? "<unknown>"
+                : string.Join(" -> ", cycle.MemberPath);
+            var message = $"Recursive inline layout is not allowed: {typePath}. "
+                + $"The by-value storage chain is {memberPathText}. "
+                + "Struct, record, and enum payload storage must have a finite size; "
+                + "use an explicit indirection such as rawptr<T>, rawmutptr<T>, dynamic T, or another pointer-backed owner.";
+
+            if (cycle.Context is { } context)
+            {
+                ReportError("STK3056", message, context);
+            }
+            else
+            {
+                ReportError("STK3056", message, SourceLocation.Synthetic());
+            }
+        }
+    }
+
+    private Dictionary<string, ParserRuleContext> BuildInlineLayoutMemberContextMap()
+    {
+        var contexts = new Dictionary<string, ParserRuleContext>(StringComparer.Ordinal);
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    var ownerName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    foreach (var member in structDeclaration.structBody().structMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    var ownerName = QualifyName(module, recordDeclaration.Identifier().GetText());
+                    if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
+                    {
+                        foreach (var parameter in primaryConstructor.parameterList().parameter())
+                        {
+                            contexts[InlineLayoutFieldContextKey(ownerName, parameter.Identifier().GetText())] = parameter.type_();
+                        }
+                    }
+
+                    foreach (var member in recordDeclaration.recordBody().recordMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    var ownerName = QualifyName(module, enumDeclaration.Identifier().GetText());
+                    foreach (var variant in enumDeclaration.enumBody().enumVariantDeclaration())
+                    {
+                        var payload = variant.enumVariantPayload();
+                        if (payload is null)
+                        {
+                            continue;
+                        }
+
+                        var variantName = variant.Identifier().GetText();
+                        if (payload.FROM() is not null)
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, "0")] = payload.type_(0);
+                            continue;
+                        }
+
+                        if (payload.enumVariantFieldDeclaration().Length != 0)
+                        {
+                            foreach (var field in payload.enumVariantFieldDeclaration())
+                            {
+                                contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, field.Identifier().GetText())] = field.type_();
+                            }
+
+                            continue;
+                        }
+
+                        foreach (var (fieldType, index) in payload.type_().Select((fieldType, index) => (fieldType, index)))
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, index.ToString(CultureInfo.InvariantCulture))] = fieldType;
+                        }
+                    }
+                }
+            }
+        }
+
+        return contexts;
+    }
+
+    private static void AddFieldInlineLayoutContexts(
+        Dictionary<string, ParserRuleContext> contexts,
+        string ownerName,
+        StarkParser.FieldDeclarationContext field)
+    {
+        foreach (var declarator in field.variableDeclarators().variableDeclarator())
+        {
+            contexts[InlineLayoutFieldContextKey(ownerName, declarator.Identifier().GetText())] = field.type_();
+        }
+    }
+
+    private bool TryFindInlineLayoutCycleInNamedType(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (knownFiniteTypes.Contains(typeKey))
+        {
+            return false;
+        }
+
+        if (activeTypeIndices.TryGetValue(typeKey, out var cycleStart))
+        {
+            cycle = BuildInlineLayoutCycle(typeKey, cycleStart, activeTypes, memberPath);
+            return true;
+        }
+
+        if (!IsInlineLayoutAggregateKind(namedType.Kind))
+        {
+            knownFiniteTypes.Add(typeKey);
+            return false;
+        }
+
+        activeTypeIndices[typeKey] = activeTypes.Count;
+        activeTypes.Add(new InlineLayoutTypeFrame(typeKey, typeKey));
+
+        foreach (var member in EnumerateInlineLayoutMembers(typeKey, namedType, typeSubstitution, valueSubstitution, memberContexts))
+        {
+            memberPath.Add(new InlineLayoutMemberFrame(member.DisplayName, member.Context));
+            if (TryFindInlineLayoutCycleInType(
+                    member.Type,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out cycle))
+            {
+                activeTypes.RemoveAt(activeTypes.Count - 1);
+                activeTypeIndices.Remove(typeKey);
+                return true;
+            }
+
+            memberPath.RemoveAt(memberPath.Count - 1);
+        }
+
+        activeTypes.RemoveAt(activeTypes.Count - 1);
+        activeTypeIndices.Remove(typeKey);
+        knownFiniteTypes.Add(typeKey);
+        return false;
+    }
+
+    private bool TryFindInlineLayoutCycleInType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (type.Kind == StarkTypeKind.Error
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (coreType.Kind == StarkTypeKind.FixedArray && coreType.ElementType is { } elementType)
+        {
+            return TryFindInlineLayoutCycleInType(
+                elementType,
+                memberContexts,
+                activeTypes,
+                activeTypeIndices,
+                memberPath,
+                knownFiniteTypes,
+                out cycle);
+        }
+
+        if (coreType.Kind != StarkTypeKind.Named
+            || coreType.NamedType is not { } namedTypeName
+            || !TryResolveInlineLayoutNamedType(
+                coreType,
+                namedTypeName,
+                out var typeKey,
+                out var namedType,
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return false;
+        }
+
+        return TryFindInlineLayoutCycleInNamedType(
+            typeKey,
+            namedType,
+            typeSubstitution,
+            valueSubstitution,
+            memberContexts,
+            activeTypes,
+            activeTypeIndices,
+            memberPath,
+            knownFiniteTypes,
+            out cycle);
+    }
+
+    private bool TryResolveInlineLayoutNamedType(
+        StarkTypeSymbol coreType,
+        string namedTypeName,
+        out string typeKey,
+        out NamedTypeSymbol namedType,
+        out IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        out IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        typeKey = namedTypeName;
+        typeSubstitution = null;
+        valueSubstitution = null;
+
+        if (_namedTypes.TryGetValue(typeKey, out namedType!))
+        {
+            return true;
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(coreType))
+        {
+            namedType = null!;
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(namedTypeName);
+        if (!_namedTypes.TryGetValue(baseName, out namedType!))
+        {
+            return false;
+        }
+
+        typeSubstitution = BuildInlineLayoutTypeSubstitution(namedType, coreType);
+        valueSubstitution = BuildInlineLayoutValueSubstitution(namedType, coreType);
+        return true;
+    }
+
+    private static IReadOnlyDictionary<string, StarkTypeSymbol>? BuildInlineLayoutTypeSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.GenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var typeArguments = genericInstance.TypeArguments ?? [];
+        if (template.GenericParams.Count != typeArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < template.GenericParams.Count; index++)
+        {
+            substitution[template.GenericParams[index]] = typeArguments[index];
+        }
+
+        return substitution;
+    }
+
+    private static IReadOnlyDictionary<string, BigInteger>? BuildInlineLayoutValueSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.ComptimeGenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var valueArguments = genericInstance.ComptimeValueArguments ?? [];
+        if (template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var argument = valueArguments[index];
+            if (!argument.IsSymbolic)
+            {
+                substitution[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
+            }
+        }
+
+        return substitution.Count == 0 ? null : substitution;
+    }
+
+    private IEnumerable<InlineLayoutMember> EnumerateInlineLayoutMembers(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts)
+    {
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                yield return new InlineLayoutMember(
+                    $"{typeKey}.{field.Name}",
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutFieldContext(memberContexts, namedType.Name, field.Name));
+            }
+
+            yield break;
+        }
+
+        if (namedType.Kind != DeclarationKind.Enum)
+        {
+            yield break;
+        }
+
+        foreach (var variant in namedType.Variants)
+        {
+            foreach (var field in variant.Fields)
+            {
+                var fieldKey = variant.UsesNamedFields && field.Name is { } fieldName
+                    ? fieldName
+                    : field.Position.ToString(CultureInfo.InvariantCulture);
+                var displayName = variant.UsesNamedFields && field.Name is not null
+                    ? $"{typeKey}.{variant.Name}.{field.Name}"
+                    : $"{typeKey}.{variant.Name}#{field.Position.ToString(CultureInfo.InvariantCulture)}";
+                yield return new InlineLayoutMember(
+                    displayName,
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutEnumFieldContext(memberContexts, namedType.Name, variant.Name, fieldKey));
+            }
+        }
+    }
+
+    private StarkTypeSymbol SubstituteInlineLayoutType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        if ((typeSubstitution is null || typeSubstitution.Count == 0)
+            && (valueSubstitution is null || valueSubstitution.Count == 0))
+        {
+            return type;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        StarkTypeSymbol substitutedCore;
+        if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedType)
+        {
+            if (typeSubstitution is not null && typeSubstitution.TryGetValue(namedType, out var substitutedType))
+            {
+                substitutedCore = StarkTypeSymbols.WithQualifiers(
+                    substitutedType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+            }
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
+            {
+                var substitutedArguments = (coreType.TypeArguments ?? [])
+                    .Select(argument => SubstituteInlineLayoutType(argument, typeSubstitution, valueSubstitution))
+                    .ToArray();
+                substitutedCore = StarkTypeSymbols.GenericInstantiation(
+                    StarkTypeSymbols.GetGenericBaseName(namedType),
+                    substitutedArguments,
+                    coreType.ComptimeValueArguments);
+            }
+            else
+            {
+                substitutedCore = coreType;
+            }
+        }
+        else if (coreType.ElementType is { } elementType)
+        {
+            var substitutedElement = SubstituteInlineLayoutType(elementType, typeSubstitution, valueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && valueSubstitution is not null
+                && valueSubstitution.TryGetValue(fixedLengthParameterName, out var concreteLength)
+                && concreteLength >= BigInteger.Zero
+                && concreteLength <= int.MaxValue)
+            {
+                fixedLength = (int)concreteLength;
+                fixedLengthParameterName = null;
+            }
+
+            substitutedCore = coreType.Kind switch
+            {
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, fixedLength, fixedLengthParameterName),
+                StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
+                StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
+                _ => coreType
+            };
+        }
+        else
+        {
+            substitutedCore = coreType;
+        }
+
+        return StarkTypeSymbols.WithQualifiers(
+            substitutedCore,
+            borrowKind: type.BorrowKind,
+            accessKind: type.AccessKind,
+            initializationKind: type.InitializationKind,
+            isMutableView: type.IsMutableView);
+    }
+
+    private static InlineLayoutCycle BuildInlineLayoutCycle(
+        string closingTypeKey,
+        int cycleStart,
+        IReadOnlyList<InlineLayoutTypeFrame> activeTypes,
+        IReadOnlyList<InlineLayoutMemberFrame> memberPath)
+    {
+        var typePath = activeTypes
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .Concat([closingTypeKey])
+            .ToArray();
+        var cycleMembers = memberPath
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .ToArray();
+        return new InlineLayoutCycle(
+            typePath,
+            cycleMembers,
+            memberPath.Count == 0 ? null : memberPath[^1].Context);
+    }
+
+    private static string BuildInlineLayoutCycleKey(InlineLayoutCycle cycle)
+    {
+        return string.Join(
+            "|",
+            cycle.TypePath
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+    }
+
+    private static bool IsInlineLayoutAggregateKind(DeclarationKind kind)
+    {
+        return kind is DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string fieldName)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutFieldContextKey(ownerName, fieldName), out var context)
+            ? context
+            : null;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutEnumFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string variantName,
+        string fieldKey)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutEnumFieldContextKey(ownerName, variantName, fieldKey), out var context)
+            ? context
+            : null;
+    }
+
+    private static bool TryGetInlineLayoutContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string key,
+        out ParserRuleContext context)
+    {
+        if (memberContexts.TryGetValue(key, out context!))
+        {
+            return true;
+        }
+
+        var separator = key.IndexOf('|', StringComparison.Ordinal);
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var ownerName = key[..separator];
+        var baseOwnerName = StarkTypeSymbols.GetGenericBaseName(ownerName);
+        if (string.Equals(ownerName, baseOwnerName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var baseKey = baseOwnerName + key[separator..];
+        return memberContexts.TryGetValue(baseKey, out context!);
+    }
+
+    private static string InlineLayoutFieldContextKey(string ownerName, string fieldName)
+    {
+        return $"{ownerName}|field|{fieldName}";
+    }
+
+    private static string InlineLayoutEnumFieldContextKey(string ownerName, string variantName, string fieldKey)
+    {
+        return $"{ownerName}|enum|{variantName}|{fieldKey}";
+    }
+
     private NamedTypeSymbol BuildStructLikeNamedType(
         string name,
         DeclarationKind kind,
-        IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
+        IEnumerable<StarkParser.StructMemberContext> members,
         string currentModuleName,
         StarkVisibility containingVisibility,
-        ISet<string>? genericParameters = null)
+        ISet<string>? genericParameters = null,
+        IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters = null,
+        IReadOnlyList<string>? implementedTraitNames = null,
+        IReadOnlyList<StarkTypeSymbol>? implementedTraitTypes = null,
+        StructLayoutMetadata? layout = null,
+        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null)
     {
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
         var genericParameterNames = genericParameters?.ToList();
+        var comptimeParameterList = comptimeGenericParameters ?? [];
+        var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameterList);
+        var hasDestructor = members.Any(static member => member.destructorDeclaration() is not null);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            typeAttributeLists ?? [],
+            genericParameters,
+            currentModuleName,
+            comptimeParameterMap);
+        var associatedTypes = BuildStructAssociatedTypes(
+            name,
+            members,
+            genericParameters,
+            currentModuleName,
+            requireTargetType: true);
         _namedTypes[name] = new NamedTypeSymbol(
             name,
             kind,
             fields,
             orderedFields,
-            GenericParameterNames: genericParameterNames);
+            GenericParameterNames: genericParameterNames,
+            ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
+            ImplementedTraitNames: implementedTraitNames,
+            ImplementedTraitTypeSymbols: implementedTraitTypes,
+            AssociatedTypeMembers: associatedTypes,
+            Layout: layout,
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName,
+            Visibility: containingVisibility,
+            HasDestructor: hasDestructor);
 
-        foreach (var field in fieldDeclarations)
+        foreach (var member in members)
         {
-            AddFields(fields, orderedFields, field, genericParameters, currentModuleName, name, containingVisibility);
+            if (member.fieldDeclaration() is { } field)
+            {
+                AddFields(
+                    fields,
+                    orderedFields,
+                    field,
+                    member.attributeList(),
+                    genericParameters,
+                    currentModuleName,
+                    name,
+                    containingVisibility,
+                    layout,
+                    comptimeParameterMap);
+            }
         }
 
         var namedType = new NamedTypeSymbol(name, kind, fields, orderedFields,
-            GenericParameterNames: genericParameterNames);
+            GenericParameterNames: genericParameterNames,
+            ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
+            ImplementedTraitNames: implementedTraitNames,
+            ImplementedTraitTypeSymbols: implementedTraitTypes,
+            AssociatedTypeMembers: associatedTypes,
+            Layout: layout,
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName,
+            Visibility: containingVisibility,
+            HasDestructor: hasDestructor);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildStructAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.StructMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool requireTargetType)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: !requireTargetType);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildRecordAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.RecordMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool requireTargetType)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: !requireTargetType);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildTraitAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.TraitMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        var traitGenericParameters = ExtendGenericParameters(genericParameters, "Self");
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            traitGenericParameters,
+            currentModuleName,
+            allowBareRequirements: true);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildDoctrineAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.DoctrineMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: false);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.AssociatedTypeDeclarationContext> declarations,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool allowBareRequirements)
+    {
+        var result = new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
+        foreach (var declaration in declarations)
+        {
+            var name = declaration.Identifier().GetText();
+            if (result.ContainsKey(name))
+            {
+                ReportError(
+                    "STK3051",
+                    $"Type '{ownerName}' declares associated type '{name}' more than once.",
+                    declaration);
+                continue;
+            }
+
+            if (declaration.type_() is not { } targetTypeSyntax)
+            {
+                if (!allowBareRequirements)
+                {
+                    ReportError(
+                        "STK3051",
+                        $"Type '{ownerName}' must define associated type '{name}' with '= <type>'; only traits may declare bare associated type requirements.",
+                        declaration);
+                }
+
+                result[name] = new AssociatedTypeSymbol(name);
+                continue;
+            }
+
+            var targetType = ResolveType(targetTypeSyntax, genericParameters, currentModuleName);
+            result[name] = new AssociatedTypeSymbol(name, targetType);
+        }
+
+        return result.Count == 0 ? null : result;
+    }
+
+    private static ISet<string>? ExtendGenericParameters(ISet<string>? genericParameters, string name)
+    {
+        var result = genericParameters is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(genericParameters, StringComparer.Ordinal);
+        result.Add(name);
+        return result;
+    }
+
+    // Resolves each base-list entry to the qualified name and typed shape of the
+    // trait it names. Non-trait entries are dropped here; the base-list-must-be-trait
+    // contract is reported separately in semantic validation (STK3026).
+    private (IReadOnlyList<string>? Names, IReadOnlyList<StarkTypeSymbol>? Types) ResolveBaseTraits(
+        StarkParser.BaseTraitListContext? baseTraitList,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        if (baseTraitList is null)
+        {
+            return (null, null);
+        }
+
+        var names = new List<string>();
+        var types = new List<StarkTypeSymbol>();
+        foreach (var entry in baseTraitList.type_())
+        {
+            var resolved = ResolveType(entry, genericParameters, currentModuleName);
+            if (resolved.NamedType is { } namedType
+                && TryResolveBaseTraitSymbol(namedType, out var symbol)
+                && symbol.Kind == DeclarationKind.Trait
+                && !names.Contains(namedType))
+            {
+                names.Add(namedType);
+                types.Add(resolved);
+            }
+        }
+
+        return names.Count > 0 ? (names, types) : (null, null);
+    }
+
+    private bool TryResolveBaseTraitSymbol(string name, out NamedTypeSymbol symbol)
+    {
+        if (_namedTypes.TryGetValue(name, out symbol!))
+        {
+            return true;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        return !string.Equals(baseName, name, StringComparison.Ordinal)
+            && _namedTypes.TryGetValue(baseName, out symbol!);
+    }
+
+    // Parses `where T: Trait, ...` clauses into typed constraints so they can be
+    // enforced at instantiation sites and used to resolve trait-method calls on
+    // the type parameter inside the body. Bound types are resolved in the
+    // function's generic scope.
+    private IReadOnlyList<TypeParameterConstraint>? ParseTypeParameterConstraints(
+        DeclaredFunctionSyntax functionSyntax,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
+    {
+        var constraintContexts = GetTypeParameterConstraintContexts(functionSyntax.DeclarationContext);
+        if (constraintContexts.Length == 0)
+        {
+            return null;
+        }
+
+        var result = new List<TypeParameterConstraint>();
+        foreach (var constraintContext in constraintContexts)
+        {
+            var parameterName = constraintContext.Identifier().GetText();
+            var bounds = new List<StarkTypeSymbol>();
+            foreach (var boundContext in constraintContext.type_())
+            {
+                bounds.Add(ResolveType(boundContext, genericParameters, currentModuleName, comptimeGenericParameters));
+            }
+
+            if (bounds.Count > 0)
+            {
+                result.Add(new TypeParameterConstraint(parameterName, bounds));
+            }
+        }
+
+        return result.Count > 0 ? result : null;
+    }
+
+    private static StarkParser.TypeParameterConstraintsContext[] GetTypeParameterConstraintContexts(ParserRuleContext declarationContext)
+    {
+        return declarationContext switch
+        {
+            StarkParser.FunctionDeclarationContext function => function.typeParameterConstraints(),
+            StarkParser.MethodDeclarationContext method => method.typeParameterConstraints(),
+            StarkParser.TraitMethodDeclarationContext traitMethod => traitMethod.typeParameterConstraints(),
+            StarkParser.DoctrineMethodDeclarationContext doctrineMethod => doctrineMethod.typeParameterConstraints(),
+            _ => []
+        };
+    }
+
+    private IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ParseThreadSafetyLawPredicates(
+        DeclaredFunctionSyntax functionSyntax,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
+    {
+        List<ThreadSafetyLawPredicateSymbol>? predicates = null;
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !IsThreadSafetyLawName(predicate.Identifier().GetText()))
+                {
+                    continue;
+                }
+
+                predicates ??= [];
+                predicates.Add(new ThreadSafetyLawPredicateSymbol(
+                    predicate.Identifier().GetText(),
+                    ResolveType(predicate.type_(), genericParameters, currentModuleName, comptimeGenericParameters)));
+            }
+        }
+
+        return predicates;
+    }
+
+    // Inside a trait method body `Self` is implicitly bound by the enclosing trait,
+    // so trait-method calls on `self` (e.g. a default body calling another trait
+    // method) resolve through that bound via the same generic-dispatch path (CG05).
+    private IReadOnlyList<TypeParameterConstraint> WithImplicitTraitSelfConstraint(TypedFunctionSignature signature)
+    {
+        var name = signature.SourceName ?? signature.Name;
+        var lastDot = name.LastIndexOf('.');
+        if (lastDot <= 0)
+        {
+            return signature.Constraints;
+        }
+
+        var containingTypeName = name[..lastDot];
+        if (!_namedTypes.TryGetValue(containingTypeName, out var containingType)
+            || containingType.Kind != DeclarationKind.Trait
+            || signature.Constraints.Any(constraint => string.Equals(constraint.ParameterName, "Self", StringComparison.Ordinal)))
+        {
+            return signature.Constraints;
+        }
+
+        var selfBound = containingType.IsGeneric
+            ? StarkTypeSymbols.GenericInstantiation(
+                containingTypeName,
+                containingType.GenericParams.Select(parameter => StarkTypeSymbols.Named(parameter)).ToArray())
+            : StarkTypeSymbols.Named(containingTypeName);
+        return new List<TypeParameterConstraint>(signature.Constraints)
+        {
+            new("Self", [selfBound]),
+        };
     }
 
     private NamedTypeSymbol BuildEnumNamedType(
         string name,
         IEnumerable<StarkParser.EnumVariantDeclarationContext> variantDeclarations,
         ISet<string>? genericParameters,
-        string currentModuleName)
+        IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters,
+        string currentModuleName,
+        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null,
+        StarkVisibility visibility = StarkVisibility.Module)
     {
         var variants = new List<EnumVariantSymbol>();
+        var variantContexts = new List<StarkParser.EnumVariantDeclarationContext>();
         var seenVariantNames = new HashSet<string>(StringComparer.Ordinal);
+        var funnelSourceTypeToVariant = new Dictionary<string, string>(StringComparer.Ordinal);
+        var comptimeParameterList = comptimeGenericParameters ?? [];
+        var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameterList);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            typeAttributeLists ?? [],
+            genericParameters,
+            currentModuleName,
+            comptimeParameterMap);
 
         foreach (var variantDeclaration in variantDeclarations)
         {
@@ -522,10 +1779,50 @@ internal sealed class TypeChecker
                 continue;
             }
 
+            // Innate variant attributes: `[Ok]` / `[Err]` declare the propagation roles
+            // that `try` consults (doc 11 v2). Anything else on a variant is rejected.
+            var role = ResolveEnumVariantRole(variantDeclaration, name, variantName);
+
             var payload = variantDeclaration.enumVariantPayload();
             if (payload is null)
             {
-                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: false, Fields: []));
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: false, Fields: [], Role: role));
+                variantContexts.Add(variantDeclaration);
+                continue;
+            }
+
+            // `Io from IoError` — a single positional-payload variant additionally
+            // marked as the canonical error funnel that `try` uses to wrap an
+            // `IoError` into this enum. Layout/construction/matching are identical to
+            // `Io(IoError)`; only the `AbsorbsErrorType` marker is added.
+            if (payload.FROM() is not null)
+            {
+                var sourceType = ValidateRuntimeValueType(
+                    ResolveType(payload.type_(0), genericParameters, currentModuleName, comptimeParameterMap),
+                    payload.type_(0),
+                    $"enum variant '{name}.{variantName}' from-payload");
+                var funnelKey = sourceType.DisplayName;
+                if (funnelSourceTypeToVariant.TryGetValue(funnelKey, out var existingVariant))
+                {
+                    ReportError(
+                        "STK3040",
+                        $"Enum '{name}' declares more than one `from` funnel for '{sourceType.DisplayName}' "
+                            + $"(variants '{existingVariant}' and '{variantName}'). `try` could not pick one; "
+                            + "give each absorbed error type a single `from` variant, or convert explicitly.",
+                        variantDeclaration);
+                }
+                else
+                {
+                    funnelSourceTypeToVariant.Add(funnelKey, variantName);
+                }
+
+                variants.Add(new EnumVariantSymbol(
+                    variantName,
+                    UsesNamedFields: false,
+                    Fields: [new EnumVariantFieldSymbol(0, Name: null, sourceType)],
+                    AbsorbsErrorType: sourceType,
+                    Role: role));
+                variantContexts.Add(variantDeclaration);
                 continue;
             }
 
@@ -550,12 +1847,13 @@ internal sealed class TypeChecker
                         index,
                         fieldName,
                         ValidateRuntimeValueType(
-                            ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName),
+                            ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName, comptimeParameterMap),
                             fieldDeclaration.type_(),
                             $"enum variant field '{fieldName}' in '{name}.{variantName}'")));
                 }
 
-                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields));
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields, Role: role));
+                variantContexts.Add(variantDeclaration);
                 continue;
             }
 
@@ -567,11 +1865,15 @@ internal sealed class TypeChecker
                         index,
                         Name: null,
                         ValidateRuntimeValueType(
-                            ResolveType(fieldType, genericParameters, currentModuleName),
+                            ResolveType(fieldType, genericParameters, currentModuleName, comptimeParameterMap),
                             fieldType,
                             $"enum variant field '{name}.{variantName}#{index}'")))
-                    .ToArray()));
+                    .ToArray(),
+                Role: role));
+            variantContexts.Add(variantDeclaration);
         }
+
+        ValidateEnumPropagationRoles(name, variants, variantContexts);
 
         return new NamedTypeSymbol(
             name,
@@ -579,20 +1881,340 @@ internal sealed class TypeChecker
             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
             [],
             EnumVariants: variants,
-            GenericParameterNames: genericParameters?.ToList());
+            GenericParameterNames: genericParameters?.ToList(),
+            ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName,
+            Visibility: visibility);
+    }
+
+    /// <summary>
+    /// Reads the innate `[Ok]` / `[Err]` propagation-role attributes from an enum
+    /// variant declaration (doc 11 v2). Variant attributes are load-bearing for `try`,
+    /// so anything unrecognized is a compile error rather than inert metadata — a typo
+    /// like `[Okk]` must not silently produce a non-propagatable enum.
+    /// </summary>
+    private EnumVariantRole ResolveEnumVariantRole(
+        StarkParser.EnumVariantDeclarationContext variantDeclaration,
+        string enumName,
+        string variantName)
+    {
+        var role = EnumVariantRole.None;
+        foreach (var attributeList in variantDeclaration.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var attributeName = attribute.qualifiedName().GetText();
+                var resolvedRole = attributeName switch
+                {
+                    "Ok" => EnumVariantRole.Ok,
+                    "Err" => EnumVariantRole.Err,
+                    _ => EnumVariantRole.None,
+                };
+
+                if (resolvedRole == EnumVariantRole.None)
+                {
+                    ReportError(
+                        "STK3042",
+                        $"Unknown attribute '[{attributeName}]' on enum variant '{enumName}.{variantName}'. "
+                            + "The attributes recognized on enum variants are [Ok] and [Err].",
+                        attribute);
+                    continue;
+                }
+
+                if (attribute.LPAREN() is not null)
+                {
+                    ReportError(
+                        "STK3042",
+                        $"Attribute '[{attributeName}]' on enum variant '{enumName}.{variantName}' takes no arguments.",
+                        attribute);
+                }
+
+                if (role != EnumVariantRole.None)
+                {
+                    ReportError(
+                        "STK3043",
+                        $"Enum variant '{enumName}.{variantName}' declares more than one propagation role; "
+                            + "a variant is either [Ok] or [Err], never both.",
+                        attribute);
+                    continue;
+                }
+
+                role = resolvedRole;
+            }
+        }
+
+        return role;
+    }
+
+    /// <summary>
+    /// Validates an enum's propagation-role configuration (doc 11 v2). Roles are
+    /// optional, but once any variant carries one, the enum must have exactly two
+    /// variants — one [Ok] and one [Err] — and each role variant carries zero or one
+    /// payload. Violations are STK3043.
+    /// </summary>
+    private void ValidateEnumPropagationRoles(
+        string name,
+        IReadOnlyList<EnumVariantSymbol> variants,
+        IReadOnlyList<StarkParser.EnumVariantDeclarationContext> variantContexts)
+    {
+        var okCount = 0;
+        var errCount = 0;
+        foreach (var variant in variants)
+        {
+            if (variant.Role == EnumVariantRole.Ok)
+            {
+                okCount++;
+            }
+            else if (variant.Role == EnumVariantRole.Err)
+            {
+                errCount++;
+            }
+        }
+
+        if (okCount == 0 && errCount == 0)
+        {
+            return;
+        }
+
+        if (variantContexts.Count == 0)
+        {
+            return;
+        }
+
+        var reportContext = variantContexts[0];
+        if (variants.Count != 2 || okCount != 1 || errCount != 1)
+        {
+            ReportError(
+                "STK3043",
+                $"Enum '{name}' uses propagation role attributes but is not a propagatable shape: it has "
+                    + $"{variants.Count} variant(s) with {okCount} [Ok] and {errCount} [Err]. A propagatable "
+                    + "enum has exactly two variants, one [Ok] and one [Err].",
+                reportContext);
+            return;
+        }
+
+        for (var index = 0; index < variants.Count && index < variantContexts.Count; index++)
+        {
+            var variant = variants[index];
+            if (variant.Role != EnumVariantRole.None && variant.Fields.Count > 1)
+            {
+                ReportError(
+                    "STK3043",
+                    $"Propagation role variant '{name}.{variant.Name}' must carry zero or one payload, "
+                        + $"but it has {variant.Fields.Count}.",
+                    variantContexts[index]);
+            }
+        }
+    }
+
+    private StructLayoutMetadata? ResolveStructLayoutMetadata(
+        string typeName,
+        IEnumerable<StarkParser.AttributeListContext> attributeLists)
+    {
+        StructLayoutKind layoutKind = StructLayoutKind.Auto;
+        int? packBytes = null;
+        int? alignBytes = null;
+        StarkParser.AttributeContext? layoutAttribute = null;
+        StarkParser.AttributeContext? packAttribute = null;
+        StarkParser.AttributeContext? alignAttribute = null;
+
+        foreach (var attributeList in attributeLists)
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var name = attribute.qualifiedName().GetText();
+                switch (name)
+                {
+                    case "StructLayout":
+                        if (layoutAttribute is not null)
+                        {
+                            ReportError(
+                                "STK3048",
+                                $"Struct '{typeName}' declares [StructLayout(...)] more than once.",
+                                attribute);
+                            continue;
+                        }
+
+                        layoutAttribute = attribute;
+                        if (attribute.attributeArgument() is not [var layoutArgument])
+                        {
+                            ReportError(
+                                "STK3048",
+                                $"Struct '{typeName}' must spell layout as [StructLayout(C)] or [StructLayout(Explicit)].",
+                                attribute);
+                            continue;
+                        }
+
+                        layoutKind = layoutArgument.GetText() switch
+                        {
+                            "C" => StructLayoutKind.C,
+                            "Explicit" => StructLayoutKind.Explicit,
+                            _ => StructLayoutKind.Auto
+                        };
+                        if (layoutKind == StructLayoutKind.Auto)
+                        {
+                            ReportError(
+                                "STK3048",
+                                $"Unsupported StructLayout argument '{layoutArgument.GetText()}' on struct '{typeName}'. Use C or Explicit.",
+                                layoutArgument);
+                        }
+
+                        continue;
+                    case "Pack":
+                        if (packAttribute is not null)
+                        {
+                            ReportError("STK3048", $"Struct '{typeName}' declares [Pack(...)] more than once.", attribute);
+                            continue;
+                        }
+
+                        packAttribute = attribute;
+                        packBytes = ResolvePowerOfTwoLayoutAttribute(typeName, "Pack", attribute);
+                        continue;
+                    case "Align":
+                        if (alignAttribute is not null)
+                        {
+                            ReportError("STK3048", $"Struct '{typeName}' declares [Align(...)] more than once.", attribute);
+                            continue;
+                        }
+
+                        alignAttribute = attribute;
+                        alignBytes = ResolvePowerOfTwoLayoutAttribute(typeName, "Align", attribute);
+                        continue;
+                }
+            }
+        }
+
+        if (packAttribute is not null && layoutKind != StructLayoutKind.C)
+        {
+            ReportError(
+                "STK3048",
+                $"Struct '{typeName}' may use [Pack(N)] only with [StructLayout(C)].",
+                packAttribute);
+        }
+
+        if (alignAttribute is not null && layoutKind is not (StructLayoutKind.C or StructLayoutKind.Explicit))
+        {
+            ReportError(
+                "STK3048",
+                $"Struct '{typeName}' may use [Align(N)] only with [StructLayout(C)] or [StructLayout(Explicit)].",
+                alignAttribute);
+        }
+
+        if (layoutKind == StructLayoutKind.Auto)
+        {
+            return null;
+        }
+
+        return new StructLayoutMetadata(
+            layoutKind,
+            layoutKind == StructLayoutKind.C ? packBytes : null,
+            alignBytes);
+    }
+
+    private int? ResolvePowerOfTwoLayoutAttribute(
+        string typeName,
+        string attributeName,
+        StarkParser.AttributeContext attribute)
+    {
+        if (attribute.attributeArgument() is not [var argument]
+            || !BigInteger.TryParse(argument.GetText(), out var value)
+            || value <= BigInteger.Zero
+            || value > int.MaxValue
+            || !IsPowerOfTwo(value))
+        {
+            ReportError(
+                "STK3048",
+                $"Struct '{typeName}' attribute [{attributeName}(N)] requires a positive power-of-two integer literal.",
+                attribute);
+            return null;
+        }
+
+        return (int)value;
+    }
+
+    private static bool IsPowerOfTwo(BigInteger value)
+    {
+        return value > BigInteger.Zero && (value & (value - BigInteger.One)) == BigInteger.Zero;
+    }
+
+    private IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ResolveThreadSafetyLawAttributes(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
+    {
+        List<ThreadSafetyLawAttributeSymbol>? attributes = null;
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (!TryParseThreadSafetyLawAttributeKind(attribute.qualifiedName().GetText(), out var kind)
+                || attribute.attributeArgument() is not [var lawArgument]
+                || !IsThreadSafetyLawName(lawArgument.GetText()))
+            {
+                continue;
+            }
+
+            ThreadSafetyLawPredicateSymbol? condition = null;
+            if (attribute.attributeCondition()?.lawPredicateContract() is { } predicate
+                && IsThreadSafetyLawName(predicate.Identifier().GetText()))
+            {
+                condition = new ThreadSafetyLawPredicateSymbol(
+                    predicate.Identifier().GetText(),
+                    ResolveType(predicate.type_(), genericParameters, currentModuleName, comptimeGenericParameters));
+            }
+
+            attributes ??= [];
+            attributes.Add(new ThreadSafetyLawAttributeSymbol(kind, lawArgument.GetText(), condition));
+        }
+
+        return attributes;
+    }
+
+    private static bool TryParseThreadSafetyLawAttributeKind(string attributeName, out ThreadSafetyLawAttributeKind kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Grant;
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Deny;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
+    private static bool IsThreadSafetyLawName(string lawName)
+    {
+        return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Copyable", StringComparison.Ordinal);
     }
 
     private void AddFields(
         Dictionary<string, FieldSymbol> fields,
         List<FieldSymbol> orderedFields,
         StarkParser.FieldDeclarationContext fieldDeclaration,
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
         ISet<string>? genericParameters,
         string currentModuleName,
         string containingTypeName,
-        StarkVisibility containingVisibility)
+        StarkVisibility containingVisibility,
+        StructLayoutMetadata? containingLayout,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
-        var fieldType = ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName);
+        var fieldType = ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
         var fieldVisibility = ResolveFieldVisibility(containingVisibility, fieldDeclaration.visibilityModifier());
+        var explicitOffsetBytes = ResolveFieldOffsetBytes(containingTypeName, fieldDeclaration, attributeLists, containingLayout);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            attributeLists,
+            genericParameters,
+            currentModuleName,
+            comptimeGenericParameters);
 
         if (fieldDeclaration.visibilityModifier() is not null && IsMoreVisible(fieldVisibility, containingVisibility))
         {
@@ -610,18 +2232,155 @@ internal sealed class TypeChecker
             }
 
             var fieldName = declarator.Identifier().GetText();
+            var validatedFieldType = ValidateRuntimeValueType(
+                fieldType,
+                fieldDeclaration.type_(),
+                $"field '{fieldName}' in type '{containingTypeName}'");
+            if (containingLayout is not null
+                && !IsFfiLayoutSafeFieldType(validatedFieldType))
+            {
+                ReportError(
+                    "STK3049",
+                    $"Field '{fieldName}' in layout-controlled struct '{containingTypeName}' has type '{validatedFieldType.DisplayName}', which is not FFI-layout safe.",
+                    fieldDeclaration.type_());
+            }
+
             AddField(
                 fields,
                 orderedFields,
                 new FieldSymbol(
                     fieldName,
-                    ValidateRuntimeValueType(
-                        fieldType,
-                        fieldDeclaration.type_(),
-                        $"field '{fieldName}' in type '{containingTypeName}'"),
+                    validatedFieldType,
                     fieldVisibility,
-                    currentModuleName));
+                    currentModuleName,
+                    explicitOffsetBytes,
+                    threadSafetyLawAttributes));
         }
+    }
+
+    private int? ResolveFieldOffsetBytes(
+        string containingTypeName,
+        StarkParser.FieldDeclarationContext fieldDeclaration,
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        StructLayoutMetadata? containingLayout)
+    {
+        StarkParser.AttributeContext? fieldOffsetAttribute = null;
+        foreach (var attributeList in attributeLists)
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var attributeName = attribute.qualifiedName().GetText();
+                if (!string.Equals(attributeName, "FieldOffset", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (fieldOffsetAttribute is not null)
+                {
+                    ReportError(
+                        "STK3048",
+                        $"Field in struct '{containingTypeName}' declares [FieldOffset(...)] more than once.",
+                        attribute);
+                    continue;
+                }
+
+                fieldOffsetAttribute = attribute;
+            }
+        }
+
+        if (containingLayout?.Kind == StructLayoutKind.Explicit)
+        {
+            if (fieldOffsetAttribute is null)
+            {
+                ReportError(
+                    "STK3048",
+                    $"Every field in [StructLayout(Explicit)] struct '{containingTypeName}' must declare [FieldOffset(N)].",
+                    fieldDeclaration);
+                return null;
+            }
+        }
+        else if (fieldOffsetAttribute is not null)
+        {
+            ReportError(
+                "STK3048",
+                $"[FieldOffset(N)] may only be used inside a [StructLayout(Explicit)] struct.",
+                fieldOffsetAttribute);
+        }
+
+        if (fieldOffsetAttribute is null)
+        {
+            return null;
+        }
+
+        if (fieldDeclaration.variableDeclarators().variableDeclarator().Length != 1)
+        {
+            ReportError(
+                "STK3048",
+                "[FieldOffset(N)] applies to exactly one field declarator.",
+                fieldDeclaration);
+        }
+
+        if (fieldOffsetAttribute.attributeArgument() is not [var argument]
+            || !BigInteger.TryParse(argument.GetText(), out var value)
+            || value < BigInteger.Zero
+            || value > int.MaxValue)
+        {
+            ReportError(
+                "STK3048",
+                "[FieldOffset(N)] requires a non-negative integer literal byte offset.",
+                fieldOffsetAttribute);
+            return null;
+        }
+
+        return (int)value;
+    }
+
+    private bool IsFfiLayoutSafeFieldType(StarkTypeSymbol type)
+    {
+        var normalizedType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.AccessKind != StarkAccessKind.None
+            || type.InitializationKind != StarkInitializationKind.None
+            || type.IsMutableView)
+        {
+            return false;
+        }
+
+        return normalizedType.Kind switch
+        {
+            StarkTypeKind.Bool => true,
+            StarkTypeKind.Integer when normalizedType.BitWidth is not null => true,
+            StarkTypeKind.Float when normalizedType.BitWidth is not null => true,
+            StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => true,
+            StarkTypeKind.FixedArray when normalizedType.ElementType is not null
+                => IsFfiLayoutSafeFieldType(normalizedType.ElementType),
+            StarkTypeKind.Named when normalizedType.NamedType is { } namedTypeName
+                                     && normalizedType.TypeArguments is not { Count: > 0 }
+                                     && _namedTypes.TryGetValue(namedTypeName, out var namedType)
+                                     && namedType.Kind == DeclarationKind.Struct
+                                     && namedType.Layout?.Kind is StructLayoutKind.C or StructLayoutKind.Explicit
+                => true,
+            _ => false
+        };
+    }
+
+    private bool IsMisalignedLayoutFieldProjection(NamedTypeSymbol namedType, string fieldName)
+    {
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                StarkTypeSymbols.Named(namedType.Name),
+                _namedTypes,
+                enumLayouts: null) is not { } layout
+            || !layout.TryGetField(fieldName, out var fieldLayout))
+        {
+            return false;
+        }
+
+        return fieldLayout.IsMisaligned;
     }
 
     private static void AddField(
@@ -692,26 +2451,69 @@ internal sealed class TypeChecker
 
                 var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, functionSyntax);
                 var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
+                var comptimeGenericParameters = GetComptimeGenericParameters(
+                    functionSyntax.TypeParameters,
+                    genericParameters,
+                    module.SyntaxModel.ModuleName);
+                var comptimeGenericParameterMap = ToComptimeGenericParameterMap(comptimeGenericParameters);
                 var previousGenericParameters = _currentFunctionGenericParameters;
+                var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
                 var previousFunctionModuleName = _currentFunctionModuleName;
+                var previousDiagnosticFilePath = _currentDiagnosticFilePath;
                 _currentFunctionGenericParameters = genericParameters;
+                _currentFunctionComptimeGenericParameters = comptimeGenericParameterMap;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
 
                 try
                 {
-                    var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
-                    ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
                     var isUnsafe = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal));
-                    var isFfi = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                    var isFfi = functionSyntax.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
                     var isVarargs = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal));
                     var isAbiBoundary = isFfi
                         || declarationModel.Visibility == StarkVisibility.Export;
                     var isAsm = declarationModel.Function?.Asm is not null;
+                    StarkFfiAbi? ffiAbi = null;
+                    if (isFfi)
+                    {
+                        if (!FfiAbiSyntaxFacts.TryResolveFunctionAbi(
+                                functionSyntax.Modifiers,
+                                _context.Options.TargetInfo,
+                                out var abiResolution,
+                                out var abiErrorMessage,
+                                out var abiErrorContext))
+                        {
+                            ReportError("STK3046", abiErrorMessage, abiErrorContext);
+                        }
+                        else if (isAsm && abiResolution.HasExplicitAbi)
+                        {
+                            ReportError(
+                                "STK3046",
+                                $"Asm declaration '{localName}' cannot also specify an FFI ABI. Use bare 'ffi asm(...)' because asm declarations provide register constraints directly.",
+                                abiErrorContext);
+                        }
+                        else if (!isAsm)
+                        {
+                            ffiAbi = abiResolution.Abi;
+                        }
+                    }
+
+                    var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
+                    ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
+
                     if ((isFfi || isAsm) && !isUnsafe)
                     {
                         ReportError(
                             "STK3024",
                             $"FFI and assembly function '{localName}' must be declared 'unsafe' because callers cross a raw platform or ABI boundary.",
+                            functionSyntax.DeclarationContext);
+                    }
+
+                    if (isVarargs && isFfi && !FfiAbiSyntaxFacts.AbiSupportsCVarargs(ffiAbi))
+                    {
+                        ReportError(
+                            "STK3046",
+                            $"Variadic FFI function '{localName}' requires an ABI that supports C-style varargs on this target.",
                             functionSyntax.DeclarationContext);
                     }
 
@@ -729,23 +2531,40 @@ internal sealed class TypeChecker
                     }
 
                     var parameters = new List<TypedParameterSymbol>();
+                    var seenParameterNames = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var parameter in functionSyntax.ParameterList.parameter())
                     {
+                        var parameterName = parameter.Identifier().GetText();
+                        if (!seenParameterNames.Add(parameterName))
+                        {
+                            // Duplicate names would crash every downstream name-keyed
+                            // parameter dictionary, so report and drop the duplicate;
+                            // the first declaration stays authoritative.
+                            ReportError(
+                                "STK3057",
+                                $"Function '{localName}' declares parameter '{parameterName}' more than once.",
+                                parameter);
+                            continue;
+                        }
+
                         var parameterType = ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression);
                         ValidateRuntimeValueType(
                             parameterType,
                             parameter.type_(),
-                            $"parameter '{parameter.Identifier().GetText()}'",
-                            allowDirectInlineClosureParameter: true);
+                            $"parameter '{parameterName}'",
+                            allowDirectInlineClosureParameter: true,
+                            allowDirectCVaListParameter: isFfi && SupportsCVaListAbiParameter(ffiAbi));
                         if (isAbiBoundary)
                         {
-                            ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
+                            ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameterName}'");
                         }
 
                         parameters.Add(CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression));
                     }
 
-                    if (!isUnsafe && (ContainsRawPointer(returnType) || parameters.Any(static parameter => ContainsRawPointer(parameter.Type))))
+                    if (!isUnsafe
+                        && (ContainsRawPointerRequiringUnsafeFunctionSurface(returnType)
+                            || parameters.Any(static parameter => ContainsRawPointerRequiringUnsafeFunctionSurface(parameter.Type))))
                     {
                         ReportError(
                             "STK3024",
@@ -759,6 +2578,7 @@ internal sealed class TypeChecker
                         functionSyntax,
                         parameters,
                         allowWholeParameterDisjointContracts: isFfi || isAsm);
+                    ValidatePointeeDeadOnReturnContracts(functionSyntax, parameters);
 
                     if (declarationModel.Function?.Asm is not null)
                     {
@@ -782,20 +2602,46 @@ internal sealed class TypeChecker
                         parameters,
                         SourceName: sourceQualifiedName,
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                        ComptimeGenericParameterNames: comptimeGenericParameters.Count == 0 ? null : comptimeGenericParameters.ToArray(),
                         IsStatic: functionSyntax.IsStatic,
                         Kind: functionSyntax.DeclaredKind,
                         IsUnsafe: isUnsafe,
                         IsVarargs: isVarargs,
+                        FfiAbi: ffiAbi,
                         BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default,
                         DisjointParameterGroups: effectiveDisjointGroups,
                         OverlapParameterGroups: overlapGroups,
-                        SameParameterGroups: sameGroups);
+                        SameParameterGroups: sameGroups,
+                        TypeParameterConstraints: ParseTypeParameterConstraints(
+                            functionSyntax,
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeGenericParameterMap),
+                        HasBody: functionSyntax.HasBody,
+                        ThreadSafetyLawPredicates: ParseThreadSafetyLawPredicates(
+                            functionSyntax,
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeGenericParameterMap),
+                        Visibility: declarationModel.Visibility,
+                        ValueParameterContracts: declarationModel.Function?.ValueContracts is { Count: > 0 } valueContracts
+                            ? valueContracts
+                            : null,
+                        IsTailCallable: declarationModel.Function?.Modifiers.IsTailCallable == true,
+                        PointeeDeadOnReturnParameterNames: declarationModel.Function?.PointeeDeadOnReturnParameters is { Count: > 0 } pointeeDeadOnReturnParameters
+                            ? pointeeDeadOnReturnParameters
+                            : null,
+                        DeclarationLocation: Location(functionSyntax.DeclarationContext),
+                        ExternalLinkName: declarationModel.Function?.ExternalLinkName);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
+                    _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
                 finally
                 {
                     _currentFunctionGenericParameters = previousGenericParameters;
+                    _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
                     _currentFunctionModuleName = previousFunctionModuleName;
+                    _currentDiagnosticFilePath = previousDiagnosticFilePath;
                 }
             }
         }
@@ -1282,6 +3128,37 @@ internal sealed class TypeChecker
             parameterSymbols.TryAdd(parameter.Name, parameter);
         }
 
+        // `where overlap_all(name)` rides the law-predicate contract shape (see
+        // CreateOverlapParameterGroups); the named target must be one of this
+        // function's memory-backed parameters.
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var targetName = predicate.type_().GetText();
+                if (!parameterSymbols.TryGetValue(targetName, out var targetSymbol))
+                {
+                    ReportError(
+                        "STK3029",
+                        $"'where overlap_all({targetName})' does not name a parameter of this function.",
+                        predicate);
+                }
+                else if (!CanRuntimeDisjointTest(targetSymbol.Type))
+                {
+                    ReportError(
+                        "STK3029",
+                        $"'where overlap_all({targetName})' references parameter '{targetName}' with non-memory-backed type '{targetSymbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                        predicate);
+                }
+            }
+        }
+
         foreach (var parameter in functionSyntax.ParameterList.parameter())
         {
             var name = parameter.Identifier().GetText();
@@ -1403,6 +3280,59 @@ internal sealed class TypeChecker
                         "STK3029",
                         $"Whole-parameter 'where disjoint({string.Join(", ", wholeParameterNames)})' is redundant because Stark memory-backed parameters are non-overlapping by default. Remove the clause; use 'where overlap(...)' for intentional overlap, 'where same(...)' for identical storage, or keep 'where disjoint(parameter[start, count], other[start, count])' for subregions.",
                         contract);
+                }
+            }
+        }
+    }
+
+    private void ValidatePointeeDeadOnReturnContracts(
+        DeclaredFunctionSyntax functionSyntax,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.deadOnReturnContract()?.expressionList() is not { } expressionList)
+                {
+                    continue;
+                }
+
+                foreach (var operand in expressionList.expression())
+                {
+                    if (!TryGetSimpleParameterExpression(operand, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            "Dead-on-return contract operands must be whole parameter names.",
+                            operand);
+                        continue;
+                    }
+
+                    if (!parameterSymbols.TryGetValue(name, out var symbol))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references unknown parameter '{name}'.",
+                            operand);
+                    }
+                    else if (!CanRuntimeDisjointTest(symbol.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            operand);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract repeats parameter '{name}'.",
+                            operand);
+                    }
                 }
             }
         }
@@ -1784,6 +3714,13 @@ internal sealed class TypeChecker
         var qualifiedTypeName = QualifyName(module, localTypeName);
         var genericParameters = GetGenericParameterNames(typeParameterList);
         var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
+        // Constructor field-read validation needs the struct's field set. Records
+        // initialize their primary-constructor fields before any explicit body, so
+        // the assigned-so-far analysis below is scoped to structs for now.
+        var selfFieldOwner = declarationKind == DeclarationKind.Struct
+            && _namedTypes.TryGetValue(qualifiedTypeName, out var resolvedSelfType)
+                ? resolvedSelfType
+                : null;
 
         foreach (var constructor in constructors)
         {
@@ -1810,25 +3747,169 @@ internal sealed class TypeChecker
             var previousGenericParameters = _currentFunctionGenericParameters;
             var previousFunctionName = _currentFunctionName;
             var previousFunctionModuleName = _currentFunctionModuleName;
+            var previousDiagnosticFilePath = _currentDiagnosticFilePath;
             var previousInsideConstructorBody = _insideConstructorBody;
 
             _currentFunctionGenericParameters = genericParameters;
-            _currentFunctionName = null;
+            _currentFunctionName = BuildConstructorBodyKey(qualifiedTypeName, constructor);
             _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+            _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
             _insideConstructorBody = true;
 
             try
             {
                 CheckBlock(constructor.block(), scope, StarkTypeSymbols.Void);
+                if (selfFieldOwner is not null)
+                {
+                    ValidateConstructorFieldReads(constructor.block(), selfFieldOwner);
+                }
             }
             finally
             {
                 _currentFunctionGenericParameters = previousGenericParameters;
                 _currentFunctionName = previousFunctionName;
                 _currentFunctionModuleName = previousFunctionModuleName;
+                _currentDiagnosticFilePath = previousDiagnosticFilePath;
                 _insideConstructorBody = previousInsideConstructorBody;
             }
         }
+    }
+
+    // A `self` field holds its pre-construction zero state until the body assigns
+    // it, so reading a field before assignment yields that zero state rather than
+    // the intended value. Walk the body in evaluation order tracking the fields
+    // assigned so far; a field is "assigned" once any path assigns it (monotonic
+    // union — conservative, so valid code is never rejected), and reading a field
+    // not yet in that set reports STK3055.
+    private void ValidateConstructorFieldReads(StarkParser.BlockContext block, NamedTypeSymbol selfType)
+    {
+        var copyability = new CopyabilityFacts(_namedTypes);
+        WalkConstructorNodeForFieldReads(block, selfType, copyability, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private void WalkConstructorNodeForFieldReads(
+        IParseTree node,
+        NamedTypeSymbol selfType,
+        CopyabilityFacts copyability,
+        HashSet<string> assignedFields)
+    {
+        switch (node)
+        {
+            case StarkParser.AssignmentExpressionContext assignment
+                when assignment.assignmentOperator()?.GetText() == "="
+                    && assignment.assignmentExpression() is { } rightSide:
+            {
+                // The right side is evaluated before the assignment takes effect.
+                WalkConstructorNodeForFieldReads(rightSide, selfType, copyability, assignedFields);
+
+                var target = assignment.unaryExpression();
+                if (TryGetSelfFieldDirectTarget(target, selfType, out var initializedField))
+                {
+                    // `self.Field = ...` initializes the whole field: mark it, and do
+                    // not treat the target itself as a read.
+                    assignedFields.Add(initializedField);
+                }
+                else
+                {
+                    // A deeper or indexed target (`self.Field.X = ...`,
+                    // `self.Field[i] = ...`) still reads `self.Field` as its receiver.
+                    WalkConstructorNodeForFieldReads(target, selfType, copyability, assignedFields);
+                }
+
+                return;
+            }
+
+            case StarkParser.PostfixExpressionContext postfix
+                when TryGetSelfFieldAccess(postfix, selfType, copyability, out var readField, out var trailingParts):
+            {
+                if (!assignedFields.Contains(readField))
+                {
+                    ReportError(
+                        "STK3055",
+                        $"Constructor reads field '{readField}' of 'self' before it is assigned. Assign 'self.{readField}' before reading it.",
+                        postfix);
+                }
+
+                // The `self.Field` base is handled; index/argument sub-expressions of
+                // the access (e.g. `self.Field[self.Other]`) still need checking.
+                foreach (var trailingPart in trailingParts)
+                {
+                    WalkConstructorNodeForFieldReads(trailingPart, selfType, copyability, assignedFields);
+                }
+
+                return;
+            }
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                WalkConstructorNodeForFieldReads(child, selfType, copyability, assignedFields);
+            }
+        }
+    }
+
+    private static bool TryGetSelfFieldDirectTarget(
+        StarkParser.UnaryExpressionContext target,
+        NamedTypeSymbol selfType,
+        out string field)
+    {
+        field = string.Empty;
+        if (target.unaryOperator() is not null
+            || target.powerExpression()?.postfixExpression() is not { } postfix
+            || postfix.primaryExpression()?.Identifier()?.GetText() != "self")
+        {
+            return false;
+        }
+
+        var parts = postfix.postfixPart();
+        if (parts.Length != 1
+            || parts[0].Identifier() is not { } fieldIdentifier
+            || !selfType.Fields.ContainsKey(fieldIdentifier.GetText()))
+        {
+            return false;
+        }
+
+        field = fieldIdentifier.GetText();
+        return true;
+    }
+
+    private static bool TryGetSelfFieldAccess(
+        StarkParser.PostfixExpressionContext postfix,
+        NamedTypeSymbol selfType,
+        CopyabilityFacts copyability,
+        out string field,
+        out IReadOnlyList<StarkParser.PostfixPartContext> trailingParts)
+    {
+        field = string.Empty;
+        trailingParts = Array.Empty<StarkParser.PostfixPartContext>();
+        if (postfix.primaryExpression()?.Identifier()?.GetText() != "self")
+        {
+            return false;
+        }
+
+        var parts = postfix.postfixPart();
+        if (parts.Length == 0
+            || parts[0].Identifier() is not { } fieldIdentifier
+            || !selfType.Fields.TryGetValue(fieldIdentifier.GetText(), out var fieldSymbol))
+        {
+            return false;
+        }
+
+        // Only owning fields (dynamic storage, owned text, destructor-bearing
+        // aggregates) have a meaningless pre-assignment state worth flagging.
+        // Inline storage — scalars, fixed arrays, copyable aggregates — reads a
+        // valid zero value and is written element-wise, so it is not a read error.
+        if (copyability.IsCopyable(fieldSymbol.Type)
+            || fieldSymbol.Type.Kind == StarkTypeKind.FixedArray)
+        {
+            return false;
+        }
+
+        field = fieldIdentifier.GetText();
+        trailingParts = parts.Skip(1).ToArray();
+        return true;
     }
 
     private void CheckGlobalDeclarations()
@@ -1971,17 +4052,29 @@ internal sealed class TypeChecker
                             "a global constant type",
                             currentModuleName: module.SyntaxModel.ModuleName,
                             validateInitializer: false);
-                        _globals[QualifyName(module, declarator.Identifier().GetText())] = new VariableSymbol(
-                            QualifyName(module, declarator.Identifier().GetText()),
+                        var qualifiedName = QualifyName(module, declarator.Identifier().GetText());
+                        var moduleScope = Scope.CreateRoot(_globals);
+                        var constantValue = TryEvaluateCompileTimeConstant(
+                            declarator.variableInitializer(),
+                            moduleScope,
+                            declaredType,
+                            out var evaluatedConstant,
+                            currentModuleName: module.SyntaxModel.ModuleName)
+                            ? evaluatedConstant
+                            : (CompileTimeConstant?)null;
+                        _globals[qualifiedName] = new VariableSymbol(
+                            qualifiedName,
                             declaredType,
                             IsMutable: false,
                             IsConstant: true,
                             BindingKind: GlobalBindingKind.Const,
+                            ConstantValue: constantValue,
                             ConstantInitializer: TryBuildTypedConstantInitializer(
                                 declarator.variableInitializer(),
                                 declaredType,
-                                Scope.CreateRoot(_globals),
-                                out var constantInitializer)
+                                moduleScope,
+                                out var constantInitializer,
+                                currentModuleName: module.SyntaxModel.ModuleName)
                                 ? constantInitializer
                                 : null);
                     }
@@ -2019,6 +4112,337 @@ internal sealed class TypeChecker
         }
     }
 
+    /// <summary>
+    /// Materializes concrete generic instantiations referenced inside imported
+    /// source modules. Imported non-generic function bodies skip body checking
+    /// (their own compile as a root module already validated them), so
+    /// instantiations that appear only there — locals, constructor expressions,
+    /// module-private signatures — would otherwise never reach
+    /// <c>EnsureMonomorphizedType</c>: no concrete enum/type registration and no
+    /// monomorphization triggers, which crashes MIR lowering of those bodies. The
+    /// syntax-level walk resolves every type-argument-bearing reference and runs it
+    /// through the normal monomorphization entry point. References mentioning an
+    /// in-scope generic parameter belong to generic templates and are skipped (they
+    /// are planned at their concrete instantiations); references whose arguments
+    /// are comptime values rather than types are also skipped here and still
+    /// require a root-visible use today, as do instantiations of an imported
+    /// module's own module-private generics (private declarations are not in the
+    /// type catalog).
+    /// </summary>
+    private void MaterializeImportedSourceInstantiations()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (module.Reference.IsRoot)
+            {
+                continue;
+            }
+
+            if (module.PackageImageFacts is { } packageImageFacts)
+            {
+                // Package images publish no parse tree, so the source walk
+                // below cannot see them — but their concrete struct/enum
+                // declarations can nest generic instantiations in field types
+                // (e.g. `RowPlan { List<Row> Rows; }`). A consumer that only
+                // holds and drops such a struct needs those instantiations
+                // materialized here exactly like a source import, or the
+                // drop path meets an instantiation with no registered named
+                // type, no layout, and no LLVM struct definition.
+                var packageLocation = new SourceLocation(module.Reference.FilePath, 1, 1);
+                foreach (var importedNamedType in packageImageFacts.NamedTypes.Values)
+                {
+                    if (importedNamedType.IsGeneric)
+                    {
+                        continue;
+                    }
+
+                    foreach (var field in importedNamedType.OrderedFields)
+                    {
+                        EnsureMonomorphizedType(field.Type, packageLocation);
+                    }
+
+                    foreach (var variant in importedNamedType.Variants)
+                    {
+                        foreach (var field in variant.Fields)
+                        {
+                            EnsureMonomorphizedType(field.Type, packageLocation);
+                        }
+                    }
+                }
+
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var declaredTypeParameters = CollectDeclaredTypeParameterNames(declaration, names: null);
+                MaterializeImportedInstantiationCandidates(declaration, module, declaredTypeParameters);
+            }
+        }
+    }
+
+    private static HashSet<string>? CollectDeclaredTypeParameterNames(
+        Antlr4.Runtime.Tree.IParseTree node,
+        HashSet<string>? names)
+    {
+        if (node is StarkParser.TypeParameterListContext typeParameterList)
+        {
+            foreach (var parameter in typeParameterList.typeParameter())
+            {
+                (names ??= new HashSet<string>(StringComparer.Ordinal)).Add(parameter.Identifier().GetText());
+            }
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            names = CollectDeclaredTypeParameterNames(node.GetChild(index), names);
+        }
+
+        return names;
+    }
+
+    private void MaterializeImportedInstantiationCandidates(
+        Antlr4.Runtime.Tree.IParseTree node,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        if (node is StarkParser.Type_Context typeContext)
+        {
+            if (SubtreeHasTypeArgumentList(typeContext)
+                && !SubtreeHasComptimeGenericArgument(typeContext)
+                && ImportedTypeNamesResolveSilently(typeContext, module.SyntaxModel.ModuleName, genericParameters))
+            {
+                // Use the raw resolver: imported modules may reference their own
+                // package-visible types, which root-context resolution would reject.
+                var resolved = _typeResolver!.ResolveType(typeContext, genericParameters, module.SyntaxModel.ModuleName);
+                MaterializeImportedInstantiationSymbol(resolved, typeContext.Start, module, genericParameters);
+            }
+
+            return;
+        }
+
+        if (node is StarkParser.GenericQualifiedNameContext genericName)
+        {
+            MaterializeImportedGenericQualifiedName(genericName, module, genericParameters);
+            return;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            MaterializeImportedInstantiationCandidates(node.GetChild(index), module, genericParameters);
+        }
+    }
+
+    /// <summary>
+    /// True when every named type mentioned in the subtree resolves without
+    /// diagnostics in the given module scope. The materializer trusts imported
+    /// modules and must skip silently rather than report — references it cannot
+    /// resolve (module-private generics, aliases of them, associated types) keep
+    /// today's behavior of requiring a root-visible use.
+    /// </summary>
+    private bool ImportedTypeNamesResolveSilently(
+        Antlr4.Runtime.Tree.IParseTree node,
+        string moduleName,
+        HashSet<string>? genericParameters)
+    {
+        if (node is StarkParser.SimpleTypeContext simpleType)
+        {
+            if (simpleType.builtinType() is not null)
+            {
+                return true;
+            }
+
+            var typeName = simpleType.qualifiedName().GetText();
+            if (genericParameters?.Contains(typeName) == true)
+            {
+                return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+            }
+
+            var resolvable = _namedTypes.ContainsKey(typeName)
+                || _typeAliases.ContainsKey(typeName)
+                || (!typeName.Contains('.', StringComparison.Ordinal)
+                    && (_namedTypes.ContainsKey($"{moduleName}.{typeName}")
+                        || _typeAliases.ContainsKey($"{moduleName}.{typeName}")
+                        || _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, typeName)
+                            .Any(candidate => _namedTypes.ContainsKey(candidate) || _typeAliases.ContainsKey(candidate))));
+            if (!resolvable)
+            {
+                return false;
+            }
+
+            return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+        }
+
+        return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+    }
+
+    private bool ImportedChildTypeNamesResolveSilently(
+        Antlr4.Runtime.Tree.IParseTree node,
+        string moduleName,
+        HashSet<string>? genericParameters)
+    {
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (!ImportedTypeNamesResolveSilently(node.GetChild(index), moduleName, genericParameters))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SubtreeHasTypeArgumentList(Antlr4.Runtime.Tree.IParseTree node)
+    {
+        if (node is StarkParser.TypeArgumentListContext)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (SubtreeHasTypeArgumentList(node.GetChild(index)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SubtreeHasComptimeGenericArgument(Antlr4.Runtime.Tree.IParseTree node)
+    {
+        if (node is StarkParser.GenericArgumentContext { } genericArgument
+            && genericArgument.COMPTIME() is not null)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (SubtreeHasComptimeGenericArgument(node.GetChild(index)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void MaterializeImportedGenericQualifiedName(
+        StarkParser.GenericQualifiedNameContext genericName,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        var argumentContexts = genericName.typeArgumentList().genericArgument();
+        var argumentSymbols = new List<StarkTypeSymbol>(argumentContexts.Length);
+        foreach (var argument in argumentContexts)
+        {
+            if (argument.type_() is not { } argumentType)
+            {
+                // Comptime value argument — see the materializer doc comment.
+                return;
+            }
+
+            if (!ImportedTypeNamesResolveSilently(argumentType, module.SyntaxModel.ModuleName, genericParameters))
+            {
+                return;
+            }
+
+            argumentSymbols.Add(_typeResolver!.ResolveType(argumentType, genericParameters, module.SyntaxModel.ModuleName));
+        }
+
+        var typeName = genericName.qualifiedName().GetText();
+        var moduleName = module.SyntaxModel.ModuleName;
+        string? baseName = null;
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _namedTypes.ContainsKey($"{moduleName}.{typeName}"))
+        {
+            baseName = $"{moduleName}.{typeName}";
+        }
+        else if (_namedTypes.ContainsKey(typeName))
+        {
+            baseName = typeName;
+        }
+        else if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, typeName)
+                .Where(_namedTypes.ContainsKey)
+                .Take(2)
+                .ToArray() is { Length: 1 } importedMatches)
+        {
+            baseName = importedMatches[0];
+        }
+
+        if (baseName is null)
+        {
+            return;
+        }
+
+        MaterializeImportedInstantiationSymbol(
+            StarkTypeSymbols.GenericInstantiation(baseName, argumentSymbols),
+            genericName.Start,
+            module,
+            genericParameters);
+    }
+
+    private void MaterializeImportedInstantiationSymbol(
+        StarkTypeSymbol symbol,
+        Antlr4.Runtime.IToken location,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        if (ContainsOpenGenericReference(symbol, genericParameters))
+        {
+            return;
+        }
+
+        if (StarkTypeSymbols.IsGenericInstantiation(symbol)
+            || symbol.ElementType is not null)
+        {
+            EnsureMonomorphizedType(
+                symbol,
+                new SourceLocation(module.Reference.FilePath, location.Line, location.Column + 1));
+        }
+    }
+
+    private static bool ContainsOpenGenericReference(StarkTypeSymbol symbol, HashSet<string>? genericParameters)
+    {
+        if (genericParameters is null)
+        {
+            return false;
+        }
+
+        if (symbol.Kind == StarkTypeKind.Named
+            && symbol.NamedType is { } namedType
+            && !namedType.Contains('.', StringComparison.Ordinal)
+            && genericParameters.Contains(namedType))
+        {
+            return true;
+        }
+
+        if (symbol.FixedLengthParameterName is { } lengthParameter
+            && genericParameters.Contains(lengthParameter))
+        {
+            return true;
+        }
+
+        if (symbol.ElementType is { } elementType
+            && ContainsOpenGenericReference(elementType, genericParameters))
+        {
+            return true;
+        }
+
+        foreach (var argument in symbol.TypeArguments ?? [])
+        {
+            if (ContainsOpenGenericReference(argument, genericParameters))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void CheckFunctionBodies()
     {
         foreach (var module in _loadedModules.Modules.Values)
@@ -2036,10 +4460,9 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                if (!module.Reference.IsRoot && !signature.IsGeneric)
-                {
-                    continue;
-                }
+                // Non-root, non-generic source bodies are type-checked here too: in a
+                // whole-package (emit/library) build their bodies are still lowered and
+                // emitted, so their generic-instantiation triggers must be recorded.
 
                 var hasImportedTemplateSummary = _importedFunctionTemplates.TryGetValue(signature.Name, out var importedTemplateSummary);
                 var useImportedTemplateSummary = importedTemplateSummary?.TypedBody is not null;
@@ -2062,12 +4485,31 @@ internal sealed class TypeChecker
                 {
                     scope.Declare(CreateParameterVariableSymbol(parameter));
                 }
+
+                foreach (var comptimeParameter in signature.ComptimeGenericParams)
+                {
+                    var concreteValue = signature.ComptimeValues.FirstOrDefault(value =>
+                        string.Equals(value.ParameterName, comptimeParameter.Name, StringComparison.Ordinal));
+                    scope.Declare(new VariableSymbol(
+                        comptimeParameter.Name,
+                        comptimeParameter.Type,
+                        IsMutable: false,
+                        IsConstant: true,
+                        ConstantValue: concreteValue is null
+                            ? null
+                            : concreteValue.IsSymbolic
+                                ? CompileTimeConstant.SymbolicInteger(comptimeParameter.Type)
+                                : CompileTimeConstant.Integer(concreteValue.IntegerValue, comptimeParameter.Type)));
+                }
                 AddParameterDisjointFacts(scope, signature.DisjointGroups);
                 AddParameterSameFacts(scope, signature.SameGroups);
 
                 var previousGenericParameters = _currentFunctionGenericParameters;
+                var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
                 var previousFunctionName = _currentFunctionName;
                 var previousFunctionModuleName = _currentFunctionModuleName;
+                var previousDiagnosticFilePath = _currentDiagnosticFilePath;
+                var previousFunctionReturnType = _currentFunctionReturnType;
                 var previousImportedTemplateObjectCreations = _currentImportedTemplateObjectCreations;
                 var previousImportedTemplateObjectCreationOrdinals = _currentImportedTemplateObjectCreationOrdinals;
                 var previousImportedTemplateEnumConstructors = _currentImportedTemplateEnumConstructors;
@@ -2089,11 +4531,20 @@ internal sealed class TypeChecker
                 var previousImportedTemplateMemberCalls = _currentImportedTemplateMemberCalls;
                 var previousImportedTemplateMemberCallOrdinals = _currentImportedTemplateMemberCallOrdinals;
                 var previousUnsafeDepth = _unsafeDepth;
+                var previousFunctionConstraints = _currentFunctionConstraints;
+                var previousFunctionThreadSafetyLaws = _currentFunctionThreadSafetyLaws;
                 _currentFunctionGenericParameters = signature.IsGeneric
                     ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
                     : null;
+                _currentFunctionComptimeGenericParameters = signature.ComptimeGenericParams.Count == 0
+                    ? null
+                    : signature.ComptimeGenericParams.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
+                _currentFunctionReturnType = signature.ReturnType;
+                _currentFunctionConstraints = WithImplicitTraitSelfConstraint(signature);
+                _currentFunctionThreadSafetyLaws = signature.ThreadSafetyLaws;
                 if (signature.IsUnsafe)
                 {
                     _unsafeDepth++;
@@ -2182,12 +4633,22 @@ internal sealed class TypeChecker
                 try
                 {
                     CheckBlock(block, scope, signature.ReturnType);
+                    ValidateFunctionReturnsOnAllPaths(
+                        block,
+                        signature.ReturnType,
+                        $"Function '{functionSyntax.Name}'",
+                        block);
                 }
                 finally
                 {
                     _currentFunctionGenericParameters = previousGenericParameters;
+                    _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
+                    _currentFunctionConstraints = previousFunctionConstraints;
+                    _currentFunctionThreadSafetyLaws = previousFunctionThreadSafetyLaws;
                     _currentFunctionName = previousFunctionName;
                     _currentFunctionModuleName = previousFunctionModuleName;
+                    _currentDiagnosticFilePath = previousDiagnosticFilePath;
+                    _currentFunctionReturnType = previousFunctionReturnType;
                     _currentImportedTemplateObjectCreations = previousImportedTemplateObjectCreations;
                     _currentImportedTemplateObjectCreationOrdinals = previousImportedTemplateObjectCreationOrdinals;
                     _currentImportedTemplateEnumConstructors = previousImportedTemplateEnumConstructors;
@@ -2212,6 +4673,343 @@ internal sealed class TypeChecker
                 }
             }
         }
+    }
+
+    // Imported source-module bodies are not type-checked (their module-private
+    // names cannot resolve from this context), and lower-mir has no diagnostic
+    // channel — so a bare name that is exported by two of the module's own
+    // imports used to crash lowering ("Named operand could not be resolved")
+    // instead of reporting an ambiguity. Detect that case here: for each
+    // imported source module, find the names exported by >= 2 of its imports
+    // and report a bare, unshadowed reference as STK3003. The scan is gated on a
+    // non-empty ambiguous-name set, which is empty for almost every module.
+    private void CheckImportedModuleNameAmbiguities()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            // The root is fully type-checked; package images are pre-checked.
+            if (module.Reference.IsRoot || module.IsPackageImageImport)
+            {
+                continue;
+            }
+
+            var ambiguousNames = ComputeAmbiguousImportNames(module);
+            if (ambiguousNames.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+            {
+                if (functionSyntax.Body.block() is not { } block)
+                {
+                    continue;
+                }
+
+                // A parameter or local of the same name shadows the imports.
+                var shadowedNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var parameter in functionSyntax.ParameterList.parameter())
+                {
+                    if (parameter.Identifier()?.GetText() is { } parameterName)
+                    {
+                        shadowedNames.Add(parameterName);
+                    }
+                }
+
+                CollectDeclaredLocalNames(block, shadowedNames);
+                WalkForAmbiguousImportReferences(module, block, ambiguousNames, shadowedNames);
+            }
+        }
+    }
+
+    // Names a module's own declarations would shadow, or that only one import
+    // exports, are not ambiguous. Only the module's OWN declarations are counted
+    // for each import (re-exports are not declarations), so a name re-exported
+    // through several imports is not double-counted as an ambiguity.
+    private Dictionary<string, IReadOnlyList<string>> ComputeAmbiguousImportNames(LoadedModuleDocument module)
+    {
+        var exportersByName = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        foreach (var import in module.SyntaxModel.Imports)
+        {
+            if (!_loadedModules.Modules.TryGetValue(import.ModuleName, out var importedModule))
+            {
+                continue;
+            }
+
+            foreach (var declaration in importedModule.SyntaxModel.Declarations)
+            {
+                if (declaration.Visibility is not (StarkVisibility.Public or StarkVisibility.Export))
+                {
+                    continue;
+                }
+
+                if (!exportersByName.TryGetValue(declaration.Name, out var exporters))
+                {
+                    exporters = new SortedSet<string>(StringComparer.Ordinal);
+                    exportersByName[declaration.Name] = exporters;
+                }
+
+                exporters.Add(import.ModuleName);
+            }
+        }
+
+        var locallyDeclared = module.SyntaxModel.Declarations
+            .Select(static declaration => declaration.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var ambiguous = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (name, exporters) in exportersByName)
+        {
+            if (exporters.Count >= 2 && !locallyDeclared.Contains(name))
+            {
+                ambiguous[name] = exporters.ToArray();
+            }
+        }
+
+        return ambiguous;
+    }
+
+    private static void CollectDeclaredLocalNames(IParseTree node, ISet<string> names)
+    {
+        if (node is StarkParser.VariableDeclaratorContext declarator
+            && declarator.Identifier()?.GetText() is { } localName)
+        {
+            names.Add(localName);
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                CollectDeclaredLocalNames(child, names);
+            }
+        }
+    }
+
+    private void WalkForAmbiguousImportReferences(
+        LoadedModuleDocument module,
+        IParseTree node,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> ambiguousNames,
+        ISet<string> shadowedNames)
+    {
+        if (node is StarkParser.PostfixExpressionContext postfix
+            && postfix.primaryExpression() is { } primary
+            && primary.Identifier()?.GetText() is { } name
+            && !shadowedNames.Contains(name)
+            && ambiguousNames.TryGetValue(name, out var exporters))
+        {
+            // A direct CALL of the ambiguous name is now diagnosed — with a more detailed
+            // message — by overload resolution while the (now type-checked) body is
+            // checked (STK3022). Only report the references that path does not cover
+            // (member access, indexing, a bare function value), so calls aren't
+            // double-diagnosed.
+            var postfixParts = postfix.postfixPart();
+            var isDirectCall = postfixParts.Length > 0 && postfixParts[0].argumentList() is not null;
+            if (!isDirectCall)
+            {
+                var candidates = string.Join(", ", exporters.Select(exporter => $"{exporter}.{name}"));
+                ReportError(
+                    "STK3003",
+                    $"Imported symbol '{name}' is ambiguous between {candidates}. Use a fully qualified name.",
+                    new SourceLocation(module.Reference.FilePath, primary.Start.Line, primary.Start.Column + 1));
+            }
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                WalkForAmbiguousImportReferences(module, child, ambiguousNames, shadowedNames);
+            }
+        }
+    }
+
+    private void ValidateThreadEntryMutableStaticReferences()
+    {
+        if (_functionGlobalReferences.Count == 0)
+        {
+            return;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var worklist = new Queue<string>();
+        foreach (var (entryFunction, _) in EnumerateThreadEntryFunctionSeeds())
+        {
+            if (reachable.Add(entryFunction))
+            {
+                worklist.Enqueue(entryFunction);
+            }
+        }
+
+        if (reachable.Count == 0)
+        {
+            return;
+        }
+
+        var calleesByFunction = BuildDirectCalleesByFunction();
+        var globalReferencesByFunction = _functionGlobalReferences
+            .GroupBy(static reference => reference.FunctionName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<FunctionGlobalReference>)group.ToArray(),
+                StringComparer.Ordinal);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+
+        while (worklist.Count != 0)
+        {
+            var functionName = worklist.Dequeue();
+            if (globalReferencesByFunction.TryGetValue(functionName, out var references))
+            {
+                foreach (var reference in references)
+                {
+                    ValidateThreadReachableGlobalReference(functionName, reference, reported);
+                }
+            }
+
+            if (!calleesByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                if (reachable.Add(callee))
+                {
+                    worklist.Enqueue(callee);
+                }
+            }
+        }
+    }
+
+    private IEnumerable<(string FunctionName, SourceLocation Location)> EnumerateThreadEntryFunctionSeeds()
+    {
+        foreach (var promotion in _functionPointerPromotions)
+        {
+            if (IsThreadEntryFunctionPointerType(promotion.TargetType))
+            {
+                yield return (promotion.Signature.Name, promotion.Location);
+            }
+        }
+
+        foreach (var lambda in _lambdas)
+        {
+            if (IsThreadEntryFunctionPointerType(lambda.FunctionPointerType))
+            {
+                yield return (lambda.FunctionName, lambda.Location);
+            }
+        }
+    }
+
+    private Dictionary<string, IReadOnlyList<string>> BuildDirectCalleesByFunction()
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        void Add(string? caller, string callee)
+        {
+            if (caller is null)
+            {
+                return;
+            }
+
+            if (!result.TryGetValue(caller, out var callees))
+            {
+                callees = [];
+                result[caller] = callees;
+            }
+
+            callees.Add(callee);
+        }
+
+        foreach (var call in _directCalls)
+        {
+            Add(call.EnclosingFunctionName, call.Signature.Name);
+        }
+
+        foreach (var call in _memberCalls)
+        {
+            Add(call.EnclosingFunctionName, call.Signature.Name);
+        }
+
+        return result.ToDictionary(
+            static pair => pair.Key,
+            static pair => (IReadOnlyList<string>)pair.Value.Distinct(StringComparer.Ordinal).ToArray(),
+            StringComparer.Ordinal);
+    }
+
+    private void ValidateThreadReachableGlobalReference(
+        string reachableFunctionName,
+        FunctionGlobalReference reference,
+        HashSet<string> reported)
+    {
+        if (!_globals.TryGetValue(reference.GlobalName, out var global)
+            || !global.IsMutable
+            || IsSynchronizationBackedMutableStaticType(global.Type))
+        {
+            return;
+        }
+
+        var reportKey = $"{reachableFunctionName}|{reference.GlobalName}";
+        if (!reported.Add(reportKey))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3049",
+            $"Thread-reachable function '{reachableFunctionName}' touches mutable global '{reference.GlobalName}'. Mutable statics reachable from thread entries must be synchronization-backed; use a System.Threading.Atomic* type for scalar state or System.Threading.Synchronized<T> for guarded aggregate state.",
+            reference.Location);
+    }
+
+    private static bool IsThreadEntryFunctionPointerType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.FunctionPointer
+            && type.FunctionPointerKind == StarkFunctionKind.Fn
+            && !type.FunctionPointerIsUnsafe
+            && type.FunctionPointerReturnType is { Kind: StarkTypeKind.Integer, BitWidth: 32, IsUnsigned: false }
+            && type.FunctionPointerParameterTypes is { Count: <= 1 };
+    }
+
+    private static bool IsSynchronizationBackedMutableStaticType(StarkTypeSymbol type)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } namedType)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(namedType);
+        if (string.Equals(baseName, "System.Threading.Synchronized", StringComparison.Ordinal)
+            || string.Equals(baseName, "Synchronized", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var atomicTypeName = baseName;
+        if (atomicTypeName.StartsWith(SystemThreadingAtomicFacts.ModuleName + ".", StringComparison.Ordinal))
+        {
+            atomicTypeName = atomicTypeName[(SystemThreadingAtomicFacts.ModuleName.Length + 1)..];
+        }
+
+        return SystemThreadingAtomicFacts.TryParseAtomicTypeName(
+            atomicTypeName,
+            out _,
+            out _,
+            out _);
+    }
+
+    private void RecordGlobalReference(string globalName, SourceLocation location)
+    {
+        if (_currentFunctionName is not { } functionName)
+        {
+            return;
+        }
+
+        _functionGlobalReferences.Add(new FunctionGlobalReference(functionName, globalName, location));
     }
 
     private Scope CheckBlock(StarkParser.BlockContext block, Scope parentScope, StarkTypeSymbol returnType)
@@ -2333,9 +5131,20 @@ internal sealed class TypeChecker
         if (statement.ifStatement() is { } ifStatement)
         {
             IReadOnlyList<string>? trueBranchDisjointRoots = null;
+            StarkTypeSymbol? ifPatternScrutineeType = null;
             if (ifStatement.expression() is { } condition)
             {
-                EnsureBoolean(EvaluateExpression(condition, scope, allowFunctionReference: false).Type, condition, "if conditions must be of type 'bool'");
+                var conditionType = EvaluateExpression(condition, scope, allowFunctionReference: false).Type;
+                if (ifStatement.pattern() is not null)
+                {
+                    // `if (expr is pattern)` — the condition expression is the scrutinee, not a
+                    // boolean; the pattern's captures bind into the then-branch only.
+                    ifPatternScrutineeType = conditionType;
+                }
+                else
+                {
+                    EnsureBoolean(conditionType, condition, "if conditions must be of type 'bool'");
+                }
             }
             else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
             {
@@ -2343,6 +5152,10 @@ internal sealed class TypeChecker
             }
 
             var thenScope = new Scope(scope);
+            if (ifPatternScrutineeType is { } ifScrutineeType && ifStatement.pattern() is { } ifPattern)
+            {
+                BindPattern(ifPattern, ifScrutineeType, thenScope);
+            }
             if (trueBranchDisjointRoots is { Count: >= 2 })
             {
                 thenScope.AddDisjointFact(trueBranchDisjointRoots);
@@ -2363,9 +5176,20 @@ internal sealed class TypeChecker
             return;
         }
 
-        if (statement.switchStatement() is { } switchStatement)
+        var labeledStatement = statement.labeledStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+
+        if (statementSwitch is { } switchStatement)
         {
-            var switchType = EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type;
+            // Imported (package-image) signatures can hand back generic enum instantiations
+            // this compilation has not monomorphized yet (e.g. switching directly on
+            // `Pkg.Fetch(x)` returning `Pkg.Outcome<i32>`). Ensure the concrete enum exists so
+            // coverage analysis sees its variants and pattern binding resolves against it.
+            var switchType = EnsureMonomorphizedType(
+                EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type,
+                Location(switchStatement.expression()));
             ValidateImplementedSwitchShape(switchStatement, switchType);
             RecordSwitch(switchStatement, switchType);
 
@@ -2373,10 +5197,11 @@ internal sealed class TypeChecker
             foreach (var section in switchStatement.switchSection())
             {
                 var sectionScope = new Scope(scope);
+                ValidateSwitchSectionPatternCaptures(section, switchType);
 
                 foreach (var label in section.switchLabel())
                 {
-                    if (label.pattern() is { } pattern)
+                    foreach (var pattern in label.pattern())
                     {
                         BindPattern(pattern, switchType, sectionScope);
                     }
@@ -2399,25 +5224,41 @@ internal sealed class TypeChecker
             return;
         }
 
-        if (statement.whileStatement() is { } whileStatement)
+        if (statementWhile is { } whileStatement)
         {
-            EnsureBoolean(EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type, whileStatement.expression(), "while conditions must be of type 'bool'");
+            var whileConditionType = EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type;
+            var loopBodyScope = new Scope(scope);
+            if (whileStatement.pattern() is { } whilePattern)
+            {
+                // `while ... (expr is pattern)` — the condition is the scrutinee; captures bind
+                // into the loop body and are re-bound each iteration.
+                BindPattern(whilePattern, whileConditionType, loopBodyScope);
+            }
+            else
+            {
+                EnsureBoolean(whileConditionType, whileStatement.expression(), "while conditions must be of type 'bool'");
+            }
+
             CheckLoopContracts(
                 whileStatement.loopContract(),
                 whileStatement.statement(),
                 scope,
                 condition: whileStatement.expression());
-            var loopBodyScope = new Scope(scope);
             CheckStatement(whileStatement.statement(), loopBodyScope, returnType);
             scope.InvalidateCurrentFlowMemoryProvenance(loopBodyScope.FlowAssignedOuterLocalNames);
             return;
         }
 
-        if (statement.forStatement() is { } forStatement)
+        if (statementFor is { } forStatement)
         {
             var loopScope = new Scope(scope);
+            var forTraversal = forStatement.forTraversal();
 
-            if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
+            if (forTraversal is not null)
+            {
+                CheckForTraversal(forTraversal, loopScope);
+            }
+            else if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
             {
                 CheckVariableDeclaration(
                     TemplateLocalDeclarationFacts.ForVariableKind,
@@ -2435,12 +5276,12 @@ internal sealed class TypeChecker
                 }
             }
 
-            if (forStatement.forCondition() is { } condition)
+            if (forTraversal is null && forStatement.forCondition() is { } condition)
             {
                 EnsureBoolean(EvaluateExpression(condition.expression(), loopScope, allowFunctionReference: false).Type, condition.expression(), "for conditions must be of type 'bool'");
             }
 
-            if (forStatement.forIterator() is { } iterator)
+            if (forTraversal is null && forStatement.forIterator() is { } iterator)
             {
                 foreach (var expression in iterator.expressionList().expression())
                 {
@@ -2453,8 +5294,8 @@ internal sealed class TypeChecker
                 forStatement.statement(),
                 loopScope,
                 forStatement: forStatement,
-                condition: forStatement.forCondition()?.expression(),
-                iteratorExpressions: forStatement.forIterator()?.expressionList().expression());
+                condition: forTraversal?.expression() ?? forStatement.forCondition()?.expression(),
+                iteratorExpressions: forTraversal is null ? forStatement.forIterator()?.expressionList().expression() : null);
 
             CheckStatement(forStatement.statement(), loopScope, returnType);
             scope.InvalidateCurrentFlowMemoryProvenance(loopScope.FlowAssignedOuterLocalNames);
@@ -2490,10 +5331,206 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            CheckBecomeStatement(becomeStatement, scope, returnType);
+            return;
+        }
+
         if (statement.expressionStatement() is { } expressionStatement)
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
         }
+    }
+
+    private void CheckBecomeStatement(
+        StarkParser.BecomeStatementContext becomeStatement,
+        Scope scope,
+        StarkTypeSymbol returnType)
+    {
+        if (_insideConstructorBody)
+        {
+            ReportError("STK3002", "Constructor bodies cannot use 'become'.", becomeStatement);
+            return;
+        }
+
+        if (_currentFunctionName is not { } currentFunctionName
+            || !_functions.TryGetValue(currentFunctionName, out var currentFunction))
+        {
+            ReportError("STK3002", "'become' can only be used inside a function body.", becomeStatement);
+            return;
+        }
+
+        if (!currentFunction.IsTailCallable)
+        {
+            ReportError(
+                "STK3002",
+                $"Function '{currentFunction.DisplaySourceName}' must be declared 'tail' before it can use 'become'.",
+                becomeStatement);
+        }
+
+        if (!IsRootCallExpression(becomeStatement.expression()))
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires a single call expression in tail position, for example `become next(state);`.",
+                becomeStatement.expression());
+        }
+
+        var operationStart = _boundOperations.Count;
+        var value = EvaluateExpression(
+            becomeStatement.expression(),
+            scope,
+            allowFunctionReference: false,
+            expectedType: returnType.Kind == StarkTypeKind.Void ? null : returnType);
+
+        if (returnType.Kind != StarkTypeKind.Void)
+        {
+            EnsureReturnCompatible(returnType, value, becomeStatement.expression());
+        }
+        else if (value.Type.Kind != StarkTypeKind.Void && value.Type.Kind != StarkTypeKind.Error)
+        {
+            ReportError("STK3002", "Void functions can only become calls that return void.", becomeStatement.expression());
+        }
+
+        var tailCall = _boundOperations
+            .Skip(operationStart)
+            .LastOrDefault(static operation => operation is BoundDirectCallOperation
+                or BoundMemberCallOperation
+                or BoundFunctionPointerCallOperation
+                or BoundClosureCallOperation);
+        if (tailCall is null)
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires its expression to lower to a direct, member, function-pointer, or closure call.",
+                becomeStatement.expression());
+            return;
+        }
+
+        if (!IsTailCallableOperation(tailCall))
+        {
+            ReportError(
+                "STK3002",
+                $"The target of 'become' is not tail-callable. Declare the callee or callable type with 'tail'.",
+                becomeStatement.expression());
+        }
+    }
+
+    private static bool IsTailCallableOperation(BoundOperation operation)
+    {
+        return operation switch
+        {
+            BoundDirectCallOperation direct => direct.Signature.IsTailCallable,
+            BoundMemberCallOperation member => member.Signature.IsTailCallable,
+            BoundFunctionPointerCallOperation functionPointer => functionPointer.FunctionPointerType.FunctionPointerIsTailCallable,
+            BoundClosureCallOperation closure => closure.ClosureType.ClosureIsTailCallable,
+            _ => false
+        };
+    }
+
+    private static bool IsRootCallExpression(StarkParser.ExpressionContext expression)
+    {
+        return IsRootCallAssignmentExpression(expression.assignmentExpression());
+    }
+
+    private static bool IsRootCallAssignmentExpression(StarkParser.AssignmentExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.conditionalExpression() is { } conditional
+            && IsRootCallConditionalExpression(conditional);
+    }
+
+    private static bool IsRootCallConditionalExpression(StarkParser.ConditionalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalOrExpression(expression.logicalOrExpression());
+    }
+
+    private static bool IsRootCallLogicalOrExpression(StarkParser.LogicalOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalAndExpression(expression.logicalAndExpression(0));
+    }
+
+    private static bool IsRootCallLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseOrExpression(expression.bitwiseOrExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseXorExpression(expression.bitwiseXorExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseXorExpression(StarkParser.BitwiseXorExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseAndExpression(expression.bitwiseAndExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseAndExpression(StarkParser.BitwiseAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallEqualityExpression(expression.equalityExpression(0));
+    }
+
+    private static bool IsRootCallEqualityExpression(StarkParser.EqualityExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallRelationalExpression(expression.relationalExpression(0));
+    }
+
+    private static bool IsRootCallRelationalExpression(StarkParser.RelationalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallShiftExpression(expression.shiftExpression(0));
+    }
+
+    private static bool IsRootCallShiftExpression(StarkParser.ShiftExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallAdditiveExpression(expression.additiveExpression(0));
+    }
+
+    private static bool IsRootCallAdditiveExpression(StarkParser.AdditiveExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallMultiplicativeExpression(expression.multiplicativeExpression(0));
+    }
+
+    private static bool IsRootCallMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallUnaryExpression(expression.unaryExpression(0));
+    }
+
+    private static bool IsRootCallUnaryExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.powerExpression() is { } power
+            && IsRootCallPowerExpression(power);
+    }
+
+    private static bool IsRootCallPowerExpression(StarkParser.PowerExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallPostfixExpression(expression.postfixExpression());
+    }
+
+    private static bool IsRootCallPostfixExpression(StarkParser.PostfixExpressionContext expression)
+    {
+        var parts = expression.postfixPart();
+        if (parts.Length > 0)
+        {
+            return parts[^1].argumentList() is not null;
+        }
+
+        var primary = expression.primaryExpression();
+        return primary.expression() is { } parenthesized
+            && IsRootCallExpression(parenthesized);
     }
 
     private void CheckAssumeStatement(
@@ -2602,6 +5639,135 @@ internal sealed class TypeChecker
             "Unsafe disjoint assumptions must name at least two distinct compiler-visible memory regions. Same-root assumptions, hidden call results, and integer-laundered pointers cannot establish a scoped noalias fact; name visible roots or representable subregions such as 'ptr[0, count]' and 'ptr[count, count]'.",
             condition);
         return null;
+    }
+
+    private void CheckForTraversal(StarkParser.ForTraversalContext traversal, Scope loopScope)
+    {
+        var source = EvaluateExpression(traversal.expression(), loopScope, allowFunctionReference: false);
+        if (!TryGetTraversalSource(source, traversal.expression(), out var sourceInfo))
+        {
+            return;
+        }
+
+        if (traversal.traversalIndexBinding() is { } indexBinding)
+        {
+            var indexType = ResolveType(indexBinding.type_(), _currentFunctionGenericParameters, _currentFunctionModuleName);
+            if (indexType.Kind != StarkTypeKind.Integer)
+            {
+                ReportError(
+                    "STK3002",
+                    $"for-in traversal index '{indexBinding.Identifier().GetText()}' must have an integer type but found '{indexType.DisplayName}'.",
+                    indexBinding.type_());
+            }
+            else if (!CanAssign(indexType, sourceInfo.IndexRangeType))
+            {
+                ReportError(
+                    "STK3002",
+                    $"for-in traversal index '{indexBinding.Identifier().GetText()}' has type '{indexType.DisplayName}', which cannot represent every index produced by source type '{source.Type.DisplayName}'.",
+                    indexBinding.type_());
+            }
+
+            var storageClassText = indexBinding.storageClass().GetText();
+            if (!string.Equals(storageClassText, "stack", StringComparison.Ordinal)
+                && !string.Equals(storageClassText, "register", StringComparison.Ordinal))
+            {
+                ReportError(
+                    "STK3002",
+                    $"for-in traversal index '{indexBinding.Identifier().GetText()}' must use 'stack' or 'register' storage.",
+                    indexBinding.storageClass());
+            }
+
+            loopScope.Declare(new VariableSymbol(
+                indexBinding.Identifier().GetText(),
+                indexType,
+                IsMutable: false,
+                IsConstant: false));
+            RecordLocalDeclarationType(
+                TemplateLocalDeclarationFacts.TraversalIndexKind,
+                indexType,
+                indexBinding);
+        }
+
+        var elementBinding = traversal.traversalElementBinding();
+        var elementBindingType = ResolveType(elementBinding.type_(), _currentFunctionGenericParameters, _currentFunctionModuleName);
+        if (elementBindingType.BorrowKind != StarkBorrowKind.Borrow
+            || elementBindingType.InitializationKind != StarkInitializationKind.None)
+        {
+            ReportError(
+                "STK3002",
+                $"for-in traversal element '{elementBinding.Identifier().GetText()}' must be declared as 'borrow T' or 'borrow mut T'.",
+                elementBinding.type_());
+        }
+
+        var elementValueType = StarkTypeSymbols.BorrowReturnValueType(elementBindingType);
+        if (!CanAssign(elementValueType, sourceInfo.ElementType))
+        {
+            ReportError(
+                "STK3002",
+                $"for-in traversal element '{elementBinding.Identifier().GetText()}' expects '{elementValueType.DisplayName}' but source elements are '{sourceInfo.ElementType.DisplayName}'.",
+                elementBinding.type_());
+        }
+
+        if (elementBindingType.IsMutableView && !sourceInfo.CanBorrowElementMutably)
+        {
+            ReportError(
+                "STK3002",
+                $"for-in traversal element '{elementBinding.Identifier().GetText()}' requests 'borrow mut', but source '{traversal.expression().GetText()}' does not provide mutable element storage.",
+                elementBinding.type_());
+        }
+
+        loopScope.Declare(new VariableSymbol(
+            elementBinding.Identifier().GetText(),
+            elementBindingType,
+            IsMutable: false,
+            IsConstant: false));
+        RecordLocalDeclarationType(
+            TemplateLocalDeclarationFacts.TraversalElementKind,
+            elementBindingType,
+            elementBinding);
+    }
+
+    private bool TryGetTraversalSource(
+        ExpressionBinding source,
+        ParserRuleContext context,
+        out TraversalSourceInfo info)
+    {
+        if (source.Type.ElementType is not { } elementType
+            || source.Type.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic))
+        {
+            ReportError(
+                "STK3010",
+                $"for-in traversal expects a fixed array, slice, or dynamic storage value but found '{source.Type.DisplayName}'.",
+                context);
+            info = default!;
+            return false;
+        }
+
+        var projectedElementType = UsesFrozenProjectionSemantics(source)
+            ? StarkTypeSymbols.FreezeReachableView(elementType)
+            : ProjectFrozenView(source.Type, elementType);
+        var canBorrowMutably = source.Type.Kind switch
+        {
+            StarkTypeKind.FixedArray => source.IsAddressMutable
+                && source.Type.AccessKind != StarkAccessKind.Frozen
+                && projectedElementType.AccessKind != StarkAccessKind.Frozen,
+            StarkTypeKind.Slice => source.IsAddressMutable
+                && (source.Type.IsMutableView || source.Type.InitializationKind != StarkInitializationKind.None)
+                && source.Type.AccessKind != StarkAccessKind.Frozen
+                && projectedElementType.AccessKind != StarkAccessKind.Frozen,
+            StarkTypeKind.Dynamic => source.IsAddressMutable
+                && source.Type.AccessKind != StarkAccessKind.Frozen
+                && projectedElementType.AccessKind != StarkAccessKind.Frozen,
+            _ => false
+        };
+
+        var indexRangeType = source.Type.Kind == StarkTypeKind.FixedArray
+            && source.Type.FixedLength is int fixedLength
+            && fixedLength > 0
+                ? StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(fixedLength - 1))
+                : NonNegativeI64Type;
+        info = new TraversalSourceInfo(projectedElementType, indexRangeType, canBorrowMutably);
+        return true;
     }
 
     private void CheckLoopContracts(
@@ -3932,48 +7098,619 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                $"Switch expression type '{switchType.DisplayName}' is not a valid switch domain. Stark switch domains are integers, floating-point values, bool, raw pointers, ascii/unicode text literals, named aggregates, and enum case patterns.",
+                $"Switch expression type '{switchType.DisplayName}' is not a valid switch domain. Stark switch domains are integers, floating-point values, bool, raw pointers, ascii/unicode text literals, named aggregates, enum case patterns, fixed arrays, slices, and dynamic storage.",
                 switchStatement.expression());
             return;
         }
 
-        foreach (var section in switchStatement.switchSection())
+        AnalyzeSwitchCoverage(switchStatement, switchType);
+    }
+
+    private void ValidateSwitchSectionPatternCaptures(StarkParser.SwitchSectionContext section, StarkTypeSymbol switchType)
+    {
+        Dictionary<string, StarkTypeSymbol>? expectedCaptures = null;
+        ParserRuleContext? expectedContext = null;
+        var requiresSharedCaptures = RequiresSharedSwitchSectionCaptures(section);
+
+        foreach (var label in section.switchLabel())
         {
-            var captureLabels = 0;
-            var aggregateLabels = 0;
-            var labelCount = section.switchLabel().Length;
-
-            foreach (var label in section.switchLabel())
+            if (label.DEFAULT() is not null)
             {
-                var pattern = label.pattern();
-                if (pattern?.VAR() is not null)
+                var captures = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+                if (requiresSharedCaptures
+                    && !ValidateSameSwitchSectionCaptures(
+                        expectedCaptures,
+                        ref expectedContext,
+                        captures,
+                        label,
+                        out expectedCaptures))
                 {
-                    captureLabels++;
+                    return;
                 }
 
-                if (pattern?.aggregatePattern() is not null || pattern?.enumNamedFieldPattern() is not null)
-                {
-                    aggregateLabels++;
-                }
+                continue;
             }
 
-            if (aggregateLabels > 0 && labelCount != 1)
+            foreach (var pattern in label.pattern())
             {
-                ReportError(
-                    "STK3008",
-                    "Switch aggregate patterns must currently appear as the only label in their section.",
-                    section);
+                if (!ValidateNoDuplicateSwitchPatternCaptures(pattern))
+                {
+                    continue;
+                }
+
+                if (!TryCollectPatternCaptures(pattern, switchType, out var captures))
+                {
+                    continue;
+                }
+
+                if (requiresSharedCaptures
+                    && !ValidateSameSwitchSectionCaptures(
+                        expectedCaptures,
+                        ref expectedContext,
+                        captures,
+                        pattern,
+                        out expectedCaptures))
+                {
+                    return;
+                }
             }
-            else if (captureLabels > 0 && labelCount != 1)
+        }
+    }
+
+    private static bool RequiresSharedSwitchSectionCaptures(StarkParser.SwitchSectionContext section)
+    {
+        return section.statement().Length != 0
+            || section.switchLabel().Any(static label => label.whenClause() is not null);
+    }
+
+    private bool ValidateNoDuplicateSwitchPatternCaptures(StarkParser.PatternContext pattern)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return ValidateNoDuplicateSwitchPatternCapturesCore(pattern, seen);
+    }
+
+    private bool ValidateNoDuplicateSwitchPatternCapturesCore(IParseTree node, HashSet<string> seen)
+    {
+        var isValid = true;
+        if (node is StarkParser.PatternContext pattern
+            && pattern.VAR() is not null
+            && pattern.Identifier() is { } patternCapture
+            && !seen.Add(patternCapture.GetText()))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch pattern capture '{patternCapture.GetText()}' is bound more than once in the same pattern. Use distinct capture names or discard the duplicate field with '_'.",
+                patternCapture.Symbol);
+            isValid = false;
+        }
+
+        if (node is StarkParser.AggregatePatternSuffixContext suffix
+            && suffix.Identifier() is { } wholeCapture
+            && !seen.Add(wholeCapture.GetText()))
+        {
+            ReportError(
+                "STK3008",
+                $"Switch pattern capture '{wholeCapture.GetText()}' is bound more than once in the same pattern. Use distinct capture names or discard the duplicate field with '_'.",
+                wholeCapture.Symbol);
+            isValid = false;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (!ValidateNoDuplicateSwitchPatternCapturesCore(node.GetChild(index), seen))
             {
-                ReportError(
-                    "STK3008",
-                    "Switch capture patterns must currently appear as the only label in their section.",
-                    section);
+                isValid = false;
             }
         }
 
-        AnalyzeSwitchCoverage(switchStatement, switchType);
+        return isValid;
+    }
+
+    private bool ValidateSameSwitchSectionCaptures(
+        Dictionary<string, StarkTypeSymbol>? expectedCaptures,
+        ref ParserRuleContext? expectedContext,
+        Dictionary<string, StarkTypeSymbol> captures,
+        ParserRuleContext context,
+        out Dictionary<string, StarkTypeSymbol> updatedExpectedCaptures)
+    {
+        if (expectedCaptures is null)
+        {
+            updatedExpectedCaptures = captures;
+            expectedContext = context;
+            return true;
+        }
+
+        updatedExpectedCaptures = expectedCaptures;
+        if (HaveSameSwitchSectionCaptures(expectedCaptures, captures))
+        {
+            return true;
+        }
+
+        var expectedNames = FormatSwitchCaptureNames(expectedCaptures);
+        var actualNames = FormatSwitchCaptureNames(captures);
+        ReportError(
+            "STK3008",
+            $"Switch labels that share a body must bind the same capture names with the same types. "
+                + $"Earlier label binds {expectedNames}; this label binds {actualNames}. Split the labels into separate sections or make their captures match.",
+            context);
+
+        if (expectedContext is not null)
+        {
+            ReportInfo(
+                "STK3020",
+                $"This earlier switch label established the capture set {expectedNames} for the shared body.",
+                expectedContext);
+        }
+
+        return false;
+    }
+
+    private static bool HaveSameSwitchSectionCaptures(
+        IReadOnlyDictionary<string, StarkTypeSymbol> expected,
+        IReadOnlyDictionary<string, StarkTypeSymbol> actual)
+    {
+        if (expected.Count != actual.Count)
+        {
+            return false;
+        }
+
+        foreach (var (name, expectedType) in expected)
+        {
+            if (!actual.TryGetValue(name, out var actualType)
+                || !StarkTypeSymbolsHaveSameIdentity(expectedType, actualType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string FormatSwitchCaptureNames(IReadOnlyDictionary<string, StarkTypeSymbol> captures)
+    {
+        if (captures.Count == 0)
+        {
+            return "no captures";
+        }
+
+        return string.Join(
+            ", ",
+            captures
+                .OrderBy(static capture => capture.Key, StringComparer.Ordinal)
+                .Select(static capture => $"'{capture.Key}: {capture.Value.DisplayName}'"));
+    }
+
+    private bool TryCollectPatternCaptures(
+        StarkParser.PatternContext pattern,
+        StarkTypeSymbol valueType,
+        out Dictionary<string, StarkTypeSymbol> captures)
+    {
+        captures = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        return TryCollectPatternCaptures(pattern, valueType, captures);
+    }
+
+    private bool TryCollectPatternCaptures(
+        StarkParser.PatternContext pattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        if (pattern.literal() is not null || pattern.rangePattern() is not null || pattern.DISCARD() is not null)
+        {
+            return true;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            return TryCollectListPatternCaptures(listPattern, valueType, captures);
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            return IsEnumSwitchType(valueType)
+                || TryAddPatternCapture(captures, pattern.Identifier().GetText(), valueType);
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            return TryCollectEnumNamedFieldPatternCaptures(enumNamedFieldPattern, valueType, captures);
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            return TryCollectGenericEnumAggregatePatternCaptures(genericEnumAggregatePattern, valueType, captures);
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (TryCollectEnumAggregatePatternCaptures(aggregatePattern, valueType, captures))
+            {
+                return true;
+            }
+
+            return TryCollectAggregatePatternCaptures(aggregatePattern, valueType, captures);
+        }
+
+        return true;
+    }
+
+    private bool TryCollectAggregatePatternCaptures(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        StarkTypeSymbol patternType;
+        NamedTypeSymbol namedType;
+
+        if (TryGetPublishedTemplateAggregatePattern(
+                aggregatePattern,
+                out var publishedPatternType,
+                out var publishedNamedType))
+        {
+            patternType = publishedPatternType;
+            namedType = publishedNamedType;
+        }
+        else
+        {
+            patternType = ResolveSimpleType(aggregatePattern.simpleType());
+            if (valueType.Kind != StarkTypeKind.Named
+                || patternType.Kind != StarkTypeKind.Named
+                || valueType.NamedType is null
+                || patternType.NamedType is null
+                || !string.Equals(valueType.NamedType, patternType.NamedType, StringComparison.Ordinal)
+                || !_namedTypes.TryGetValue(valueType.NamedType, out namedType!))
+            {
+                return false;
+            }
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || patternType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is null
+            || patternType.NamedType is null
+            || !string.Equals(valueType.NamedType, patternType.NamedType, StringComparison.Ordinal)
+            || namedType.Kind == DeclarationKind.Enum)
+        {
+            return false;
+        }
+
+        var suffix = aggregatePattern.aggregatePatternSuffix();
+        if (suffix is null)
+        {
+            return true;
+        }
+
+        if (suffix.Identifier() is { } wholeCapture)
+        {
+            return TryAddPatternCapture(captures, wholeCapture.GetText(), valueType);
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            return TryCollectAggregateNamedFieldPatternCaptures(namedPayload, namedType, captures);
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            if (!TryCollectPatternCaptures(fieldPatterns[index], namedType.OrderedFields[index].Type, captures))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryCollectAggregateNamedFieldPatternCaptures(
+        StarkParser.NamedPatternPayloadContext namedPayload,
+        NamedTypeSymbol namedType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        var members = namedPayload.namedPatternMember();
+        if (members.Length != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var seenMembers = new HashSet<int>();
+        foreach (var member in members)
+        {
+            var memberName = member.Identifier().GetText();
+            var fieldIndex = FindOrderedAggregateFieldIndex(namedType, memberName);
+            if (fieldIndex < 0 || !seenMembers.Add(fieldIndex))
+            {
+                return false;
+            }
+
+            if (!TryCollectPatternCaptures(member.pattern(), namedType.OrderedFields[fieldIndex].Type, captures))
+            {
+                return false;
+            }
+        }
+
+        return seenMembers.Count == namedType.OrderedFields.Count;
+    }
+
+    private static int FindOrderedAggregateFieldIndex(NamedTypeSymbol namedType, string fieldName)
+    {
+        for (var index = 0; index < namedType.OrderedFields.Count; index++)
+        {
+            if (string.Equals(namedType.OrderedFields[index].Name, fieldName, StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool TryGetListPatternElementType(
+        StarkTypeSymbol valueType,
+        out StarkTypeSymbol elementType,
+        out int? fixedLength)
+    {
+        elementType = StarkTypeSymbols.Error;
+        fixedLength = null;
+
+        if (valueType.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic)
+            || valueType.ElementType is not { } resolvedElementType)
+        {
+            return false;
+        }
+
+        elementType = resolvedElementType;
+        fixedLength = valueType.Kind == StarkTypeKind.FixedArray ? valueType.FixedLength : null;
+        return true;
+    }
+
+    private bool TryResolveAggregatePropertyPatternTarget(
+        string patternTypeName,
+        StarkTypeSymbol valueType,
+        out NamedTypeSymbol namedType)
+    {
+        namedType = null!;
+        return valueType.Kind == StarkTypeKind.Named
+            && valueType.NamedType is not null
+            && TryResolveNamedTypeBySourceName(patternTypeName, out namedType)
+            && namedType.Kind != DeclarationKind.Enum
+            && string.Equals(valueType.NamedType, namedType.Name, StringComparison.Ordinal);
+    }
+
+    private bool TryCollectListPatternCaptures(
+        StarkParser.ListPatternContext listPattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        if (!TryGetListPatternElementType(valueType, out var elementType, out _))
+        {
+            return false;
+        }
+
+        var elementPatterns = listPattern.pattern();
+        if (valueType.Kind == StarkTypeKind.FixedArray
+            && valueType.FixedLength is int fixedLength
+            && elementPatterns.Length != fixedLength)
+        {
+            return false;
+        }
+
+        foreach (var elementPattern in elementPatterns)
+        {
+            if (!TryCollectPatternCaptures(elementPattern, elementType, captures))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryCollectEnumAggregatePatternCaptures(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        if (TryGetPublishedTemplateEnumPattern(
+                aggregatePattern,
+                out _,
+                out var publishedEnumTypeSymbol,
+                out var publishedEnumType,
+                out var publishedVariant))
+        {
+            return TryCollectResolvedEnumAggregatePatternCaptures(
+                aggregatePattern.aggregatePatternSuffix(),
+                valueType,
+                publishedEnumTypeSymbol,
+                publishedEnumType,
+                publishedVariant,
+                captures);
+        }
+
+        var caseName = aggregatePattern.simpleType().GetText();
+        return TryResolveEnumCaseReference(caseName, out var enumType, out var enumTypeSymbol, out var variant)
+               && TryCollectResolvedEnumAggregatePatternCaptures(
+                   aggregatePattern.aggregatePatternSuffix(),
+                   valueType,
+                   enumTypeSymbol,
+                   enumType,
+                   variant,
+                   captures);
+    }
+
+    private bool TryCollectGenericEnumAggregatePatternCaptures(
+        StarkParser.GenericEnumAggregatePatternContext genericEnumAggregatePattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        if (TryGetPublishedTemplateEnumPattern(
+                genericEnumAggregatePattern,
+                out _,
+                out var publishedEnumTypeSymbol,
+                out var publishedEnumType,
+                out var publishedVariant))
+        {
+            return TryCollectResolvedEnumAggregatePatternCaptures(
+                genericEnumAggregatePattern.aggregatePatternSuffix(),
+                valueType,
+                publishedEnumTypeSymbol,
+                publishedEnumType,
+                publishedVariant,
+                captures);
+        }
+
+        return TryResolveEnumCaseReference(genericEnumAggregatePattern.genericEnumCaseReference(), out var enumType, out var enumTypeSymbol, out var variant)
+               && TryCollectResolvedEnumAggregatePatternCaptures(
+                   genericEnumAggregatePattern.aggregatePatternSuffix(),
+                   valueType,
+                   enumTypeSymbol,
+                   enumType,
+                   variant,
+                   captures);
+    }
+
+    private bool TryCollectResolvedEnumAggregatePatternCaptures(
+        StarkParser.AggregatePatternSuffixContext? suffix,
+        StarkTypeSymbol valueType,
+        StarkTypeSymbol enumTypeSymbol,
+        NamedTypeSymbol enumType,
+        EnumVariantSymbol variant,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is null
+            || !string.Equals(valueType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || variant.UsesNamedFields)
+        {
+            return false;
+        }
+
+        if (variant.IsUnit)
+        {
+            return suffix is null;
+        }
+
+        if (suffix is null)
+        {
+            return false;
+        }
+
+        if (suffix.Identifier() is { } wholeCapture)
+        {
+            return TryAddPatternCapture(captures, wholeCapture.GetText(), valueType);
+        }
+
+        var fieldPatterns = suffix.pattern();
+        if (fieldPatterns.Length != variant.Fields.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < fieldPatterns.Length; index++)
+        {
+            if (!TryCollectPatternCaptures(fieldPatterns[index], variant.Fields[index].Type, captures))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryCollectEnumNamedFieldPatternCaptures(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        StarkTypeSymbol valueType,
+        Dictionary<string, StarkTypeSymbol> captures)
+    {
+        ImportedTemplateEnumPatternSummary? publishedPattern = null;
+        NamedTypeSymbol enumType;
+        EnumVariantSymbol variant;
+
+        if (TryGetPublishedTemplateEnumPattern(
+                enumNamedFieldPattern,
+                out var publishedSummary,
+                out _,
+                out var publishedEnumType,
+                out var publishedVariant))
+        {
+            publishedPattern = publishedSummary;
+            enumType = publishedEnumType;
+            variant = publishedVariant;
+        }
+        else if (!TryResolveEnumCaseTarget(enumNamedFieldPattern.enumCaseTarget(), out _, out enumType, out _, out variant))
+        {
+            return TryResolveAggregatePropertyPatternTarget(
+                    enumNamedFieldPattern.enumCaseTarget().GetText(),
+                    valueType,
+                    out var aggregateType)
+                && TryCollectAggregateNamedFieldPatternCaptures(
+                    enumNamedFieldPattern.namedPatternPayload(),
+                    aggregateType,
+                    captures);
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is null
+            || !string.Equals(valueType.NamedType, enumType.Name, StringComparison.Ordinal)
+            || !variant.UsesNamedFields)
+        {
+            return false;
+        }
+
+        var members = enumNamedFieldPattern.namedPatternPayload().namedPatternMember();
+        var seenMembers = new HashSet<int>();
+        for (var memberOrdinal = 0; memberOrdinal < members.Length; memberOrdinal++)
+        {
+            var member = members[memberOrdinal];
+            EnumVariantFieldSymbol? field;
+
+            if (publishedPattern is { Members.Count: > 0 } && memberOrdinal < publishedPattern.Members.Count)
+            {
+                var publishedMember = publishedPattern.Members[memberOrdinal];
+                field = publishedMember.FieldIndex >= 0 && publishedMember.FieldIndex < variant.Fields.Count
+                    ? variant.Fields[publishedMember.FieldIndex]
+                    : null;
+            }
+            else
+            {
+                var memberName = member.Identifier().GetText();
+                field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
+            }
+
+            if (field is null
+                || !seenMembers.Add(field.Position)
+                || !TryCollectPatternCaptures(member.pattern(), field.Type, captures))
+            {
+                return false;
+            }
+        }
+
+        return seenMembers.Count == variant.Fields.Count;
+    }
+
+    private static bool TryAddPatternCapture(
+        Dictionary<string, StarkTypeSymbol> captures,
+        string name,
+        StarkTypeSymbol type)
+    {
+        if (captures.TryGetValue(name, out var existingType))
+        {
+            return StarkTypeSymbolsHaveSameIdentity(existingType, type);
+        }
+
+        captures.Add(name, type);
+        return true;
+    }
+
+    private static bool StarkTypeSymbolsHaveSameIdentity(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        return left == right
+            || string.Equals(left.DisplayName, right.DisplayName, StringComparison.Ordinal)
+            && string.Equals(left.NamedType, right.NamedType, StringComparison.Ordinal);
     }
 
     private void RecordSwitch(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
@@ -4055,54 +7792,53 @@ internal sealed class TypeChecker
         {
             foreach (var label in section.switchLabel())
             {
-                labelCount++;
                 if (label.DEFAULT() is not null)
                 {
+                    labelCount++;
                     explicitDefaultLabelCount++;
                     loweredDefaultLabelCount++;
                     continue;
                 }
 
-                if (label.whenClause() is not null)
+                foreach (var pattern in label.pattern())
                 {
-                    guardedLabelCount++;
-                }
-
-                var pattern = label.pattern();
-                if (pattern is null)
-                {
-                    continue;
-                }
-
-                if (pattern.literal() is not null)
-                {
-                    literalLabelCount++;
-                    continue;
-                }
-
-                if (pattern.DISCARD() is not null)
-                {
-                    matchAllLabelCount++;
-                    if (label.whenClause() is null)
+                    labelCount++;
+                    if (label.whenClause() is not null)
                     {
-                        loweredDefaultLabelCount++;
+                        guardedLabelCount++;
                     }
 
-                    continue;
-                }
+                    if (pattern.literal() is not null)
+                    {
+                        literalLabelCount++;
+                        continue;
+                    }
 
-                if (pattern.VAR() is not null)
-                {
-                    matchAllLabelCount++;
-                    captureLabelCount++;
-                    continue;
-                }
+                    if (pattern.DISCARD() is not null)
+                    {
+                        matchAllLabelCount++;
+                        if (label.whenClause() is null)
+                        {
+                            loweredDefaultLabelCount++;
+                        }
 
-                if (pattern.aggregatePattern() is not null
-                    || pattern.enumNamedFieldPattern() is not null
-                    || pattern.genericEnumAggregatePattern() is not null)
-                {
-                    structuredPatternLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.VAR() is not null)
+                    {
+                        matchAllLabelCount++;
+                        captureLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.aggregatePattern() is not null
+                        || pattern.enumNamedFieldPattern() is not null
+                        || pattern.genericEnumAggregatePattern() is not null
+                        || pattern.listPattern() is not null)
+                    {
+                        structuredPatternLabelCount++;
+                    }
                 }
             }
         }
@@ -4127,12 +7863,16 @@ internal sealed class TypeChecker
         var boolFalseCovered = false;
         var exhaustiveEnumVariants = new HashSet<string>(StringComparer.Ordinal);
         var enumVariantCount = 0;
+        NamedTypeSymbol? switchEnumType = null;
+        var coveredIntegerIntervals = new List<RangeCoverageInterval>();
+        var coveredIntegerValueCount = BigInteger.Zero;
 
         if (switchType.Kind == StarkTypeKind.Named
             && switchType.NamedType is not null
             && _namedTypes.TryGetValue(switchType.NamedType, out var switchNamedType)
             && switchNamedType.Kind == DeclarationKind.Enum)
         {
+            switchEnumType = switchNamedType;
             enumVariantCount = switchNamedType.Variants.Count;
         }
 
@@ -4140,117 +7880,475 @@ internal sealed class TypeChecker
         {
             foreach (var label in section.switchLabel())
             {
-                var labelText = DescribeSwitchLabel(label);
-                _ = TryCreateSwitchCoveragePattern(label, switchType, out var currentPattern);
-
-                if (exhaustivePattern is not null)
+                if (label.DEFAULT() is not null)
                 {
-                    ReportUnreachableSwitchLabel(label, labelText, exhaustivePattern, switchType, becauseExhaustive: true);
-                    continue;
-                }
+                    var defaultPattern = new SwitchCoveragePattern(
+                        SwitchCoveragePatternKind.MatchAll,
+                        "default",
+                        label,
+                        LiteralKey: null,
+                        AggregatePattern: null,
+                        EnumPattern: null);
 
-                if (currentPattern is not null)
-                {
-                    var coveringPattern = coveragePatterns.FirstOrDefault(existing => Covers(existing, currentPattern));
+                    if (exhaustivePattern is not null)
+                    {
+                        ReportUnreachableSwitchLabel(label, "default", exhaustivePattern, switchType, becauseExhaustive: true);
+                        continue;
+                    }
+
+                    var coveringPattern = coveragePatterns.FirstOrDefault(existing => Covers(existing, defaultPattern));
                     if (coveringPattern is not null)
                     {
-                        ReportUnreachableSwitchLabel(label, labelText, coveringPattern, switchType, becauseExhaustive: false);
+                        ReportUnreachableSwitchLabel(label, "default", coveringPattern, switchType, becauseExhaustive: false);
                         continue;
                     }
-                }
 
-                if (label.whenClause() is not null || currentPattern is null)
-                {
+                    if (label.whenClause() is null)
+                    {
+                        coveragePatterns.Add(defaultPattern);
+                        exhaustivePattern = defaultPattern;
+                    }
+
                     continue;
                 }
 
-                coveragePatterns.Add(currentPattern);
-                if (currentPattern.Kind == SwitchCoveragePatternKind.MatchAll)
+                foreach (var switchPattern in label.pattern())
                 {
-                    exhaustivePattern = currentPattern;
-                    continue;
-                }
+                    var labelText = switchPattern.GetText();
+                    _ = TryCreateSwitchCoveragePattern(switchPattern, switchType, out var currentPattern);
 
-                if (currentPattern.Kind == SwitchCoveragePatternKind.Aggregate
-                    && currentPattern.AggregatePattern is not null
-                    && IsMatchAllAggregatePattern(currentPattern.AggregatePattern))
-                {
-                    exhaustivePattern = currentPattern;
-                    continue;
-                }
+                    if (exhaustivePattern is not null)
+                    {
+                        ReportUnreachableSwitchLabel(switchPattern, labelText, exhaustivePattern, switchType, becauseExhaustive: true);
+                        continue;
+                    }
 
-                if (currentPattern.Kind == SwitchCoveragePatternKind.EnumCase
-                    && currentPattern.EnumPattern is not null
-                    && IsMatchAllEnumPattern(currentPattern.EnumPattern))
-                {
-                    exhaustiveEnumVariants.Add(currentPattern.EnumPattern.VariantName);
-                    if (enumVariantCount != 0 && exhaustiveEnumVariants.Count == enumVariantCount)
+                    if (currentPattern is not null)
+                    {
+                        var coveringPattern = coveragePatterns.FirstOrDefault(existing => Covers(existing, currentPattern));
+                        if (coveringPattern is not null)
+                        {
+                            ReportUnreachableSwitchLabel(switchPattern, labelText, coveringPattern, switchType, becauseExhaustive: false);
+                            continue;
+                        }
+                    }
+
+                    if (label.whenClause() is not null || currentPattern is null)
+                    {
+                        continue;
+                    }
+
+                    coveragePatterns.Add(currentPattern);
+                    if (currentPattern.Kind == SwitchCoveragePatternKind.MatchAll)
                     {
                         exhaustivePattern = currentPattern;
                         continue;
                     }
-                }
 
-                if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
-                    && switchType.Kind == StarkTypeKind.Bool)
-                {
-                    boolTrueCovered |= string.Equals(currentPattern.LiteralKey, BoolTrueCoverageKey, StringComparison.Ordinal);
-                    boolFalseCovered |= string.Equals(currentPattern.LiteralKey, BoolFalseCoverageKey, StringComparison.Ordinal);
-                    if (boolTrueCovered && boolFalseCovered)
+                    if (currentPattern.Kind == SwitchCoveragePatternKind.Aggregate
+                        && currentPattern.AggregatePattern is not null
+                        && IsMatchAllAggregatePattern(currentPattern.AggregatePattern))
                     {
                         exhaustivePattern = currentPattern;
+                        continue;
+                    }
+
+                    if (currentPattern.Kind == SwitchCoveragePatternKind.EnumCase
+                        && currentPattern.EnumPattern is not null
+                        && IsMatchAllEnumPattern(currentPattern.EnumPattern))
+                    {
+                        exhaustiveEnumVariants.Add(currentPattern.EnumPattern.VariantName);
+                        if (enumVariantCount != 0 && exhaustiveEnumVariants.Count == enumVariantCount)
+                        {
+                            exhaustivePattern = currentPattern;
+                            continue;
+                        }
+                    }
+
+                    if (currentPattern.Kind == SwitchCoveragePatternKind.List
+                        && currentPattern.ListPattern is not null
+                        && currentPattern.ListPattern.CanBeExhaustiveForTarget
+                        && IsMatchAllListPattern(currentPattern.ListPattern))
+                    {
+                        exhaustivePattern = currentPattern;
+                        continue;
+                    }
+
+                    if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
+                        && switchType.Kind == StarkTypeKind.Bool)
+                    {
+                        boolTrueCovered |= string.Equals(currentPattern.LiteralKey, BoolTrueCoverageKey, StringComparison.Ordinal);
+                        boolFalseCovered |= string.Equals(currentPattern.LiteralKey, BoolFalseCoverageKey, StringComparison.Ordinal);
+                        if (boolTrueCovered && boolFalseCovered)
+                        {
+                            exhaustivePattern = currentPattern;
+                        }
+                    }
+
+                    // Integer switches can be exhaustive by covering every value of the
+                    // scrutinee's (possibly ranged) type, e.g. `u8[0 3]` with cases 0..3
+                    // or a range pattern such as `case 0..3:`.
+                    if ((currentPattern.Kind is SwitchCoveragePatternKind.Literal or SwitchCoveragePatternKind.Range)
+                        && switchType.Kind == StarkTypeKind.Integer
+                        && currentPattern.RangeInterval is { } currentIntegerInterval
+                        && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
+                    {
+                        AddIntegerCoverageInterval(
+                            coveredIntegerIntervals,
+                            ClipRangeToDomain(currentIntegerInterval, rangeMin, rangeMax));
+                        coveredIntegerValueCount = CountIntegerCoverageValues(coveredIntegerIntervals);
+                        if (coveredIntegerValueCount == rangeMax - rangeMin + 1)
+                        {
+                            exhaustivePattern = currentPattern;
+                        }
                     }
                 }
             }
         }
+
+        // Every switch must be exhaustive: a value that matches no arm has nowhere to go
+        // (a hidden trap at best, undefined fall-through at worst), which is exactly the
+        // kind of invalid state Stark makes unrepresentable. Cover the whole domain or
+        // declare the remainder explicitly with `default`.
+        if (exhaustivePattern is not null)
+        {
+            _exhaustiveSwitches.Add(switchStatement);
+            return;
+        }
+
+        ReportError(
+            "STK3044",
+            BuildNonExhaustiveSwitchMessage(switchType, switchEnumType, exhaustiveEnumVariants, coveredIntegerValueCount, boolTrueCovered, boolFalseCovered),
+            switchStatement.expression());
+    }
+
+    private static string BuildNonExhaustiveSwitchMessage(
+        StarkTypeSymbol switchType,
+        NamedTypeSymbol? switchEnumType,
+        IReadOnlySet<string> coveredEnumVariants,
+        BigInteger coveredIntegerValueCount,
+        bool boolTrueCovered,
+        bool boolFalseCovered)
+    {
+        if (switchEnumType is not null)
+        {
+            var missingVariants = switchEnumType.Variants
+                .Select(static variant => variant.Name)
+                .Where(variant => !coveredEnumVariants.Contains(variant))
+                .ToArray();
+            var missingText = missingVariants.Length <= 4
+                ? string.Join(", ", missingVariants.Select(static variant => $"'{variant}'"))
+                : string.Join(", ", missingVariants.Take(4).Select(static variant => $"'{variant}'")) + $", … ({missingVariants.Length} total)";
+            return $"Switch over '{switchType.DisplayName}' is not exhaustive: variant(s) {missingText} are not covered. "
+                + "Add the missing case(s) or a `default` arm.";
+        }
+
+        if (switchType.Kind == StarkTypeKind.Bool)
+        {
+            var missing = !boolTrueCovered && !boolFalseCovered ? "'true' and 'false'" : boolTrueCovered ? "'false'" : "'true'";
+            return $"Switch over 'bool' is not exhaustive: {missing} not covered. Add the missing case(s) or a `default` arm.";
+        }
+
+        if (switchType.Kind == StarkTypeKind.Integer
+            && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
+        {
+            var rangeSize = rangeMax - rangeMin + 1;
+            return $"Switch over '{switchType.DisplayName}' is not exhaustive: {coveredIntegerValueCount} of {rangeSize} possible value(s) covered. "
+                + "Cover the full range or add a `default` arm.";
+        }
+
+        return $"Switch over '{switchType.DisplayName}' is not exhaustive: values of this type cannot be enumerated by cases. "
+            + "Add a `default` arm or a match-all pattern (`var`/`_`).";
+    }
+
+    private static RangeCoverageInterval ClipRangeToDomain(
+        RangeCoverageInterval interval,
+        BigInteger domainMin,
+        BigInteger domainMax)
+    {
+        return new RangeCoverageInterval(
+            BigInteger.Max(interval.Min, domainMin),
+            BigInteger.Min(interval.Max, domainMax));
+    }
+
+    private static void AddIntegerCoverageInterval(
+        List<RangeCoverageInterval> intervals,
+        RangeCoverageInterval interval)
+    {
+        if (interval.Min > interval.Max)
+        {
+            return;
+        }
+
+        intervals.Add(interval);
+        intervals.Sort(static (left, right) =>
+        {
+            var minComparison = left.Min.CompareTo(right.Min);
+            return minComparison != 0 ? minComparison : left.Max.CompareTo(right.Max);
+        });
+
+        var writeIndex = 0;
+        for (var readIndex = 0; readIndex < intervals.Count; readIndex++)
+        {
+            var current = intervals[readIndex];
+            if (writeIndex == 0)
+            {
+                intervals[writeIndex++] = current;
+                continue;
+            }
+
+            var previous = intervals[writeIndex - 1];
+            if (current.Min <= previous.Max + BigInteger.One)
+            {
+                intervals[writeIndex - 1] = previous with
+                {
+                    Max = BigInteger.Max(previous.Max, current.Max)
+                };
+                continue;
+            }
+
+            intervals[writeIndex++] = current;
+        }
+
+        if (writeIndex < intervals.Count)
+        {
+            intervals.RemoveRange(writeIndex, intervals.Count - writeIndex);
+        }
+    }
+
+    private static BigInteger CountIntegerCoverageValues(IReadOnlyList<RangeCoverageInterval> intervals)
+    {
+        var count = BigInteger.Zero;
+        foreach (var interval in intervals)
+        {
+            count += interval.Max - interval.Min + BigInteger.One;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Definite-return analysis: a function with a non-void return type must return on
+    /// every control-flow path. Falling off the end of the body has no value to return —
+    /// previously that was silent undefined behavior. Reported as STK3045.
+    /// </summary>
+    private void ValidateFunctionReturnsOnAllPaths(
+        StarkParser.BlockContext block,
+        StarkTypeSymbol returnType,
+        string functionDescription,
+        ParserRuleContext context)
+    {
+        if (returnType.Kind is StarkTypeKind.Void or StarkTypeKind.Error)
+        {
+            return;
+        }
+
+        if (BlockGuaranteesFunctionExit(block))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3045",
+            $"{functionDescription} returns '{returnType.DisplayName}' but control can reach the end of the body without "
+                + "returning a value. End every path with `return`, an exhaustive `switch` whose sections all return, an "
+                + "`if`/`else` whose branches both return, or an `infinite` loop.",
+            context);
+    }
+
+    private bool BlockGuaranteesFunctionExit(StarkParser.BlockContext block)
+    {
+        var statements = block.statement();
+        return statements.Length != 0 && StatementGuaranteesFunctionExit(statements[^1]);
+    }
+
+    /// <summary>
+    /// True when control cannot flow past <paramref name="statement"/> to the next
+    /// statement in sequence: it returns, every branch/section of it returns, or it loops
+    /// forever. Conservative — anything unproven counts as falling through.
+    /// </summary>
+    private bool StatementGuaranteesFunctionExit(StarkParser.StatementContext statement)
+    {
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
+        {
+            return true;
+        }
+
+        if (statement.block() is { } nestedBlock)
+        {
+            return BlockGuaranteesFunctionExit(nestedBlock);
+        }
+
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            if (unsafeStatement.block() is { } unsafeBlock)
+            {
+                return BlockGuaranteesFunctionExit(unsafeBlock);
+            }
+
+            return unsafeStatement.assumeStatement() is { } unsafeAssumeStatement
+                && StatementGuaranteesFunctionExit(unsafeAssumeStatement.statement());
+        }
+
+        // `assume disjoint(...) stmt` always executes its body — the assumption is a
+        // declared fact, not a runtime condition — so it exits iff its body exits.
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            return StatementGuaranteesFunctionExit(assumeStatement.statement());
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return ifStatement.statement().Length > 1
+                && StatementGuaranteesFunctionExit(ifStatement.statement(0))
+                && StatementGuaranteesFunctionExit(ifStatement.statement(1));
+        }
+
+        var labeledStatement = statement.labeledStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+        var statementLabel = labeledStatement?.Identifier().GetText();
+
+        if (statementSwitch is { } switchStatement)
+        {
+            if (!_exhaustiveSwitches.Contains(switchStatement))
+            {
+                return false;
+            }
+
+            foreach (var section in switchStatement.switchSection())
+            {
+                var sectionStatements = section.statement();
+                if (sectionStatements.Length == 0 || !StatementGuaranteesFunctionExit(sectionStatements[^1]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // A loop only falls through when its condition can turn false or its body can
+        // `break`. That makes two never-falling-through shapes: `infinite` loops (which
+        // additionally forbid structural exits), and the loop-until-return idiom — a
+        // literal `true` condition (or no `for` condition) with no top-level break, whose
+        // only exits are `return`s.
+        if (statementWhile is { } whileStatement)
+        {
+            var whileAlwaysRepeats = whileStatement.loopBehavior().INFINITE() is not null
+                || (whileStatement.pattern() is null
+                    && string.Equals(whileStatement.expression().GetText(), "true", StringComparison.Ordinal));
+            return whileAlwaysRepeats && !LoopBodyContainsTopLevelBreak(whileStatement.statement(), statementLabel);
+        }
+
+        if (statementFor is { } forStatement)
+        {
+            var forCondition = forStatement.forCondition();
+            var forAlwaysRepeats = forStatement.loopBehavior().INFINITE() is not null
+                || forCondition is null
+                || string.Equals(forCondition.GetText(), "true", StringComparison.Ordinal);
+            return forAlwaysRepeats && !LoopBodyContainsTopLevelBreak(forStatement.statement(), statementLabel);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when the loop body contains a `break` that targets this loop (i.e. not nested
+    /// inside an inner loop), meaning the loop can exit and control can flow past it.
+    /// </summary>
+    private static bool LoopBodyContainsTopLevelBreak(StarkParser.StatementContext body, string? loopLabel)
+    {
+        return ContainsTopLevelBreak(body, allowUnlabeledBreak: true);
+
+        bool ContainsTopLevelBreak(Antlr4.Runtime.Tree.IParseTree node, bool allowUnlabeledBreak)
+        {
+            if (node is StarkParser.BreakStatementContext breakStatement)
+            {
+                var breakLabel = breakStatement.Identifier()?.GetText();
+                return breakLabel is null
+                    ? allowUnlabeledBreak
+                    : string.Equals(breakLabel, loopLabel, StringComparison.Ordinal);
+            }
+
+            var childBreaksCanTargetCurrentLoopWithoutLabel = allowUnlabeledBreak
+                && node is not StarkParser.WhileStatementContext
+                && node is not StarkParser.ForStatementContext
+                && node is not StarkParser.SwitchStatementContext;
+
+            for (var index = 0; index < node.ChildCount; index++)
+            {
+                if (ContainsTopLevelBreak(node.GetChild(index), childBreaksCanTargetCurrentLoopWithoutLabel))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private bool TryCreateSwitchCoveragePattern(
-        StarkParser.SwitchLabelContext label,
+        StarkParser.PatternContext switchPattern,
         StarkTypeSymbol switchType,
         out SwitchCoveragePattern? pattern)
     {
-        if (label.DEFAULT() is not null)
+        if (switchPattern.DISCARD() is not null || switchPattern.VAR() is not null)
         {
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.MatchAll,
-                "default",
-                label,
+                switchPattern.GetText(),
+                switchPattern,
                 LiteralKey: null,
                 AggregatePattern: null,
                 EnumPattern: null);
             return true;
         }
 
-        var switchPattern = label.pattern();
-        if (switchPattern is null)
-        {
-            pattern = null;
-            return false;
-        }
-
-        if (switchPattern.DISCARD() is not null || switchPattern.VAR() is not null)
+        if (switchPattern.rangePattern() is { } rangePattern
+            && TryCreateRangeCoverageInterval(rangePattern, switchType, out var rangeInterval))
         {
             pattern = new SwitchCoveragePattern(
-                SwitchCoveragePatternKind.MatchAll,
-                switchPattern.GetText(),
-                label,
+                SwitchCoveragePatternKind.Range,
+                rangePattern.GetText(),
+                switchPattern,
                 LiteralKey: null,
                 AggregatePattern: null,
-                EnumPattern: null);
+                EnumPattern: null,
+                rangeInterval);
             return true;
         }
 
         if (switchPattern.literal() is { } literal
             && TryCreateLiteralCoverageKey(literal, switchType, out var literalKey))
         {
+            var integerInterval = TryCreateIntegerLiteralCoverageInterval(literal, switchType, out var literalInterval)
+                ? literalInterval
+                : (RangeCoverageInterval?)null;
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.Literal,
                 literal.GetText(),
-                label,
+                switchPattern,
                 literalKey,
                 AggregatePattern: null,
-                EnumPattern: null);
+                EnumPattern: null,
+                integerInterval);
+            return true;
+        }
+
+        if (switchPattern.listPattern() is { } listPattern
+            && TryCreateListCoveragePattern(listPattern, switchType, out var listCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.List,
+                listPattern.GetText(),
+                switchPattern,
+                LiteralKey: null,
+                AggregatePattern: null,
+                EnumPattern: null,
+                ListPattern: listCoverage);
             return true;
         }
 
@@ -4260,10 +8358,23 @@ internal sealed class TypeChecker
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.EnumCase,
                 enumNamedFieldPattern.GetText(),
-                label,
+                switchPattern,
                 LiteralKey: null,
                 AggregatePattern: null,
                 EnumPattern: enumNamedFieldCoverage);
+            return true;
+        }
+
+        if (switchPattern.enumNamedFieldPattern() is { } aggregatePropertyPattern
+            && TryCreateAggregatePropertyCoveragePattern(aggregatePropertyPattern, switchType, out var aggregatePropertyCoverage))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.Aggregate,
+                aggregatePropertyPattern.GetText(),
+                switchPattern,
+                LiteralKey: null,
+                aggregatePropertyCoverage,
+                EnumPattern: null);
             return true;
         }
 
@@ -4273,7 +8384,7 @@ internal sealed class TypeChecker
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.EnumCase,
                 genericEnumAggregatePattern.GetText(),
-                label,
+                switchPattern,
                 LiteralKey: null,
                 AggregatePattern: null,
                 EnumPattern: genericEnumAggregateCoverage);
@@ -4286,7 +8397,7 @@ internal sealed class TypeChecker
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.EnumCase,
                 enumAggregatePattern.GetText(),
-                label,
+                switchPattern,
                 LiteralKey: null,
                 AggregatePattern: null,
                 EnumPattern: enumAggregateCoverage);
@@ -4299,7 +8410,7 @@ internal sealed class TypeChecker
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.Aggregate,
                 aggregatePattern.GetText(),
-                label,
+                switchPattern,
                 LiteralKey: null,
                 aggregateCoverage,
                 EnumPattern: null);
@@ -4373,6 +8484,14 @@ internal sealed class TypeChecker
         {
             coveragePattern = CreateMatchAllAggregateCoveragePattern(namedType);
             return true;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            return TryCreateAggregateNamedFieldCoveragePattern(
+                namedPayload,
+                namedType,
+                out coveragePattern);
         }
 
         var fieldPatterns = suffix.pattern();
@@ -4572,6 +8691,59 @@ internal sealed class TypeChecker
             out coveragePattern);
     }
 
+    private bool TryCreateAggregateNamedFieldCoveragePattern(
+        StarkParser.NamedPatternPayloadContext namedPayload,
+        NamedTypeSymbol namedType,
+        out AggregateCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+        var members = namedPayload.namedPatternMember();
+        if (members.Length != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var coverageFields = new AggregateCoverageField[namedType.OrderedFields.Count];
+        var seenMembers = new HashSet<int>();
+        foreach (var member in members)
+        {
+            var memberName = member.Identifier().GetText();
+            var fieldIndex = FindOrderedAggregateFieldIndex(namedType, memberName);
+            if (fieldIndex < 0
+                || !seenMembers.Add(fieldIndex)
+                || !TryCreateStructuredCoverageField(member.pattern(), namedType.OrderedFields[fieldIndex].Type, out var coverageField, allowAnyCaptureWildcard: false))
+            {
+                return false;
+            }
+
+            coverageFields[fieldIndex] = coverageField;
+        }
+
+        if (seenMembers.Count != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        coveragePattern = new AggregateCoveragePattern(namedType.Name, coverageFields);
+        return true;
+    }
+
+    private bool TryCreateAggregatePropertyCoveragePattern(
+        StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
+        StarkTypeSymbol switchType,
+        out AggregateCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+        return TryResolveAggregatePropertyPatternTarget(
+                enumNamedFieldPattern.enumCaseTarget().GetText(),
+                switchType,
+                out var namedType)
+            && TryCreateAggregateNamedFieldCoveragePattern(
+                enumNamedFieldPattern.namedPatternPayload(),
+                namedType,
+                out coveragePattern);
+    }
+
     private bool TryCreateResolvedEnumNamedFieldCoveragePattern(
         StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
         StarkTypeSymbol switchType,
@@ -4590,7 +8762,7 @@ internal sealed class TypeChecker
             return false;
         }
 
-        var members = enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember();
+        var members = enumNamedFieldPattern.namedPatternPayload().namedPatternMember();
         if (members.Length != variant.Fields.Count
             || publishedPattern is { Members.Count: > 0 } && members.Length != publishedPattern.Members.Count)
         {
@@ -4669,15 +8841,54 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (pattern.rangePattern() is { } rangePattern
+            && TryCreateRangeCoverageInterval(rangePattern, fieldType, out var rangeInterval))
+        {
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.Range,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null,
+                rangeInterval);
+            return true;
+        }
+
         if (pattern.literal() is { } literal
             && SupportsAggregateFieldSubpattern(fieldType)
             && TryCreateLiteralCoverageKey(literal, fieldType, out var literalKey))
         {
+            var integerInterval = TryCreateIntegerLiteralCoverageInterval(literal, fieldType, out var literalInterval)
+                ? literalInterval
+                : (RangeCoverageInterval?)null;
             coverageField = new AggregateCoverageField(
                 AggregateCoverageFieldKind.Literal,
                 literalKey,
                 NestedAggregatePattern: null,
-                NestedEnumPattern: null);
+                NestedEnumPattern: null,
+                integerInterval);
+            return true;
+        }
+
+        if (pattern.listPattern() is { } nestedListPattern
+            && TryCreateListCoveragePattern(nestedListPattern, fieldType, out var listCoverage)
+            && listCoverage is not null)
+        {
+            if (listCoverage.CanBeExhaustiveForTarget && IsMatchAllListPattern(listCoverage))
+            {
+                coverageField = new AggregateCoverageField(
+                    AggregateCoverageFieldKind.Wildcard,
+                    LiteralKey: null,
+                    NestedAggregatePattern: null,
+                    NestedEnumPattern: null);
+                return true;
+            }
+
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.NestedList,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null,
+                NestedListPattern: listCoverage);
             return true;
         }
 
@@ -4777,6 +8988,82 @@ internal sealed class TypeChecker
         return false;
     }
 
+    private bool TryCreateListCoveragePattern(
+        StarkParser.ListPatternContext listPattern,
+        StarkTypeSymbol targetType,
+        out ListCoveragePattern? coveragePattern)
+    {
+        coveragePattern = null;
+        if (!TryGetListPatternElementType(targetType, out var elementType, out var fixedLength))
+        {
+            return false;
+        }
+
+        var elementPatterns = listPattern.pattern();
+        if (fixedLength is int requiredLength && elementPatterns.Length != requiredLength)
+        {
+            return false;
+        }
+
+        var coverageElements = new AggregateCoverageField[elementPatterns.Length];
+        for (var index = 0; index < elementPatterns.Length; index++)
+        {
+            if (!TryCreateStructuredCoverageField(elementPatterns[index], elementType, out var elementCoverage, allowAnyCaptureWildcard: false))
+            {
+                return false;
+            }
+
+            coverageElements[index] = elementCoverage;
+        }
+
+        coveragePattern = new ListCoveragePattern(
+            targetType,
+            elementPatterns.Length,
+            CanBeExhaustiveForTarget: fixedLength is int knownLength && knownLength == elementPatterns.Length,
+            coverageElements);
+        return true;
+    }
+
+    private bool TryCreateRangeCoverageInterval(
+        StarkParser.RangePatternContext rangePattern,
+        StarkTypeSymbol targetType,
+        out RangeCoverageInterval interval)
+    {
+        interval = default;
+        if (targetType.Kind != StarkTypeKind.Integer
+            || !TryGetRangePatternBounds(rangePattern, out var min, out var max)
+            || min > max)
+        {
+            return false;
+        }
+
+        if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(targetType, out var targetMin, out var targetMax)
+            && (max < targetMin || min > targetMax))
+        {
+            return false;
+        }
+
+        interval = new RangeCoverageInterval(min, max);
+        return true;
+    }
+
+    private static bool TryCreateIntegerLiteralCoverageInterval(
+        StarkParser.LiteralContext literal,
+        StarkTypeSymbol targetType,
+        out RangeCoverageInterval interval)
+    {
+        interval = default;
+        if (targetType.Kind != StarkTypeKind.Integer
+            || literal.signedIntegerLiteral() is not { } integerLiteral)
+        {
+            return false;
+        }
+
+        var value = ParseSignedIntegerLiteral(integerLiteral);
+        interval = new RangeCoverageInterval(value, value);
+        return true;
+    }
+
     private static bool TryCreateLiteralCoverageKey(
         StarkParser.LiteralContext literal,
         StarkTypeSymbol targetType,
@@ -4833,7 +9120,7 @@ internal sealed class TypeChecker
     }
 
     private void ReportUnreachableSwitchLabel(
-        StarkParser.SwitchLabelContext label,
+        ParserRuleContext context,
         string labelText,
         SwitchCoveragePattern coveringPattern,
         StarkTypeSymbol switchType,
@@ -4842,7 +9129,7 @@ internal sealed class TypeChecker
         var message = becauseExhaustive
             ? $"Switch label '{labelText}' is unreachable because the switch is already exhaustive after the earlier unguarded label '{coveringPattern.LabelText}'."
             : $"Switch label '{labelText}' is unreachable because the earlier unguarded label '{coveringPattern.LabelText}' already covers it.";
-        ReportError("STK3019", message, label);
+        ReportError("STK3019", message, context);
 
         var note = becauseExhaustive
             ? $"Switch coverage becomes exhaustive here for '{switchType.DisplayName}'."
@@ -4855,6 +9142,12 @@ internal sealed class TypeChecker
         if (existing.Kind == SwitchCoveragePatternKind.MatchAll)
         {
             return true;
+        }
+
+        if (existing.RangeInterval is { } existingRange
+            && current.RangeInterval is { } currentRange)
+        {
+            return existingRange.Min <= currentRange.Min && existingRange.Max >= currentRange.Max;
         }
 
         if (existing.Kind != current.Kind)
@@ -4872,6 +9165,13 @@ internal sealed class TypeChecker
             return existing.EnumPattern is not null
                 && current.EnumPattern is not null
                 && Covers(existing.EnumPattern, current.EnumPattern);
+        }
+
+        if (existing.Kind == SwitchCoveragePatternKind.List)
+        {
+            return existing.ListPattern is not null
+                && current.ListPattern is not null
+                && Covers(existing.ListPattern, current.ListPattern);
         }
 
         return existing.AggregatePattern is not null
@@ -4925,6 +9225,12 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (existing.RangeInterval is { } existingRange
+            && current.RangeInterval is { } currentRange)
+        {
+            return existingRange.Min <= currentRange.Min && existingRange.Max >= currentRange.Max;
+        }
+
         if (existing.Kind != current.Kind)
         {
             return false;
@@ -4942,14 +9248,46 @@ internal sealed class TypeChecker
                 && Covers(existing.NestedAggregatePattern, current.NestedAggregatePattern);
         }
 
-        return existing.NestedEnumPattern is not null
-            && current.NestedEnumPattern is not null
-            && Covers(existing.NestedEnumPattern, current.NestedEnumPattern);
+        if (existing.Kind == AggregateCoverageFieldKind.NestedEnum)
+        {
+            return existing.NestedEnumPattern is not null
+                && current.NestedEnumPattern is not null
+                && Covers(existing.NestedEnumPattern, current.NestedEnumPattern);
+        }
+
+        return existing.NestedListPattern is not null
+            && current.NestedListPattern is not null
+            && Covers(existing.NestedListPattern, current.NestedListPattern);
     }
 
     private static bool IsMatchAllAggregatePattern(AggregateCoveragePattern pattern)
     {
         return pattern.Fields.All(static field => field.Kind == AggregateCoverageFieldKind.Wildcard);
+    }
+
+    private static bool Covers(ListCoveragePattern existing, ListCoveragePattern current)
+    {
+        if (existing.Length != current.Length
+            || !StarkTypeSymbolsHaveSameIdentity(existing.ListType, current.ListType)
+            || existing.Elements.Count != current.Elements.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < existing.Elements.Count; index++)
+        {
+            if (!Covers(existing.Elements[index], current.Elements[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsMatchAllListPattern(ListCoveragePattern pattern)
+    {
+        return pattern.Elements.All(static element => element.Kind == AggregateCoverageFieldKind.Wildcard);
     }
 
     private static AggregateCoveragePattern CreateMatchAllAggregateCoveragePattern(NamedTypeSymbol namedType)
@@ -4985,11 +9323,20 @@ internal sealed class TypeChecker
             return "default";
         }
 
-        return label.pattern()?.GetText() ?? label.GetText();
+        var patterns = label.pattern();
+        return patterns.Length == 0
+            ? label.GetText()
+            : string.Join(" | ", patterns.Select(static pattern => pattern.GetText()));
     }
 
     private void BindPattern(StarkParser.PatternContext pattern, StarkTypeSymbol switchType, Scope scope)
     {
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, switchType, "switch expression");
+            return;
+        }
+
         if (pattern.literal() is { } literal)
         {
             var literalBinding = EvaluateLiteral(literal);
@@ -5001,6 +9348,12 @@ internal sealed class TypeChecker
                     $"Switch pattern '{literal.GetText()}' expects '{switchType.DisplayName}' but found '{literalType.DisplayName}'.{GetExplicitConversionHint(switchType, literalType)}",
                     literal);
             }
+            return;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            BindListPattern(listPattern, switchType, scope, "switch expression");
             return;
         }
 
@@ -5039,6 +9392,45 @@ internal sealed class TypeChecker
             }
 
             BindAggregatePattern(aggregatePattern, switchType, scope);
+        }
+    }
+
+    private void BindRangePattern(
+        StarkParser.RangePatternContext rangePattern,
+        StarkTypeSymbol targetType,
+        string targetDescription)
+    {
+        if (targetType.Kind != StarkTypeKind.Integer)
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' requires an integer target, but the {targetDescription} has type '{targetType.DisplayName}'.",
+                rangePattern);
+            return;
+        }
+
+        if (!TryGetRangePatternBounds(rangePattern, out var min, out var max))
+        {
+            ReportError("STK3008", $"Range pattern '{rangePattern.GetText()}' could not resolve its integer endpoints.", rangePattern);
+            return;
+        }
+
+        if (min > max)
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' has lower bound {min} greater than upper bound {max}.",
+                rangePattern);
+            return;
+        }
+
+        if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(targetType, out var targetMin, out var targetMax)
+            && (max < targetMin || min > targetMax))
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' cannot match '{targetType.DisplayName}' because it does not overlap the target range [{targetMin}, {targetMax}].",
+                rangePattern);
         }
     }
 
@@ -5114,6 +9506,17 @@ internal sealed class TypeChecker
         if (suffix.Identifier() is not null)
         {
             scope.Declare(new VariableSymbol(suffix.Identifier().GetText(), switchType, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            BindAggregateNamedFieldPatternPayload(
+                aggregatePattern.GetText(),
+                namedType,
+                namedPayload,
+                scope,
+                aggregatePattern);
             return;
         }
 
@@ -5309,6 +9712,18 @@ internal sealed class TypeChecker
 
         if (!TryResolveEnumCaseTarget(enumNamedFieldPattern.enumCaseTarget(), out _, out var enumType, out var enumTypeSymbol, out var variant))
         {
+            if (TryResolveAggregatePropertyPatternTarget(caseName, switchType, out var aggregateType))
+            {
+                RecordAggregatePattern(switchType, enumNamedFieldPattern);
+                BindAggregateNamedFieldPatternPayload(
+                    enumNamedFieldPattern.GetText(),
+                    aggregateType,
+                    enumNamedFieldPattern.namedPatternPayload(),
+                    scope,
+                    enumNamedFieldPattern);
+                return;
+            }
+
             ReportError("STK3003", $"Unknown symbol '{caseName}'.", enumNamedFieldPattern);
             return;
         }
@@ -5349,7 +9764,7 @@ internal sealed class TypeChecker
             return;
         }
 
-        var members = enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember();
+        var members = enumNamedFieldPattern.namedPatternPayload().namedPatternMember();
         var seenMembers = new HashSet<int>();
         var recordedMembers = new List<EnumPatternMemberTypingRecord>(members.Length);
         for (var memberOrdinal = 0; memberOrdinal < members.Length; memberOrdinal++)
@@ -5406,6 +9821,18 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, field.Type, $"enum case payload field '{fieldName}'");
+            return;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            BindListPattern(listPattern, field.Type, scope, $"enum case payload field '{fieldName}'");
+            return;
+        }
+
         if (pattern.VAR() is not null)
         {
             scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
@@ -5453,6 +9880,18 @@ internal sealed class TypeChecker
     {
         if (pattern.DISCARD() is not null)
         {
+            return;
+        }
+
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, field.Type, $"field '{field.Name}'");
+            return;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            BindListPattern(listPattern, field.Type, scope, $"field '{field.Name}'");
             return;
         }
 
@@ -5519,6 +9958,198 @@ internal sealed class TypeChecker
         }
     }
 
+    private void BindAggregateNamedFieldPatternPayload(
+        string patternText,
+        NamedTypeSymbol namedType,
+        StarkParser.NamedPatternPayloadContext namedPayload,
+        Scope scope,
+        ParserRuleContext context)
+    {
+        var members = namedPayload.namedPatternMember();
+        if (members.Length != namedType.OrderedFields.Count)
+        {
+            ReportError(
+                "STK3008",
+                $"Switch aggregate property pattern '{patternText}' expects {namedType.OrderedFields.Count} named field subpattern{Pluralize(namedType.OrderedFields.Count)} for '{namedType.Name}' but found {members.Length}.",
+                context);
+            return;
+        }
+
+        var seenMembers = new HashSet<int>();
+        var recordedMembers = new List<AggregatePatternMemberTypingRecord>(members.Length);
+        foreach (var member in members)
+        {
+            var memberName = member.Identifier().GetText();
+            var fieldIndex = FindOrderedAggregateFieldIndex(namedType, memberName);
+            if (fieldIndex < 0)
+            {
+                ReportError("STK3005", $"Aggregate type '{namedType.Name}' does not contain a field named '{memberName}'.", member);
+                continue;
+            }
+
+            if (!seenMembers.Add(fieldIndex))
+            {
+                ReportError("STK3006", $"Aggregate property pattern member '{memberName}' for '{namedType.Name}' is specified more than once.", member);
+                continue;
+            }
+
+            recordedMembers.Add(new AggregatePatternMemberTypingRecord(
+                memberName,
+                fieldIndex,
+                namedType.OrderedFields[fieldIndex].Type));
+            BindAggregateFieldPattern(member.pattern(), namedType.OrderedFields[fieldIndex], scope);
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            var fieldIndex = FindOrderedAggregateFieldIndex(namedType, field.Name);
+            if (!seenMembers.Contains(fieldIndex))
+            {
+                ReportError("STK3009", $"Aggregate property pattern '{patternText}' requires member '{field.Name}'.", context);
+            }
+        }
+
+        RecordAggregatePattern(StarkTypeSymbols.Named(namedType.Name), context, recordedMembers);
+    }
+
+    private void BindListPattern(
+        StarkParser.ListPatternContext listPattern,
+        StarkTypeSymbol targetType,
+        Scope scope,
+        string targetDescription)
+    {
+        if (!TryGetListPatternElementType(targetType, out var elementType, out var fixedLength))
+        {
+            ReportError(
+                "STK3008",
+                $"List pattern '{listPattern.GetText()}' requires a fixed array, slice, or dynamic storage target, but the {targetDescription} has type '{targetType.DisplayName}'.",
+                listPattern);
+            return;
+        }
+
+        var elementPatterns = listPattern.pattern();
+        if (fixedLength is int requiredLength && elementPatterns.Length != requiredLength)
+        {
+            ReportError(
+                "STK3008",
+                $"List pattern '{listPattern.GetText()}' expects exactly {requiredLength} element subpattern{Pluralize(requiredLength)} for fixed-array target '{targetType.DisplayName}' but found {elementPatterns.Length}.",
+                listPattern);
+            return;
+        }
+
+        for (var index = 0; index < elementPatterns.Length; index++)
+        {
+            BindListElementPattern(elementPatterns[index], elementType, index, scope);
+        }
+    }
+
+    private void BindListElementPattern(
+        StarkParser.PatternContext pattern,
+        StarkTypeSymbol elementType,
+        int elementIndex,
+        Scope scope)
+    {
+        if (pattern.DISCARD() is not null)
+        {
+            return;
+        }
+
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, elementType, $"list element #{elementIndex}");
+            return;
+        }
+
+        if (pattern.listPattern() is { } nestedListPattern)
+        {
+            BindListPattern(nestedListPattern, elementType, scope, $"list element #{elementIndex}");
+            return;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, elementType, scope);
+            return;
+        }
+
+        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+        {
+            BindEnumAggregatePattern(genericEnumAggregatePattern, elementType, scope);
+            return;
+        }
+
+        if (pattern.aggregatePattern() is { } aggregatePattern)
+        {
+            if (TryBindEnumAggregatePattern(aggregatePattern, elementType, scope))
+            {
+                return;
+            }
+
+            if (elementType.Kind != StarkTypeKind.Named || elementType.NamedType is null)
+            {
+                ReportError(
+                    "STK3008",
+                    $"List element #{elementIndex} of '{elementType.DisplayName}' must use a literal, '_', 'var', list, enum, or aggregate subpattern.",
+                    aggregatePattern);
+                return;
+            }
+
+            var patternType = ResolveSimpleType(aggregatePattern.simpleType());
+            if (patternType.Kind != StarkTypeKind.Named
+                || patternType.NamedType is null
+                || !string.Equals(elementType.NamedType, patternType.NamedType, StringComparison.Ordinal))
+            {
+                ReportError(
+                    "STK3008",
+                    $"Nested aggregate switch pattern '{aggregatePattern.GetText()}' must exactly match list element #{elementIndex} of type '{elementType.DisplayName}'.",
+                    aggregatePattern);
+                return;
+            }
+
+            BindAggregatePattern(aggregatePattern, elementType, scope);
+            return;
+        }
+
+        if (pattern.VAR() is not null)
+        {
+            if (!SupportsAggregateFieldSubpattern(elementType))
+            {
+                ReportError(
+                    "STK3008",
+                    $"List element #{elementIndex} of type '{elementType.DisplayName}' cannot currently be captured in a list switch pattern. List element subpatterns currently support only scalar and text-view element types for direct capture.",
+                    pattern);
+                return;
+            }
+
+            scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), elementType, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (pattern.literal() is { } literal)
+        {
+            if (!SupportsAggregateFieldSubpattern(elementType))
+            {
+                ReportError(
+                    "STK3008",
+                    $"List element #{elementIndex} of type '{elementType.DisplayName}' cannot currently be matched with a literal in a list switch pattern. List element subpatterns currently support only scalar and text-view element types for literal matching.",
+                    pattern);
+                return;
+            }
+
+            var literalType = EvaluateLiteral(literal).Type;
+            if (!CanAssignPatternLiteral(elementType, new ExpressionBinding(
+                    literalType,
+                    TextLiteral: literal.GetText(),
+                    TextLiteralKind: literal.StringLiteral() is not null ? TextLiteralKind.String : TextLiteralKind.Character)))
+            {
+                ReportError(
+                    "STK3002",
+                    $"List element pattern '{literal.GetText()}' expects '{elementType.DisplayName}' for element #{elementIndex} but found '{literalType.DisplayName}'.{GetExplicitConversionHint(elementType, literalType)}",
+                    literal);
+            }
+        }
+    }
+
     private void BindNestedAggregateFieldPattern(StarkParser.AggregatePatternContext aggregatePattern, FieldSymbol field, Scope scope)
     {
         if (field.Type.Kind != StarkTypeKind.Named || field.Type.NamedType is null)
@@ -5563,6 +10194,17 @@ internal sealed class TypeChecker
         if (suffix.Identifier() is not null)
         {
             scope.Declare(new VariableSymbol(suffix.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
+            return;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            BindAggregateNamedFieldPatternPayload(
+                aggregatePattern.GetText(),
+                namedType,
+                namedPayload,
+                scope,
+                aggregatePattern);
             return;
         }
 
@@ -5809,7 +10451,8 @@ internal sealed class TypeChecker
                 declarator,
                 scope,
                 usage,
-                validateInitializer);
+                validateInitializer,
+                currentModuleName);
         }
 
         if (typeContext is not null)
@@ -5826,14 +10469,18 @@ internal sealed class TypeChecker
                 ? ResolveLocalDeclarationType(localDeclarationKind, localDeclarationContext, typeContext)
                 : ResolveType(typeContext, currentModuleName: currentModuleName ?? CurrentFunctionModuleName);
             declaredType = ValidateRuntimeValueType(declaredType, typeContext, usage);
-            ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, typeContext, usage);
 
             if (validateInitializer)
             {
                 CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
             }
 
-            if (TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant))
+            if (TryInferCompileTimeConstantStorageType(
+                    declarator.variableInitializer(),
+                    scope,
+                    out var constantType,
+                    out var constant,
+                    currentModuleName))
             {
                 if (constantType.Kind is StarkTypeKind.Integer or StarkTypeKind.Float)
                 {
@@ -5855,7 +10502,7 @@ internal sealed class TypeChecker
             return declaredType;
         }
 
-        var inferredType = InferConstantDeclarationType(declarator, scope, usage);
+        var inferredType = InferConstantDeclarationType(declarator, scope, usage, currentModuleName);
         return ValidateRuntimeValueType(inferredType, declarator, usage);
     }
 
@@ -5864,10 +10511,16 @@ internal sealed class TypeChecker
         StarkParser.ConstantDeclaratorContext declarator,
         Scope scope,
         string usage,
-        bool validateInitializer)
+        bool validateInitializer,
+        string? currentModuleName = null)
     {
         var declaredType = ResolveConstIntegerStorageType(integerTypeToken);
-        if (!TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant)
+        if (!TryInferCompileTimeConstantStorageType(
+                declarator.variableInitializer(),
+                scope,
+                out var constantType,
+                out var constant,
+                currentModuleName)
             || constantType.Kind != StarkTypeKind.Integer)
         {
             if (validateInitializer)
@@ -6000,10 +10653,11 @@ internal sealed class TypeChecker
     private StarkTypeSymbol InferConstantDeclarationType(
         StarkParser.ConstantDeclaratorContext declarator,
         Scope scope,
-        string usage)
+        string usage,
+        string? currentModuleName = null)
     {
         var initializer = declarator.variableInitializer();
-        if (TryInferCompileTimeConstantStorageType(initializer, out var constantType))
+        if (TryInferCompileTimeConstantStorageType(initializer, scope, out var constantType, currentModuleName))
         {
             return constantType;
         }
@@ -6020,23 +10674,26 @@ internal sealed class TypeChecker
         return StarkTypeSymbols.Error;
     }
 
-    private static bool TryInferCompileTimeConstantStorageType(
+    private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
-        out StarkTypeSymbol type)
+        Scope scope,
+        out StarkTypeSymbol type,
+        string? currentModuleName = null)
     {
-        return TryInferCompileTimeConstantStorageType(initializer, out type, out _);
+        return TryInferCompileTimeConstantStorageType(initializer, scope, out type, out _, currentModuleName);
     }
 
-    private static bool TryInferCompileTimeConstantStorageType(
+    private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
+        Scope scope,
         out StarkTypeSymbol type,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         type = StarkTypeSymbols.Error;
         constant = default;
 
-        if (initializer.expression() is not { } expression
-            || !CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant))
+        if (!TryEvaluateCompileTimeConstant(initializer, scope, targetType: null, out constant, currentModuleName))
         {
             return false;
         }
@@ -6047,6 +10704,9 @@ internal sealed class TypeChecker
             CompileTimeConstantKind.Float => constant.Type,
             CompileTimeConstantKind.Bool => StarkTypeSymbols.Bool,
             CompileTimeConstantKind.Text => constant.Type,
+            CompileTimeConstantKind.FixedArray => constant.Type,
+            CompileTimeConstantKind.NamedAggregate => constant.Type,
+            CompileTimeConstantKind.EnumAggregate => constant.Type,
             _ => StarkTypeSymbols.Error
         };
 
@@ -6057,37 +10717,688 @@ internal sealed class TypeChecker
         StarkParser.VariableInitializerContext initializer,
         Scope scope,
         StarkTypeSymbol? targetType,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         constant = default;
-        if (initializer.expression() is not { } expression
-            || !CompileTimeExpressionEvaluator.TryEvaluate(
-                expression,
-                out constant,
-                CreateCompileTimeEvaluationServices(scope)))
+        if (initializer.expression() is { } expression)
+        {
+            var evaluationModuleName = currentModuleName ?? CurrentFunctionModuleName;
+            var resolver = (TryResolveCompileTimeIdentifier)((string name, out CompileTimeConstant value) =>
+                TryResolveCompileTimeConstant(scope, name, out value, evaluationModuleName));
+            var evaluated = IsComptimeBlockExpression(expression, out var block)
+                ? CompileTimeEvaluator.TryEvaluateBlock(
+                    block,
+                    evaluationModuleName,
+                    targetType,
+                    out constant,
+                    resolver)
+                : CompileTimeEvaluator.TryEvaluateExpression(
+                    expression,
+                    evaluationModuleName,
+                    state: null,
+                    activeCalls: null,
+                    out constant,
+                    resolver);
+            if (!evaluated)
+            {
+                return false;
+            }
+
+            if (targetType is not null
+                && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+            {
+                constant = coerced;
+            }
+
+            return true;
+        }
+
+        if (targetType is null)
         {
             return false;
         }
 
-        if (targetType is not null
-            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+        if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            constant = coerced;
+            return TryEvaluateCompileTimeArrayInitializer(arrayInitializer, scope, targetType, out constant);
         }
 
+        return initializer.objectInitializer() is { } objectInitializer
+            && TryEvaluateCompileTimeObjectInitializer(objectInitializer, scope, targetType, out constant);
+    }
+
+    private bool TryEvaluateCompileTimeArrayInitializer(
+        StarkParser.ArrayInitializerContext arrayInitializer,
+        Scope scope,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || arrayInitializer.variableInitializer().Length > fixedLength)
+        {
+            return false;
+        }
+
+        var elements = new CompileTimeConstant[fixedLength];
+        var initializedCount = arrayInitializer.variableInitializer().Length;
+        for (var index = 0; index < initializedCount; index++)
+        {
+            if (!TryEvaluateCompileTimeConstant(
+                    arrayInitializer.variableInitializer(index),
+                    scope,
+                    elementType,
+                    out var element)
+                || !CompileTimeExpressionEvaluator.TryCoerce(element, elementType, out elements[index]))
+            {
+                return false;
+            }
+        }
+
+        for (var index = initializedCount; index < fixedLength; index++)
+        {
+            if (!TryCreateZeroCompileTimeConstant(elementType, out elements[index]))
+            {
+                return false;
+            }
+        }
+
+        constant = CompileTimeConstant.FixedArray(elements, targetType);
         return true;
+    }
+
+    private bool TryEvaluateCompileTimeObjectInitializer(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        Scope scope,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { } namedType
+            || !TryCreateZeroCompileTimeConstant(targetType, out var current))
+        {
+            return false;
+        }
+
+        var initializedFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var initializer in objectInitializer.memberInitializer())
+        {
+            var fieldName = initializer.Identifier().GetText();
+            if (!initializedFields.Add(fieldName)
+                || !namedType.TryGetField(fieldName, out var field, out var fieldIndex))
+            {
+                return false;
+            }
+
+            var fieldType = field.Type;
+            if (!TryEvaluateCompileTimeConstant(
+                    initializer.variableInitializer(),
+                    scope,
+                    fieldType,
+                    out var member)
+                || !CompileTimeExpressionEvaluator.TryCoerce(member, fieldType, out var coercedMember)
+                || !TryWithCompileTimeNamedAggregateField(current, fieldIndex, coercedMember, out current))
+            {
+                return false;
+            }
+        }
+
+        constant = current;
+        return true;
+    }
+
+    private bool TryCreateZeroCompileTimeConstant(
+        StarkTypeSymbol type,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        switch (type.Kind)
+        {
+            case StarkTypeKind.Integer:
+                constant = CompileTimeConstant.Integer(BigInteger.Zero, type);
+                return true;
+            case StarkTypeKind.Float:
+                constant = CompileTimeConstant.Float(0, type);
+                return true;
+            case StarkTypeKind.Bool:
+                constant = CompileTimeConstant.Bool(false);
+                return true;
+            case StarkTypeKind.RawPointer:
+                constant = CompileTimeConstant.Null(type);
+                return true;
+            case StarkTypeKind.FixedArray when type.ElementType is { } elementType && type.FixedLength is int fixedLength:
+                var elements = new CompileTimeConstant[fixedLength];
+                for (var index = 0; index < fixedLength; index++)
+                {
+                    if (!TryCreateZeroCompileTimeConstant(elementType, out elements[index]))
+                    {
+                        return false;
+                    }
+                }
+
+                constant = CompileTimeConstant.FixedArray(elements, type);
+                return true;
+            case StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { Kind: DeclarationKind.Enum }:
+                return false;
+            case StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { } namedType:
+                var fieldValues = new CompileTimeConstant[namedType.OrderedFields.Count];
+                for (var index = 0; index < namedType.OrderedFields.Count; index++)
+                {
+                    if (!TryCreateZeroCompileTimeConstant(namedType.OrderedFields[index].Type, out fieldValues[index]))
+                    {
+                        return false;
+                    }
+                }
+
+                constant = CompileTimeConstant.NamedAggregate(fieldValues, type);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryWithCompileTimeNamedAggregateField(
+        CompileTimeConstant aggregate,
+        int fieldIndex,
+        CompileTimeConstant fieldValue,
+        out CompileTimeConstant updated)
+    {
+        updated = default;
+        if (aggregate.Kind != CompileTimeConstantKind.NamedAggregate
+            || fieldIndex < 0
+            || fieldIndex >= aggregate.Elements.Count)
+        {
+            return false;
+        }
+
+        var elements = aggregate.Elements.ToArray();
+        elements[fieldIndex] = fieldValue;
+        updated = CompileTimeConstant.NamedAggregate(elements, aggregate.Type);
+        return true;
+    }
+
+    private static bool IsComptimeBlockExpression(
+        StarkParser.ExpressionContext expression,
+        [NotNullWhen(true)] out StarkParser.BlockContext? block)
+    {
+        block = null;
+        var assignment = expression.assignmentExpression();
+        if (assignment.conditionalExpression()?.logicalOrExpression().logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        if (assignment.assignmentOperator() is not null
+            || assignment.INIT() is not null
+            || assignment.unaryExpression() is not null
+            || assignment.assignmentExpression() is not null)
+        {
+            return false;
+        }
+
+        var postfix = TryGetSimplePostfixExpression(expression);
+        var primary = postfix?.postfixPart().Length == 0
+            ? postfix.primaryExpression()
+            : null;
+        block = primary?.COMPTIME() is not null ? primary.block() : null;
+        return block is not null;
+    }
+
+    private CompileTimeFunctionEvaluator CompileTimeEvaluator =>
+        _compileTimeFunctionEvaluator ??= new CompileTimeFunctionEvaluator(
+            TryGetFunctionOverloads,
+            TryResolveFunctionSignature,
+            TryGetFunctionDeclaration,
+            (StarkParser.Type_Context typeContext, string moduleName, ISet<string>? genericParameters, IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters) =>
+                ResolveType(typeContext, genericParameters, moduleName, comptimeGenericParameters),
+            (StarkParser.ConversionTypeContext typeContext, string moduleName, ISet<string>? genericParameters, IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters) =>
+                _typeResolver!.ResolveConversionType(typeContext, genericParameters, moduleName, comptimeGenericParameters),
+            tryResolveLocalDeclarationType: null,
+            tryResolveNamedType: TryResolveCompileTimeNamedType,
+            tryResolveTraitConformance: TryResolveCompileTimeTraitConformance,
+            resolveMethodSignatures: ResolveCompileTimeMethodSignatures,
+            tryResolveObjectCreation: TryResolveCompileTimeObjectCreation,
+            tryResolveEnumConstructor: TryResolveCompileTimeEnumConstructor,
+            tryResolveEnumCall: TryResolveCompileTimeEnumCall,
+            tryResolveEnumValue: TryResolveCompileTimeEnumValue,
+            tryEvaluateTypeLayout: TryEvaluateCompileTimeTypeLayout,
+            tryResolveConcreteLayout: TryResolveCompileTimeConcreteLayout,
+            maximumLoopIterations: _context.Options.MaximumCompileTimeLoopIterations);
+
+    private bool TryResolveCompileTimeNamedType(
+        StarkTypeSymbol type,
+        out NamedTypeSymbol namedType)
+    {
+        if (!TryResolveCompileTimeNamedTypeInModule(type, CurrentFunctionModuleName, out namedType))
+        {
+            return false;
+        }
+
+        if (namedType is not null
+            && namedType.ImplementedTraits.Count == 0
+            && TryResolveSourceImplementedTraitNames(type, namedType, out var implementedTraits))
+        {
+            namedType = namedType with { ImplementedTraitNames = implementedTraits };
+        }
+
+        return namedType is not null;
+    }
+
+    private bool TryResolveSourceImplementedTraitNames(
+        StarkTypeSymbol type,
+        NamedTypeSymbol namedType,
+        out IReadOnlyList<string> implementedTraits)
+    {
+        implementedTraits = [];
+        if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+        {
+            return false;
+        }
+
+        var namedTypeName = StarkTypeSymbols.GetGenericBaseName(namedType.Name);
+        var sourceTypeName = type.NamedType is { } typeName
+            ? StarkTypeSymbols.GetGenericBaseName(typeName)
+            : namedTypeName;
+
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                StarkParser.BaseTraitListContext? baseTraitList;
+                StarkParser.TypeParameterListContext? typeParameterList;
+                string localName;
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    localName = structDeclaration.Identifier().GetText();
+                    baseTraitList = structDeclaration.baseTraitList();
+                    typeParameterList = structDeclaration.typeParameterList();
+                }
+                else if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    localName = recordDeclaration.Identifier().GetText();
+                    baseTraitList = recordDeclaration.baseTraitList();
+                    typeParameterList = recordDeclaration.typeParameterList();
+                }
+                else
+                {
+                    continue;
+                }
+
+                var qualifiedName = QualifyName(module, localName);
+                if (!string.Equals(namedTypeName, qualifiedName, StringComparison.Ordinal)
+                    && !string.Equals(namedTypeName, localName, StringComparison.Ordinal)
+                    && !string.Equals(sourceTypeName, qualifiedName, StringComparison.Ordinal)
+                    && !string.Equals(sourceTypeName, localName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var genericParameters = GetGenericParameterNames(typeParameterList);
+                if (ResolveBaseTraits(baseTraitList, genericParameters, module.SyntaxModel.ModuleName).Names is { Count: > 0 } traits)
+                {
+                    implementedTraits = traits;
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryResolveCompileTimeTraitConformance(
+        StarkTypeSymbol targetType,
+        StarkTypeSymbol traitType,
+        string moduleName,
+        out bool implements)
+    {
+        implements = false;
+        if (!TryResolveCompileTimeNamedTypeInModule(traitType, moduleName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait)
+        {
+            return false;
+        }
+
+        if (!TryResolveCompileTimeNamedTypeInModule(targetType, moduleName, out var targetSymbol))
+        {
+            implements = false;
+            return true;
+        }
+
+        if (CompileTimeTraitNameMatches(targetSymbol.ImplementedTraits, traitType, traitSymbol))
+        {
+            implements = true;
+            return true;
+        }
+
+        if (TryResolveSourceImplementedTraitNames(targetType, targetSymbol, out var sourceTraits))
+        {
+            implements = CompileTimeTraitNameMatches(sourceTraits, traitType, traitSymbol);
+            return true;
+        }
+
+        implements = false;
+        return true;
+    }
+
+    private IReadOnlyList<TypedFunctionSignature> ResolveCompileTimeMethodSignatures(
+        StarkTypeSymbol ownerType,
+        string moduleName)
+    {
+        var cacheKey = $"{moduleName}|{ownerType.DisplayName}";
+        if (_compileTimeMethodSignatureCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        if (!TryResolveCompileTimeNamedTypeInModule(ownerType, moduleName, out var ownerSymbol))
+        {
+            _compileTimeMethodSignatureCache[cacheKey] = [];
+            return [];
+        }
+
+        var methods = CompileTimeStructuralFacts.GetOrderedMethodSignatures(
+            ownerType,
+            ownerSymbol,
+            _functionOverloads.Values.SelectMany(static overloads => overloads));
+        _compileTimeMethodSignatureCache[cacheKey] = methods;
+        return methods;
+    }
+
+    private bool TryResolveCompileTimeNamedTypeInModule(
+        StarkTypeSymbol type,
+        string moduleName,
+        out NamedTypeSymbol namedType)
+    {
+        namedType = null!;
+        if (type.Kind != StarkTypeKind.Named || type.NamedType is not { } typeName)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(typeName);
+        if (_namedTypes.TryGetValue(baseName, out namedType!))
+        {
+            return true;
+        }
+
+        if (!baseName.Contains('.', StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(moduleName)
+            && _namedTypes.TryGetValue($"{moduleName}.{baseName}", out namedType!))
+        {
+            return true;
+        }
+
+        if (!baseName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, baseName)
+                .Where(_namedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                namedType = _namedTypes[importedMatches[0]];
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool CompileTimeTraitNameMatches(
+        IReadOnlyList<string> implementedTraits,
+        StarkTypeSymbol traitType,
+        NamedTypeSymbol traitSymbol)
+    {
+        var sourceName = traitType.NamedType;
+        foreach (var implementedTrait in implementedTraits)
+        {
+            if (string.Equals(implementedTrait, traitSymbol.Name, StringComparison.Ordinal)
+                || (sourceName is not null && string.Equals(implementedTrait, sourceName, StringComparison.Ordinal))
+                || string.Equals(LastNameSegment(implementedTrait), LastNameSegment(traitSymbol.Name), StringComparison.Ordinal)
+                || (sourceName is not null
+                    && string.Equals(LastNameSegment(implementedTrait), LastNameSegment(sourceName), StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string LastNameSegment(string name)
+    {
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        var separator = baseName.LastIndexOf('.');
+        return separator < 0 ? baseName : baseName[(separator + 1)..];
+    }
+
+    private bool TryResolveCompileTimeConcreteLayout(
+        StarkTypeSymbol targetType,
+        out ConcreteTypeLayout layout)
+    {
+        layout = null!;
+        if (targetType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        _compileTimeEnumLayouts ??= EnumLayoutBuilder.Build(_syntaxModel.ModuleName, _namedTypes).Layouts;
+        layout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(targetType, _namedTypes, _compileTimeEnumLayouts)!;
+        return layout is not null;
+    }
+
+    private bool TryResolveCompileTimeObjectCreation(
+        StarkParser.ObjectCreationExpressionContext expression,
+        out CompileTimeObjectCreation objectCreation)
+    {
+        var location = Location(expression);
+        var record = _objectCreations.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is null)
+        {
+            objectCreation = null!;
+            return false;
+        }
+
+        objectCreation = new CompileTimeObjectCreation(
+            record.CreatedType,
+            record.Constructor,
+            record.Members);
+        return true;
+    }
+
+    private bool TryResolveCompileTimeEnumConstructor(
+        StarkParser.EnumConstructorExpressionContext expression,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(expression);
+        var record = _enumConstructors.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName,
+                record.Members);
+            return true;
+        }
+
+        if (TryResolveEnumCaseTarget(
+                expression.enumCaseTarget(),
+                out _,
+                out _,
+                out var enumTypeSymbol,
+                out var variant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryResolveCompileTimeEnumCall(
+        StarkParser.PostfixExpressionContext expression,
+        string caseName,
+        StarkParser.ArgumentListContext arguments,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(arguments);
+        var record = _enumCalls.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName);
+            return true;
+        }
+
+        if (expression.primaryExpression().genericEnumCaseReference() is { } genericEnumCaseReference
+            && TryResolveEnumCaseReference(genericEnumCaseReference, out _, out var genericEnumTypeSymbol, out var genericVariant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(genericEnumTypeSymbol, genericVariant.Name);
+            return true;
+        }
+
+        if (TryResolveEnumCaseReference(caseName, out _, out var enumTypeSymbol, out var variant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryResolveCompileTimeEnumValue(
+        ParserRuleContext expression,
+        string caseName,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(expression);
+        var record = _enumValues.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName);
+            return true;
+        }
+
+        if (expression is StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference
+            && TryResolveEnumCaseReference(genericEnumCaseReference, out _, out var genericEnumTypeSymbol, out var genericVariant)
+            && genericVariant.IsUnit)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(genericEnumTypeSymbol, genericVariant.Name);
+            return true;
+        }
+
+        if (TryResolveEnumCaseReference(caseName, out _, out var enumTypeSymbol, out var variant)
+            && variant.IsUnit)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryEvaluateCompileTimeTypeLayout(
+        BoundLayoutQueryKind kind,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        _compileTimeEnumLayouts ??= EnumLayoutBuilder.Build(_syntaxModel.ModuleName, _namedTypes).Layouts;
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(targetType, _namedTypes, _compileTimeEnumLayouts) is not { } layout)
+        {
+            return false;
+        }
+
+        var resultType = TypeLayoutQueryFacts.GetResultType(kind);
+        constant = CompileTimeConstant.Integer(
+            TypeLayoutQueryFacts.GetResultValue(kind, layout),
+            resultType);
+        return true;
+    }
+
+    private static bool SourceLocationStartsAt(SourceLocation left, SourceLocation right)
+    {
+        return left.Line == right.Line
+            && left.Column == right.Column
+            && (left.FilePath is null
+                || right.FilePath is null
+                || string.Equals(left.FilePath, right.FilePath, StringComparison.Ordinal));
+    }
+
+    private bool TryGetFunctionDeclaration(TypedFunctionSignature signature, out DeclaredFunctionSyntax declaration)
+    {
+        if (_functionSyntaxByQualifiedName.TryGetValue(signature.Name, out declaration!))
+        {
+            return true;
+        }
+
+        if (signature.TemplateName is not null
+            && _functionSyntaxByQualifiedName.TryGetValue(signature.TemplateName, out declaration!))
+        {
+            return true;
+        }
+
+        declaration = null!;
+        return false;
+    }
+
+    private bool TryResolveFunctionSignature(
+        string name,
+        string currentModuleName,
+        out TypedFunctionSignature signature)
+    {
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && _functions.TryGetValue($"{currentModuleName}.{name}", out signature!))
+        {
+            return true;
+        }
+
+        if (_functions.TryGetValue(name, out signature!))
+        {
+            return true;
+        }
+
+        if (TryGetFunctionOverloads(name, currentModuleName, out var overloads) && overloads.Count == 1)
+        {
+            signature = overloads[0];
+            return true;
+        }
+
+        signature = null!;
+        return false;
     }
 
     private bool TryBuildTypedConstantInitializer(
         StarkParser.VariableInitializerContext initializer,
         StarkTypeSymbol targetType,
         Scope scope,
-        out TypedConstantInitializer typedInitializer)
+        out TypedConstantInitializer typedInitializer,
+        string? currentModuleName = null)
     {
         typedInitializer = default!;
 
         if (initializer.expression() is not null
-            && TryEvaluateCompileTimeConstant(initializer, scope, targetType, out var constant)
+            && TryEvaluateCompileTimeConstant(initializer, scope, targetType, out var constant, currentModuleName)
             && TryBuildTypedConstantInitializer(constant, targetType, out typedInitializer))
         {
             return true;
@@ -6109,7 +11420,8 @@ internal sealed class TypeChecker
                     arrayInitializer.variableInitializer(index),
                     elementType,
                     scope,
-                    out var elementInitializer))
+                    out var elementInitializer,
+                    currentModuleName))
             {
                 typedInitializer = default!;
                 return false;
@@ -6125,12 +11437,12 @@ internal sealed class TypeChecker
         return true;
     }
 
-    private static bool TryBuildTypedConstantInitializer(
+    private bool TryBuildTypedConstantInitializer(
         CompileTimeConstant constant,
         StarkTypeSymbol targetType,
         out TypedConstantInitializer typedInitializer)
     {
-        typedInitializer = constant.Kind switch
+        var candidate = constant.Kind switch
         {
             CompileTimeConstantKind.Integer => new TypedConstantInitializer(
                 TypedConstantInitializerKind.Integer,
@@ -6151,17 +11463,222 @@ internal sealed class TypeChecker
             CompileTimeConstantKind.Null => new TypedConstantInitializer(
                 TypedConstantInitializerKind.Null,
                 targetType),
+            CompileTimeConstantKind.FixedArray => TryBuildTypedFixedArrayConstantInitializer(
+                constant,
+                targetType),
+            CompileTimeConstantKind.NamedAggregate => TryBuildTypedNamedAggregateConstantInitializer(
+                constant,
+                targetType),
+            CompileTimeConstantKind.EnumAggregate => TryBuildTypedEnumAggregateConstantInitializer(
+                constant,
+                targetType),
             _ => default!
         };
 
-        return typedInitializer is not null;
+        typedInitializer = candidate!;
+        return candidate is not null;
+    }
+
+    private TypedConstantInitializer? TryBuildTypedFixedArrayConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || constant.Elements.Count != fixedLength)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[fixedLength];
+        for (var index = 0; index < fixedLength; index++)
+        {
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], elementType, out var elementInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = elementInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.FixedArray,
+            targetType,
+            Elements: elements);
+    }
+
+    private TypedConstantInitializer? TryBuildTypedNamedAggregateConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { } namedType
+            || constant.Elements.Count != namedType.OrderedFields.Count)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[namedType.OrderedFields.Count];
+        for (var index = 0; index < namedType.OrderedFields.Count; index++)
+        {
+            var fieldType = namedType.OrderedFields[index].Type;
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], fieldType, out var fieldInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = fieldInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.NamedAggregate,
+            targetType,
+            Elements: elements);
+    }
+
+    private TypedConstantInitializer? TryBuildTypedEnumAggregateConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { Kind: DeclarationKind.Enum } namedType
+            || constant.VariantName is not { } variantName
+            || !namedType.TryGetVariant(variantName, out var variant, out _)
+            || constant.Elements.Count != variant.Fields.Count)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[variant.Fields.Count];
+        for (var index = 0; index < variant.Fields.Count; index++)
+        {
+            var fieldType = variant.Fields[index].Type;
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], fieldType, out var fieldInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = fieldInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.EnumAggregate,
+            targetType,
+            VariantName: variantName,
+            Elements: elements);
     }
 
     private CompileTimeEvaluationServices CreateCompileTimeEvaluationServices(Scope scope)
     {
         return new CompileTimeEvaluationServices(
             TryResolveIdentifier: (string name, out CompileTimeConstant constant) =>
-                TryResolveCompileTimeConstant(scope, name, out constant));
+                TryResolveCompileTimeConstant(scope, name, out constant, CurrentFunctionModuleName),
+            TryEvaluatePostfixExpression: (StarkParser.PostfixExpressionContext expression, CompileTimeEvaluationServices _, out CompileTimeConstant constant) =>
+                TryResolveCompileTimePostfixConstant(scope, expression, out constant, CurrentFunctionModuleName),
+            TryEvaluateTypeLayoutExpression: (StarkParser.PrimaryExpressionContext expression, out CompileTimeConstant constant) =>
+            {
+                var kind = expression.ALIGNOF() is not null
+                    ? BoundLayoutQueryKind.AlignOf
+                    : BoundLayoutQueryKind.SizeOf;
+                var targetType = ResolveType(
+                    expression.type_(),
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters);
+                return TryEvaluateCompileTimeTypeLayout(kind, targetType, out constant);
+            },
+            TryResolveConversionType: (StarkParser.ConversionTypeContext type, out StarkTypeSymbol resolved) =>
+            {
+                resolved = _typeResolver!.ResolveConversionType(
+                    type,
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters);
+                return resolved.Kind != StarkTypeKind.Error;
+            });
+    }
+
+    private bool TryResolveCompileTimePostfixConstant(
+        Scope scope,
+        StarkParser.PostfixExpressionContext expression,
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
+    {
+        constant = default;
+
+        var parts = new List<string>(expression.postfixPart().Length + 1);
+        CompileTimeConstant? current = null;
+        if (expression.primaryExpression().Identifier()?.GetText() is { } identifier)
+        {
+            parts.Add(identifier);
+        }
+        else if (expression.primaryExpression().qualifiedName()?.GetText() is { } qualifiedName)
+        {
+            parts.Add(qualifiedName);
+        }
+        else
+        {
+            return false;
+        }
+
+        foreach (var postfixPart in expression.postfixPart())
+        {
+            if (postfixPart.DOT() is null
+                || postfixPart.Identifier()?.GetText() is not { } memberName)
+            {
+                return false;
+            }
+
+            if (current is not null)
+            {
+                if (!TryGetCompileTimeNamedAggregateField(current.Value, memberName, out var fieldValue))
+                {
+                    return false;
+                }
+
+                current = fieldValue;
+                parts.Clear();
+                continue;
+            }
+
+            if (TryResolveCompileTimeConstant(scope, string.Join(".", parts), out var resolved, currentModuleName)
+                && TryGetCompileTimeNamedAggregateField(resolved, memberName, out var projected))
+            {
+                current = projected;
+                parts.Clear();
+                continue;
+            }
+
+            parts.Add(memberName);
+        }
+
+        if (current is not null)
+        {
+            constant = current.Value;
+            return true;
+        }
+
+        return TryResolveCompileTimeConstant(scope, string.Join(".", parts), out constant, currentModuleName);
+    }
+
+    private bool TryGetCompileTimeNamedAggregateField(
+        CompileTimeConstant aggregate,
+        string fieldName,
+        out CompileTimeConstant fieldValue)
+    {
+        fieldValue = default;
+        if (aggregate.Kind != CompileTimeConstantKind.NamedAggregate
+            || ResolveNamedTypeSymbol(aggregate.Type) is not { } namedType
+            || !namedType.TryGetField(fieldName, out _, out var fieldIndex)
+            || fieldIndex < 0
+            || fieldIndex >= aggregate.Elements.Count)
+        {
+            return false;
+        }
+
+        fieldValue = aggregate.Elements[fieldIndex];
+        return true;
     }
 
     private bool TryEvaluateCompileTimeIntegerExpression(
@@ -6190,21 +11707,79 @@ internal sealed class TypeChecker
         return true;
     }
 
-    private static bool TryResolveCompileTimeConstant(
+    private bool TryResolveCompileTimeConstant(
         Scope scope,
         string name,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         if (scope.TryLookup(name, out var symbol)
-            && symbol.BindingKind is null
+            && symbol.BindingKind is null or GlobalBindingKind.Const
             && symbol.ConstantValue is { } value)
         {
             constant = value;
             return true;
         }
 
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(currentModuleName))
+        {
+            if (scope.TryLookup($"{currentModuleName}.{name}", out symbol!)
+                && symbol.BindingKind is null or GlobalBindingKind.Const
+                && symbol.ConstantValue is { } moduleValue)
+            {
+                constant = moduleValue;
+                return true;
+            }
+
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, name))
+            {
+                if (scope.TryLookup(candidateName, out symbol!)
+                    && symbol.BindingKind is null or GlobalBindingKind.Const
+                    && symbol.ConstantValue is { } importedValue
+                    && IsGlobalCandidateAccessibleFrom(currentModuleName, candidateName))
+                {
+                    constant = importedValue;
+                    return true;
+                }
+            }
+        }
+
         constant = default;
         return false;
+    }
+
+    private bool TryResolveOpenComptimeGenericConstant(
+        string name,
+        out CompileTimeConstant constant)
+    {
+        if (_currentFunctionComptimeGenericParameters is { Count: > 0 } parameters
+            && parameters.TryGetValue(name, out var parameter)
+            && parameter.Type.Kind == StarkTypeKind.Integer)
+        {
+            constant = CompileTimeConstant.SymbolicInteger(parameter.Type);
+            return true;
+        }
+
+        constant = default;
+        return false;
+    }
+
+    private CompileTimeFunctionEvaluationState? CreateOpenComptimeGenericEvaluationState()
+    {
+        if (_currentFunctionGenericParameters is not { Count: > 0 }
+            && _currentFunctionComptimeGenericParameters is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var state = new CompileTimeFunctionEvaluationState();
+        state.SetGenericContext(
+            _currentFunctionGenericParameters,
+            typeSubstitution: null,
+            _currentFunctionComptimeGenericParameters,
+            comptimeValueSubstitution: null);
+        return state;
     }
 
     private static StarkTypeSymbol InferConstIntegerStorageType(BigInteger value)
@@ -6514,12 +12089,14 @@ internal sealed class TypeChecker
 
     private void RecordAggregatePattern(
         StarkTypeSymbol type,
-        ParserRuleContext context)
+        ParserRuleContext context,
+        IReadOnlyList<AggregatePatternMemberTypingRecord>? members = null)
     {
         _aggregatePatterns.Add(new AggregatePatternTypingRecord(
             type,
             Location(context),
-            _currentFunctionName));
+            _currentFunctionName,
+            members));
     }
 
     private bool TryGetPublishedTemplateEnumPattern(
@@ -6727,7 +12304,10 @@ internal sealed class TypeChecker
             MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
                 ? $"{memoryRootKey}.{publishedFieldAccess.FieldName}"
                 : null,
-            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage,
+            IsMisalignedFieldProjection: target.IsMisalignedFieldProjection
+                || target.NamedType is { } targetNamedType
+                    && IsMisalignedLayoutFieldProjection(targetNamedType, publishedFieldAccess.FieldName));
         return true;
     }
 
@@ -7776,9 +13356,32 @@ internal sealed class TypeChecker
                 expression);
         }
 
+        var bothBranchesConst = HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse);
+        if (bothBranchesConst
+            && resultType.Kind != StarkTypeKind.Error
+            && CanRuntimeDisjointTest(resultType))
+        {
+            // A conditional whose branches are both read-only const
+            // values (e.g. string literals) yields a read-only const view. Such a
+            // value is static read-only data: it can never be the WRITER in an
+            // aliasing hazard, and it lives in distinct const storage that cannot
+            // alias a mutable argument — so it is disjoint-safe exactly like a direct
+            // string-literal argument (which the disjoint checker already exempts).
+            // Without an independent-storage memory root here, the conditional loses
+            // that provenance and a flag/artifact selection such as
+            // `cond ? "llvm" : "llvm-normalized"` passed alongside sibling text params
+            // spuriously trips STK3030's default non-overlap. The root key is
+            // expression-derived so two distinct conditionals never collide.
+            return new ExpressionBinding(
+                resultType,
+                HasConstProvenance: true,
+                MemoryRootKey: $"const-conditional:{NormalizeExpressionText(expression.GetText())}",
+                MemoryRootIsIndependentStorage: true);
+        }
+
         return new ExpressionBinding(
             resultType,
-            HasConstProvenance: HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse));
+            HasConstProvenance: bothBranchesConst);
     }
 
     private ExpressionBinding EvaluateLogicalOrExpression(
@@ -8033,7 +13636,13 @@ internal sealed class TypeChecker
                     conversionType,
                     _currentFunctionGenericParameters,
                     _currentFunctionModuleName);
-            if (IsRawPointerConversion(targetType, convertedOperand.Type))
+            if (IsRawPointerFunctionPointerConversion(targetType, convertedOperand.Type))
+            {
+                RequireUnsafeContext(
+                    $"Function pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
+                    expression);
+            }
+            else if (IsRawPointerConversion(targetType, convertedOperand.Type))
             {
                 RequireUnsafeContext(
                     $"Raw pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
@@ -8104,6 +13713,16 @@ internal sealed class TypeChecker
             return MakeInitDestinationBinding(initOperand, expression);
         }
 
+        if (expression.TRY() is not null)
+        {
+            return EvaluateTryExpression(expression, scope, expectedType);
+        }
+
+        if (expression.COMPTIME() is not null)
+        {
+            return EvaluateComptimeExpression(expression, scope, expectedType);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
@@ -8117,6 +13736,374 @@ internal sealed class TypeChecker
             "*" => EnsureDereferenceUnary(operand, expression),
             _ => new ExpressionBinding(StarkTypeSymbols.Error)
         };
+    }
+
+    private ExpressionBinding EvaluateComptimeExpression(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var previousAllowCompileTimeOnlyStructuralFactCalls = _allowCompileTimeOnlyStructuralFactCalls;
+        _allowCompileTimeOnlyStructuralFactCalls = true;
+        ExpressionBinding operandBinding;
+        try
+        {
+            operandBinding = EvaluateUnaryExpression(
+                expression.unaryExpression(),
+                scope,
+                allowFunctionReference: false,
+                expectedType);
+        }
+        finally
+        {
+            _allowCompileTimeOnlyStructuralFactCalls = previousAllowCompileTimeOnlyStructuralFactCalls;
+        }
+
+        if (operandBinding.Type.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (!CompileTimeEvaluator.TryEvaluateExpressionNode(
+                expression.unaryExpression(),
+                CurrentFunctionModuleName,
+                state: CreateOpenComptimeGenericEvaluationState(),
+                activeCalls: null,
+                out var constant,
+                (string name, out CompileTimeConstant value) =>
+                    TryResolveCompileTimeConstant(scope, name, out value)
+                    || TryResolveOpenComptimeGenericConstant(name, out value)))
+        {
+            ReportError(
+                "STK3053",
+                BuildComptimeEvaluationFailureMessage(
+                    "`comptime` expression must evaluate during compilation. Use literals, const values, comptime generic values, or finite/law calls whose bodies stay within the supported compile-time subset."),
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (expectedType is not null
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+        {
+            constant = coerced;
+        }
+
+        return new ExpressionBinding(
+            constant.Type,
+            NamedType: ResolveNamedTypeSymbol(constant.Type),
+            HasConstProvenance: true);
+    }
+
+    private ExpressionBinding EvaluateTryExpression(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        // Position rule (doc 11 §4.6): `try` may only appear where its early return sits
+        // at a statement boundary — the whole initializer of a binding, the whole right
+        // side of an assignment, the operand of `return`, or a bare expression statement.
+        // That keeps the divert greppable and makes the drop set on the error path
+        // identical to a normal `return`.
+        if (!IsPropagationBoundaryPosition(expression))
+        {
+            ReportError(
+                "STK3037",
+                "`try` may only appear as the whole initializer of a binding, the whole right side of an "
+                    + "assignment, the operand of `return`, or a bare expression statement. Bind the fallible "
+                    + "call to a local first, then `try` that local.",
+                expression);
+        }
+
+        var operandBinding = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
+        var operandType = operandBinding.Type;
+        if (operandType.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        // Imported (package-image) signatures hand back generic instantiations that this
+        // compilation may not have monomorphized yet — e.g. `try Pkg.Fetch(x)` where Fetch
+        // returns Pkg.FetchOutcome<i32> and no consumer type annotation names that
+        // instantiation. Ensure the concrete enum exists (threading the imported template's
+        // [Ok]/[Err] roles and `from` funnels) and is registered for enum-layout planning.
+        operandType = EnsureMonomorphizedType(operandType, Location(expression));
+
+        // The operand must be a propagatable enum: exactly two variants carrying the
+        // [Ok]/[Err] roles (doc 11 v2). Recognition is by role — never by type name and
+        // never by stdlib identity.
+        if (!TryResolvePropagationRoles(operandType, out var operandRoles))
+        {
+            ReportError(
+                "STK3039",
+                $"`try` requires a propagatable operand: an enum with one `[Ok]` and one `[Err]` variant. "
+                    + $"'{operandType.DisplayName}' has no propagation roles.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var successBinding = operandRoles.SuccessPayloadType is { } successType
+            ? new ExpressionBinding(successType, NamedType: ResolveNamedTypeSymbol(successType))
+            : new ExpressionBinding(StarkTypeSymbols.Void);
+
+        // The enclosing function must also return a propagatable enum so the early
+        // return can construct its [Err] variant.
+        var returnType = _currentFunctionReturnType is { } declaredReturnType
+            ? EnsureMonomorphizedType(declaredReturnType, Location(expression))
+            : null;
+        if (returnType is null || !TryResolvePropagationRoles(returnType, out var enclosingRoles))
+        {
+            ReportError(
+                "STK3038",
+                $"`try` requires the enclosing function to return a propagatable enum (one `[Ok]` and one "
+                    + $"`[Err]` variant), but it returns '{(returnType?.DisplayName ?? "void")}'. Change the "
+                    + "return type or handle the failure with `switch`.",
+                expression);
+            return successBinding;
+        }
+
+        // The failure payloads must be connected: identical types, a `from` funnel on
+        // the enclosing failure payload's enum, or both unit (no payload). Mixing a
+        // payload failure with a unit failure is rejected — an error value is never
+        // silently discarded and never invented.
+        string? funnelVariant = null;
+        if (operandRoles.FailurePayloadType is { } operandFailure
+            && enclosingRoles.FailurePayloadType is { } enclosingFailure)
+        {
+            // Failure payload enums may themselves be imported and/or generic; the funnel
+            // lookup needs their concrete definitions (with `from` markers) in the type table.
+            funnelVariant = ResolveErrorFunnelVariant(
+                EnsureMonomorphizedType(operandFailure, Location(expression)),
+                EnsureMonomorphizedType(enclosingFailure, Location(expression)),
+                expression);
+        }
+        else if (operandRoles.FailurePayloadType is not null || enclosingRoles.FailurePayloadType is not null)
+        {
+            var operandFailureText = operandRoles.FailurePayloadType is { } operandPayload
+                ? $"fails with '{operandPayload.DisplayName}'"
+                : "fails without a payload";
+            var enclosingFailureText = enclosingRoles.FailurePayloadType is { } enclosingPayload
+                ? $"fails with '{enclosingPayload.DisplayName}'"
+                : "fails without a payload";
+            ReportError(
+                "STK3038",
+                $"`try` cannot propagate here: the operand '{operandType.DisplayName}' {operandFailureText}, "
+                    + $"but the enclosing '{returnType.DisplayName}' {enclosingFailureText}. An error value is "
+                    + "never silently discarded or invented; convert explicitly or handle with `switch`.",
+                expression);
+            return successBinding;
+        }
+
+        RecordTryPropagation(new TryPropagationTypingRecord(
+            Location(expression),
+            operandType,
+            operandRoles.OkVariantName,
+            operandRoles.ErrVariantName,
+            operandRoles.SuccessPayloadType,
+            operandRoles.FailurePayloadType,
+            returnType,
+            enclosingRoles.ErrVariantName,
+            enclosingRoles.FailurePayloadType,
+            funnelVariant,
+            _currentFunctionName));
+
+        return successBinding;
+    }
+
+    private void RecordTryPropagation(TryPropagationTypingRecord record) => _tryPropagations.Add(record);
+
+    /// <summary>
+    /// Resolves how the operand's error type funnels into the enclosing error type for a
+    /// cross-layer `try`. Returns <c>null</c> when no conversion is needed (the error types
+    /// match); otherwise the name of the `from` funnel variant on the enclosing error enum.
+    /// Reports STK3041 when the types differ and no funnel exists.
+    /// </summary>
+    private string? ResolveErrorFunnelVariant(
+        StarkTypeSymbol operandErrorType,
+        StarkTypeSymbol enclosingErrorType,
+        StarkParser.UnaryExpressionContext expression)
+    {
+        if (SameErrorType(operandErrorType, enclosingErrorType))
+        {
+            return null;
+        }
+
+        if (ResolveNamedTypeSymbol(enclosingErrorType) is { } enclosingNamed)
+        {
+            foreach (var variant in enclosingNamed.Variants)
+            {
+                if (variant.AbsorbsErrorType is { } absorbed && SameErrorType(absorbed, operandErrorType))
+                {
+                    return variant.Name;
+                }
+            }
+        }
+
+        ReportError(
+            "STK3041",
+            $"`try` cannot convert error '{operandErrorType.DisplayName}' into '{enclosingErrorType.DisplayName}': "
+                + $"'{enclosingErrorType.DisplayName}' declares no `from {operandErrorType.DisplayName}` funnel variant. "
+                + $"Add one (e.g. `SomeVariant from {operandErrorType.DisplayName}`), convert explicitly, or handle the error with `switch`.",
+            expression);
+        return null;
+    }
+
+    private static bool SameErrorType(StarkTypeSymbol a, StarkTypeSymbol b)
+        => string.Equals(a.NamedType ?? a.DisplayName, b.NamedType ?? b.DisplayName, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The resolved [Ok]/[Err] propagation roles of an enum type (doc 11 v2): the role
+    /// variant names plus the success/failure payload types (substituted for generic
+    /// instantiations; <c>null</c> when the role variant carries no payload).
+    /// </summary>
+    private readonly record struct PropagationRoles(
+        string OkVariantName,
+        string ErrVariantName,
+        StarkTypeSymbol? SuccessPayloadType,
+        StarkTypeSymbol? FailurePayloadType);
+
+    /// <summary>
+    /// Resolves a type's [Ok]/[Err] propagation roles. Returns false when the type is
+    /// not an enum, has no role-marked variants, or is malformed (which
+    /// <c>ValidateEnumPropagationRoles</c> already diagnosed at its declaration).
+    /// Recognition is purely role-based: any two-variant enum with one [Ok] and one
+    /// [Err] qualifies, regardless of its name or where it is declared.
+    /// </summary>
+    private bool TryResolvePropagationRoles(StarkTypeSymbol type, out PropagationRoles roles)
+    {
+        roles = default;
+        if (type.Kind != StarkTypeKind.Named)
+        {
+            return false;
+        }
+
+        var namedType = ResolveNamedTypeSymbol(type);
+        if (namedType is null || namedType.Variants.Count != 2)
+        {
+            return false;
+        }
+
+        EnumVariantSymbol? okVariant = null;
+        EnumVariantSymbol? errVariant = null;
+        foreach (var variant in namedType.Variants)
+        {
+            if (variant.Role == EnumVariantRole.Ok)
+            {
+                okVariant = variant;
+            }
+            else if (variant.Role == EnumVariantRole.Err)
+            {
+                errVariant = variant;
+            }
+        }
+
+        if (okVariant is null
+            || errVariant is null
+            || okVariant.Fields.Count > 1
+            || errVariant.Fields.Count > 1)
+        {
+            return false;
+        }
+
+        var successPayload = okVariant.Fields.Count == 1
+            ? SubstitutePropagationPayloadType(okVariant.Fields[0].Type, namedType, type)
+            : null;
+        var failurePayload = errVariant.Fields.Count == 1
+            ? SubstitutePropagationPayloadType(errVariant.Fields[0].Type, namedType, type)
+            : null;
+
+        roles = new PropagationRoles(okVariant.Name, errVariant.Name, successPayload, failurePayload);
+        return true;
+    }
+
+    /// <summary>
+    /// Substitutes generic parameters in a role variant's payload type using the
+    /// instantiation's type arguments. Concrete enums produced by
+    /// <c>CreateConcreteEnum</c> already carry substituted field types, making this a
+    /// no-op; the substitution covers paths that resolve to the generic template.
+    /// </summary>
+    private StarkTypeSymbol SubstitutePropagationPayloadType(
+        StarkTypeSymbol payloadType,
+        NamedTypeSymbol enumDefinition,
+        StarkTypeSymbol instantiatedType)
+    {
+        if (!enumDefinition.IsGeneric || instantiatedType.TypeArguments is not { Count: > 0 } typeArguments)
+        {
+            return payloadType;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        var genericParameters = enumDefinition.GenericParams;
+        for (var index = 0; index < genericParameters.Count && index < typeArguments.Count; index++)
+        {
+            substitution[genericParameters[index]] = typeArguments[index];
+        }
+
+        return SubstituteType(payloadType, substitution);
+    }
+
+    /// <summary>
+    /// True when this `try` unary expression sits at a propagation boundary: walking up,
+    /// every expression-precedence wrapper is a pure pass-through (applies no operator),
+    /// and the first structural ancestor is a binding initializer, an assignment whose
+    /// whole right side is the try, a `return`, or an expression statement.
+    /// </summary>
+    private static bool IsPropagationBoundaryPosition(StarkParser.UnaryExpressionContext tryExpression)
+    {
+        RuleContext? previous = tryExpression;
+        var current = tryExpression.Parent as RuleContext;
+        while (current is not null)
+        {
+            switch (current)
+            {
+                case StarkParser.ReturnStatementContext:
+                case StarkParser.ExpressionStatementContext:
+                case StarkParser.VariableInitializerContext:
+                    return true;
+                case StarkParser.AssignmentExpressionContext assignment:
+                    // `lhs = try ...;` / `lhs op= try ...;` — boundary when the try is the whole
+                    // right side. A pure pass-through (single child) just continues upward.
+                    if (assignment.ChildCount == 1)
+                    {
+                        break;
+                    }
+
+                    if (assignment.assignmentExpression() is { } rhs && ReferenceEquals(rhs, previous))
+                    {
+                        break;
+                    }
+
+                    return false;
+                case StarkParser.ExpressionContext:
+                case StarkParser.ConditionalExpressionContext:
+                case StarkParser.LogicalOrExpressionContext:
+                case StarkParser.LogicalAndExpressionContext:
+                case StarkParser.BitwiseOrExpressionContext:
+                case StarkParser.BitwiseXorExpressionContext:
+                case StarkParser.BitwiseAndExpressionContext:
+                case StarkParser.EqualityExpressionContext:
+                case StarkParser.RelationalExpressionContext:
+                case StarkParser.ShiftExpressionContext:
+                case StarkParser.AdditiveExpressionContext:
+                case StarkParser.MultiplicativeExpressionContext:
+                    if (current.ChildCount != 1)
+                    {
+                        return false;
+                    }
+
+                    break;
+                default:
+                    // argumentList, powerExpression (as an exponent), a unary operator/cast
+                    // wrapper, object/array initializers, etc. — the try is nested inside a
+                    // larger expression, not at a statement boundary.
+                    return false;
+            }
+
+            previous = current;
+            current = current.Parent as RuleContext;
+        }
+
+        return false;
     }
 
     private ExpressionBinding EvaluatePowerExpression(
@@ -8169,6 +14156,15 @@ internal sealed class TypeChecker
                 out firstUnhandledPostfixIndex))
         {
             binding = rawSliceBinding;
+        }
+        else if (TryEvaluateUnsafeDynTraitFromPartsConstructionPrefix(
+                     expression,
+                     scope,
+                     expectedType,
+                     out var dynTraitFromPartsBinding,
+                     out firstUnhandledPostfixIndex))
+        {
+            binding = dynTraitFromPartsBinding;
         }
         else
         {
@@ -8578,6 +14574,222 @@ internal sealed class TypeChecker
         return true;
     }
 
+    private bool TryEvaluateUnsafeDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType,
+        out ExpressionBinding binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = null!;
+        firstUnhandledPostfixIndex = 0;
+        if (!TryGetDynTraitFromPartsOperationName(expression, out var operationName)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } arguments)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        if (_unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe dynamic trait object construction '{operationName}(context, vtable)' requires an unsafe context.",
+                callPart);
+        }
+
+        var argumentList = arguments.argument();
+        if (argumentList.Length != 2)
+        {
+            ReportError(
+                "STK3009",
+                $"Dynamic trait object construction '{operationName}' expects 2 arguments but received {argumentList.Length}.",
+                arguments);
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var isOwning = string.Equals(operationName, "dynbox", StringComparison.Ordinal);
+        if (!TryResolveDynTraitFromPartsTargetType(expression, expectedType, isOwning, out var targetType))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var contextType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+        var vtableType = StarkTypeSymbols.DynTraitVtablePointerForTraitObject(targetType);
+        var contextArgument = EvaluateExpression(argumentList[0].expression(), scope, allowFunctionReference: false, contextType);
+        var vtableArgument = EvaluateExpression(argumentList[1].expression(), scope, allowFunctionReference: false, vtableType);
+
+        if (!CanAssign(contextType, contextArgument.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic trait object construction '{operationName}' expects '{contextType.DisplayName}' as its context argument, but found '{contextArgument.Type.DisplayName}'.",
+                argumentList[0].expression());
+        }
+
+        if (!CanAssign(vtableType, vtableArgument.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic trait object construction '{operationName}' expects '{vtableType.DisplayName}' as its vtable argument, but found '{vtableArgument.Type.DisplayName}'.",
+                argumentList[1].expression());
+        }
+
+        _boundOperations.Add(new BoundDynTraitFromPartsOperation(
+            operationName,
+            targetType,
+            contextType,
+            vtableType,
+            Location(arguments),
+            _currentFunctionName));
+
+        binding = new ExpressionBinding(
+            targetType,
+            NamedType: ResolveNamedTypeSymbol(targetType),
+            DiagnosticName: $"dynamic trait object '{operationName}'");
+        return true;
+    }
+
+    private bool TryResolveDynTraitFromPartsTargetType(
+        StarkParser.PostfixExpressionContext expression,
+        StarkTypeSymbol? expectedType,
+        bool isOwning,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var storageKind = isOwning ? StarkDynTraitStorageKind.Heap : StarkDynTraitStorageKind.View;
+
+        if (TryResolveExplicitDynTraitFromPartsTypeArgument(expression, storageKind, out targetType))
+        {
+            return targetType.Kind != StarkTypeKind.Error;
+        }
+
+        if (expectedType?.Kind == StarkTypeKind.DynTrait)
+        {
+            if (expectedType.DynTraitStorageKind != storageKind)
+            {
+                ReportError(
+                    "STK3002",
+                    isOwning
+                        ? $"'dynbox' constructs 'heap dyn' trait objects, but the expected type is '{expectedType.DisplayName}'."
+                        : $"'dynview' constructs borrowed 'dyn' trait object views, but the expected type is '{expectedType.DisplayName}'.",
+                    expression.primaryExpression());
+                return false;
+            }
+
+            targetType = expectedType;
+            return true;
+        }
+
+        ReportError(
+            "STK3019",
+            isOwning
+                ? "'dynbox' requires an explicit target trait, for example 'dynbox<Module.Resolver>(context, vtable)', or an expected 'heap dyn Trait' type."
+                : "'dynview' requires an explicit target trait, for example 'dynview<Module.Resolver>(context, vtable)', or an expected 'borrow dyn Trait' type.",
+            expression.primaryExpression());
+        return false;
+    }
+
+    private bool TryResolveExplicitDynTraitFromPartsTypeArgument(
+        StarkParser.PostfixExpressionContext expression,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var genericQualifiedName = expression.primaryExpression().genericQualifiedName();
+        if (genericQualifiedName is null)
+        {
+            return false;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            ["T"],
+            [],
+            typeArgument => ResolveType(typeArgument, currentModuleName: CurrentFunctionModuleName),
+            ReportError,
+            visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+        if (genericArguments.TypeArguments.Count != 1
+            || genericArguments.TypeArguments[0].Kind == StarkTypeKind.Error)
+        {
+            return true;
+        }
+
+        targetType = BuildDynTraitFromPartsTargetType(
+            genericArguments.TypeArguments[0],
+            storageKind,
+            genericQualifiedName);
+        return true;
+    }
+
+    private StarkTypeSymbol BuildDynTraitFromPartsTargetType(
+        StarkTypeSymbol declaredType,
+        StarkDynTraitStorageKind storageKind,
+        ParserRuleContext context)
+    {
+        if (declaredType.Kind == StarkTypeKind.DynTrait)
+        {
+            if (declaredType.DynTraitStorageKind != storageKind)
+            {
+                ReportError(
+                    "STK3002",
+                    storageKind == StarkDynTraitStorageKind.Heap
+                        ? $"'dynbox' requires a 'heap dyn' target, but found '{declaredType.DisplayName}'."
+                        : $"'dynview' requires a borrowed 'dyn' target, but found '{declaredType.DisplayName}'.",
+                    context);
+                return StarkTypeSymbols.Error;
+            }
+
+            return storageKind == StarkDynTraitStorageKind.View && declaredType.BorrowKind == StarkBorrowKind.None
+                ? StarkTypeSymbols.ApplyQualifiers(declaredType, borrowKind: StarkBorrowKind.Borrow, isMutableView: declaredType.IsMutableView)
+                : declaredType;
+        }
+
+        if (declaredType.Kind != StarkTypeKind.Named
+            || declaredType.NamedType is not { } traitName
+            || !_namedTypes.TryGetValue(traitName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait)
+        {
+            ReportError(
+                "STK3035",
+                $"Dynamic trait object construction requires a trait target, but found '{declaredType.DisplayName}'.",
+                context);
+            return StarkTypeSymbols.Error;
+        }
+
+        if (!traitSymbol.IsDynTrait)
+        {
+            var simpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
+            ReportError(
+                "STK3035",
+                $"Trait '{simpleName}' is static-only and cannot form a trait object. Declare it as 'dyn trait {simpleName}' to opt into dynamic dispatch, or use an enum for a closed set of cases.",
+                context);
+            return StarkTypeSymbols.Error;
+        }
+
+        var dynType = StarkTypeSymbols.DynTrait(traitName, storageKind, declaredType.TypeArguments);
+        return storageKind == StarkDynTraitStorageKind.View
+            ? StarkTypeSymbols.ApplyQualifiers(dynType, borrowKind: StarkBorrowKind.Borrow)
+            : dynType;
+    }
+
+    private static bool TryGetDynTraitFromPartsOperationName(
+        StarkParser.PostfixExpressionContext expression,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return string.Equals(operationName, "dynview", StringComparison.Ordinal)
+            || string.Equals(operationName, "dynbox", StringComparison.Ordinal);
+    }
+
     private bool IsCompileTimeNullExpression(
         StarkParser.ExpressionContext expression,
         Scope scope,
@@ -8619,6 +14831,11 @@ internal sealed class TypeChecker
             return EvaluateLiteral(literal);
         }
 
+        if (expression.COMPTIME() is not null && expression.block() is { } block)
+        {
+            return EvaluateComptimeBlockExpression(expression, block, scope, expectedType);
+        }
+
         if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
         {
             var kind = expression.SIZEOF() is not null ? "sizeof" : "alignof";
@@ -8633,11 +14850,10 @@ internal sealed class TypeChecker
                 location,
                 _currentFunctionName));
 
-            var resultType = expression.ALIGNOF() is not null
-                ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
-                : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+            var queryKind = expression.ALIGNOF() is not null ? BoundLayoutQueryKind.AlignOf : BoundLayoutQueryKind.SizeOf;
+            var resultType = TypeLayoutQueryFacts.GetResultType(queryKind);
             _boundOperations.Add(new BoundLayoutQueryOperation(
-                expression.ALIGNOF() is not null ? BoundLayoutQueryKind.AlignOf : BoundLayoutQueryKind.SizeOf,
+                queryKind,
                 targetType,
                 resultType,
                 location,
@@ -8673,6 +14889,11 @@ internal sealed class TypeChecker
             return ResolveGenericMemberReferenceValue(genericEnumCaseReference, allowFunctionReference);
         }
 
+        if (expression.genericQualifiedName() is { } genericQualifiedName)
+        {
+            return ResolveGenericQualifiedNameValue(genericQualifiedName, scope, allowFunctionReference, expectedType);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, scope, allowFunctionReference, expectedType);
@@ -8684,6 +14905,58 @@ internal sealed class TypeChecker
         }
 
         return EvaluateExpression(expression.expression(), scope, allowFunctionReference: false, expectedType);
+    }
+
+    private ExpressionBinding EvaluateComptimeBlockExpression(
+        StarkParser.PrimaryExpressionContext expression,
+        StarkParser.BlockContext block,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var previousInsideConstructorBody = _insideConstructorBody;
+        var previousAllowCompileTimeOnlyStructuralFactCalls = _allowCompileTimeOnlyStructuralFactCalls;
+        _insideConstructorBody = false;
+        _allowCompileTimeOnlyStructuralFactCalls = true;
+        try
+        {
+            CheckBlock(block, scope, expectedType ?? StarkTypeSymbols.Error);
+        }
+        finally
+        {
+            _insideConstructorBody = previousInsideConstructorBody;
+            _allowCompileTimeOnlyStructuralFactCalls = previousAllowCompileTimeOnlyStructuralFactCalls;
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (!CompileTimeEvaluator.TryEvaluateBlock(
+                block,
+                CurrentFunctionModuleName,
+                expectedType,
+                out var constant,
+                (string name, out CompileTimeConstant value) =>
+                    TryResolveCompileTimeConstant(scope, name, out value)
+                    || TryResolveOpenComptimeGenericConstant(name, out value),
+                initialState: CreateOpenComptimeGenericEvaluationState()))
+        {
+            ReportError(
+                "STK3053",
+                BuildComptimeEvaluationFailureMessage(
+                    "`comptime` block must return a value during compilation using literals, const values, comptime generic values, local compile-time state, or finite/law calls whose bodies stay within the supported compile-time subset."),
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        return new ExpressionBinding(
+            constant.Type,
+            NamedType: ResolveNamedTypeSymbol(constant.Type),
+            HasConstProvenance: true);
+    }
+
+    private string BuildComptimeEvaluationFailureMessage(string fallback)
+    {
+        return CompileTimeEvaluator.LastFailure is { } failure
+            ? failure.Message
+            : fallback;
     }
 
     private ExpressionBinding EvaluateObjectCreation(
@@ -8721,7 +14994,16 @@ internal sealed class TypeChecker
         ConstructorShape? matchedConstructor = null;
         IReadOnlyList<ObjectInitializerMemberTypingRecord>? initializerMembers = null;
 
-        matchedConstructor = CheckObjectCreationArguments(expression.argumentList(), expression, createdType, scope);
+        var storageSelector = GetObjectCreationStorageSelector(expression);
+        if (storageSelector == ObjectCreationStorageSelector.Arena && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            ReportError(
+                "STK3010",
+                "The `new(arena, ...)` storage selector is only valid for dynamic storage creation. Use an `arena` local declaration for arena-backed object storage.",
+                expression.arenaObjectCreationArgumentList());
+        }
+
+        matchedConstructor = CheckObjectCreationArguments(expression, createdType, scope);
 
         if (createdType.Kind == StarkTypeKind.Dynamic
             && expression.objectInitializer() is { } dynamicObjectInitializer)
@@ -8766,11 +15048,13 @@ internal sealed class TypeChecker
                 typedConstructor,
                 location,
                 _currentFunctionName,
+                storageSelector,
                 initializerMembers));
             _boundOperations.Add(new BoundObjectCreationOperation(
                 expression.GetText(),
                 createdType,
                 typedConstructor,
+                storageSelector,
                 initializerMembers,
                 location,
                 _currentFunctionName));
@@ -8783,7 +15067,15 @@ internal sealed class TypeChecker
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static ObjectCreationStorageSelector GetObjectCreationStorageSelector(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is null
+            ? ObjectCreationStorageSelector.Default
+            : ObjectCreationStorageSelector.Arena;
     }
 
     private StarkTypeSymbol ResolveObjectCreationType(
@@ -8976,6 +15268,7 @@ internal sealed class TypeChecker
             else if (expression.block() is { } block)
             {
                 CheckBlock(block, lambdaScope, returnType);
+                ValidateFunctionReturnsOnAllPaths(block, returnType, "Lambda", block);
             }
         }
         finally
@@ -9419,9 +15712,12 @@ internal sealed class TypeChecker
         StarkTypeSymbol[]? argumentTypes = null;
         ExpressionBinding[]? argumentBindings = null;
 
-        if (target.OverloadSourceName is { } overloadSourceName)
+        var overloadSourceName = target.OverloadSourceName;
+        if (overloadSourceName is not null || target.OverloadCandidates is { Count: > 0 })
         {
-            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            var displayOverloadName = target.OverloadSourceName ?? target.DiagnosticName ?? "overload group";
+            var overloads = target.OverloadCandidates;
+            if (overloads is null && !TryGetFunctionOverloads(overloadSourceName!, out overloads))
             {
                 ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
                 return new ExpressionBinding(StarkTypeSymbols.Error);
@@ -9429,10 +15725,15 @@ internal sealed class TypeChecker
 
             argumentBindings = EvaluateArguments(arguments, expectedParameters: null, scope);
             argumentTypes = argumentBindings.Select(static argument => argument.Type).ToArray();
-            var resolution = FunctionOverloadFacts.Resolve(overloads, target.Receiver?.Type, argumentTypes, CanAssign);
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                target.Receiver?.Type,
+                argumentTypes,
+                CanAssign,
+                ResolveAssociatedTypeForSubstitution);
             if (!resolution.Succeeded)
             {
-                ReportOverloadResolutionFailure(overloadSourceName, argumentTypes, resolution, arguments);
+                ReportOverloadResolutionFailure(displayOverloadName, argumentTypes, resolution, arguments);
                 return new ExpressionBinding(StarkTypeSymbols.Error);
             }
 
@@ -9441,6 +15742,7 @@ internal sealed class TypeChecker
             {
                 Function = resolvedFunction,
                 OverloadSourceName = null,
+                OverloadCandidates = null,
                 Type = resolvedFunction.ReturnType,
                 NamedType = ResolveNamedTypeSymbol(resolvedFunction.ReturnType),
                 DiagnosticName = $"function '{resolvedFunction.DisplaySourceName}'"
@@ -9449,8 +15751,36 @@ internal sealed class TypeChecker
 
         if (target.Function is null)
         {
-            ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
+            var notCallableMessage = target.ShadowedMethodName is { } shadowedMethodName
+                ? $"{DescribeExpressionTarget(target)} is not callable; a field named '{shadowedMethodName}' shadows a same-named method — rename one to disambiguate."
+                : $"{DescribeExpressionTarget(target)} is not callable.";
+            ReportError("STK3008", notCallableMessage, arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (CompileTimeStructuralFacts.IsSignature(target.Function))
+        {
+            if (arguments.argument().Length != 0)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Compile-time structural fact '{target.Function.DisplaySourceName}' expects 0 arguments but received {arguments.argument().Length}.",
+                    arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!_allowCompileTimeOnlyStructuralFactCalls)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{target.Function.DisplaySourceName}' may only be used inside a `comptime` expression or block.",
+                    arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            return new ExpressionBinding(
+                target.Function.ReturnType,
+                DiagnosticName: $"compile-time structural fact '{target.Function.DisplaySourceName}'");
         }
 
         if (target.Function.IsUnsafe && _unsafeDepth == 0)
@@ -9501,11 +15831,23 @@ internal sealed class TypeChecker
                 arguments);
         }
 
+        var calleeTemplate = TryGetCallTemplateSignature(target.Function);
         for (var index = 0; index < Math.Min(explicitParameterCount, argumentTypes.Length); index++)
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
             var argument = argumentBindings[index];
-            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter, argument, arguments.argument(index).expression());
+            var templateParameterType = calleeTemplate is { } template
+                && index + receiverOffset < template.Parameters.Count
+                    ? template.Parameters[index + receiverOffset].Type
+                    : null;
+            EnsureCallArgumentCompatible(
+                target.Function.DisplaySourceName,
+                index + receiverOffset + 1,
+                parameter,
+                argument,
+                arguments.argument(index).expression(),
+                calleeTemplate?.GenericParameterNames,
+                templateParameterType);
         }
 
         ValidateBoundedRawPointerCallArguments(
@@ -9525,6 +15867,11 @@ internal sealed class TypeChecker
             target.Function.DisplaySourceName,
             scope);
 
+        ValidateThreadSafetyLawCallPredicates(
+            target.Function,
+            target.Function.DisplaySourceName,
+            arguments);
+
         if (target.Function.IsVarargs)
         {
             for (var index = explicitParameterCount; index < argumentTypes.Length; index++)
@@ -9538,6 +15885,14 @@ internal sealed class TypeChecker
                         arguments.argument(index).expression());
                 }
             }
+
+            ValidateCVarargsFormatStringArguments(
+                target.Function,
+                receiverOffset,
+                explicitParameterCount,
+                arguments,
+                argumentBindings,
+                scope);
         }
 
         var callArgumentRecords = BuildCallArgumentRecords(
@@ -10227,6 +16582,82 @@ internal sealed class TypeChecker
         }
 
         return arguments;
+    }
+
+    private void ValidateThreadSafetyLawCallPredicates(
+        TypedFunctionSignature function,
+        string functionName,
+        ParserRuleContext context)
+    {
+        foreach (var predicate in function.ThreadSafetyLaws)
+        {
+            var predicateType = EnsureMonomorphizedType(predicate.Type, Location(context));
+            if (TypeContainsOpenCurrentFunctionGenericParameter(predicateType)
+                || TypeContainsOpenCurrentFunctionComptimeParameter(predicateType))
+            {
+                if (CurrentFunctionCarriesThreadSafetyLawPredicate(predicate.LawName, predicateType))
+                {
+                    continue;
+                }
+
+                ReportError(
+                    "STK3049",
+                    FormatOpenThreadSafetyLawFailure(functionName, predicate.LawName, predicateType),
+                    context);
+                continue;
+            }
+
+            var fact = GetThreadSafetyLawEvaluator().Evaluate(predicate.LawName, predicateType);
+            if (fact.Holds)
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3049",
+                FormatThreadSafetyLawFailure(functionName, predicate.LawName, predicateType, fact),
+                context);
+        }
+    }
+
+    private bool CurrentFunctionCarriesThreadSafetyLawPredicate(string lawName, StarkTypeSymbol type)
+    {
+        return _currentFunctionThreadSafetyLaws.Any(predicate =>
+            string.Equals(predicate.LawName, lawName, StringComparison.Ordinal)
+            && StarkTypeSymbolsHaveSameIdentity(predicate.Type, type));
+    }
+
+    private ThreadSafetyLawEvaluator GetThreadSafetyLawEvaluator()
+    {
+        return _threadSafetyLawEvaluator ??= new ThreadSafetyLawEvaluator(
+            _namedTypes,
+            _syntaxModel.ModuleName,
+            (code, message) => ReportError(code, message, SourceLocation.Synthetic()));
+    }
+
+    private static string FormatThreadSafetyLawFailure(
+        string functionName,
+        string lawName,
+        StarkTypeSymbol type,
+        ThreadSafetyLawFact fact)
+    {
+        var failure = fact.FailureReasons.FirstOrDefault();
+        var reason = failure?.Message ?? $"Type '{type.DisplayName}' does not satisfy {lawName}.";
+        var fieldChain = failure?.Path is { Count: > 0 } path
+            ? $" Responsible field chain: {type.DisplayName}.{string.Join(".", path)}."
+            : string.Empty;
+        return $"Function '{functionName}' requires where {lawName}({type.DisplayName}), but the type does not satisfy that law. {reason}{fieldChain}";
+    }
+
+    private string FormatOpenThreadSafetyLawFailure(
+        string functionName,
+        string lawName,
+        StarkTypeSymbol type)
+    {
+        var enclosing = _currentFunctionName is { Length: > 0 } name
+            ? $" Enclosing generic function '{name}' must declare `where {lawName}({type.DisplayName})` or avoid this call for unconstrained '{type.DisplayName}'."
+            : string.Empty;
+        return $"Function '{functionName}' requires where {lawName}({type.DisplayName}), but that open generic law predicate is not available at this call site.{enclosing}";
     }
 
     private static bool TryResolveParameterRegionExpressionRange(
@@ -11237,6 +17668,233 @@ internal sealed class TypeChecker
         };
     }
 
+    private void ValidateCVarargsFormatStringArguments(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        int explicitParameterCount,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        Scope scope)
+    {
+        if (explicitParameterCount == 0
+            || argumentBindings.Count == 0
+            || receiverOffset >= function.Parameters.Count
+            || !IsCVarargsFormatParameter(function.Parameters[receiverOffset])
+            || !TryDecodeCVarargsFormatString(arguments.argument(0).expression(), argumentBindings[0], scope, out var format))
+        {
+            return;
+        }
+
+        var consumedExtraArguments = 0;
+        foreach (var expectation in EnumeratePrintfArgumentExpectations(format))
+        {
+            var argumentIndex = explicitParameterCount + consumedExtraArguments;
+            consumedExtraArguments++;
+
+            if (!expectation.RequiresCString)
+            {
+                continue;
+            }
+
+            if (argumentIndex >= argumentBindings.Count)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Format string for '{function.DisplaySourceName}' expects a C string argument for '%s' at argument {argumentIndex + 1}, but the call provides only {argumentBindings.Count} argument(s).",
+                    arguments);
+                continue;
+            }
+
+            var argument = argumentBindings[argumentIndex];
+            if (IsCCharRawPointerType(argument.Type))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3009",
+                $"C varargs '%s' argument {argumentIndex + 1} to '{function.DisplaySourceName}' must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>, but found '{argument.Type.DisplayName}'. Convert Stark text with System.C.FromAscii(...) and pass OwnedCStr.Data().",
+                arguments.argument(argumentIndex).expression());
+        }
+    }
+
+    private bool TryDecodeCVarargsFormatString(
+        StarkParser.ExpressionContext expression,
+        ExpressionBinding binding,
+        Scope scope,
+        out string format)
+    {
+        if (binding.TextLiteral is { } literal
+            && binding.TextLiteralKind is { } literalKind
+            && TextLiteralDecoder.TryDecode(literal, literalKind, out var decoded, out _))
+        {
+            format = decoded.Value;
+            return true;
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (CompileTimeEvaluator.TryEvaluateExpressionNode(
+                expression,
+                CurrentFunctionModuleName,
+                state: null,
+                activeCalls: null,
+                out var constant,
+                (string name, out CompileTimeConstant value) => TryResolveCompileTimeConstant(scope, name, out value))
+            && constant.Kind == CompileTimeConstantKind.Text
+            && constant.TextLiteral is { } constantLiteral
+            && TextLiteralDecoder.TryDecode(
+                constantLiteral,
+                constantLiteral.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String,
+                out var decodedConstant,
+                out _))
+        {
+            format = decodedConstant.Value;
+            return true;
+        }
+
+        format = string.Empty;
+        return false;
+    }
+
+    private static bool IsCVarargsFormatParameter(TypedParameterSymbol parameter)
+    {
+        return (string.Equals(parameter.Name, "format", StringComparison.Ordinal)
+                || string.Equals(parameter.Name, "fmt", StringComparison.Ordinal))
+            && (parameter.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                || IsCCharRawPointerType(parameter.Type));
+    }
+
+    private static IEnumerable<PrintfArgumentExpectation> EnumeratePrintfArgumentExpectations(string format)
+    {
+        for (var index = 0; index < format.Length; index++)
+        {
+            if (format[index] != '%')
+            {
+                continue;
+            }
+
+            index++;
+            if (index >= format.Length)
+            {
+                yield break;
+            }
+
+            if (format[index] == '%')
+            {
+                continue;
+            }
+
+            while (index < format.Length && IsPrintfFlag(format[index]))
+            {
+                index++;
+            }
+
+            if (index < format.Length && format[index] == '*')
+            {
+                yield return new PrintfArgumentExpectation(RequiresCString: false);
+                index++;
+            }
+            else
+            {
+                while (index < format.Length && char.IsDigit(format[index]))
+                {
+                    index++;
+                }
+            }
+
+            if (index < format.Length && format[index] == '.')
+            {
+                index++;
+                if (index < format.Length && format[index] == '*')
+                {
+                    yield return new PrintfArgumentExpectation(RequiresCString: false);
+                    index++;
+                }
+                else
+                {
+                    while (index < format.Length && char.IsDigit(format[index]))
+                    {
+                        index++;
+                    }
+                }
+            }
+
+            var lengthModifierStart = index;
+            index = SkipPrintfLengthModifier(format, index);
+            if (index >= format.Length)
+            {
+                yield break;
+            }
+
+            var conversion = format[index];
+            if (conversion == '%')
+            {
+                continue;
+            }
+
+            if (IsPrintfConversionSpecifier(conversion))
+            {
+                yield return new PrintfArgumentExpectation(
+                    RequiresCString: conversion == 's' && index == lengthModifierStart);
+            }
+        }
+    }
+
+    private static bool IsPrintfFlag(char character)
+    {
+        return character is '-' or '+' or ' ' or '#' or '0' or '\'';
+    }
+
+    private static int SkipPrintfLengthModifier(string format, int index)
+    {
+        if (index >= format.Length)
+        {
+            return index;
+        }
+
+        return format[index] switch
+        {
+            'h' when index + 1 < format.Length && format[index + 1] == 'h' => index + 2,
+            'l' when index + 1 < format.Length && format[index + 1] == 'l' => index + 2,
+            'h' or 'l' or 'j' or 'z' or 't' or 'L' => index + 1,
+            'I' when index + 2 < format.Length
+                     && (format[index + 1], format[index + 2]) is ('3', '2') or ('6', '4') => index + 3,
+            'I' => index + 1,
+            _ => index
+        };
+    }
+
+    private static bool IsPrintfConversionSpecifier(char character)
+    {
+        return character is 'd' or 'i' or 'u' or 'o' or 'x' or 'X'
+            or 'f' or 'F' or 'e' or 'E' or 'g' or 'G' or 'a' or 'A'
+            or 'c' or 's' or 'p' or 'n';
+    }
+
+    private static bool IsCCharRawPointerType(StarkTypeSymbol type)
+    {
+        type = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        return type.Kind == StarkTypeKind.RawPointer
+            && type.ElementType is { } elementType
+            && string.Equals(
+                StarkTypeSymbols.WithQualifiers(
+                    elementType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false).CSourceAliasName,
+                StarkCDataModelFacts.QualifyAliasName("c_char"),
+                StringComparison.Ordinal);
+    }
+
+    private readonly record struct PrintfArgumentExpectation(bool RequiresCString);
+
     private ExpressionBinding InvokeIndirectCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
     {
         if (target.Type.FunctionPointerReturnType is not { } returnType
@@ -11244,6 +17902,14 @@ internal sealed class TypeChecker
         {
             ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (target.Type.FunctionPointerIsUnsafe && _unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe function pointer '{target.Type.DisplayName}' requires an unsafe context.",
+                arguments);
         }
 
         var expectedParameters = parameterTypes
@@ -11256,9 +17922,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.FunctionPointerIsTailCallable,
             DisjointParameterGroups: target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -11347,9 +18015,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.ClosureIsTailCallable,
             DisjointParameterGroups: target.Type.ClosureDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.ClosureOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.ClosurePointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -11653,7 +18323,8 @@ internal sealed class TypeChecker
             UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics,
             HasConstProvenance: currentHasConstProvenance,
             MemoryRootKey: currentMemoryRootKey,
-            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage,
+            IsMisalignedFieldProjection: target.IsMisalignedFieldProjection);
         RecordIndexAccess("element", target.Type, indexed.Type, indexes.expression().Length, indexes);
         return indexed;
     }
@@ -11663,6 +18334,11 @@ internal sealed class TypeChecker
         if (target.NamespaceName is not null)
         {
             var qualifiedName = $"{target.NamespaceName}.{memberName}";
+            if (IsCompilerKnownNamespace(qualifiedName))
+            {
+                return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"module namespace '{qualifiedName}'");
+            }
+
             if (_moduleGraph.CanAccessModule(CurrentFunctionModuleName, qualifiedName))
             {
                 return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: qualifiedName, DiagnosticName: $"module '{qualifiedName}'");
@@ -11675,6 +18351,18 @@ internal sealed class TypeChecker
 
             if (_globals.TryGetValue(qualifiedName, out var global))
             {
+                if (DeclaringModuleOfQualifiedKey(qualifiedName) is { } globalModule
+                    && IsLoadedModuleName(globalModule)
+                    && TryGetGlobalVisibility(globalModule, LastNameSegment(qualifiedName), out var globalVisibility)
+                    && !IsModuleMemberAccessible(globalModule, globalVisibility))
+                {
+                    ReportError(
+                        "STK3015",
+                        $"Global '{qualifiedName}' is {RenderVisibility(globalVisibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 return new ExpressionBinding(
                     global.Type,
                     IsAssignable: global.IsMutable,
@@ -11684,9 +18372,12 @@ internal sealed class TypeChecker
                     IsAddressMutable: global.IsMutable,
                     RootGlobalName: qualifiedName,
                     RootGlobalBindingKind: global.BindingKind,
+                    HasConstProvenance: global.BindingKind == GlobalBindingKind.Const,
                     AssignmentErrorMessage: global.IsMutable
                         ? null
-                        : DescribeGlobalRebindingError(qualifiedName, global.BindingKind ?? GlobalBindingKind.Immutable));
+                        : DescribeGlobalRebindingError(qualifiedName, global.BindingKind ?? GlobalBindingKind.Immutable),
+                    MemoryRootKey: qualifiedName,
+                    MemoryRootIsIndependentStorage: IsLocalBindingIndependentStorage(global));
             }
 
             if (TryGetFunctionOverloads(qualifiedName, out var namespaceFunctions))
@@ -11705,6 +18396,24 @@ internal sealed class TypeChecker
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
 
+                if (DeclaringModuleOfQualifiedKey(qualifiedName) is { } functionModule
+                    && IsLoadedModuleName(functionModule))
+                {
+                    var accessibleFunctions = namespaceFunctions
+                        .Where(candidate => IsModuleMemberAccessible(functionModule, candidate.Visibility))
+                        .ToArray();
+                    if (accessibleFunctions.Length == 0 && namespaceFunctions.Count > 0)
+                    {
+                        ReportError(
+                            "STK3015",
+                            $"Function '{qualifiedName}' is {RenderVisibility(namespaceFunctions[0].Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                            context);
+                        return new ExpressionBinding(StarkTypeSymbols.Error);
+                    }
+
+                    namespaceFunctions = accessibleFunctions;
+                }
+
                 if (namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric)
                 {
                     var function = namespaceFunctions[0];
@@ -11719,6 +18428,15 @@ internal sealed class TypeChecker
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (!IsModuleMemberAccessible(qualifiedType.DeclaringModuleName, qualifiedType.Visibility))
+                {
+                    ReportError(
+                        "STK3015",
+                        $"Type '{qualifiedName}' is {RenderVisibility(qualifiedType.Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 if (qualifiedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
                 {
                     return new ExpressionBinding(
@@ -11780,9 +18498,24 @@ internal sealed class TypeChecker
             return ApplyDynamicMemberAccess(target, memberName, context);
         }
 
+        if (TryApplyKnownViewMemberAccess(target, memberName, context, out var knownViewMember))
+        {
+            return knownViewMember;
+        }
+
+        if (target.Type.Kind == StarkTypeKind.DynTrait)
+        {
+            return ApplyDynTraitMemberAccess(target, memberName, context);
+        }
+
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
+            if (TryResolveTraitBoundMemberCall(target, memberName, out var traitBoundCall))
+            {
+                return traitBoundCall;
+            }
+
             ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -11823,7 +18556,12 @@ internal sealed class TypeChecker
                 MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
                     ? $"{memoryRootKey}.{memberName}"
                     : null,
-                MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+                MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage,
+                IsMisalignedFieldProjection: target.IsMisalignedFieldProjection
+                    || IsMisalignedLayoutFieldProjection(namedType, field.Name),
+                ShadowedMethodName: DeclaresSameNamedShadowedMethod(namedType, memberName)
+                    ? memberName
+                    : null);
         }
 
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
@@ -11892,8 +18630,326 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
+        // Default-member fallback (Phase B): a type that implements a trait but does
+        // not override one of its default methods dispatches to the trait's default
+        // body, instantiated with Self = this type via ordinary overload resolution.
+        if (TryResolveTraitDefaultMemberCall(namedType, target, memberName, out var traitDefaultCall))
+        {
+            return traitDefaultCall;
+        }
+
+        var methodSyntaxHint = TryDescribeMethodSyntaxFreeFunctionHint(memberName, target.Type, out var freeFunctionHint)
+            ? freeFunctionHint
+            : string.Empty;
+        ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.{methodSyntaxHint}", context);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    // `value.Fn(...)` where `Fn` is not a member but a free function whose first
+    // parameter accepts the receiver type is a common method-syntax slip: Stark
+    // has no UFCS, so methods must live inside the type body. Surface that as a
+    // hint rather than a bare "does not contain a field named".
+    private bool TryDescribeMethodSyntaxFreeFunctionHint(
+        string memberName,
+        StarkTypeSymbol receiverType,
+        out string hint)
+    {
+        hint = string.Empty;
+        if (!TryGetFunctionOverloads(memberName, out var overloads))
+        {
+            return false;
+        }
+
+        foreach (var overload in overloads)
+        {
+            if (overload.Parameters.Count == 0)
+            {
+                continue;
+            }
+
+            var firstParameterType = overload.Parameters[0].Type;
+            var matchesReceiver = firstParameterType.Kind == StarkTypeKind.Named && receiverType.Kind == StarkTypeKind.Named
+                ? string.Equals(firstParameterType.NamedType, receiverType.NamedType, StringComparison.Ordinal)
+                : firstParameterType.Kind == receiverType.Kind;
+            if (matchesReceiver)
+            {
+                hint = $" '{memberName}' is a free function — call it as '{memberName}(...)' with the receiver as the first argument. Methods are declared inside the type body.";
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryApplyKnownViewMemberAccess(
+        ExpressionBinding target,
+        string memberName,
+        ParserRuleContext context,
+        out ExpressionBinding result)
+    {
+        result = null!;
+        if (!string.Equals(memberName, "Length", StringComparison.Ordinal)
+            || target.Type.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice))
+        {
+            return false;
+        }
+
+        var memberType = target.Type.Kind == StarkTypeKind.FixedArray
+            && target.Type.FixedLength is int fixedLength
+                ? StarkTypeSymbols.Integer(64, new BigInteger(fixedLength), new BigInteger(fixedLength))
+                : NonNegativeI64Type;
+        RecordFieldAccess(memberName, 1, memberType, context);
+        result = new ExpressionBinding(
+            memberType,
+            IsAssignable: false,
+            NamedType: ResolveNamedTypeSymbol(memberType),
+            DiagnosticName: target.Type.Kind == StarkTypeKind.FixedArray
+                ? "fixed array length"
+                : "slice length",
+            RootGlobalName: target.RootGlobalName,
+            RootGlobalBindingKind: target.RootGlobalBindingKind,
+            HasConstProvenance: target.Type.Kind == StarkTypeKind.FixedArray || HasConstProvenance(target),
+            MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
+                ? $"{memoryRootKey}.{memberName}"
+                : null,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+        return true;
+    }
+
+    // CG05: resolves `value.Member(...)` where `value` is a generic type parameter
+    // constrained by `where T: Trait`. Binds the call to the trait method with
+    // `Self` (and any trait type arguments) substituted to the type parameter so
+    // the generic body type-checks. The bound target keeps the trait-method name,
+    // which MIR lowering rebinds to the concrete implementation per specialization
+    // Resolves `receiver.Member(...)` where the receiver is a `dyn Trait` trait
+    // object: the call binds to the trait method's signature (so it type-checks and
+    // yields the right return type) while MIR lowers it to an indirect vtable call.
+    // `Self` is substituted to the trait-object type; the method must be object-safe.
+    private ExpressionBinding ApplyDynTraitMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
+    {
+        if (target.Type.DynTraitName is not { } traitName)
+        {
+            ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (TryApplyDynTraitRepresentationMemberAccess(target, memberName, context, out var representationMember))
+        {
+            return representationMember;
+        }
+
+        var traitSimpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
+        if (!TryGetFunctionOverloads(methodSourceName, out var methods)
+            || methods.Where(static method => !method.IsStatic).ToArray() is not { Length: 1 } instanceMethods)
+        {
+            ReportError(
+                "STK3011",
+                $"'dyn {traitSimpleName}' has no instance method '{memberName}' to dispatch.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var traitMethod = instanceMethods[0];
+        if (!DynTraitFacts.IsObjectSafeInstanceMethod(traitMethod))
+        {
+            ReportError(
+                "STK3036",
+                $"Trait method '{methodSourceName}' is not object-safe and cannot be called through 'dyn {traitSimpleName}'.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        // Substitute `Self` -> the trait-object type, plus the trait's own type
+        // arguments, so the bound signature's parameter/return types are concrete.
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+        {
+            ["Self"] = target.Type,
+        };
+        if (_namedTypes.TryGetValue(traitName, out var traitSymbol) && target.Type.TypeArguments is { } traitArguments)
+        {
+            var traitParameters = traitSymbol.GenericParams;
+            for (var index = 0; index < traitParameters.Count && index < traitArguments.Count; index++)
+            {
+                substitution[traitParameters[index]] = traitArguments[index];
+            }
+        }
+
+        var resolvedMethod = traitMethod with
+        {
+            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution, ResolveAssociatedTypeForSubstitution),
+            Parameters = traitMethod.Parameters
+                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution, ResolveAssociatedTypeForSubstitution) })
+                .ToArray(),
+            GenericParameterNames = null,
+        };
+
+        return new ExpressionBinding(
+            resolvedMethod.ReturnType,
+            NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
+            Function: resolvedMethod,
+            DiagnosticName: $"dynamic trait method '{traitMethod.DisplaySourceName}'",
+            Receiver: target);
+    }
+
+    private bool TryApplyDynTraitRepresentationMemberAccess(
+        ExpressionBinding target,
+        string memberName,
+        ParserRuleContext context,
+        out ExpressionBinding binding)
+    {
+        binding = default!;
+        var fieldType = memberName switch
+        {
+            "Context" => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            "Vtable" => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(target.Type),
+            _ => StarkTypeSymbols.Error
+        };
+        if (fieldType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        RequireUnsafeContext($"Dynamic trait object representation member '.{memberName}'", context);
+        RecordFieldAccess(memberName, string.Equals(memberName, "Context", StringComparison.Ordinal) ? 0 : 1, fieldType, context);
+        binding = new ExpressionBinding(
+            fieldType,
+            NamedType: ResolveNamedTypeSymbol(fieldType),
+            DiagnosticName: $"dynamic trait object member '{memberName}'",
+            HasConstProvenance: target.HasConstProvenance,
+            MemoryRootIsIndependentStorage: false);
+        return true;
+    }
+
+    // (a direct call, not dynamic dispatch).
+    private bool TryResolveTraitBoundMemberCall(
+        ExpressionBinding target,
+        string memberName,
+        out ExpressionBinding binding)
+    {
+        binding = new ExpressionBinding(StarkTypeSymbols.Error);
+
+        var parameterName = target.Type.NamedType;
+        if (parameterName is null
+            || _currentFunctionGenericParameters?.Contains(parameterName) != true
+            || _currentFunctionConstraints.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var constraint in _currentFunctionConstraints)
+        {
+            if (!string.Equals(constraint.ParameterName, parameterName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var bound in constraint.BoundTraits)
+            {
+                if (bound.NamedType is not { } boundName)
+                {
+                    continue;
+                }
+
+                var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(boundName)}.{memberName}";
+                if (!TryGetFunctionOverloads(methodSourceName, out var methods))
+                {
+                    continue;
+                }
+
+                var instanceMethods = methods.Where(static method => !method.IsStatic).ToArray();
+                if (instanceMethods.Length != 1)
+                {
+                    continue;
+                }
+
+                var traitMethod = instanceMethods[0];
+
+                // A default method (one with a body) is dispatched by instantiating
+                // the default over `Self` = this type parameter through ordinary
+                // overload resolution; the per-type default body is materialized via
+                // a deferred instantiation trigger. An abstract method instead falls
+                // through to the pre-substituted form and is rerouted to the concrete
+                // override during MIR lowering (CG06).
+                if (traitMethod.HasBody)
+                {
+                    binding = new ExpressionBinding(
+                        StarkTypeSymbols.Error,
+                        DiagnosticName: $"trait default method '{methodSourceName}'",
+                        Receiver: target,
+                        OverloadSourceName: methodSourceName);
+                    return true;
+                }
+
+                // Substitute `Self` -> the type parameter, plus the trait's own type
+                // arguments (e.g. `Equatable<i32>` binds the trait's parameter to i32).
+                var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+                {
+                    ["Self"] = StarkTypeSymbols.Named(parameterName),
+                };
+
+                var boundSymbol = ResolveNamedTypeSymbol(bound);
+                if (boundSymbol is not null && bound.TypeArguments is { } boundArguments)
+                {
+                    var traitParameters = boundSymbol.GenericParams;
+                    for (var index = 0; index < traitParameters.Count && index < boundArguments.Count; index++)
+                    {
+                        substitution[traitParameters[index]] = boundArguments[index];
+                    }
+                }
+
+                var resolvedMethod = traitMethod with
+                {
+                    ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution, ResolveAssociatedTypeForSubstitution),
+                    Parameters = traitMethod.Parameters
+                        .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution, ResolveAssociatedTypeForSubstitution) })
+                        .ToArray(),
+                    GenericParameterNames = null,
+                };
+
+                binding = new ExpressionBinding(
+                    resolvedMethod.ReturnType,
+                    NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
+                    Function: resolvedMethod,
+                    DiagnosticName: $"trait method '{traitMethod.DisplaySourceName}'",
+                    Receiver: target);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Phase B: resolves `value.Member(...)` to a trait default method when the
+    // value's concrete type implements a trait that defines `Member` but does not
+    // override it. Binds through ordinary overload resolution so `Self` is inferred
+    // from the receiver and the default body is monomorphized for the concrete type
+    // (a direct call). An abstract (non-default) unimplemented method is reported as
+    // a conformance failure (STK3032) elsewhere.
+    private bool TryResolveTraitDefaultMemberCall(
+        NamedTypeSymbol implementingType,
+        ExpressionBinding target,
+        string memberName,
+        out ExpressionBinding binding)
+    {
+        binding = new ExpressionBinding(StarkTypeSymbols.Error);
+
+        foreach (var traitName in implementingType.ImplementedTraits)
+        {
+            var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
+            if (TryGetFunctionOverloads(methodSourceName, out var methods)
+                && methods.Any(static method => !method.IsStatic))
+            {
+                binding = new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    DiagnosticName: $"trait default method '{methodSourceName}'",
+                    Receiver: target,
+                    OverloadSourceName: methodSourceName);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ExpressionBinding ApplyDynamicMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -12094,6 +19150,7 @@ internal sealed class TypeChecker
                 || IsLocalBindingIndependentStorage(local);
             if (local.BindingKind is not null)
             {
+                RecordGlobalReference(local.Name, Location(token));
                 return new ExpressionBinding(
                     expressionType,
                     IsAssignable: local.IsMutable,
@@ -12132,6 +19189,7 @@ internal sealed class TypeChecker
 
         if (TryResolveGlobalBySourceName(name, out var global, out var ambiguousGlobalNames))
         {
+            RecordGlobalReference(global.Name, Location(token));
             return new ExpressionBinding(
                 global.Type,
                 IsAssignable: global.IsMutable,
@@ -12272,6 +19330,11 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: namedType.Name, DiagnosticName: $"enum '{name}'");
         }
 
+        if (IsCompilerKnownNamespace(name))
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module namespace '{name}'");
+        }
+
         if (_moduleGraph.CanAccessModule(CurrentFunctionModuleName, name))
         {
             return new ExpressionBinding(StarkTypeSymbols.Error, NamespaceName: name, DiagnosticName: $"module '{name}'");
@@ -12297,18 +19360,27 @@ internal sealed class TypeChecker
             .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(targetType, FunctionPointerTypeForSignature(function)))
             .ToArray();
         var candidates = matchingCandidates
-            .Where(function => !function.IsUnsafe || _unsafeDepth != 0)
+            .Where(function => !function.IsUnsafe || targetType.FunctionPointerIsUnsafe)
             .ToArray();
+        var unsafeRequirementCandidates = !targetType.FunctionPointerIsUnsafe
+            ? functions
+                .Where(static function => !function.IsGeneric && function.IsUnsafe)
+                .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
+                    BuildUnsafeFunctionPointerType(targetType),
+                    FunctionPointerTypeForSignature(function)))
+                .ToArray()
+            : [];
 
         if (candidates.Length == 1)
         {
-            var function = candidates[0];
+            var function = CacheFunctionInstantiation(candidates[0]);
             var location = Location(token);
             _functionPointerPromotions.Add(new FunctionPointerPromotionTypingRecord(
                 function,
                 targetType,
                 location,
                 _currentFunctionName));
+            RecordFunctionInstantiationTrigger(function, location);
             RecordAddressTakenFunction(function, location);
             return new ExpressionBinding(
                 targetType,
@@ -12316,7 +19388,7 @@ internal sealed class TypeChecker
                 DiagnosticName: $"function item '{function.DisplaySourceName}'");
         }
 
-        if (candidates.Length == 0 && matchingCandidates.Any(static function => function.IsUnsafe))
+        if (candidates.Length == 0 && (matchingCandidates.Any(static function => function.IsUnsafe) || unsafeRequirementCandidates.Length > 0))
         {
             ReportError(
                 "STK3024",
@@ -12327,9 +19399,10 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 0)
         {
+            var candidateDetail = FormatFunctionPointerPromotionCandidateTypes(functions);
             ReportError(
                 "STK3002",
-                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.",
+                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.{candidateDetail}",
                 token);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -12339,6 +19412,29 @@ internal sealed class TypeChecker
             $"Function item '{name}' is ambiguous for target '{targetType.DisplayName}'.",
             token);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private static StarkTypeSymbol BuildUnsafeFunctionPointerType(StarkTypeSymbol type)
+    {
+        if (type.FunctionPointerKind is not { } functionKind
+            || type.FunctionPointerReturnType is not { } returnType
+            || type.FunctionPointerParameterTypes is not { } parameterTypes)
+        {
+            return type;
+        }
+
+        return StarkTypeSymbols.FunctionPointer(
+            functionKind,
+            returnType,
+            parameterTypes,
+            type.FunctionPointerDisjointParameterGroups,
+            type.FunctionPointerOverlapParameterGroups,
+            type.FunctionPointerSameParameterGroups,
+            type.FunctionPointerParameterRawPointerElementCountExpressions,
+            type.FunctionPointerAbi,
+            isUnsafe: true,
+            isTailCallable: type.FunctionPointerIsTailCallable,
+            pointeeDeadOnReturnParameterNames: type.FunctionPointerPointeeDeadOnReturnParameterNames);
     }
 
     private ExpressionBinding ResolveClosureFunctionPromotion(
@@ -12362,7 +19458,7 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 1)
         {
-            var function = candidates[0];
+            var function = CacheFunctionInstantiation(candidates[0]);
             var location = Location(token);
             var enclosingFunctionName = _currentFunctionName ?? "module";
             var adapterFunctionName = CallableValueFacts.BuildClosureFunctionAdapterName(enclosingFunctionName, location);
@@ -12373,6 +19469,7 @@ internal sealed class TypeChecker
                 location,
                 _currentFunctionName);
             _closureFunctionPromotions.Add(promotion);
+            RecordFunctionInstantiationTrigger(function, location);
             _functions.TryAdd(adapterFunctionName, CallableValueFacts.BuildClosureFunctionAdapterSignature(promotion));
             return new ExpressionBinding(
                 targetType,
@@ -12408,6 +19505,21 @@ internal sealed class TypeChecker
     private static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
     {
         return TypeCompatibilityFacts.FunctionPointerTypeForSignature(function);
+    }
+
+    private static string FormatFunctionPointerPromotionCandidateTypes(IReadOnlyList<TypedFunctionSignature> functions)
+    {
+        var candidateTypes = functions
+            .Where(static function => !function.IsGeneric)
+            .Select(FunctionPointerTypeForSignature)
+            .Select(static type => type.DisplayName)
+            .Distinct(StringComparer.Ordinal)
+            .Take(4)
+            .ToArray();
+
+        return candidateTypes.Length == 0
+            ? string.Empty
+            : $" Candidate callable type(s): {string.Join(", ", candidateTypes.Select(static type => $"'{type}'"))}.";
     }
 
     private void RecordAddressTakenFunction(TypedFunctionSignature function, SourceLocation location)
@@ -12495,7 +19607,43 @@ internal sealed class TypeChecker
 
     private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
     {
-        if (_functionOverloads.TryGetValue(sourceName, out var candidates))
+        return TryGetFunctionOverloads(sourceName, CurrentFunctionModuleName, out overloads);
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="namedType"/> declares an instance method or
+    /// finite-law accessor whose name collides with the field <paramref name="memberName"/>.
+    /// Field access binds before the method table is consulted, so such a method is shadowed
+    /// by the field; reporting it lets a "field is not callable" diagnostic name the cause.
+    /// </summary>
+    private bool DeclaresSameNamedShadowedMethod(NamedTypeSymbol namedType, string memberName)
+    {
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
+        return TryGetFunctionOverloads(methodSourceName, out var methods)
+            && methods.Any(static method => !method.IsStatic);
+    }
+
+    private bool TryGetFunctionOverloads(
+        string sourceName,
+        string currentModuleName,
+        out IReadOnlyList<TypedFunctionSignature> overloads)
+    {
+        // Prefer the current module's own overloads before the bare (root-module /
+        // builtin) ones — matching TryResolveFunctionSignature's order. A non-root
+        // body must resolve a same-named function from its OWN module before one the
+        // build root happens to register under the bare name; otherwise, when the root
+        // module defines a colliding name (e.g. System.C.ToAscii is registered bare in
+        // a root=System.C build while System.Text's ToAscii body is being checked), the
+        // root's bare entry wrongly shadows the current module's overloads. Cross-module
+        // resolution still works through the accessible-module enumeration below.
+        if (!sourceName.Contains('.', StringComparison.Ordinal)
+            && _functionOverloads.TryGetValue($"{currentModuleName}.{sourceName}", out var candidates))
+        {
+            overloads = candidates;
+            return true;
+        }
+
+        if (_functionOverloads.TryGetValue(sourceName, out candidates))
         {
             overloads = candidates;
             return true;
@@ -12508,21 +19656,27 @@ internal sealed class TypeChecker
             return true;
         }
 
-        if (!sourceName.Contains('.', StringComparison.Ordinal)
-            && _functionOverloads.TryGetValue($"{CurrentFunctionModuleName}.{sourceName}", out candidates))
-        {
-            overloads = candidates;
-            return true;
-        }
-
         if (!sourceName.Contains('.', StringComparison.Ordinal))
         {
             var importedCandidates = new List<TypedFunctionSignature>();
-            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, sourceName))
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, sourceName))
             {
-                if (_functionOverloads.TryGetValue(candidateName, out candidates))
+                if (!_functionOverloads.TryGetValue(candidateName, out candidates))
                 {
-                    importedCandidates.AddRange(candidates);
+                    continue;
+                }
+
+                // Exclude another module's module-private overloads: a sibling source
+                // submodule must not reach them just because they are now registered
+                // (IsDeclarationVisible). Same-module calls never reach here — they
+                // resolve through the current-module-qualified lookup above.
+                var declaringModule = DeclaringModuleOfQualifiedKey(candidateName);
+                foreach (var candidate in candidates)
+                {
+                    if (IsModuleMemberAccessible(declaringModule, candidate.Visibility))
+                    {
+                        importedCandidates.Add(candidate);
+                    }
                 }
             }
 
@@ -12586,11 +19740,13 @@ internal sealed class TypeChecker
         StarkTypeSymbol type;
         string? textLiteral = null;
         TextLiteralKind? textLiteralKind = null;
+        BigInteger? integerLiteralValue = null;
 
         if (literal.signedIntegerLiteral() is { } integerLiteral)
         {
             var value = ParseSignedIntegerLiteral(integerLiteral);
             type = InferIntegerLiteralType(value);
+            integerLiteralValue = value;
         }
         else if (literal.FloatLiteral() is not null)
         {
@@ -12625,7 +19781,8 @@ internal sealed class TypeChecker
             TextLiteralKind: textLiteralKind,
             HasConstProvenance: textLiteralHasMemoryRoot,
             MemoryRootKey: textLiteralHasMemoryRoot ? BuildLiteralMemoryRootKey(literal) : null,
-            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot);
+            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot,
+            IntegerLiteralValue: integerLiteralValue);
     }
 
     private ExpressionBinding EvaluateInterpolatedTextLiteral(
@@ -12733,17 +19890,33 @@ internal sealed class TypeChecker
         return $"__literal_{literal.Start.Line.ToString(CultureInfo.InvariantCulture)}_{(literal.Start.Column + 1).ToString(CultureInfo.InvariantCulture)}";
     }
 
-    private StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters, string? currentModuleName = null)
+    private StarkTypeSymbol ResolveReturnType(
+        StarkParser.ReturnTypeContext returnType,
+        ISet<string>? genericParameters,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         return EnsureMonomorphizedType(
-            _typeResolver!.ResolveReturnType(returnType, genericParameters ?? _currentFunctionGenericParameters, currentModuleName),
+            _typeResolver!.ResolveReturnType(
+                returnType,
+                genericParameters ?? _currentFunctionGenericParameters,
+                currentModuleName,
+                comptimeGenericParameters ?? _currentFunctionComptimeGenericParameters),
             Location(returnType));
     }
 
-    private StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    private StarkTypeSymbol ResolveType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters = null,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         return EnsureMonomorphizedType(
-            _typeResolver!.ResolveType(type, genericParameters ?? _currentFunctionGenericParameters, currentModuleName),
+            _typeResolver!.ResolveType(
+                type,
+                genericParameters ?? _currentFunctionGenericParameters,
+                currentModuleName,
+                comptimeGenericParameters ?? _currentFunctionComptimeGenericParameters),
             Location(type));
     }
 
@@ -12751,14 +19924,16 @@ internal sealed class TypeChecker
         StarkParser.Type_Context type,
         ISet<string>? genericParameters,
         string? currentModuleName,
-        out string? rawPointerElementCountExpression)
+        out string? rawPointerElementCountExpression,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         return EnsureMonomorphizedType(
             _typeResolver!.ResolveParameterType(
                 type,
                 genericParameters ?? _currentFunctionGenericParameters,
                 currentModuleName,
-                out rawPointerElementCountExpression),
+                out rawPointerElementCountExpression,
+                comptimeGenericParameters ?? _currentFunctionComptimeGenericParameters),
             Location(type));
     }
 
@@ -12770,23 +19945,1251 @@ internal sealed class TypeChecker
     private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (_typeResolver!.TryResolveGenericTypeAlias(
+                baseName,
+                CurrentFunctionModuleName,
+                genericQualifiedName.qualifiedName().Start,
+                genericQualifiedName.typeArgumentList(),
+                _currentFunctionGenericParameters,
+                _currentFunctionComptimeGenericParameters,
+                out var aliasType))
+        {
+            return aliasType.Kind == StarkTypeKind.Error
+                ? StarkTypeSymbols.Error
+                : EnsureMonomorphizedType(aliasType, Location(genericQualifiedName));
+        }
+
         var baseType = ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, CurrentFunctionModuleName);
         if (baseType.Kind == StarkTypeKind.Error)
         {
             return StarkTypeSymbols.Error;
         }
 
-        var typeArguments = genericQualifiedName.typeArgumentList().type_()
-            .Select(typeArgument => ResolveType(typeArgument, currentModuleName: CurrentFunctionModuleName))
-            .ToArray();
-        if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        if (!_namedTypes.TryGetValue(baseType.NamedType ?? baseName, out var namedType))
+        {
+            ReportError("STK3004", $"Unknown generic type '{baseName}'.", genericQualifiedName);
+            return StarkTypeSymbols.Error;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            namedType.GenericParams,
+            namedType.ComptimeGenericParams,
+            typeArgument => ResolveType(typeArgument, currentModuleName: CurrentFunctionModuleName),
+            ReportError,
+            visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+        if (genericArguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
         {
             return StarkTypeSymbols.Error;
         }
 
         return EnsureMonomorphizedType(
-            StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments),
+            StarkTypeSymbols.GenericInstantiation(
+                baseType.NamedType ?? baseName,
+                genericArguments.TypeArguments,
+                genericArguments.ComptimeValueArguments),
             Location(genericQualifiedName));
+    }
+
+    private ExpressionBinding ResolveGenericQualifiedNameValue(
+        StarkParser.GenericQualifiedNameContext genericQualifiedName,
+        Scope scope,
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
+    {
+        var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (TryResolveCompileTimeStructuralFactReference(genericQualifiedName, baseName, scope, out var structuralFactBinding))
+        {
+            if (!allowFunctionReference)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{baseName}' may only be used inside a `comptime` expression or block.",
+                    genericQualifiedName);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            return structuralFactBinding;
+        }
+
+        if (TryGetFunctionOverloads(baseName, out var overloads))
+        {
+            if (!allowFunctionReference
+                && expectedType?.Kind is not (StarkTypeKind.FunctionPointer or StarkTypeKind.Closure))
+            {
+                ReportError("STK3012", $"Function '{baseName}' must be called before its value can be used.", genericQualifiedName);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
+            var matchingCandidates = overloads
+                .Where(candidate => candidate.GenericParams.Count + candidate.ComptimeGenericParams.Count == syntaxArgumentCount)
+                .ToArray();
+            if (matchingCandidates.Length == 0)
+            {
+                ReportError(
+                    "STK3019",
+                    $"No overload of '{baseName}' accepts {syntaxArgumentCount} explicit generic argument(s).",
+                    genericQualifiedName.typeArgumentList());
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            var instantiatedCandidates = new List<TypedFunctionSignature>(matchingCandidates.Length);
+            foreach (var candidate in matchingCandidates)
+            {
+                var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+                    genericQualifiedName.typeArgumentList(),
+                    candidate.GenericParams,
+                    candidate.ComptimeGenericParams,
+                    typeArgument => ResolveType(typeArgument, currentModuleName: CurrentFunctionModuleName),
+                    ReportError,
+                    CreateCompileTimeEvaluationServices(scope),
+                    _currentFunctionComptimeGenericParameters);
+                if (genericArguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+                {
+                    continue;
+                }
+
+                instantiatedCandidates.Add(FunctionOverloadFacts.InstantiateSignature(
+                    candidate,
+                    genericArguments.TypeArguments,
+                    candidate.Name,
+                    ResolveAssociatedTypeForSubstitution,
+                    genericArguments.ComptimeValueArguments));
+            }
+
+            if (instantiatedCandidates.Count == 0)
+            {
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (expectedType?.Kind == StarkTypeKind.FunctionPointer && instantiatedCandidates.Count == 1)
+            {
+                return ResolveFunctionPointerPromotion(baseName, instantiatedCandidates, expectedType, genericQualifiedName.Start);
+            }
+
+            if (expectedType?.Kind == StarkTypeKind.Closure && instantiatedCandidates.Count == 1)
+            {
+                return ResolveClosureFunctionPromotion(baseName, instantiatedCandidates, expectedType, genericQualifiedName.Start);
+            }
+
+            return instantiatedCandidates.Count == 1
+                ? new ExpressionBinding(
+                    instantiatedCandidates[0].ReturnType,
+                    Function: CacheFunctionInstantiation(instantiatedCandidates[0]),
+                    DiagnosticName: $"function '{instantiatedCandidates[0].DisplaySourceName}'")
+                : new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    DiagnosticName: $"overload group '{baseName}'",
+                    OverloadCandidates: instantiatedCandidates.ToArray());
+        }
+
+        var targetType = ResolveGenericQualifiedName(genericQualifiedName);
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        return new ExpressionBinding(
+            StarkTypeSymbols.Error,
+            NamespaceName: targetType.NamedType,
+            NamedType: namedType,
+            DiagnosticName: $"type '{targetType.DisplayName}'");
+    }
+
+    private bool TryResolveCompileTimeStructuralFactReference(
+        StarkParser.GenericQualifiedNameContext genericQualifiedName,
+        string baseName,
+        Scope scope,
+        out ExpressionBinding binding)
+    {
+        binding = default!;
+        if (!CompileTimeStructuralFacts.TryGetFactKind(baseName, out _))
+        {
+            return false;
+        }
+
+        if (!CompileTimeStructuralFacts.TryResolveArguments(
+                baseName,
+                genericQualifiedName,
+                typeArgument => ResolveType(
+                    typeArgument,
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters),
+                ReportError,
+                CreateCompileTimeEvaluationServices(scope),
+                _currentFunctionComptimeGenericParameters,
+                comptimeValueSubstitution: null,
+                out var structuralArguments))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            return true;
+        }
+
+        if (HasErrorStructuralFactTypeArgument(structuralArguments)
+            || !ValidateCompileTimeStructuralFactArguments(baseName, structuralArguments, genericQualifiedName))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            return true;
+        }
+
+        CompileTimeStructuralFacts.TryCreateSignature(baseName, structuralArguments, out var signature);
+        binding = new ExpressionBinding(
+            signature.ReturnType,
+            Function: signature,
+            DiagnosticName: $"compile-time structural fact '{baseName}'");
+        return true;
+    }
+
+    private static bool HasErrorStructuralFactTypeArgument(CompileTimeStructuralFactArguments arguments)
+    {
+        return arguments.TargetType.Kind == StarkTypeKind.Error
+            || arguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error);
+    }
+
+    private bool ValidateStructuralFactTypeArgumentIndex(
+        string factName,
+        StarkTypeSymbol type,
+        BigInteger index,
+        string subjectDescription,
+        ParserRuleContext context)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        var typeArgumentCount = coreType.TypeArguments?.Count ?? 0;
+        if (index >= BigInteger.Zero && index < typeArgumentCount)
+        {
+            return true;
+        }
+
+        ReportError(
+            "STK3054",
+            $"Compile-time structural fact '{factName}' type argument index '{index}' is out of range for {subjectDescription} with {typeArgumentCount} type argument(s).",
+            context);
+        return false;
+    }
+
+    private bool ValidateCompileTimeStructuralFactArguments(
+        string factName,
+        CompileTimeStructuralFactArguments arguments,
+        ParserRuleContext context)
+    {
+        if (!CompileTimeStructuralFacts.TryGetFactKind(factName, out var kind)
+            || arguments.ComptimeValueArguments.Any(static argument => argument.IsSymbolic)
+            || arguments.TargetType.Kind == StarkTypeKind.Error
+            || arguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error))
+        {
+            return true;
+        }
+
+        if (kind is CompileTimeStructuralFactKind.Implements
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeIs)
+        {
+            if (arguments.AdditionalTypeArguments.Count != 1)
+            {
+                return true;
+            }
+
+            var traitType = arguments.AdditionalTypeArguments[0];
+            if (ResolveNamedTypeDefinitionSymbol(traitType) is not { } traitSymbol)
+            {
+                return true;
+            }
+
+            if (traitSymbol.Kind != DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a trait type as its second argument, but found '{traitType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsImplementedTraitIndexedFact(kind))
+        {
+            if ((ResolveNamedTypeSymbol(arguments.TargetType) ?? ResolveNamedTypeDefinitionSymbol(arguments.TargetType)) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.ImplementedTraits.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' implemented-trait index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.ImplementedTraits.Count} implemented trait(s).",
+                    context);
+                return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsImplementedTraitTypeArgumentIndexedFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var implementedTraitTypeArgumentCount =
+                    (int)index < namedType.ImplementedTraitTypes.Count
+                        ? namedType.ImplementedTraitTypes[(int)index].TypeArguments?.Count ?? 0
+                        : 0;
+                if (argumentIndex < BigInteger.Zero || argumentIndex >= implementedTraitTypeArgumentCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' implemented-trait type argument index '{argumentIndex}' is out of range for trait slot {index} of '{arguments.TargetType.DisplayName}' with {implementedTraitTypeArgumentCount} type argument(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsImplementedTraitComptimeArgumentIndexedFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var implementedTraitComptimeArgumentCount =
+                    (int)index < namedType.ImplementedTraitTypes.Count
+                        ? namedType.ImplementedTraitTypes[(int)index].ComptimeValueArguments?.Count ?? 0
+                        : 0;
+                if (argumentIndex < BigInteger.Zero || argumentIndex >= implementedTraitComptimeArgumentCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' implemented-trait comptime argument index '{argumentIndex}' is out of range for trait slot {index} of '{arguments.TargetType.DisplayName}' with {implementedTraitComptimeArgumentCount} comptime argument(s).",
+                        context);
+                    return false;
+                }
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeSize
+            or CompileTimeStructuralFactKind.TypeAlign
+            or CompileTimeStructuralFactKind.TypeIsZeroSized)
+        {
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                if (arguments.TargetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(arguments.TargetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresIntegerTarget(kind)
+            || CompileTimeStructuralFacts.RequiresFloatTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            var expectsInteger = CompileTimeStructuralFacts.RequiresIntegerTarget(kind);
+            var hasExpectedTarget = expectsInteger
+                ? targetType.Kind == StarkTypeKind.Integer && targetType.BitWidth is not null
+                : targetType.Kind == StarkTypeKind.Float && targetType.BitWidth is not null;
+            if (!hasExpectedTarget)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires {(expectsInteger ? "an integer" : "a float")} type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresRawPointerTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.RawPointer)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a raw pointer type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresElementTypeTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.ElementType is null)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an element-bearing type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresFixedArrayTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.FixedArray)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a fixed-array type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.DynTraitTargetTypeIs)
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.DynTrait)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a dyn trait object type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (arguments.AdditionalTypeArguments.Count != 1)
+            {
+                return true;
+            }
+
+            var traitType = arguments.AdditionalTypeArguments[0];
+            if (ResolveNamedTypeDefinitionSymbol(traitType) is not { } traitSymbol)
+            {
+                return true;
+            }
+
+            if (traitSymbol.Kind != DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a trait type as its second argument, but found '{traitType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind != CompileTimeStructuralFactKind.MethodCount
+            && CompileTimeStructuralFacts.IsMethodIndexedFact(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeNamedTypeInModule(targetType, CurrentFunctionModuleName, out _))
+            {
+                return true;
+            }
+
+            var methods = ResolveCompileTimeMethodSignatures(targetType, CurrentFunctionModuleName);
+            var methodIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (methodIndex < BigInteger.Zero || methodIndex >= methods.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' method index '{methodIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {methods.Count} method slot(s).",
+                    context);
+                return false;
+            }
+
+            var method = methods[(int)methodIndex];
+            if (kind == CompileTimeStructuralFactKind.MethodParameterName
+                || kind == CompileTimeStructuralFactKind.MethodParameterTypeIs
+                || CompileTimeStructuralFacts.IsMethodParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterTypeArgumentFact(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (parameterIndex < BigInteger.Zero || parameterIndex >= method.Parameters.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{parameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.Parameters.Count} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodReturnTypeArgumentFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        method.ReturnType,
+                        argumentIndex,
+                        $"return type of method slot {methodIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodParameterTypeArgumentFact(kind))
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[2].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        method.Parameters[(int)parameterIndex].Type,
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of method slot {methodIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodParameterMemoryFact(kind))
+            {
+                for (var position = 1; position <= 2; position++)
+                {
+                    var parameterIndex = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (parameterIndex < BigInteger.Zero || parameterIndex >= method.Parameters.Count)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{parameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.Parameters.Count} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+
+            if (kind is CompileTimeStructuralFactKind.MethodGenericParameterName
+                or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundCount
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind))
+            {
+                var genericParameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var genericParameterCount = kind is CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                    or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind)
+                        ? method.ComptimeGenericParams.Count
+                        : method.GenericParams.Count;
+                var genericParameterKind = kind is CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                    or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind)
+                        ? "comptime generic parameter"
+                        : "generic parameter";
+                if (genericParameterIndex < BigInteger.Zero || genericParameterIndex >= genericParameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' {genericParameterKind} index '{genericParameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {genericParameterCount} {genericParameterKind}(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodGenericParameterTraitBoundIndexedFact(kind))
+            {
+                var genericParameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (genericParameterIndex < BigInteger.Zero || genericParameterIndex >= method.GenericParams.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' generic parameter index '{genericParameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.GenericParams.Count} generic parameter(s).",
+                        context);
+                    return false;
+                }
+
+                var parameterName = method.GenericParams[(int)genericParameterIndex];
+                var boundCount = 0;
+                foreach (var constraint in method.Constraints)
+                {
+                    if (string.Equals(constraint.ParameterName, parameterName, StringComparison.Ordinal))
+                    {
+                        boundCount = constraint.BoundTraits.Count;
+                        break;
+                    }
+                }
+
+                var boundIndex = arguments.ComptimeValueArguments[2].IntegerValue;
+                if (boundIndex < BigInteger.Zero || boundIndex >= boundCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' trait-bound index '{boundIndex}' is out of range for generic parameter '{parameterName}' of method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {boundCount} trait bound(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodThreadSafetyLawPredicateIndexedFact(kind))
+            {
+                var predicateIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (predicateIndex < BigInteger.Zero || predicateIndex >= method.ThreadSafetyLaws.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' thread-safety law predicate index '{predicateIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.ThreadSafetyLaws.Count} predicate(s).",
+                        context);
+                    return false;
+                }
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.FunctionPointerReturnTypeIs
+            || kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterMemoryFact(kind)
+            || kind == CompileTimeStructuralFactKind.FunctionPointerIsUnsafe)
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.FunctionPointer)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a function pointer type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var index = arguments.ComptimeValueArguments[0].IntegerValue;
+                var parameterCount = targetType.FunctionPointerParameterTypes?.Count ?? 0;
+                if (index < BigInteger.Zero || index >= parameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerReturnTypeArgumentFact(kind)
+                && targetType.FunctionPointerReturnType is { } returnType)
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        returnType,
+                        argumentIndex,
+                        $"return type of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
+                && targetType.FunctionPointerParameterTypes is { } parameterTypes)
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        parameterTypes[(int)parameterIndex],
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerParameterMemoryFact(kind))
+            {
+                var parameterCount = targetType.FunctionPointerParameterTypes?.Count ?? 0;
+                for (var position = 0; position < 2; position++)
+                {
+                    var index = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (index < BigInteger.Zero || index >= parameterCount)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.ClosureReturnTypeIs
+            || kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs
+            || kind is CompileTimeStructuralFactKind.ClosureKindIsFn
+                or CompileTimeStructuralFactKind.ClosureKindIsFinite
+                or CompileTimeStructuralFactKind.ClosureKindIsLaw
+                or CompileTimeStructuralFactKind.ClosureKindIsFiniteLaw
+                or CompileTimeStructuralFactKind.ClosureStorageIsBorrow
+                or CompileTimeStructuralFactKind.ClosureStorageIsHeap
+                or CompileTimeStructuralFactKind.ClosureStorageIsInline
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsNormal
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsMut
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsOnce
+            || CompileTimeStructuralFacts.IsClosureReturnTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsClosureReturnTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsClosureReturnTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterMemoryFact(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.Closure)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a closure type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs
+                || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var index = arguments.ComptimeValueArguments[0].IntegerValue;
+                var parameterCount = targetType.ClosureParameterTypes?.Count ?? 0;
+                if (index < BigInteger.Zero || index >= parameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureReturnTypeArgumentFact(kind)
+                && targetType.ClosureReturnType is { } returnType)
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        returnType,
+                        argumentIndex,
+                        $"return type of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
+                && targetType.ClosureParameterTypes is { } parameterTypes)
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        parameterTypes[(int)parameterIndex],
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureParameterMemoryFact(kind))
+            {
+                var parameterCount = targetType.ClosureParameterTypes?.Count ?? 0;
+                for (var position = 0; position < 2; position++)
+                {
+                    var index = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (index < BigInteger.Zero || index >= parameterCount)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.FieldOffset
+            or CompileTimeStructuralFactKind.FieldSize
+            or CompileTimeStructuralFactKind.FieldAlign
+            or CompileTimeStructuralFactKind.FieldIsMisaligned)
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.FieldTypeIs
+            or CompileTimeStructuralFactKind.FieldName
+            or CompileTimeStructuralFactKind.FieldHasExplicitOffset
+            or CompileTimeStructuralFactKind.FieldExplicitOffset)
+            || CompileTimeStructuralFacts.IsFieldTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFieldTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFieldVisibilityFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsTypeThreadSafetyLawAttributeIndexedFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.ThreadSafetyLaws.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' thread-safety law attribute index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.ThreadSafetyLaws.Count} attribute(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsFieldThreadSafetyLawAttributeFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var fieldIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (fieldIndex < BigInteger.Zero || fieldIndex >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{fieldIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsFieldThreadSafetyLawAttributeIndexedFact(kind))
+            {
+                var field = namedType.OrderedFields[(int)fieldIndex];
+                var attributeIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (attributeIndex < BigInteger.Zero || attributeIndex >= field.ThreadSafetyLaws.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' thread-safety law attribute index '{attributeIndex}' is out of range for field '{field.Name}' of '{arguments.TargetType.DisplayName}' with {field.ThreadSafetyLaws.Count} attribute(s).",
+                        context);
+                    return false;
+                }
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.AssociatedTypeName
+            or CompileTimeStructuralFactKind.AssociatedTypeHasTarget
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIs)
+            || CompileTimeStructuralFacts.IsAssociatedTypeTargetTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsAssociatedTypeTargetTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            var associatedTypes = namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .ToArray();
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= associatedTypes.Length)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' associated type index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {associatedTypes.Length} associated type(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIs
+            || CompileTimeStructuralFacts.IsTypeComptimeGenericParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeComptimeGenericParameterTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeDefinitionSymbol(arguments.TargetType) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            var parameterCount = kind == CompileTimeStructuralFactKind.TypeGenericParameterName
+                ? namedType.GenericParams.Count
+                : namedType.ComptimeGenericParams.Count;
+            var parameterKind = kind == CompileTimeStructuralFactKind.TypeGenericParameterName
+                ? "generic parameter"
+                : "comptime generic parameter";
+            if (index < BigInteger.Zero || index >= parameterCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' {parameterKind} index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} {parameterKind}(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.TypeArgumentTypeIs
+            || CompileTimeStructuralFacts.IsTypeArgumentTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeArgumentTypeMetadataFact(kind))
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (coreType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var typeArgumentCount = coreType.TypeArguments?.Count ?? 0;
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= typeArgumentCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' type argument index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {typeArgumentCount} type argument(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeComptimeArgumentName
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIs
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentValueIs
+            || CompileTimeStructuralFacts.IsTypeComptimeArgumentTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeComptimeArgumentTypeMetadataFact(kind))
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (coreType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var comptimeArgumentCount = coreType.ComptimeValueArguments?.Count ?? 0;
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= comptimeArgumentCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' comptime argument index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {comptimeArgumentCount} comptime argument(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.EnumVariantPayloadCount
+            or CompileTimeStructuralFactKind.EnumVariantTag
+            or CompileTimeStructuralFactKind.EnumVariantIsOk
+            or CompileTimeStructuralFactKind.EnumVariantIsErr
+            or CompileTimeStructuralFactKind.EnumVariantIsErrorFunnel
+            or CompileTimeStructuralFactKind.EnumVariantAbsorbsErrorTypeIs
+            or CompileTimeStructuralFactKind.EnumVariantName
+            or CompileTimeStructuralFactKind.EnumVariantUsesNamedFields)
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.Variants.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' variant index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.Variants.Count} variant(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsEnumTagLayoutFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.EnumVariantPayloadTypeIs
+            or CompileTimeStructuralFactKind.EnumVariantPayloadHasName
+            or CompileTimeStructuralFactKind.EnumVariantPayloadName)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadLayoutFact(kind)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var variantIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (variantIndex < BigInteger.Zero || variantIndex >= namedType.Variants.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' variant index '{variantIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.Variants.Count} variant(s).",
+                    context);
+                return false;
+            }
+
+            var payloadIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+            var variant = namedType.Variants[(int)variantIndex];
+            if (payloadIndex < BigInteger.Zero || payloadIndex >= variant.Fields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' payload index '{payloadIndex}' is out of range for variant '{variant.Name}' of '{arguments.TargetType.DisplayName}' with {variant.Fields.Count} payload field(s).",
+                    context);
+                return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsEnumVariantPayloadLayoutFact(kind)
+                && !TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(ownerType, associatedTypeName, _namedTypes, out var targetType)
+            ? EnsureMonomorphizedType(targetType)
+            : null;
     }
 
     private ExpressionBinding ResolveGenericMemberReferenceValue(
@@ -12885,16 +21288,16 @@ internal sealed class TypeChecker
 
         if (strippedType.Kind == StarkTypeKind.Named
             && StarkTypeSymbols.IsGenericInstantiation(strippedType)
-            && strippedType.NamedType is not null
-            && strippedType.TypeArguments is not null)
+            && strippedType.NamedType is not null)
         {
-            var monomorphizedArguments = strippedType.TypeArguments
+            var monomorphizedArguments = (strippedType.TypeArguments ?? [])
                 .Select(argument => EnsureMonomorphizedType(argument))
                 .ToArray();
             monomorphizedType = StarkTypeSymbols.WithQualifiers(
                 StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(strippedType.NamedType),
-                    monomorphizedArguments),
+                    monomorphizedArguments,
+                    strippedType.ComptimeValueArguments),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -12905,7 +21308,7 @@ internal sealed class TypeChecker
             var monomorphizedElement = EnsureMonomorphizedType(strippedType.ElementType);
             var rebuiltCore = strippedType.Kind switch
             {
-                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(monomorphizedElement, strippedType.FixedLength),
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(monomorphizedElement, strippedType.FixedLength, strippedType.FixedLengthParameterName),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(monomorphizedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(monomorphizedElement, strippedType.IsMutablePointer),
                 StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(monomorphizedElement),
@@ -12931,7 +21334,11 @@ internal sealed class TypeChecker
                     strippedType.FunctionPointerDisjointParameterGroups,
                     strippedType.FunctionPointerOverlapParameterGroups,
                     strippedType.FunctionPointerSameParameterGroups,
-                    strippedType.FunctionPointerParameterRawPointerElementCountExpressions),
+                    strippedType.FunctionPointerParameterRawPointerElementCountExpressions,
+                    strippedType.FunctionPointerAbi,
+                    strippedType.FunctionPointerIsUnsafe,
+                    strippedType.FunctionPointerIsTailCallable,
+                    strippedType.FunctionPointerPointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -12952,7 +21359,9 @@ internal sealed class TypeChecker
                     strippedType.ClosureDisjointParameterGroups,
                     strippedType.ClosureOverlapParameterGroups,
                     strippedType.ClosureSameParameterGroups,
-                    strippedType.ClosureParameterRawPointerElementCountExpressions),
+                    strippedType.ClosureParameterRawPointerElementCountExpressions,
+                    strippedType.ClosureIsTailCallable,
+                    strippedType.ClosurePointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -12970,23 +21379,36 @@ internal sealed class TypeChecker
         }
 
         var key = monomorphizedType.NamedType!;
-        if (monomorphizedType.TypeArguments is { Count: > 0 } typeArguments)
+        var concreteTypeArguments = monomorphizedType.TypeArguments ?? [];
+        var concreteValueArguments = monomorphizedType.ComptimeValueArguments ?? [];
+        if (concreteTypeArguments.Count > 0 || concreteValueArguments.Count > 0)
         {
             ValidateDictionaryKeyConstraint(monomorphizedType, triggerLocation);
-            _genericInstantiationArguments.TryAdd(key, typeArguments.ToArray());
+            _genericInstantiationArguments.TryAdd(
+                key,
+                new ConcreteGenericTypeArguments(
+                    concreteTypeArguments.ToArray(),
+                    concreteValueArguments.Count == 0 ? null : concreteValueArguments.ToArray()));
         }
 
         if (_namedTypes.TryGetValue(key, out var existingNamedType))
         {
-            if (monomorphizedType.TypeArguments is { Count: > 0 } refreshTypeArguments
-                && TryRefreshIncompleteConcreteType(key, refreshTypeArguments))
+            if (TryRefreshIncompleteConcreteType(
+                    key,
+                    new ConcreteGenericTypeArguments(
+                        concreteTypeArguments.ToArray(),
+                        concreteValueArguments.Count == 0 ? null : concreteValueArguments.ToArray())))
             {
                 existingNamedType = _namedTypes[key];
             }
 
-            if (monomorphizedType.TypeArguments is { Count: > 0 } existingTypeArguments)
+            if (concreteTypeArguments.Count > 0 || concreteValueArguments.Count > 0)
             {
-                EnsureConcreteConstructorShapes(key, existingTypeArguments);
+                EnsureConcreteConstructorShapes(
+                    key,
+                    new ConcreteGenericTypeArguments(
+                        concreteTypeArguments.ToArray(),
+                        concreteValueArguments.Count == 0 ? null : concreteValueArguments.ToArray()));
             }
 
             if (triggerLocation is { } existingTriggerLocation)
@@ -13010,11 +21432,12 @@ internal sealed class TypeChecker
             return monomorphizedType;
         }
 
-        if (template.GenericParams.Count != monomorphizedType.TypeArguments!.Count)
+        if (template.GenericParams.Count != concreteTypeArguments.Count
+            || template.ComptimeGenericParams.Count != concreteValueArguments.Count)
         {
             ReportError(
                 "STK3019",
-                $"Generic type '{baseName}' expects {template.GenericParams.Count} type argument(s) but {monomorphizedType.TypeArguments.Count} were provided.",
+                $"Generic type '{baseName}' expects {template.GenericParams.Count} type argument(s) and {template.ComptimeGenericParams.Count} comptime value argument(s) but {concreteTypeArguments.Count} type argument(s) and {concreteValueArguments.Count} comptime value argument(s) were provided.",
                 SourceLocation.Synthetic());
             return monomorphizedType;
         }
@@ -13022,21 +21445,27 @@ internal sealed class TypeChecker
         var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         for (var i = 0; i < template.GenericParams.Count; i++)
         {
-            substitution[template.GenericParams[i]] = EnsureMonomorphizedType(monomorphizedType.TypeArguments[i]);
+            substitution[template.GenericParams[i]] = EnsureMonomorphizedType(concreteTypeArguments[i]);
         }
+        var valueSubstitution = BuildNamedTypeComptimeValueSubstitution(template, concreteValueArguments);
 
         _namedTypes[key] = new NamedTypeSymbol(
             key,
             template.Kind,
             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
             [],
-            GenericParameterNames: template.GenericParams.ToArray());
+            GenericParameterNames: template.GenericParams.ToArray(),
+            ComptimeGenericParameterNames: template.ComptimeGenericParams.ToArray(),
+            IsDynTrait: template.IsDynTrait,
+            Layout: template.Layout,
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility);
         _namedTypes[key] = template.Kind == DeclarationKind.Enum
-            ? CreateConcreteEnum(key, template, substitution)
-            : CreateConcreteStructLike(key, template, substitution);
+            ? CreateConcreteEnum(key, template, substitution, valueSubstitution)
+            : CreateConcreteStructLike(key, template, substitution, valueSubstitution);
         if (_constructors.TryGetValue(baseName, out var templateConstructors))
         {
-            _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution);
+            _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution, valueSubstitution);
         }
 
         if (triggerLocation is { } typeTriggerLocation)
@@ -13049,10 +21478,27 @@ internal sealed class TypeChecker
 
     private void ValidateDictionaryKeyConstraint(StarkTypeSymbol dictionaryType, SourceLocation? triggerLocation)
     {
-        if (!TryGetDictionaryKeyType(dictionaryType, out var keyType)
-            || TypeContainsOpenCurrentFunctionGenericParameter(keyType)
-            || IsCompilerProvenDictionaryKey(keyType))
+        if (!SystemCollectionsDictionaryKeyFacts.TryGetDictionaryKeyType(dictionaryType, out var keyType)
+            || TypeContainsOpenCurrentFunctionGenericParameter(keyType))
         {
+            return;
+        }
+
+        if (!_canValidateDictionaryKeyConstraints)
+        {
+            _pendingDictionaryKeyConstraintValidations.Add((dictionaryType, triggerLocation));
+            return;
+        }
+
+        if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                sourceName => TryGetFunctionOverloads(sourceName, CurrentFunctionModuleName, out var candidates) ? candidates : null,
+                out var contract,
+                out var contractDiagnostic))
+        {
+            RecordDictionaryKeyContractInstantiationTriggers(
+                contract,
+                triggerLocation ?? SourceLocation.Synthetic());
             return;
         }
 
@@ -13064,47 +21510,68 @@ internal sealed class TypeChecker
 
         ReportError(
             "STK3023",
-            $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+            $"{FormatDictionaryKeyCollectionUse(dictionaryType, keyType)} collection use requires a compile-time DictionaryKey contract for key type '{keyType.DisplayName}'. {contractDiagnostic}",
             triggerLocation ?? SourceLocation.Synthetic());
     }
 
-    private static bool TryGetDictionaryKeyType(StarkTypeSymbol type, out StarkTypeSymbol keyType)
+    private void ValidatePendingDictionaryKeyConstraints()
     {
-        keyType = StarkTypeSymbols.Error;
-        var coreType = StarkTypeSymbols.WithQualifiers(
-            type,
-            borrowKind: StarkBorrowKind.None,
-            accessKind: StarkAccessKind.None,
-            initializationKind: StarkInitializationKind.None,
-            isMutableView: false);
-
-        if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
-            || coreType.NamedType is null
-            || coreType.TypeArguments is not { Count: 2 }
-            || StarkTypeSymbols.GetGenericBaseName(coreType.NamedType) is not "System.Collections.Dictionary")
+        foreach (var (type, location) in _pendingDictionaryKeyConstraintValidations)
         {
-            return false;
+            ValidateDictionaryKeyConstraint(type, location);
         }
 
-        keyType = StarkTypeSymbols.WithQualifiers(
-            coreType.TypeArguments[0],
-            borrowKind: StarkBorrowKind.None,
-            accessKind: StarkAccessKind.None,
-            initializationKind: StarkInitializationKind.None,
-            isMutableView: false);
-        return true;
+        _pendingDictionaryKeyConstraintValidations.Clear();
     }
 
-    private static bool IsCompilerProvenDictionaryKey(StarkTypeSymbol keyType)
+    private static string FormatDictionaryKeyCollectionUse(
+        StarkTypeSymbol dictionaryType,
+        StarkTypeSymbol keyType)
     {
-        var coreType = StarkTypeSymbols.WithQualifiers(
-            keyType,
-            borrowKind: StarkBorrowKind.None,
-            accessKind: StarkAccessKind.None,
-            initializationKind: StarkInitializationKind.None,
-            isMutableView: false);
+        var normalizedDictionaryType = SystemCollectionsDictionaryKeyFacts.NormalizeType(dictionaryType);
+        var collectionBaseName = normalizedDictionaryType.NamedType is null
+            ? string.Empty
+            : StarkTypeSymbols.GetGenericBaseName(normalizedDictionaryType.NamedType);
 
-        return coreType.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
+        return collectionBaseName is SystemCollectionsDictionaryKeyFacts.HashSetTypeName
+            ? $"HashSet<{keyType.DisplayName}>"
+            : $"Dictionary<{keyType.DisplayName}, V>";
+    }
+
+    private void RecordDictionaryKeyContractInstantiationTriggers(
+        SystemCollectionsDictionaryKeyContract contract,
+        SourceLocation location)
+    {
+        RecordDictionaryKeyContractInstantiationTrigger(contract.HashFunction, location);
+        RecordDictionaryKeyContractInstantiationTrigger(contract.EqualsFunction, location);
+    }
+
+    private void RecordDictionaryKeyContractInstantiationTrigger(
+        TypedFunctionSignature? signature,
+        SourceLocation location)
+    {
+        if (signature is null
+            || !signature.IsGenericInstantiation
+            || signature.TemplateName is not { } templateName
+            || signature.TypeArguments is not { Count: > 0 } typeArguments
+            || typeArguments.Any(TypeContainsOpenCurrentFunctionGenericParameter)
+            || SignatureContainsOpenCurrentFunctionComptimeParameter(signature))
+        {
+            return;
+        }
+
+        var key = BuildFunctionInstantiationKey(templateName, typeArguments, signature.ComptimeValueArguments);
+        if (!_functionInstantiationKeys.Add(key))
+        {
+            return;
+        }
+
+        _functionInstantiationTriggers.Add(new FunctionInstantiationTriggerRecord(
+            signature.DisplaySourceName,
+            typeArguments.ToArray(),
+            signature.ComptimeValueArguments?.ToArray(),
+            signature,
+            location));
     }
 
     private void RefreshConcreteInstantiationsForTemplate(NamedTypeSymbol template)
@@ -13114,18 +21581,18 @@ internal sealed class TypeChecker
             return;
         }
 
-        foreach (var (key, typeArguments) in _genericInstantiationArguments.ToArray())
+        foreach (var (key, arguments) in _genericInstantiationArguments.ToArray())
         {
             if (!string.Equals(StarkTypeSymbols.GetGenericBaseName(key), template.Name, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            _ = TryRefreshIncompleteConcreteType(key, typeArguments);
+            _ = TryRefreshIncompleteConcreteType(key, arguments);
         }
     }
 
-    private bool TryRefreshIncompleteConcreteType(string key, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    private bool TryRefreshIncompleteConcreteType(string key, ConcreteGenericTypeArguments arguments)
     {
         if (!_refreshingConcreteTypes.Add(key))
         {
@@ -13142,7 +21609,8 @@ internal sealed class TypeChecker
             }
 
             if (!template.IsGeneric
-                || template.GenericParams.Count != typeArguments.Count
+                || template.GenericParams.Count != arguments.TypeArguments.Count
+                || template.ComptimeGenericParams.Count != arguments.ComptimeValueArguments.Count
                 || (template.Kind is DeclarationKind.Struct or DeclarationKind.Record && template.OrderedFields.Count == 0))
             {
                 return false;
@@ -13158,12 +21626,13 @@ internal sealed class TypeChecker
             var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
             for (var i = 0; i < template.GenericParams.Count; i++)
             {
-                substitution[template.GenericParams[i]] = typeArguments[i];
+                substitution[template.GenericParams[i]] = arguments.TypeArguments[i];
             }
+            var valueSubstitution = BuildNamedTypeComptimeValueSubstitution(template, arguments.ComptimeValueArguments);
 
             _namedTypes[key] = template.Kind == DeclarationKind.Enum
-                ? CreateConcreteEnum(key, template, substitution)
-                : CreateConcreteStructLike(key, template, substitution);
+                ? CreateConcreteEnum(key, template, substitution, valueSubstitution)
+                : CreateConcreteStructLike(key, template, substitution, valueSubstitution);
             return true;
         }
         finally
@@ -13175,15 +21644,24 @@ internal sealed class TypeChecker
     private NamedTypeSymbol CreateConcreteEnum(
         string key,
         NamedTypeSymbol template,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
     {
+        // Carry the propagation `Role` ([Ok]/[Err]) and the `from` funnel marker through
+        // monomorphization: `try` consults them on the *instantiated* enum (e.g.
+        // `Result<i32, ParseError>`), so dropping them here would silently disable
+        // propagation for every generic enum.
         var concreteVariants = template.Variants
             .Select(variant => new EnumVariantSymbol(
                 variant.Name,
                 variant.UsesNamedFields,
                 variant.Fields
-                    .Select(f => new EnumVariantFieldSymbol(f.Position, f.Name, SubstituteType(f.Type, substitution)))
-                    .ToArray()))
+                    .Select(f => new EnumVariantFieldSymbol(f.Position, f.Name, SubstituteType(f.Type, substitution, valueSubstitution)))
+                    .ToArray(),
+                AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbed
+                    ? SubstituteType(absorbed, substitution, valueSubstitution)
+                    : null,
+                Role: variant.Role))
             .ToList();
 
         return new NamedTypeSymbol(
@@ -13191,30 +21669,64 @@ internal sealed class TypeChecker
             DeclarationKind.Enum,
             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
             [],
-            EnumVariants: concreteVariants);
+            EnumVariants: concreteVariants,
+            ThreadSafetyLawAttributes: SubstituteThreadSafetyLawAttributes(
+                template.ThreadSafetyLaws,
+                substitution,
+                valueSubstitution),
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility);
     }
 
     private NamedTypeSymbol CreateConcreteStructLike(
         string key,
         NamedTypeSymbol template,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
     {
         var concreteFields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var concreteOrderedFields = new List<FieldSymbol>();
 
         foreach (var field in template.OrderedFields)
         {
-            var concreteField = field with { Type = SubstituteType(field.Type, substitution) };
+            var concreteField = field with
+            {
+                Type = SubstituteType(field.Type, substitution, valueSubstitution),
+                ThreadSafetyLawAttributes = SubstituteThreadSafetyLawAttributes(
+                    field.ThreadSafetyLaws,
+                    substitution,
+                    valueSubstitution)
+            };
             concreteFields[field.Name] = concreteField;
             concreteOrderedFields.Add(concreteField);
         }
 
-        return new NamedTypeSymbol(key, template.Kind, concreteFields, concreteOrderedFields);
+        return new NamedTypeSymbol(
+            key,
+            template.Kind,
+            concreteFields,
+            concreteOrderedFields,
+            ImplementedTraitNames: template.ImplementedTraits,
+            ImplementedTraitTypeSymbols: template.ImplementedTraitTypes.Count == 0
+                ? null
+                : template.ImplementedTraitTypes
+                    .Select(type => SubstituteType(type, substitution, valueSubstitution))
+                    .ToArray(),
+            IsDynTrait: template.IsDynTrait,
+            Layout: template.Layout,
+            ThreadSafetyLawAttributes: SubstituteThreadSafetyLawAttributes(
+                template.ThreadSafetyLaws,
+                substitution,
+                valueSubstitution),
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility,
+            HasDestructor: template.HasDestructor);
     }
 
     private List<ConstructorShape> CreateConcreteConstructors(
         IReadOnlyList<ConstructorShape> templateConstructors,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
     {
         return templateConstructors
             .Select(constructor => new ConstructorShape(
@@ -13222,7 +21734,7 @@ internal sealed class TypeChecker
                 constructor.Parameters
                     .Select(parameter => new TypedParameterSymbol(
                         parameter.Name,
-                        SubstituteType(parameter.Type, substitution),
+                        SubstituteType(parameter.Type, substitution, valueSubstitution),
                         parameter.IsDisjoint,
                         parameter.IsConst,
                         parameter.RawPointerElementCountExpression))
@@ -13234,13 +21746,13 @@ internal sealed class TypeChecker
 
     private void PopulateConcreteConstructorShapesForKnownGenericInstantiations()
     {
-        foreach (var (key, typeArguments) in _genericInstantiationArguments.ToArray())
+        foreach (var (key, arguments) in _genericInstantiationArguments.ToArray())
         {
-            EnsureConcreteConstructorShapes(key, typeArguments);
+            EnsureConcreteConstructorShapes(key, arguments);
         }
     }
 
-    private void EnsureConcreteConstructorShapes(string key, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    private void EnsureConcreteConstructorShapes(string key, ConcreteGenericTypeArguments arguments)
     {
         if (_constructors.ContainsKey(key))
         {
@@ -13252,7 +21764,8 @@ internal sealed class TypeChecker
             || templateConstructors.Count == 0
             || !_namedTypes.TryGetValue(baseName, out var template)
             || !template.IsGeneric
-            || template.GenericParams.Count != typeArguments.Count)
+            || template.GenericParams.Count != arguments.TypeArguments.Count
+            || template.ComptimeGenericParams.Count != arguments.ComptimeValueArguments.Count)
         {
             return;
         }
@@ -13260,15 +21773,17 @@ internal sealed class TypeChecker
         var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         for (var i = 0; i < template.GenericParams.Count; i++)
         {
-            substitution[template.GenericParams[i]] = typeArguments[i];
+            substitution[template.GenericParams[i]] = arguments.TypeArguments[i];
         }
+        var valueSubstitution = BuildNamedTypeComptimeValueSubstitution(template, arguments.ComptimeValueArguments);
 
-        _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution);
+        _constructors[key] = CreateConcreteConstructors(templateConstructors, substitution, valueSubstitution);
     }
 
     private StarkTypeSymbol SubstituteType(
         StarkTypeSymbol type,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution = null)
     {
         var coreType = StarkTypeSymbols.WithQualifiers(
             type,
@@ -13289,23 +21804,57 @@ internal sealed class TypeChecker
                     initializationKind: StarkInitializationKind.None,
                     isMutableView: false);
             }
-            else if (StarkTypeSymbols.IsGenericInstantiation(coreType) && coreType.TypeArguments is not null)
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
             {
-                var newArgs = coreType.TypeArguments.Select(a => SubstituteType(a, substitution)).ToArray();
+                var newArgs = (coreType.TypeArguments ?? []).Select(a => SubstituteType(a, substitution, valueSubstitution)).ToArray();
+                var newValues = FunctionOverloadFacts.SubstituteComptimeValues(coreType.ComptimeValueArguments, valueSubstitution);
                 substitutedCore = EnsureMonomorphizedType(
                     StarkTypeSymbols.GenericInstantiation(
                         StarkTypeSymbols.GetGenericBaseName(name),
-                        newArgs));
+                        newArgs,
+                        newValues));
             }
             else
             {
                 substitutedCore = coreType;
             }
         }
+        else if (coreType.Kind == StarkTypeKind.AssociatedType
+            && coreType.AssociatedTypeOwner is not null
+            && coreType.AssociatedTypeName is not null)
+        {
+            var substitutedOwner = SubstituteType(coreType.AssociatedTypeOwner, substitution, valueSubstitution);
+            substitutedCore = AssociatedTypeFacts.TryResolveAssociatedType(
+                    substitutedOwner,
+                    coreType.AssociatedTypeName,
+                    _namedTypes,
+                    out var associatedTarget)
+                ? StarkTypeSymbols.WithQualifiers(
+                    EnsureMonomorphizedType(associatedTarget),
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false)
+                : StarkTypeSymbols.AssociatedType(substitutedOwner, coreType.AssociatedTypeName);
+        }
         else if (coreType.ElementType is not null)
         {
-            var newElement = SubstituteType(coreType.ElementType, substitution);
-            if (ReferenceEquals(newElement, coreType.ElementType))
+            var newElement = SubstituteType(coreType.ElementType, substitution, valueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && valueSubstitution is not null
+                && valueSubstitution.TryGetValue(fixedLengthParameterName, out var concreteLength)
+                && concreteLength >= BigInteger.Zero
+                && concreteLength <= int.MaxValue)
+            {
+                fixedLength = (int)concreteLength;
+                fixedLengthParameterName = null;
+            }
+
+            if (ReferenceEquals(newElement, coreType.ElementType)
+                && fixedLength == coreType.FixedLength
+                && string.Equals(fixedLengthParameterName, coreType.FixedLengthParameterName, StringComparison.Ordinal))
             {
                 substitutedCore = coreType;
             }
@@ -13313,7 +21862,7 @@ internal sealed class TypeChecker
             {
                 substitutedCore = coreType.Kind switch
                 {
-                    StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(newElement, coreType.FixedLength),
+                    StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(newElement, fixedLength, fixedLengthParameterName),
                     StarkTypeKind.Slice => StarkTypeSymbols.Slice(newElement),
                     StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(newElement, coreType.IsMutablePointer),
                     StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(newElement),
@@ -13328,12 +21877,16 @@ internal sealed class TypeChecker
         {
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
-                SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(returnType, substitution, valueSubstitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution, valueSubstitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
-                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions,
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -13344,12 +21897,14 @@ internal sealed class TypeChecker
                 coreType.ClosureStorageKind,
                 coreType.ClosureCallCapability,
                 closureFunctionKind,
-                SubstituteType(closureReturnType, substitution),
-                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(closureReturnType, substitution, valueSubstitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution, valueSubstitution)).ToArray(),
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {
@@ -13362,6 +21917,54 @@ internal sealed class TypeChecker
             accessKind: type.AccessKind,
             initializationKind: type.InitializationKind,
             isMutableView: type.IsMutableView);
+    }
+
+    private IReadOnlyList<ThreadSafetyLawAttributeSymbol>? SubstituteThreadSafetyLawAttributes(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution = null)
+    {
+        if (attributes.Count == 0)
+        {
+            return null;
+        }
+
+        return attributes
+            .Select(attribute => attribute.Condition is null
+                ? attribute
+                : attribute with
+                {
+                    Condition = attribute.Condition with
+                    {
+                        Type = SubstituteType(attribute.Condition.Type, substitution, valueSubstitution)
+                    }
+                })
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, BigInteger> BuildNamedTypeComptimeValueSubstitution(
+        NamedTypeSymbol template,
+        IReadOnlyList<ComptimeValueArgumentSymbol> valueArguments)
+    {
+        if (template.ComptimeGenericParams.Count == 0)
+        {
+            return new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        }
+
+        var substitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count && index < valueArguments.Count; index++)
+        {
+            var parameter = template.ComptimeGenericParams[index];
+            var argument = valueArguments[index];
+            if (argument.IsSymbolic)
+            {
+                continue;
+            }
+
+            substitution[parameter.Name] = argument.IntegerValue;
+        }
+
+        return substitution;
     }
 
     private void ReportError(string code, string message, SourceLocation location)
@@ -13465,7 +22068,11 @@ internal sealed class TypeChecker
         if (!name.Contains('.', StringComparison.Ordinal))
         {
             var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, name)
-                .Where(_globals.ContainsKey)
+                .Where(candidate =>
+                    _globals.ContainsKey(candidate)
+                    && (DeclaringModuleOfQualifiedKey(candidate) is not { } declaringModule
+                        || !TryGetGlobalVisibility(declaringModule, name, out var visibility)
+                        || IsModuleMemberAccessible(declaringModule, visibility)))
                 .ToArray();
             if (importedMatches.Length == 1)
             {
@@ -13511,7 +22118,9 @@ internal sealed class TypeChecker
         if (!typeName.Contains('.', StringComparison.Ordinal))
         {
             var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, typeName)
-                .Where(_namedTypes.ContainsKey)
+                .Where(candidate =>
+                    _namedTypes.TryGetValue(candidate, out var candidateType)
+                    && IsModuleMemberAccessible(candidateType.DeclaringModuleName, candidateType.Visibility))
                 .ToArray();
             if (importedMatches.Length == 1)
             {
@@ -13535,6 +22144,12 @@ internal sealed class TypeChecker
     }
 
     private string CurrentFunctionModuleName => _currentFunctionModuleName ?? _syntaxModel.ModuleName;
+
+    private static bool IsCompilerKnownNamespace(string name)
+    {
+        return string.Equals(name, "System", StringComparison.Ordinal)
+            || string.Equals(name, StarkCDataModelFacts.ModuleName, StringComparison.Ordinal);
+    }
 
     private string GetSystemTextFunctionName(string name)
     {
@@ -13659,6 +22274,75 @@ internal sealed class TypeChecker
         return operators;
     }
 
+    // A bare integer literal is typed as the smallest signed singleton range that
+    // holds its value (e.g. `1` is `i8[1 1]`). Reconciling that against a runtime
+    // ranged operand in `FindCommonType` misses the same-type fast path and merges
+    // to a full-width, opposite-signed default (`u64[...] + 1` becomes `i64`),
+    // which then demands a narrowing cast. When the chain has a single ranged
+    // integer "anchor" shared by every non-literal integer operand, let each
+    // fitting literal adopt that anchor so the literal stops dragging the
+    // expression's type. Non-fitting literals keep their own type (a genuine
+    // out-of-range value still requires an explicit cast).
+    private static StarkTypeSymbol[] ResolveIntegerLiteralOperandTypes(IReadOnlyList<ExpressionBinding> operands)
+    {
+        StarkTypeSymbol? anchor = null;
+        var hasNonLiteralInteger = false;
+        foreach (var operand in operands)
+        {
+            if (operand.IntegerLiteralValue is not null)
+            {
+                continue;
+            }
+
+            if (operand.Type.Kind != StarkTypeKind.Integer || operand.Type.BitWidth is null)
+            {
+                continue;
+            }
+
+            hasNonLiteralInteger = true;
+            anchor = anchor is null ? operand.Type : FindCommonType(anchor, operand.Type);
+        }
+
+        var effective = new StarkTypeSymbol[operands.Count];
+        for (var index = 0; index < operands.Count; index++)
+        {
+            effective[index] = operands[index].Type;
+        }
+
+        if (!hasNonLiteralInteger
+            || anchor is not { Kind: StarkTypeKind.Integer, BitWidth: int anchorWidth })
+        {
+            return effective;
+        }
+
+        // Adopt a PLAIN integer of the anchor's numeric shape (width/range/sign),
+        // stripping any out/init/borrow/frozen qualifiers the anchor operand
+        // carries: arithmetic on a qualified operand yields a plain value, so the
+        // literal must not inherit those qualifiers (else e.g. `outParam * 2`
+        // would type as `out u64` and reject the surrounding conversion).
+        var cleanAnchor = StarkTypeSymbols.Integer(
+            anchorWidth,
+            anchor.RangeMin,
+            anchor.RangeMax,
+            anchor.IsUnsigned);
+        if (!StarkTypeSymbols.TryGetEffectiveIntegerBounds(cleanAnchor, out var min, out var max))
+        {
+            return effective;
+        }
+
+        for (var index = 0; index < operands.Count; index++)
+        {
+            if (operands[index].IntegerLiteralValue is { } literalValue
+                && literalValue >= min
+                && literalValue <= max)
+            {
+                effective[index] = cleanAnchor;
+            }
+        }
+
+        return effective;
+    }
+
     private ExpressionBinding EvaluateBinaryChain(
         IReadOnlyList<ExpressionBinding> operands,
         IReadOnlyList<string> operators,
@@ -13671,11 +22355,12 @@ internal sealed class TypeChecker
             return operands[0];
         }
 
-        var currentType = operands[0].Type;
+        var effectiveTypes = ResolveIntegerLiteralOperandTypes(operands);
+        var currentType = effectiveTypes[0];
 
         for (var index = 1; index < operands.Count; index++)
         {
-            var nextType = operands[index].Type;
+            var nextType = effectiveTypes[index];
             if (requireInteger)
             {
                 if (currentType.Kind != StarkTypeKind.Integer || nextType.Kind != StarkTypeKind.Integer)
@@ -13715,11 +22400,12 @@ internal sealed class TypeChecker
             return operands[0];
         }
 
-        var currentType = operands[0].Type;
+        var effectiveTypes = ResolveIntegerLiteralOperandTypes(operands);
+        var currentType = effectiveTypes[0];
 
         for (var index = 1; index < operands.Count; index++)
         {
-            var nextType = operands[index].Type;
+            var nextType = effectiveTypes[index];
             var operatorText = operators[index - 1];
 
             if (IsExplicitArithmeticOperator(operatorText))
@@ -13926,7 +22612,8 @@ internal sealed class TypeChecker
             overloads,
             receiverType: null,
             [left.Type, NonNegativeI64Type, right.Type],
-            CanAssign);
+            CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (!resolution.Succeeded)
         {
             return false;
@@ -14080,13 +22767,18 @@ internal sealed class TypeChecker
     }
 
     private ConstructorShape? CheckObjectCreationArguments(
-        StarkParser.ArgumentListContext? arguments,
-        ParserRuleContext diagnosticContext,
+        StarkParser.ObjectCreationExpressionContext expression,
         StarkTypeSymbol createdType,
         Scope scope)
     {
-        var suppliedArguments = arguments?.argument() ?? [];
+        var arguments = expression.argumentList();
+        var suppliedArguments = GetObjectCreationArguments(expression);
         var argumentCount = suppliedArguments.Length;
+        if (GetObjectCreationStorageSelector(expression) == ObjectCreationStorageSelector.Arena
+            && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            return null;
+        }
 
         if (createdType.Kind == StarkTypeKind.Dynamic)
         {
@@ -14095,7 +22787,7 @@ internal sealed class TypeChecker
                 ReportError(
                     "STK3009",
                     $"Dynamic storage creation expects zero arguments or one capacity argument, but received {argumentCount}.",
-                    diagnosticContext);
+                    expression);
                 return null;
             }
 
@@ -14135,7 +22827,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare constructors and cannot be created with arguments.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -14154,7 +22846,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -14168,7 +22860,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}. Available constructor arities: {availableArities}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -14210,6 +22902,13 @@ internal sealed class TypeChecker
         }
 
         return hadMismatch ? null : matchedConstructor;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private StarkTypeSymbol[] EvaluateArgumentTypes(
@@ -14314,6 +23013,12 @@ internal sealed class TypeChecker
         var valueType = value.Type;
         if (CanAssign(returnType, valueType))
         {
+            if (returnType.BorrowKind != StarkBorrowKind.None
+                && TryRejectMisalignedSafeBorrow("Return statement", value, context))
+            {
+                return;
+            }
+
             return;
         }
 
@@ -14332,6 +23037,11 @@ internal sealed class TypeChecker
             var returnedStorageType = StarkTypeSymbols.BorrowReturnValueType(returnType);
             if (CanAssign(returnedStorageType, valueType))
             {
+                if (TryRejectMisalignedSafeBorrow("Return statement", value, context))
+                {
+                    return;
+                }
+
                 return;
             }
         }
@@ -14347,7 +23057,9 @@ internal sealed class TypeChecker
         int position,
         TypedParameterSymbol parameter,
         ExpressionBinding argument,
-        ParserRuleContext context)
+        ParserRuleContext context,
+        IReadOnlyList<string>? calleeGenericParameterNames = null,
+        StarkTypeSymbol? calleeTemplateParameterType = null)
     {
         var parameterType = parameter.Type;
         if (parameter.IsConst)
@@ -14383,12 +23095,23 @@ internal sealed class TypeChecker
                 : StarkTypeSymbols.WithQualifiers(argumentType, initializationKind: StarkInitializationKind.None);
             if (CanAssign(parameterStorageType, argumentStorageType))
             {
+                if (TryRejectMisalignedSafeBorrow($"Argument {position} for '{functionName}'", argument, context))
+                {
+                    return;
+                }
+
                 return;
             }
         }
 
         if (CanAssign(parameterType, argumentType))
         {
+            if (parameterType.BorrowKind != StarkBorrowKind.None
+                && TryRejectMisalignedSafeBorrow($"Argument {position} for '{functionName}'", argument, context))
+            {
+                return;
+            }
+
             return;
         }
 
@@ -14405,9 +23128,12 @@ internal sealed class TypeChecker
         {
             if (!argument.IsAddressable)
             {
+                var borrowFromHint = IsBorrowedGenericTypeParameter(calleeTemplateParameterType ?? parameterType, calleeGenericParameterNames)
+                    ? " (if the parameter is a generic `T`, declaring it by value as `T` under `where Copyable(T)` lets callers pass a literal)."
+                    : string.Empty;
                 ReportError(
                     "STK3002",
-                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' borrows from it.",
+                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' borrows from it.{borrowFromHint}",
                     context);
                 return;
             }
@@ -14436,6 +23162,11 @@ internal sealed class TypeChecker
 
             if (CanAssign(parameterStorageType, argumentStorageType))
             {
+                if (TryRejectMisalignedSafeBorrow($"Argument {position} for '{functionName}'", argument, context))
+                {
+                    return;
+                }
+
                 return;
             }
         }
@@ -14444,6 +23175,49 @@ internal sealed class TypeChecker
             "STK3002",
             $"Argument {position} for '{functionName}' expects '{parameterType.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
             context);
+    }
+
+    // Recovers the open (pre-substitution) template signature for a resolved call target so
+    // the STK3002 hint can inspect the original parameter types and generic parameter names.
+    // After overload resolution a generic callee is monomorphized: its parameter types are
+    // substituted and GenericParameterNames is cleared, but TemplateName still points back at
+    // the template registered in _functions. When the callee is not an instantiation, it is
+    // already its own (possibly generic) template.
+    private TypedFunctionSignature? TryGetCallTemplateSignature(TypedFunctionSignature function)
+    {
+        if (function.TemplateName is { } templateName
+            && _functions.TryGetValue(templateName, out var template))
+        {
+            return template;
+        }
+
+        return function.GenericParameterNames is { Count: > 0 } ? function : null;
+    }
+
+    // True when the borrowed parameter type is, at its core, one of the callee's own
+    // generic type parameters (`borrow T` where `T` is a generic parameter of the callee).
+    // In that case the by-value + `where Copyable(T)` shape lets callers pass a literal,
+    // so the STK3002 diagnostic appends that fix-it hint.
+    private static bool IsBorrowedGenericTypeParameter(
+        StarkTypeSymbol parameterType,
+        IReadOnlyList<string>? calleeGenericParameterNames)
+    {
+        if (calleeGenericParameterNames is not { Count: > 0 } genericNames)
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            parameterType,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        return coreType.Kind == StarkTypeKind.Named
+            && coreType.NamedType is { } name
+            && (coreType.TypeArguments is null || coreType.TypeArguments.Count == 0)
+            && genericNames.Contains(name);
     }
 
     private void EnsureConstCallArgumentCompatible(
@@ -14466,6 +23240,12 @@ internal sealed class TypeChecker
         var argumentType = GetConstProvenanceViewType(argument.Type);
         if (CanAssign(parameterType, argumentType))
         {
+            if (parameter.Type.BorrowKind != StarkBorrowKind.None
+                && TryRejectMisalignedSafeBorrow($"Argument {position} for '{functionName}'", argument, context))
+            {
+                return;
+            }
+
             return;
         }
 
@@ -14490,6 +23270,12 @@ internal sealed class TypeChecker
 
         if (FunctionOverloadFacts.CanBindReceiver(parameterType, receiver.Type, CanAssign))
         {
+            if (parameterType.BorrowKind != StarkBorrowKind.None
+                && TryRejectMisalignedSafeBorrow($"Receiver for '{functionName}'", receiver, context))
+            {
+                return;
+            }
+
             return;
         }
 
@@ -14497,6 +23283,21 @@ internal sealed class TypeChecker
             "STK3002",
             $"Argument 1 for '{functionName}' expects '{parameterType.DisplayName}' but found '{receiver.Type.DisplayName}'.{GetExplicitConversionHint(parameterType, receiver.Type)}",
             context);
+    }
+
+    private bool TryRejectMisalignedSafeBorrow(string subject, ExpressionBinding value, ParserRuleContext context)
+    {
+        if (!value.IsMisalignedFieldProjection)
+        {
+            return false;
+        }
+
+        var target = value.DiagnosticName ?? "packed field projection";
+        ReportError(
+            "STK3049",
+            $"{subject} cannot form a safe borrow to {target} because its packed layout may make the address misaligned. Copy the value to aligned storage or use an explicit unsafe raw pointer path.",
+            context);
+        return true;
     }
 
     private void EnsureObjectInitializerCompatible(
@@ -14600,6 +23401,13 @@ internal sealed class TypeChecker
             || sourceType.Kind == StarkTypeKind.RawPointer;
     }
 
+    private static bool IsRawPointerFunctionPointerConversion(StarkTypeSymbol targetType, StarkTypeSymbol sourceType)
+    {
+        var targetIsPointerLike = targetType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer;
+        var sourceIsPointerLike = sourceType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer;
+        return targetIsPointerLike && sourceIsPointerLike && targetType.Kind != sourceType.Kind;
+    }
+
     private static bool ContainsRawPointer(StarkTypeSymbol type)
     {
         return type.Kind == StarkTypeKind.RawPointer
@@ -14609,6 +23417,27 @@ internal sealed class TypeChecker
             || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsRawPointer)
             || type.ClosureReturnType is not null && ContainsRawPointer(type.ClosureReturnType)
             || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointer);
+    }
+
+    private static bool ContainsRawPointerRequiringUnsafeFunctionSurface(StarkTypeSymbol type)
+    {
+        if (type.Kind == StarkTypeKind.RawPointer)
+        {
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.FunctionPointer
+            && type.FunctionPointerIsUnsafe)
+        {
+            return false;
+        }
+
+        return type.ElementType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.ElementType)
+            || type.FunctionPointerParameterTypes is { Count: > 0 } && type.FunctionPointerParameterTypes.Any(ContainsRawPointerRequiringUnsafeFunctionSurface)
+            || type.FunctionPointerReturnType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.FunctionPointerReturnType)
+            || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsRawPointerRequiringUnsafeFunctionSurface)
+            || type.ClosureReturnType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.ClosureReturnType)
+            || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointerRequiringUnsafeFunctionSurface);
     }
 
     private static string GetExplicitConversionHint(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -14813,11 +23642,62 @@ internal sealed class TypeChecker
             : projectedType;
     }
 
+    // Whether a value coerces into a `dyn Trait` slot: another trait object over
+    // the same trait (reborrow), or a concrete type that implements the `dyn trait`.
+    private bool CanAssignToDynTrait(StarkTypeSymbol dynTarget, StarkTypeSymbol source)
+    {
+        if (dynTarget.DynTraitName is not { } traitName)
+        {
+            return false;
+        }
+
+        if (source.Kind == StarkTypeKind.DynTrait)
+        {
+            return string.Equals(
+                StarkTypeSymbols.GetGenericBaseName(source.DynTraitName ?? string.Empty),
+                StarkTypeSymbols.GetGenericBaseName(traitName),
+                StringComparison.Ordinal);
+        }
+
+        var concreteTypeName = source.Kind switch
+        {
+            StarkTypeKind.Named => source.NamedType,
+            StarkTypeKind.RawPointer when source.ElementType is { NamedType: { } named } => named,
+            _ => null
+        };
+        if (concreteTypeName is null
+            || !_namedTypes.TryGetValue(concreteTypeName, out var concreteType)
+            || !_namedTypes.TryGetValue(traitName, out var traitType)
+            || !traitType.IsDynTrait)
+        {
+            return false;
+        }
+
+        var traitBaseName = StarkTypeSymbols.GetGenericBaseName(traitName);
+        foreach (var implemented in concreteType.ImplementedTraits)
+        {
+            if (string.Equals(StarkTypeSymbols.GetGenericBaseName(implemented), traitBaseName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
         {
             return true;
+        }
+
+        // A conforming concrete value (or another trait object over the same trait)
+        // coerces into a `dyn Trait` slot. The storage prefix on the slot discloses
+        // the cost, so this is the only implicit path into a trait object.
+        if (target.Kind == StarkTypeKind.DynTrait)
+        {
+            return CanAssignToDynTrait(target, source);
         }
 
         if (!AreQualifiersAssignable(target, source))
@@ -14974,6 +23854,12 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if ((target.Kind == StarkTypeKind.FunctionPointer && source.Type.Kind == StarkTypeKind.RawPointer)
+            || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.FunctionPointer))
+        {
+            return true;
+        }
+
         if (target.Kind == StarkTypeKind.Slice
             && source.Type.Kind == StarkTypeKind.FixedArray
             && source.IsAddressable
@@ -15115,7 +24001,8 @@ internal sealed class TypeChecker
             overloads,
             receiverType: null,
             [StarkTypeSymbols.RawPointer(destination, isMutable: true), source],
-            CanAssign);
+            CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (resolution.Succeeded)
         {
             return true;
@@ -15352,7 +24239,10 @@ internal sealed class TypeChecker
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
             or StarkTypeKind.Unicode
-            or StarkTypeKind.Named;
+            or StarkTypeKind.Named
+            or StarkTypeKind.FixedArray
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Dynamic;
     }
 
     private static bool IsNumeric(StarkTypeSymbol type)
@@ -15454,6 +24344,24 @@ internal sealed class TypeChecker
         return literal.MINUS() is null ? value : -value;
     }
 
+    private static bool TryGetRangePatternBounds(
+        StarkParser.RangePatternContext rangePattern,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        var endpoints = rangePattern.signedIntegerLiteral();
+        if (endpoints.Length != 2)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        min = ParseSignedIntegerLiteral(endpoints[0]);
+        max = ParseSignedIntegerLiteral(endpoints[1]);
+        return true;
+    }
+
     private static StarkTypeSymbol InferIntegerLiteralType(BigInteger value)
     {
         foreach (var width in SupportedIntegerLiteralWidths)
@@ -15490,6 +24398,31 @@ internal sealed class TypeChecker
             : null;
     }
 
+    private NamedTypeSymbol? ResolveNamedTypeDefinitionSymbol(StarkTypeSymbol type)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } typeName)
+        {
+            return null;
+        }
+
+        if (StarkTypeSymbols.IsGenericInstantiation(coreType))
+        {
+            var baseName = StarkTypeSymbols.GetGenericBaseName(typeName);
+            if (_namedTypes.TryGetValue(baseName, out var templateType))
+            {
+                return templateType;
+            }
+        }
+
+        return ResolveNamedTypeSymbol(coreType);
+    }
+
     private bool IsTraitMethodFunctionName(string functionName)
     {
         var separator = functionName.LastIndexOf('.');
@@ -15507,7 +24440,8 @@ internal sealed class TypeChecker
         StarkTypeSymbol type,
         ParserRuleContext context,
         string usage,
-        bool allowDirectInlineClosureParameter = false)
+        bool allowDirectInlineClosureParameter = false,
+        bool allowDirectCVaListParameter = false)
     {
         if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
         {
@@ -15525,6 +24459,30 @@ internal sealed class TypeChecker
                 context);
         }
 
+        if (TryFindInvalidCVoidUse(type, out var invalidCVoidType))
+        {
+            ReportError(
+                "STK3050",
+                $"Type '{invalidCVoidType.DisplayName}' is an incomplete C pointee type and is valid only as the direct pointee of rawptr<System.C.c_void> or rawmutptr<System.C.c_void>. Use Stark 'void' for functions that return no value.",
+                context);
+        }
+
+        if (TryFindInvalidCVaListUse(type, allowDirectCVaListParameter, out var invalidCVaListType))
+        {
+            ReportError(
+                "STK3051",
+                $"Type '{invalidCVaListType.DisplayName}' is a target-specific C ABI carrier and is valid only as an unsafe ffi(c)-compatible function parameter, an ffi(c)-compatible function-pointer parameter, or the direct pointee of rawptr<System.C.VaList>/rawmutptr<System.C.VaList>. It cannot be stored, returned, constructed, or used as an ordinary Stark value.",
+                context);
+        }
+
+        if (TryFindInvalidDynTraitVtableUse(type, out var invalidVtableType))
+        {
+            ReportError(
+                "STK3035",
+                $"Type '{invalidVtableType.DisplayName}' is a compiler-owned dyn-trait vtable and is valid only as the direct pointee of readonly rawptr<{invalidVtableType.DisplayName}>. User code may carry vtable pointers but cannot store or construct vtables by value.",
+                context);
+        }
+
         if (ContainsInlineClosureType(type)
             && !(allowDirectInlineClosureParameter && IsDirectInlineClosureType(type)))
         {
@@ -15535,6 +24493,106 @@ internal sealed class TypeChecker
         }
 
         return type;
+    }
+
+    private static bool SupportsCVaListAbiParameter(StarkFfiAbi? abi)
+    {
+        return FfiAbiSyntaxFacts.AbiSupportsCVarargs(abi);
+    }
+
+    private static bool TryFindInvalidDynTraitVtableUse(StarkTypeSymbol type, out StarkTypeSymbol invalidVtableType)
+    {
+        return TryFindInvalidDynTraitVtableUse(type, isDirectRawPointerPointee: false, out invalidVtableType);
+    }
+
+    private static bool TryFindInvalidDynTraitVtableUse(
+        StarkTypeSymbol type,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidVtableType)
+    {
+        if (StarkTypeSymbols.IsDynTraitVtableType(type))
+        {
+            invalidVtableType = StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            return !isDirectRawPointerPointee;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            if (type.IsMutablePointer && StarkTypeSymbols.IsDynTraitVtableType(type.ElementType))
+            {
+                invalidVtableType = StarkTypeSymbols.WithQualifiers(
+                    type.ElementType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+                return true;
+            }
+
+            return TryFindInvalidDynTraitVtableUse(
+                type.ElementType,
+                isDirectRawPointerPointee: !type.IsMutablePointer,
+                out invalidVtableType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidDynTraitVtableUse(type.ElementType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidDynTraitVtableUse(type.FunctionPointerReturnType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerParameterTypes is { Count: > 0 })
+        {
+            foreach (var parameterType in type.FunctionPointerParameterTypes)
+            {
+                if (TryFindInvalidDynTraitVtableUse(parameterType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidDynTraitVtableUse(type.ClosureReturnType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.ClosureParameterTypes is { Count: > 0 })
+        {
+            foreach (var parameterType in type.ClosureParameterTypes)
+            {
+                if (TryFindInvalidDynTraitVtableUse(parameterType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.TypeArguments is { Count: > 0 })
+        {
+            foreach (var argumentType in type.TypeArguments)
+            {
+                if (TryFindInvalidDynTraitVtableUse(argumentType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        invalidVtableType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private static bool IsDirectInlineClosureType(StarkTypeSymbol type)
@@ -15553,6 +24611,157 @@ internal sealed class TypeChecker
             || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsInlineClosureType)
             || type.ClosureReturnType is not null && ContainsInlineClosureType(type.ClosureReturnType)
             || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsInlineClosureType);
+    }
+
+    private static bool TryFindInvalidCVoidUse(StarkTypeSymbol type, out StarkTypeSymbol invalidCVoidType)
+    {
+        return TryFindInvalidCVoidUse(type, isDirectRawPointerPointee: false, out invalidCVoidType);
+    }
+
+    private static bool TryFindInvalidCVoidUse(
+        StarkTypeSymbol type,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidCVoidType)
+    {
+        if (type.Kind == StarkTypeKind.CVoid)
+        {
+            invalidCVoidType = type;
+            return !isDirectRawPointerPointee;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return TryFindInvalidCVoidUse(
+                type.ElementType,
+                isDirectRawPointerPointee: true,
+                out invalidCVoidType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidCVoidUse(type.ElementType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidCVoidUse(type.FunctionPointerReturnType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.FunctionPointerParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVoidUse(parameterType, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidCVoidUse(type.ClosureReturnType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.ClosureParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVoidUse(parameterType, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        foreach (var typeArgument in type.TypeArguments ?? [])
+        {
+            if (TryFindInvalidCVoidUse(typeArgument, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        invalidCVoidType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private static bool TryFindInvalidCVaListUse(
+        StarkTypeSymbol type,
+        bool allowDirectCAbiParameter,
+        out StarkTypeSymbol invalidCVaListType)
+    {
+        return TryFindInvalidCVaListUse(
+            type,
+            allowDirectCAbiParameter,
+            isDirectRawPointerPointee: false,
+            out invalidCVaListType);
+    }
+
+    private static bool TryFindInvalidCVaListUse(
+        StarkTypeSymbol type,
+        bool allowDirectCAbiParameter,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidCVaListType)
+    {
+        if (type.Kind == StarkTypeKind.CVaList)
+        {
+            invalidCVaListType = type;
+            return !(allowDirectCAbiParameter || isDirectRawPointerPointee);
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return TryFindInvalidCVaListUse(
+                type.ElementType,
+                allowDirectCAbiParameter: false,
+                isDirectRawPointerPointee: true,
+                out invalidCVaListType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidCVaListUse(type.ElementType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidCVaListUse(type.FunctionPointerReturnType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        var allowsFunctionPointerCVaListParameter = type.Kind == StarkTypeKind.FunctionPointer
+            && SupportsCVaListAbiParameter(type.FunctionPointerAbi);
+        foreach (var parameterType in type.FunctionPointerParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVaListUse(parameterType, allowsFunctionPointerCVaListParameter, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidCVaListUse(type.ClosureReturnType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.ClosureParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVaListUse(parameterType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        foreach (var typeArgument in type.TypeArguments ?? [])
+        {
+            if (TryFindInvalidCVaListUse(typeArgument, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        invalidCVaListType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private void ValidateAsmSignatureSurface(
@@ -15880,13 +25089,15 @@ internal sealed class TypeChecker
     private TypedFunctionSignature CacheFunctionInstantiation(TypedFunctionSignature signature)
     {
         if (!signature.IsGenericInstantiation
-            || signature.TemplateName is null
-            || signature.TypeArguments is not { Count: > 0 })
+            || signature.TemplateName is null)
         {
             return signature;
         }
 
-        var key = BuildFunctionInstantiationKey(signature.TemplateName, signature.TypeArguments);
+        var key = BuildFunctionInstantiationKey(
+            signature.TemplateName,
+            signature.TypeArguments ?? [],
+            signature.ComptimeValueArguments);
         if (_functionInstantiationCache.TryGetValue(key, out var cached))
         {
             return cached;
@@ -15897,19 +25108,26 @@ internal sealed class TypeChecker
     }
 
     private void RecordFunctionInstantiationTrigger(TypedFunctionSignature signature, ParserRuleContext context)
+        => RecordFunctionInstantiationTrigger(signature, Location(context));
+
+    private void RecordFunctionInstantiationTrigger(TypedFunctionSignature signature, SourceLocation location)
     {
-        if (!signature.IsGenericInstantiation || signature.TypeArguments is not { Count: > 0 })
+        if (!signature.IsGenericInstantiation)
         {
             return;
         }
 
-        if (signature.TypeArguments.Any(TypeContainsOpenCurrentFunctionGenericParameter))
+        if ((signature.TypeArguments ?? []).Any(TypeContainsOpenCurrentFunctionGenericParameter)
+            || SignatureContainsOpenCurrentFunctionComptimeParameter(signature))
         {
-            RecordDeferredFunctionInstantiationTrigger(signature, context);
+            RecordDeferredFunctionInstantiationTrigger(signature, location);
             return;
         }
 
-        var key = BuildFunctionInstantiationKey(signature.TemplateName ?? signature.DisplaySourceName, signature.TypeArguments);
+        var key = BuildFunctionInstantiationKey(
+            signature.TemplateName ?? signature.DisplaySourceName,
+            signature.TypeArguments ?? [],
+            signature.ComptimeValueArguments);
         if (!_functionInstantiationKeys.Add(key))
         {
             return;
@@ -15917,21 +25135,22 @@ internal sealed class TypeChecker
 
         _functionInstantiationTriggers.Add(new FunctionInstantiationTriggerRecord(
             signature.DisplaySourceName,
-            signature.TypeArguments.ToArray(),
+            (signature.TypeArguments ?? []).ToArray(),
+            signature.ComptimeValueArguments?.ToArray(),
             signature,
-            Location(context)));
+            location));
     }
 
-    private void RecordDeferredFunctionInstantiationTrigger(TypedFunctionSignature signature, ParserRuleContext context)
+    private void RecordDeferredFunctionInstantiationTrigger(TypedFunctionSignature signature, SourceLocation location)
     {
         if (_currentFunctionName is null
             || signature.TemplateName is not { } templateName
-            || signature.TypeArguments is not { Count: > 0 })
+            || !signature.IsGenericInstantiation)
         {
             return;
         }
 
-        var key = $"{_currentFunctionName}|{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(signature.TypeArguments)}";
+        var key = $"{_currentFunctionName}|{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(signature.TypeArguments, signature.ComptimeValueArguments)}";
         if (!_deferredFunctionInstantiationKeys.Add(key))
         {
             return;
@@ -15940,7 +25159,7 @@ internal sealed class TypeChecker
         _deferredFunctionInstantiationTriggers.Add(new DeferredFunctionInstantiationTriggerRecord(
             _currentFunctionName,
             signature,
-            Location(context)));
+            location));
     }
 
     private void RecordTypeInstantiationTriggers(StarkTypeSymbol type, SourceLocation location)
@@ -16009,13 +25228,13 @@ internal sealed class TypeChecker
 
         if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
             || coreType.NamedType is null
-            || coreType.TypeArguments is not { Count: > 0 }
-            || TypeContainsOpenCurrentFunctionGenericParameter(coreType))
+            || TypeContainsOpenCurrentFunctionGenericParameter(coreType)
+            || TypeContainsOpenCurrentFunctionComptimeParameter(coreType))
         {
             if (StarkTypeSymbols.IsGenericInstantiation(coreType)
                 && coreType.NamedType is not null
-                && coreType.TypeArguments is { Count: > 0 }
-                && TypeContainsOpenCurrentFunctionGenericParameter(coreType))
+                && (TypeContainsOpenCurrentFunctionGenericParameter(coreType)
+                    || TypeContainsOpenCurrentFunctionComptimeParameter(coreType)))
             {
                 RecordDeferredTypeInstantiationTrigger(coreType, location);
             }
@@ -16029,7 +25248,10 @@ internal sealed class TypeChecker
             return;
         }
 
-        var globalKey = BuildTypeInstantiationKey(coreType.NamedType, coreType.TypeArguments);
+        var globalKey = BuildTypeInstantiationKey(
+            coreType.NamedType,
+            coreType.TypeArguments ?? [],
+            coreType.ComptimeValueArguments);
         if (!_typeInstantiationKeys.Add(globalKey))
         {
             return;
@@ -16037,7 +25259,8 @@ internal sealed class TypeChecker
 
         _typeInstantiationTriggers.Add(new TypeInstantiationTriggerRecord(
             coreType.NamedType,
-            coreType.TypeArguments.ToArray(),
+            (coreType.TypeArguments ?? []).ToArray(),
+            coreType.ComptimeValueArguments?.ToArray(),
             location));
 
         if (_namedTypes.TryGetValue(coreType.NamedType, out var instantiatedType))
@@ -16074,12 +25297,13 @@ internal sealed class TypeChecker
         if (_currentFunctionName is null
             || !StarkTypeSymbols.IsGenericInstantiation(type)
             || type.NamedType is null
-            || type.TypeArguments is not { Count: > 0 })
+            || (type.TypeArguments is not { Count: > 0 }
+                && type.ComptimeValueArguments is not { Count: > 0 }))
         {
             return;
         }
 
-        var key = $"{_currentFunctionName}|{BuildTypeInstantiationKey(type.NamedType, type.TypeArguments)}";
+        var key = $"{_currentFunctionName}|{BuildTypeInstantiationKey(type.NamedType, type.TypeArguments ?? [], type.ComptimeValueArguments)}";
         if (!_deferredTypeInstantiationKeys.Add(key))
         {
             return;
@@ -16134,18 +25358,55 @@ internal sealed class TypeChecker
                 && coreType.ClosureParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
         }
 
+        if (coreType.Kind == StarkTypeKind.AssociatedType)
+        {
+            return true;
+        }
+
         return coreType.ElementType is not null
             && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ElementType);
     }
 
-    private static string BuildFunctionInstantiationKey(string templateName, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    private bool TypeContainsOpenCurrentFunctionComptimeParameter(StarkTypeSymbol type)
     {
-        return $"{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments)}";
+        return _currentFunctionComptimeGenericParameters is { Count: > 0 } parameters
+            && FunctionOverloadFacts.ContainsComptimeValueParameter(type, parameters.Keys);
     }
 
-    private static string BuildTypeInstantiationKey(string typeName, IReadOnlyList<StarkTypeSymbol> typeArguments)
+    private bool SignatureContainsOpenCurrentFunctionComptimeParameter(TypedFunctionSignature signature)
     {
-        return $"{StarkTypeSymbols.GetGenericBaseName(typeName)}|{FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments)}";
+        if (_currentFunctionComptimeGenericParameters is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        return TypeContainsOpenCurrentFunctionComptimeParameter(signature.ReturnType)
+            || signature.Parameters.Any(parameter => TypeContainsOpenCurrentFunctionComptimeParameter(parameter.Type))
+            || (signature.TypeArguments ?? []).Any(TypeContainsOpenCurrentFunctionComptimeParameter)
+            || (signature.ComptimeValueArguments ?? []).Any(ValueArgumentContainsOpenCurrentFunctionComptimeParameter);
+    }
+
+    private bool ValueArgumentContainsOpenCurrentFunctionComptimeParameter(ComptimeValueArgumentSymbol argument)
+    {
+        return argument.IsSymbolic
+            && _currentFunctionComptimeGenericParameters is { Count: > 0 } parameters
+            && parameters.ContainsKey(argument.SourceName);
+    }
+
+    private static string BuildFunctionInstantiationKey(
+        string templateName,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
+    {
+        return $"{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(typeArguments, valueArguments)}";
+    }
+
+    private static string BuildTypeInstantiationKey(
+        string typeName,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
+    {
+        return $"{StarkTypeSymbols.GetGenericBaseName(typeName)}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(typeArguments, valueArguments)}";
     }
 
     private static string DescribeCompileTimeOnlyKind(DeclarationKind kind)
@@ -16168,9 +25429,72 @@ internal sealed class TypeChecker
         return _typeResolver!.GetGenericParameterNames(typeParameterList);
     }
 
+    private IReadOnlyList<ComptimeGenericParameterSymbol> GetComptimeGenericParameters(
+        StarkParser.TypeParameterListContext? typeParameterList,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        if (typeParameterList is null)
+        {
+            return [];
+        }
+
+        var parameters = new List<ComptimeGenericParameterSymbol>();
+        foreach (var parameter in typeParameterList.typeParameter())
+        {
+            if (parameter.COMPTIME() is null)
+            {
+                continue;
+            }
+
+            var parameterName = parameter.Identifier().GetText();
+            var parameterType = ResolveType(parameter.type_(), genericParameters, currentModuleName);
+            if (parameterType.Kind != StarkTypeKind.Error && parameterType.Kind != StarkTypeKind.Integer)
+            {
+                ReportError(
+                    "STK3050",
+                    $"Comptime generic parameter '{parameterName}' must currently use a range-typed integer type, but found '{parameterType.DisplayName}'.",
+                    parameter.type_());
+                parameterType = StarkTypeSymbols.Error;
+            }
+
+            parameters.Add(new ComptimeGenericParameterSymbol(parameterName, parameterType));
+        }
+
+        return parameters;
+    }
+
+    private static IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? ToComptimeGenericParameterMap(
+        IReadOnlyList<ComptimeGenericParameterSymbol> parameters)
+    {
+        return parameters.Count == 0
+            ? null
+            : parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+    }
+
     private bool IsDeclarationVisible(LoadedModuleDocument module, TopLevelDeclarationModel declaration)
     {
         if (module.Reference.IsRoot)
+        {
+            return true;
+        }
+
+        // A source module being compiled in this build (not an imported package
+        // image, not external) registers its full declaration surface — including
+        // module-private members — so a non-root module's own body can resolve its
+        // own helpers/globals/types when the whole package is compiled as one unit
+        // (the emit/library build).
+        //
+        // NOTE: this registers a source submodule's module-private members under their
+        // qualified key. Because that would otherwise let a sibling submodule reach them
+        // (a direct unqualified lookup misses, but the accessible-module enumeration in
+        // overload / global / type resolution re-qualifies a bare name against every
+        // accessible module), module-privacy is enforced at the call site by
+        // IsModuleMemberAccessible (mirroring IsFieldAccessible): the enumeration filters
+        // out inaccessible candidates, and an explicit `Mod.Member` reach-in reports
+        // STK3015. Privacy across the package-image boundary is independently preserved
+        // (consumers see IsPackageImageImport == true and this branch is skipped).
+        if (!module.Reference.IsExternal && !module.IsPackageImageImport)
         {
             return true;
         }
@@ -16254,6 +25578,100 @@ internal sealed class TypeChecker
             || !declaringModule.Reference.IsExternal;
     }
 
+    // Free-function / global / type analogue of IsFieldAccessible: is a member declared
+    // in `declaringModuleName` with `visibility` reachable from the current body's
+    // module? Module-private members are reachable only from their own module; Internal
+    // only within the same source package; Public/Export always. A null declaring module
+    // is a root/builtin (bare-keyed) member, treated as accessible. Now that a source
+    // submodule registers its full surface into the type-check tables (IsDeclarationVisible),
+    // this is the call-site enforcement that keeps module-privacy across sibling submodules
+    // within a single whole-package build.
+    private bool IsModuleMemberAccessible(string? declaringModuleName, StarkVisibility visibility)
+    {
+        return IsModuleMemberAccessibleFrom(CurrentFunctionModuleName, declaringModuleName, visibility);
+    }
+
+    private bool IsModuleMemberAccessibleFrom(
+        string fromModuleName,
+        string? declaringModuleName,
+        StarkVisibility visibility)
+    {
+        return visibility switch
+        {
+            StarkVisibility.Module =>
+                declaringModuleName is null
+                || string.Equals(declaringModuleName, fromModuleName, StringComparison.Ordinal),
+            StarkVisibility.Internal =>
+                declaringModuleName is null || IsSameSourcePackageModule(declaringModuleName),
+            StarkVisibility.Public => true,
+            StarkVisibility.Export => true,
+            _ => false
+        };
+    }
+
+    private bool IsGlobalCandidateAccessibleFrom(string fromModuleName, string qualifiedName)
+    {
+        var declaringModuleName = DeclaringModuleOfQualifiedKey(qualifiedName);
+        if (declaringModuleName is null
+            || !IsLoadedModuleName(declaringModuleName))
+        {
+            return true;
+        }
+
+        var localName = qualifiedName[(declaringModuleName.Length + 1)..];
+        return !TryGetGlobalVisibility(declaringModuleName, localName, out var visibility)
+            || IsModuleMemberAccessibleFrom(fromModuleName, declaringModuleName, visibility);
+    }
+
+    private bool IsSameSourcePackageModule(string declaringModuleName)
+    {
+        return !_loadedModules.TryGet(declaringModuleName, out var declaringModule)
+            || declaringModule is null
+            || !declaringModule.Reference.IsExternal;
+    }
+
+    // True only when `name` is an actual loaded module. Used to gate the namespace-
+    // qualified privacy checks: a key like "Allocator.Default" is a type-qualified
+    // static member (Allocator is a type, not a module), and module-privacy must not
+    // apply to it — member visibility is a separate concern (IsFieldAccessible).
+    private bool IsLoadedModuleName(string name)
+    {
+        return _loadedModules.TryGet(name, out var module) && module is not null;
+    }
+
+    // "System.Text.ToAscii" -> "System.Text"; bare "ToAscii" -> null (root/builtin). The
+    // enumeration candidates are always "{module}.{bareName}", so stripping the last
+    // segment yields the declaring module.
+    private static string? DeclaringModuleOfQualifiedKey(string qualifiedKey)
+    {
+        var separator = qualifiedKey.LastIndexOf('.');
+        return separator <= 0 ? null : qualifiedKey[..separator];
+    }
+
+    // Globals carry no visibility on their VariableSymbol, so recover it from the
+    // declaring module's syntax. Returns false when the declaration can't be located
+    // (caller then treats the candidate as accessible, preserving prior behavior).
+    private bool TryGetGlobalVisibility(string declaringModuleName, string localName, out StarkVisibility visibility)
+    {
+        visibility = StarkVisibility.Module;
+        if (!_loadedModules.TryGet(declaringModuleName, out var module) || module is null)
+        {
+            return false;
+        }
+
+        foreach (var declaration in module.SyntaxModel.Declarations)
+        {
+            if ((declaration.Kind is DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable)
+                && string.Equals(declaration.Name, localName, StringComparison.Ordinal))
+            {
+                visibility = declaration.Visibility;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private string QualifyName(LoadedModuleDocument module, string localName)
     {
         return module.Reference.IsRoot
@@ -16263,28 +25681,35 @@ internal sealed class TypeChecker
 
     private void ReportError(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Error(code, message, "type-check", Location(context));
+        _context.Diagnostics.Error(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
 
     private void ReportError(string code, string message, IToken token)
     {
-        _context.Diagnostics.Error(code, message, "type-check", Location(token));
+        _context.Diagnostics.Error(code, message, "type-check", DiagnosticLocation(Location(token)));
     }
 
     private void ReportWarning(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Warning(code, message, "type-check", Location(context));
+        _context.Diagnostics.Warning(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
 
     private void ReportWarning(string code, string message, IToken token)
     {
-        _context.Diagnostics.Warning(code, message, "type-check", Location(token));
+        _context.Diagnostics.Warning(code, message, "type-check", DiagnosticLocation(Location(token)));
     }
 
     private void ReportInfo(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Info(code, message, "type-check", Location(context));
+        _context.Diagnostics.Info(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
+
+    // Applies the per-module diagnostics-only file path; typed records keep the
+    // root-stamped Location() (see the serialization note there).
+    private SourceLocation DiagnosticLocation(SourceLocation location)
+        => _currentDiagnosticFilePath is null
+            ? location
+            : location with { FilePath = _currentDiagnosticFilePath };
 
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
 
@@ -16294,6 +25719,14 @@ internal sealed class TypeChecker
     {
         var resolvedStop = stop ?? start;
         var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
+        // NOTE: this MUST stamp the build's root input file path, not the per-module
+        // file of the body being checked. Location() feeds the BoundOperation / typed
+        // template-body records that the package-image template member-call serialization
+        // matches by location; redirecting it to the per-module path (the reverted "F2"
+        // change) desynced an app-side imported-generic member call (e.g. List<i32>.Push)
+        // from its serialized member-call ordinal, throwing STK9999 at lower-mir. Correct
+        // per-module diagnostic file paths for non-root bodies need a serialization-safe
+        // approach that does not change record locations.
         return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
     }
 
@@ -16335,6 +25768,14 @@ internal sealed class TypeChecker
         string Mode,
         bool IsUnsafe);
 
+    private sealed record ConcreteGenericTypeArguments(
+        IReadOnlyList<StarkTypeSymbol> TypeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArgumentNames = null)
+    {
+        public IReadOnlyList<ComptimeValueArgumentSymbol> ComptimeValueArguments =>
+            ComptimeValueArgumentNames ?? [];
+    }
+
     private sealed record ExpressionBinding(
         StarkTypeSymbol Type,
         bool IsAssignable = false,
@@ -16344,6 +25785,7 @@ internal sealed class TypeChecker
         string? NamespaceName = null,
         string? DiagnosticName = null,
         ExpressionBinding? Receiver = null,
+        IReadOnlyList<TypedFunctionSignature>? OverloadCandidates = null,
         bool IsAddressable = false,
         bool IsAddressMutable = false,
         string? RootGlobalName = null,
@@ -16355,12 +25797,25 @@ internal sealed class TypeChecker
         bool UsesFrozenProjectionSemantics = false,
         bool HasConstProvenance = false,
         string? MemoryRootKey = null,
-        bool MemoryRootIsIndependentStorage = false);
+        bool MemoryRootIsIndependentStorage = false,
+        bool IsMisalignedFieldProjection = false,
+        BigInteger? IntegerLiteralValue = null,
+        string? ShadowedMethodName = null);
+
+    private sealed record TraversalSourceInfo(
+        StarkTypeSymbol ElementType,
+        StarkTypeSymbol IndexRangeType,
+        bool CanBorrowElementMutably);
 
     private sealed record LocalMemoryProvenance(
         string RootKey,
         bool IsIndependentStorage,
         string? RawPointerElementCountExpression = null);
+
+    private sealed record FunctionGlobalReference(
+        string FunctionName,
+        string GlobalName,
+        SourceLocation Location);
 
     private sealed record EnumConstructorBinding(
         string Name,

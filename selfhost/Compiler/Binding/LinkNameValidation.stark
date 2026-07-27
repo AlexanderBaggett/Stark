@@ -1,0 +1,89 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.DeclarationPrelude
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import System.Text
+import System.Memory
+module Compiler.Binding.LinkNameValidation
+
+internal finite law bool IsLinkNameDeclarationTarget(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    if (!DeclarationPreludeHasToken(stream, item, TokenKind.Ffi))
+    {
+        return false;
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Asm))
+    {
+        return false;
+    }
+
+    return stream.KindAt((u64[0 2 ** 63 - 1])item.EndToken) == TokenKind.Semi;
+}
+
+internal finite law bool StringLiteralHasNonEmptyPayload(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    return System.Text.AsciiLength(literal) > 2;
+}
+
+internal finite law bool LinkNameAttributeIsWellFormed(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    stack u32[0 max] valueToken = LinkNameValueToken(stream, attrStart, attrEnd);
+    return valueToken != 0 && StringLiteralHasNonEmptyPayload(source, stream, valueToken);
+}
+
+internal fn System.Memory.MemoryStatus CollectLinkNameDiagnostics(borrow DeclarationList decls, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] declIndex = 0; declIndex < count; declIndex += 1)
+    {
+        stack DeclItem item = decls.ItemAt(declIndex);
+        stack mut u32[0 max] scan = item.StartToken;
+        stack mut u32[0 max] linkNameCount = 0;
+        while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+        {
+            stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+            if (attrEnd <= scan)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (IsLinkNameAttribute(source, stream, scan))
+            {
+                linkNameCount = (u32[0 max])(linkNameCount + 1);
+                if (linkNameCount > 1)
+                {
+                    switch (diags.Append(BindDiagnosticCode.DuplicateLinkName, (u32[0 max])(scan + 1)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var duplicateError):
+                            return System.Memory.MemoryStatus.Err(duplicateError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (!IsLinkNameDeclarationTarget(stream, item)
+                    || !LinkNameAttributeIsWellFormed(source, stream, scan, attrEnd))
+                {
+                    switch (diags.Append(BindDiagnosticCode.InvalidLinkName, (u32[0 max])(scan + 1)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var invalidError):
+                            return System.Memory.MemoryStatus.Err(invalidError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+
+            scan = (u32[0 max])(attrEnd + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

@@ -21,6 +21,12 @@ members = [
   "data-model",
   "static-library",
   "standard-library-tests",
+  "sqlite",
+  "stb-image",
+  "miniaudio",
+  "cgltf",
+  "glfw",
+  "sdl3",
 ]
 
 [defaults]
@@ -69,9 +75,9 @@ data-model = "data-model"
 static-library = "static-library"
 standard-library-tests = "standard-library-tests"
 stdlib-tests = "standard-library-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
+sqlite = "sqlite"
+stb-image = "stb-image"
+miniaudio = "miniaudio"
+cgltf = "cgltf"
+glfw = "glfw"
+sdl3 = "sdl3"

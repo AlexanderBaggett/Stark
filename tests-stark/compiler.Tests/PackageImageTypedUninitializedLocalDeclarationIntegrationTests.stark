@@ -1,0 +1,36 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedUninitializedLocalDeclarationIntegrationTests
+
+// Ported from PackageImageTypedUninitializedLocalDeclarationIntegrationTests.ManifestBackedTypedUninitializedLocalDeclarationsCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedUninitializedLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed uninitialized local declaration bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "manifest-backed-typed-uninitialized-local-declarations-without-synthetic-source",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.Observe(7, 0);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max] current, next = value + 1;
+    current = value;
+    return current + next;
+}
+""",
+            "Facade.Observe",
+            "",
+            15);
+    }
+}

@@ -12,6 +12,24 @@ This page records user-facing changes to the published Stark Book.
 
 ## v1.35 Draft
 
+- Documented switch exhaustiveness and definite return: every `switch` must
+  cover its scrutinee's whole domain or carry a `default`, and a non-`void`
+  function must return on every path. Updated the Enums and Pattern Matching
+  and Bindings and Control Flow chapters, added a rejected non-exhaustive
+  switch sample, and noted the difference from C# switch statements for C#
+  programmers.
+- Added `try` error propagation, the `[Ok]`/`[Err]` variant role attributes
+  that make any two-variant enum propagatable, and `from` error funnels to the
+  Errors Without Exceptions chapter, including the operand/enclosing-function
+  requirements, a checked sample built on `System.Result`, and a rejected
+  sample for the statement-boundary rule.
+- Added `is` pattern conditions for `if` and `while` to the Enums and Pattern
+  Matching chapter with a checked sample built on `System.Option`, and
+  introduced the form in the control-flow chapter.
+- Added `try`, `from`, and `is` to the keywords appendix, mapped `try`/`from`
+  and `is` conditions for Rust programmers (`?`, `#[from]`, `if let`), and
+  added `try`-is-not-`try`/`catch` and `is`-pattern guidance for C#
+  programmers.
 - Updated hosted entrypoint examples to use safe `export fn main` unless the
   entrypoint itself needs unsafe or foreign ABI features.
 - Added generated Chapter Checkpoints to numbered tutorials so each chapter

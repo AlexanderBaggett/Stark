@@ -282,7 +282,6 @@ source, discovery hook, or fallback library:
 
 ```toml
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 ```
 
@@ -290,27 +289,26 @@ Fix the package that owns the native boundary. Do not copy linker flags into
 every consuming executable.
 
 For missing imports, check the source and the manifest together. The source
-must import the module, and the project must depend on the package:
+must import the module. If the missing module is from an ordinary package, the
+project must also depend on that package. `System.*` imports use standard
+library discovery instead of a `stdlib` dependency:
 
 ```stark
 import System.Console
 module App
 ```
 
-```toml
-[dependencies]
-stdlib = { path = "../../stdlib" }
-```
-
 For missing native functions, check the Stark declaration and the native symbol
-name together:
+name together. If the declaration has `[LinkName("...")]`, the link name is
+the symbol the linker must find:
 
 ```stark
-unsafe ffi fn i32[min max] stark_native_value();
+[LinkName("native_value")]
+unsafe ffi fn i32[min max] StarkNativeValue();
 ```
 
 ```c
-int stark_native_value(void) {
+int native_value(void) {
     return 42;
 }
 ```

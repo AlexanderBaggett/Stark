@@ -35,7 +35,101 @@ internal sealed class LlvmModuleSurfaceEmitter
         EmitBuiltinTypeDefinitions(builder);
         EmitNamedTypeDefinitions(builder);
         EmitStringConstants(builder);
+        EmitVTableGlobals(builder);
         EmitGlobals(builder);
+    }
+
+    // Emits one read-only vtable per (implementing type, `dyn trait`) pair. The
+    // table holds a function pointer for each object-safe trait method, in the
+    // shared slot order from DynTraitFacts, followed by a drop slot (`null` for a
+    // borrowed trait object; the implementing type's drop thunk for `heap dyn`).
+    // A `dyn Trait` fat pointer's second word points at one of these tables, and
+    // a dynamic call loads slot i with `getelementptr ptr, ptr <vtable>, i32 i`.
+    private void EmitVTableGlobals(StringBuilder builder)
+    {
+        var emittedAny = false;
+        foreach (var concreteType in _context.TypeModel.NamedTypes.Values
+                     .Where(static type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                           && type.ImplementedTraits.Count > 0)
+                     .OrderBy(static type => type.Name, StringComparer.Ordinal))
+        {
+            foreach (var traitName in concreteType.ImplementedTraits
+                         .Distinct()
+                         .OrderBy(static name => name, StringComparer.Ordinal))
+            {
+                if (!_context.TypeModel.NamedTypes.TryGetValue(traitName, out var traitType)
+                    || traitType.Kind != DeclarationKind.Trait
+                    || !traitType.IsDynTrait)
+                {
+                    continue;
+                }
+
+                if (!TryBuildVTableInitializer(concreteType.Name, traitName, out var slotCount, out var initializer))
+                {
+                    continue;
+                }
+
+                var vtableType = $"{{ {string.Join(", ", Enumerable.Repeat("ptr", slotCount + 1))} }}";
+                var symbolName = DynTraitFacts.BuildVtableGlobalName(concreteType.Name, traitName);
+                builder.AppendLine($"@{EscapeIdentifier(symbolName)} = private unnamed_addr constant {vtableType} {initializer}");
+                emittedAny = true;
+            }
+        }
+
+        if (emittedAny)
+        {
+            builder.AppendLine();
+        }
+    }
+
+    private bool TryBuildVTableInitializer(string concreteTypeName, string traitName, out int slotCount, out string initializer)
+    {
+        initializer = string.Empty;
+        var layout = DynTraitFacts.GetVtableLayout(traitName, _context.TypeModel.Functions);
+        slotCount = layout.Count;
+        var elements = new List<string>(slotCount + 1);
+        foreach (var slot in layout)
+        {
+            if (!TryResolveSlotFunctionSymbol(concreteTypeName, slot.MethodName, out var symbol))
+            {
+                // A non-overridden default method has no concrete `Type.Method`
+                // symbol; dispatching it through a trait object is not supported in
+                // this version (the implementing type must override it). Skip the
+                // table; the coercion site is rejected during semantic validation.
+                return false;
+            }
+
+            elements.Add($"ptr @{EscapeIdentifier(symbol)}");
+        }
+
+        // Drop slot: the implementing type's drop thunk (`<Type>.__dyn_drop`), which an
+        // owning `heap dyn` calls at scope exit to drop the boxed value and free the
+        // box. A borrowed trait object never reads this slot. Generic templates have no
+        // synthesized thunk, so their slot stays null (owned generic dyn is unsupported).
+        var dropSlot = _context.TypeModel.NamedTypes.TryGetValue(concreteTypeName, out var concreteType)
+                       && !concreteType.IsGeneric
+            ? $"ptr @{EscapeIdentifier(DynTraitFacts.BuildDropThunkName(concreteTypeName))}"
+            : "ptr null";
+        elements.Add(dropSlot);
+        initializer = $"{{ {string.Join(", ", elements)} }}";
+        return true;
+    }
+
+    private bool TryResolveSlotFunctionSymbol(string concreteTypeName, string methodName, out string symbol)
+    {
+        symbol = string.Empty;
+        var dot = concreteTypeName.LastIndexOf('.');
+        var simpleType = dot < 0 ? concreteTypeName : concreteTypeName[(dot + 1)..];
+        foreach (var key in new[] { $"{concreteTypeName}.{methodName}", $"{simpleType}.{methodName}" })
+        {
+            if (_context.TypeModel.Functions.TryGetValue(key, out var signature) && !signature.IsStatic)
+            {
+                symbol = signature.Name;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void EmitBuiltinTypeDefinitions(StringBuilder builder)
@@ -58,6 +152,13 @@ internal sealed class LlvmModuleSurfaceEmitter
             var fieldsSource = namedType.Kind == DeclarationKind.Enum
                 ? _context.EnumLayouts[namedType.Name].OrderedFields
                 : namedType.OrderedFields;
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                && TryBuildLayoutControlledTypeDefinition(namedType, out var layoutControlledDefinition))
+            {
+                builder.AppendLine($"%{EscapeIdentifier(namedType.Name)} = type {layoutControlledDefinition}");
+                continue;
+            }
+
             var fields = fieldsSource.Count == 0
                 ? string.Empty
                 : string.Join(", ", fieldsSource.Select(field => _context.MapType(field.Type)));
@@ -68,6 +169,36 @@ internal sealed class LlvmModuleSurfaceEmitter
         {
             builder.AppendLine();
         }
+    }
+
+    private bool TryBuildLayoutControlledTypeDefinition(NamedTypeSymbol namedType, out string definition)
+    {
+        definition = string.Empty;
+        if (!LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            || _context.TryGetConcreteTypeLayout(StarkTypeSymbols.Named(namedType.Name)) is not { } layout)
+        {
+            return false;
+        }
+
+        if (!LlvmLayoutControlledAggregateFacts.TryBuildPhysicalElements(
+                namedType,
+                layout,
+                out var elements,
+                out var hasOverlappingFields)
+            || hasOverlappingFields)
+        {
+            definition = $"{{ [{layout.SizeBytes} x i8] }}";
+            return true;
+        }
+
+        var fields = elements
+            .Where(static element => element.SizeBytes > 0)
+            .Select(element => element.FieldType is { } fieldType
+                ? _context.MapType(fieldType)
+                : $"[{element.SizeBytes} x i8]")
+            .ToArray();
+        definition = $"<{{ {string.Join(", ", fields)} }}>";
+        return true;
     }
 
     private void EmitStringConstants(StringBuilder builder)
@@ -114,10 +245,10 @@ internal sealed class LlvmModuleSurfaceEmitter
                         continue;
                     }
 
-                    if (!_globalInitializerPlanner.TryPlanVariableInitializer(
+                    if (!TryPlanGlobalInitializerFromTypedOrSource(
+                            global,
                             declarator.variableInitializer(),
-                            global.Type,
-                            true,
+                            isFrozen: true,
                             out var initializerPlan))
                     {
                         builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
@@ -158,10 +289,10 @@ internal sealed class LlvmModuleSurfaceEmitter
                     continue;
                 }
 
-                if (!_globalInitializerPlanner.TryPlanVariableInitializer(
+                if (!TryPlanGlobalInitializerFromTypedOrSource(
+                        global,
                         declarator.variableInitializer(),
-                        global.Type,
-                        false,
+                        isFrozen: false,
                         out var initializerPlan))
                 {
                     builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
@@ -179,6 +310,25 @@ internal sealed class LlvmModuleSurfaceEmitter
         }
 
         EmitImportedGlobalDeclarations(builder);
+    }
+
+    private bool TryPlanGlobalInitializerFromTypedOrSource(
+        TypedGlobalSymbol global,
+        StarkParser.VariableInitializerContext initializer,
+        bool isFrozen,
+        out LlvmGlobalInitializerPlan initializerPlan)
+    {
+        if (global.ConstantInitializer is { } typedInitializer
+            && _globalInitializerPlanner.TryPlanTypedConstantInitializer(typedInitializer, global.Type, out initializerPlan!))
+        {
+            return true;
+        }
+
+        return _globalInitializerPlanner.TryPlanVariableInitializer(
+            initializer,
+            global.Type,
+            isFrozen,
+            out initializerPlan!);
     }
 
     private void EmitImportedGlobalDeclarations(StringBuilder builder)

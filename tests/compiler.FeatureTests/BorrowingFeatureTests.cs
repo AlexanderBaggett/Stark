@@ -21,7 +21,7 @@ public sealed class BorrowingFeatureTests : FeatureLlvmTestBase
             """);
 
         Assert.Contains(
-            "define fastcc noundef i32 @Read(ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)",
+            "define fastcc noundef i32 @Read(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)",
             llvm);
     }
 }

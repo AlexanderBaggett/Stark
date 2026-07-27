@@ -39,12 +39,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private bool IsImmutableGlobalName(string globalName) => _context.IsImmutableGlobalName(globalName);
 
-    private bool IsPermanentConstGlobalName(string globalName)
-    {
-        return _context.TypeModel.Globals.TryGetValue(globalName, out var global)
-            && ConstProvenanceFacts.HasPermanentConstProvenance(global.ConstProvenance);
-    }
-
     private static string GetFloatIntrinsicSuffix(StarkTypeSymbol type)
     {
         return type.BitWidth switch
@@ -93,6 +87,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
             SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
+            SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter.Location,
+            SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave.Location,
             SsaStoreLocalInstruction storeLocal => storeLocal.Location,
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,
@@ -130,13 +126,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private enum LlvmAssumeOperandBundleKind
     {
         NonNull,
-        Align
+        Align,
+        SeparateStorage
     }
 
     private sealed record LlvmAssumeOperandBundle(
         LlvmAssumeOperandBundleKind Kind,
         SsaValue Pointer,
-        int? AlignmentBytes = null);
+        int? AlignmentBytes = null,
+        SsaValue? OtherPointer = null);
 
     private sealed record LlvmAssumeFact(
         SsaValue? Condition,

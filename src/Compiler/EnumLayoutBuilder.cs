@@ -6,7 +6,14 @@ internal static class EnumLayoutBuilder
 {
     public static EnumLayoutModel Build(TypeCheckModel typeModel)
     {
-        var layouts = typeModel.NamedTypes.Values
+        return Build(typeModel.ModuleName, typeModel.NamedTypes);
+    }
+
+    public static EnumLayoutModel Build(
+        string moduleName,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        var layouts = namedTypes.Values
             .Where(static namedType => namedType.Kind == DeclarationKind.Enum)
             .OrderBy(static namedType => namedType.Name, StringComparer.Ordinal)
             .ToDictionary(
@@ -14,7 +21,7 @@ internal static class EnumLayoutBuilder
                 static namedType => BuildDirectTagLayout(namedType),
                 StringComparer.Ordinal);
 
-        return new EnumLayoutModel(typeModel.ModuleName, layouts);
+        return new EnumLayoutModel(moduleName, layouts);
     }
 
     private static EnumLayoutSymbol BuildDirectTagLayout(NamedTypeSymbol enumType)
@@ -60,10 +67,13 @@ internal static class EnumLayoutBuilder
 
     private static StarkTypeSymbol CreateTagType(int variantCount)
     {
+        // Tags are signed integers, so the width must hold tag values
+        // 0..variantCount-1 within the SIGNED range: an i8 covers at most 128
+        // variants (tags 0..127), not 256.
         var maxTagValue = BigInteger.Max(BigInteger.Zero, variantCount - 1);
-        var bitWidth = variantCount <= 0x100
+        var bitWidth = variantCount <= 0x80
             ? 8
-            : variantCount <= 0x1_0000
+            : variantCount <= 0x8000
                 ? 16
                 : 32;
 

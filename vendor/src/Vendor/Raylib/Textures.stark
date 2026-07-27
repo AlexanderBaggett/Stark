@@ -1,0 +1,1284 @@
+import Vendor.Raylib.Types
+import Vendor.Raylib.Core
+export import Vendor.Raylib.Types
+module Vendor.Raylib.Textures
+
+public enum RaylibColorsResult
+{
+    [Ok] Ok(RaylibOwnedColors),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedColors
+{
+    internal rawmutptr<Color> Data;
+    internal u64[0 2 ** 63 - 1] Count;
+    internal bool Palette;
+
+    RaylibOwnedColors()
+    {
+        self.Data = null;
+        self.Count = 0;
+        self.Palette = false;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedColors self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow RaylibOwnedColors self, u64[0 2 ** 63 - 1] index, out Color value)
+    {
+        value = BLANK();
+        if (index >= self.Count || self.Data == null)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            value = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedColors self, borrow mut Color[] destination)
+    {
+        if (destination.Length < self.Count)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.Count)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedColors self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                if (self.Palette)
+                {
+                    stark_raylib_UnloadImagePalette(self.Data);
+                }
+                else
+                {
+                    stark_raylib_UnloadImageColors(self.Data);
+                }
+
+                self.Data = null;
+                self.Count = 0;
+                self.Palette = false;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe inline finite law rawptr<u8[0 max]> ReadU8OrNull(borrow u8[0 max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<i8[min max]> ReadI8OrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawmutptr<i8[min max]> MutI8OrNull(borrow mut i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
+[LinkName("LoadImage")]
+internal unsafe ffi fn Image stark_raylib_LoadImage(ascii fileName);
+public fn Image LoadImage(ascii fileName) {
+    unsafe {
+        return stark_raylib_LoadImage(fileName);
+    }
+}
+
+[LinkName("LoadImageRaw")]
+internal unsafe ffi fn Image stark_raylib_LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] headerSize);
+public fn Image LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] headerSize) {
+    unsafe {
+        return stark_raylib_LoadImageRaw(fileName, width, height, format, headerSize);
+    }
+}
+
+public fn Image LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] height, PixelFormat format, i32[min max] headerSize) {
+    return LoadImageRaw(fileName, width, height, PixelFormatNative(format), headerSize);
+}
+
+[LinkName("LoadImageAnim")]
+internal unsafe ffi fn Image stark_raylib_LoadImageAnim(ascii fileName, rawmutptr<i32[min max]> frames);
+public fn Image LoadImageAnim(ascii fileName, out i32[min max] frames) {
+    unsafe {
+        stack mut i32[min max] frameCount = 0;
+        stack Image image = stark_raylib_LoadImageAnim(fileName, &frameCount);
+        frames = frameCount;
+        return image;
+    }
+}
+
+[LinkName("LoadImageAnimFromMemory")]
+internal unsafe ffi fn Image stark_raylib_LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames);
+public fn Image LoadImageAnimFromMemory(ascii fileType, borrow u8[0 max][] fileData, out i32[min max] frames) {
+    if (TooManyForI32(fileData.Length))
+    {
+        frames = 0;
+        return DefaultImage();
+    }
+
+    unsafe {
+        stack mut i32[min max] frameCount = 0;
+        stack Image image = stark_raylib_LoadImageAnimFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length, &frameCount);
+        frames = frameCount;
+        return image;
+    }
+}
+
+[LinkName("LoadImageFromMemory")]
+internal unsafe ffi fn Image stark_raylib_LoadImageFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
+public fn Image LoadImageFromMemory(ascii fileType, borrow u8[0 max][] fileData) {
+    if (TooManyForI32(fileData.Length))
+    {
+        return DefaultImage();
+    }
+
+    unsafe {
+        return stark_raylib_LoadImageFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length);
+    }
+}
+
+[LinkName("LoadImageFromTexture")]
+internal unsafe ffi fn Image stark_raylib_LoadImageFromTexture(Texture2D texture);
+public fn Image LoadImageFromTexture(Texture2D texture) {
+    unsafe {
+        return stark_raylib_LoadImageFromTexture(texture);
+    }
+}
+
+[LinkName("LoadImageFromScreen")]
+internal unsafe ffi fn Image stark_raylib_LoadImageFromScreen();
+public fn Image LoadImageFromScreen() {
+    unsafe {
+        return stark_raylib_LoadImageFromScreen();
+    }
+}
+
+[LinkName("IsImageValid")]
+internal unsafe ffi fn bool stark_raylib_IsImageValid(Image image);
+public fn bool IsImageValid(Image image) {
+    unsafe {
+        return stark_raylib_IsImageValid(image);
+    }
+}
+
+[LinkName("UnloadImage")]
+internal unsafe ffi fn void stark_raylib_UnloadImage(Image image);
+public fn void UnloadImage(Image image) {
+    unsafe {
+        stark_raylib_UnloadImage(image);
+    }
+    return;
+}
+
+[LinkName("ExportImage")]
+internal unsafe ffi fn bool stark_raylib_ExportImage(Image image, ascii fileName);
+public fn bool ExportImage(Image image, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportImage(image, fileName);
+    }
+}
+
+[LinkName("ExportImageToMemory")]
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize);
+public fn RaylibBytesResult ExportImageToMemory(Image image, ascii fileType) {
+    unsafe {
+        stack mut i32[min max] fileSize = 0;
+        stack rawmutptr<u8[0 max]> data = stark_raylib_ExportImageToMemory(image, fileType, &fileSize);
+        return OwnedBytesFromPointer(data, fileSize);
+    }
+}
+
+[LinkName("ExportImageAsCode")]
+internal unsafe ffi fn bool stark_raylib_ExportImageAsCode(Image image, ascii fileName);
+public fn bool ExportImageAsCode(Image image, ascii fileName) {
+    unsafe {
+        return stark_raylib_ExportImageAsCode(image, fileName);
+    }
+}
+
+[LinkName("GenImageColor")]
+internal unsafe ffi fn Image stark_raylib_GenImageColor(i32[min max] width, i32[min max] height, Color color);
+public fn Image GenImageColor(i32[min max] width, i32[min max] height, Color color) {
+    unsafe {
+        return stark_raylib_GenImageColor(width, height, color);
+    }
+}
+
+[LinkName("GenImageGradientLinear")]
+internal unsafe ffi fn Image stark_raylib_GenImageGradientLinear(i32[min max] width, i32[min max] height, i32[min max] direction, Color start, Color end);
+public fn Image GenImageGradientLinear(i32[min max] width, i32[min max] height, i32[min max] direction, Color start, Color end) {
+    unsafe {
+        return stark_raylib_GenImageGradientLinear(width, height, direction, start, end);
+    }
+}
+
+[LinkName("GenImageGradientRadial")]
+internal unsafe ffi fn Image stark_raylib_GenImageGradientRadial(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer);
+public fn Image GenImageGradientRadial(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer) {
+    unsafe {
+        return stark_raylib_GenImageGradientRadial(width, height, density, inner, outer);
+    }
+}
+
+[LinkName("GenImageGradientSquare")]
+internal unsafe ffi fn Image stark_raylib_GenImageGradientSquare(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer);
+public fn Image GenImageGradientSquare(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer) {
+    unsafe {
+        return stark_raylib_GenImageGradientSquare(width, height, density, inner, outer);
+    }
+}
+
+[LinkName("GenImageChecked")]
+internal unsafe ffi fn Image stark_raylib_GenImageChecked(i32[min max] width, i32[min max] height, i32[min max] checksX, i32[min max] checksY, Color col1, Color col2);
+public fn Image GenImageChecked(i32[min max] width, i32[min max] height, i32[min max] checksX, i32[min max] checksY, Color col1, Color col2) {
+    unsafe {
+        return stark_raylib_GenImageChecked(width, height, checksX, checksY, col1, col2);
+    }
+}
+
+[LinkName("GenImageWhiteNoise")]
+internal unsafe ffi fn Image stark_raylib_GenImageWhiteNoise(i32[min max] width, i32[min max] height, f32 factor);
+public fn Image GenImageWhiteNoise(i32[min max] width, i32[min max] height, f32 factor) {
+    unsafe {
+        return stark_raylib_GenImageWhiteNoise(width, height, factor);
+    }
+}
+
+[LinkName("GenImagePerlinNoise")]
+internal unsafe ffi fn Image stark_raylib_GenImagePerlinNoise(i32[min max] width, i32[min max] height, i32[min max] offsetX, i32[min max] offsetY, f32 scale);
+public fn Image GenImagePerlinNoise(i32[min max] width, i32[min max] height, i32[min max] offsetX, i32[min max] offsetY, f32 scale) {
+    unsafe {
+        return stark_raylib_GenImagePerlinNoise(width, height, offsetX, offsetY, scale);
+    }
+}
+
+[LinkName("GenImageCellular")]
+internal unsafe ffi fn Image stark_raylib_GenImageCellular(i32[min max] width, i32[min max] height, i32[min max] tileSize);
+public fn Image GenImageCellular(i32[min max] width, i32[min max] height, i32[min max] tileSize) {
+    unsafe {
+        return stark_raylib_GenImageCellular(width, height, tileSize);
+    }
+}
+
+[LinkName("GenImageText")]
+internal unsafe ffi fn Image stark_raylib_GenImageText(i32[min max] width, i32[min max] height, ascii text);
+public fn Image GenImageText(i32[min max] width, i32[min max] height, ascii text) {
+    unsafe {
+        return stark_raylib_GenImageText(width, height, text);
+    }
+}
+
+[LinkName("ImageCopy")]
+internal unsafe ffi fn Image stark_raylib_ImageCopy(Image image);
+public fn Image ImageCopy(Image image) {
+    unsafe {
+        return stark_raylib_ImageCopy(image);
+    }
+}
+
+[LinkName("ImageFromImage")]
+internal unsafe ffi fn Image stark_raylib_ImageFromImage(Image image, Rectangle rec);
+public fn Image ImageFromImage(Image image, Rectangle rec) {
+    unsafe {
+        return stark_raylib_ImageFromImage(image, rec);
+    }
+}
+
+[LinkName("ImageFromChannel")]
+internal unsafe ffi fn Image stark_raylib_ImageFromChannel(Image image, i32[min max] selectedChannel);
+public fn Image ImageFromChannel(Image image, i32[min max] selectedChannel) {
+    unsafe {
+        return stark_raylib_ImageFromChannel(image, selectedChannel);
+    }
+}
+
+[LinkName("ImageText")]
+internal unsafe ffi fn Image stark_raylib_ImageText(ascii text, i32[min max] fontSize, Color color);
+public fn Image ImageText(ascii text, i32[min max] fontSize, Color color) {
+    unsafe {
+        return stark_raylib_ImageText(text, fontSize, color);
+    }
+}
+
+[LinkName("ImageTextEx")]
+internal unsafe ffi fn Image stark_raylib_ImageTextEx(Font font, ascii text, f32 fontSize, f32 spacing, Color tint);
+public fn Image ImageTextEx(Font font, ascii text, f32 fontSize, f32 spacing, Color tint) {
+    unsafe {
+        return stark_raylib_ImageTextEx(font, text, fontSize, spacing, tint);
+    }
+}
+
+[LinkName("ImageFormat")]
+internal unsafe ffi fn void stark_raylib_ImageFormat(rawmutptr<Image> image, i32[min max] newFormat);
+public fn Image ImageFormat(Image image, i32[min max] newFormat) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageFormat(&result, newFormat);
+    }
+    return result;
+}
+
+public fn Image ImageFormat(Image image, PixelFormat newFormat) {
+    return ImageFormat(image, PixelFormatNative(newFormat));
+}
+
+[LinkName("ImageToPOT")]
+internal unsafe ffi fn void stark_raylib_ImageToPOT(rawmutptr<Image> image, Color fill);
+public fn Image ImageToPOT(Image image, Color fill) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageToPOT(&result, fill);
+    }
+    return result;
+}
+
+[LinkName("ImageCrop")]
+internal unsafe ffi fn void stark_raylib_ImageCrop(rawmutptr<Image> image, Rectangle crop);
+public fn Image ImageCrop(Image image, Rectangle crop) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageCrop(&result, crop);
+    }
+    return result;
+}
+
+[LinkName("ImageAlphaCrop")]
+internal unsafe ffi fn void stark_raylib_ImageAlphaCrop(rawmutptr<Image> image, f32 threshold);
+public fn Image ImageAlphaCrop(Image image, f32 threshold) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageAlphaCrop(&result, threshold);
+    }
+    return result;
+}
+
+[LinkName("ImageAlphaClear")]
+internal unsafe ffi fn void stark_raylib_ImageAlphaClear(rawmutptr<Image> image, Color color, f32 threshold);
+public fn Image ImageAlphaClear(Image image, Color color, f32 threshold) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageAlphaClear(&result, color, threshold);
+    }
+    return result;
+}
+
+[LinkName("ImageAlphaMask")]
+internal unsafe ffi fn void stark_raylib_ImageAlphaMask(rawmutptr<Image> image, Image alphaMask);
+public fn Image ImageAlphaMask(Image image, Image alphaMask) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageAlphaMask(&result, alphaMask);
+    }
+    return result;
+}
+
+[LinkName("ImageAlphaPremultiply")]
+internal unsafe ffi fn void stark_raylib_ImageAlphaPremultiply(rawmutptr<Image> image);
+public fn Image ImageAlphaPremultiply(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageAlphaPremultiply(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageBlurGaussian")]
+internal unsafe ffi fn void stark_raylib_ImageBlurGaussian(rawmutptr<Image> image, i32[min max] blurSize);
+public fn Image ImageBlurGaussian(Image image, i32[min max] blurSize) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageBlurGaussian(&result, blurSize);
+    }
+    return result;
+}
+
+[LinkName("ImageKernelConvolution")]
+internal unsafe ffi fn void stark_raylib_ImageKernelConvolution(rawmutptr<Image> image, rawptr<f32> kernel, i32[min max] kernelSize);
+public fn RaylibStatus ImageKernelConvolution(Image image, borrow f32[] kernel, out Image result) {
+    stack mut Image working = image;
+    if (kernel.Length == 0) {
+        result = working;
+        return RaylibStatus.InvalidArgument;
+    }
+
+    if (kernel.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        result = working;
+        return RaylibStatus.TooManyItems;
+    }
+
+    unsafe {
+        stark_raylib_ImageKernelConvolution(&working, &kernel[0], (i32[min max])kernel.Length);
+    }
+    result = working;
+    return RaylibStatus.Ok;
+}
+
+[LinkName("ImageResize")]
+internal unsafe ffi fn void stark_raylib_ImageResize(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight);
+public fn Image ImageResize(Image image, i32[min max] newWidth, i32[min max] newHeight) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageResize(&result, newWidth, newHeight);
+    }
+    return result;
+}
+
+[LinkName("ImageResizeNN")]
+internal unsafe ffi fn void stark_raylib_ImageResizeNN(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight);
+public fn Image ImageResizeNN(Image image, i32[min max] newWidth, i32[min max] newHeight) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageResizeNN(&result, newWidth, newHeight);
+    }
+    return result;
+}
+
+[LinkName("ImageResizeCanvas")]
+internal unsafe ffi fn void stark_raylib_ImageResizeCanvas(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight, i32[min max] offsetX, i32[min max] offsetY, Color fill);
+public fn Image ImageResizeCanvas(Image image, i32[min max] newWidth, i32[min max] newHeight, i32[min max] offsetX, i32[min max] offsetY, Color fill) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageResizeCanvas(&result, newWidth, newHeight, offsetX, offsetY, fill);
+    }
+    return result;
+}
+
+[LinkName("ImageMipmaps")]
+internal unsafe ffi fn void stark_raylib_ImageMipmaps(rawmutptr<Image> image);
+public fn Image ImageMipmaps(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageMipmaps(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageDither")]
+internal unsafe ffi fn void stark_raylib_ImageDither(rawmutptr<Image> image, i32[min max] rBpp, i32[min max] gBpp, i32[min max] bBpp, i32[min max] aBpp);
+public fn Image ImageDither(Image image, i32[min max] rBpp, i32[min max] gBpp, i32[min max] bBpp, i32[min max] aBpp) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageDither(&result, rBpp, gBpp, bBpp, aBpp);
+    }
+    return result;
+}
+
+[LinkName("ImageFlipVertical")]
+internal unsafe ffi fn void stark_raylib_ImageFlipVertical(rawmutptr<Image> image);
+public fn Image ImageFlipVertical(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageFlipVertical(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageFlipHorizontal")]
+internal unsafe ffi fn void stark_raylib_ImageFlipHorizontal(rawmutptr<Image> image);
+public fn Image ImageFlipHorizontal(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageFlipHorizontal(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageRotate")]
+internal unsafe ffi fn void stark_raylib_ImageRotate(rawmutptr<Image> image, i32[min max] degrees);
+public fn Image ImageRotate(Image image, i32[min max] degrees) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageRotate(&result, degrees);
+    }
+    return result;
+}
+
+[LinkName("ImageRotateCW")]
+internal unsafe ffi fn void stark_raylib_ImageRotateCW(rawmutptr<Image> image);
+public fn Image ImageRotateCW(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageRotateCW(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageRotateCCW")]
+internal unsafe ffi fn void stark_raylib_ImageRotateCCW(rawmutptr<Image> image);
+public fn Image ImageRotateCCW(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageRotateCCW(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageColorTint")]
+internal unsafe ffi fn void stark_raylib_ImageColorTint(rawmutptr<Image> image, Color color);
+public fn Image ImageColorTint(Image image, Color color) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorTint(&result, color);
+    }
+    return result;
+}
+
+[LinkName("ImageColorInvert")]
+internal unsafe ffi fn void stark_raylib_ImageColorInvert(rawmutptr<Image> image);
+public fn Image ImageColorInvert(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorInvert(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageColorGrayscale")]
+internal unsafe ffi fn void stark_raylib_ImageColorGrayscale(rawmutptr<Image> image);
+public fn Image ImageColorGrayscale(Image image) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorGrayscale(&result);
+    }
+    return result;
+}
+
+[LinkName("ImageColorContrast")]
+internal unsafe ffi fn void stark_raylib_ImageColorContrast(rawmutptr<Image> image, f32 contrast);
+public fn Image ImageColorContrast(Image image, f32 contrast) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorContrast(&result, contrast);
+    }
+    return result;
+}
+
+[LinkName("ImageColorBrightness")]
+internal unsafe ffi fn void stark_raylib_ImageColorBrightness(rawmutptr<Image> image, i32[min max] brightness);
+public fn Image ImageColorBrightness(Image image, i32[min max] brightness) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorBrightness(&result, brightness);
+    }
+    return result;
+}
+
+[LinkName("ImageColorReplace")]
+internal unsafe ffi fn void stark_raylib_ImageColorReplace(rawmutptr<Image> image, Color color, Color replace);
+public fn Image ImageColorReplace(Image image, Color color, Color replace) {
+    stack mut Image result = image;
+    unsafe {
+        stark_raylib_ImageColorReplace(&result, color, replace);
+    }
+    return result;
+}
+
+[LinkName("LoadImageColors")]
+internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImageColors(Image image);
+public fn RaylibColorsResult LoadImageColors(Image image) {
+    unsafe {
+        stack rawmutptr<Color> colors = stark_raylib_LoadImageColors(image);
+        if (colors == null || image.Width <= 0 || image.Height <= 0)
+        {
+            return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibColorsResult.Ok(new RaylibOwnedColors()
+        {
+            Data = colors,
+            Count = (u64[0 2 ** 63 - 1])image.Width * (u64[0 2 ** 63 - 1])image.Height,
+            Palette = false
+        });
+    }
+}
+
+[LinkName("LoadImagePalette")]
+internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImagePalette(Image image, i32[min max] maxPaletteSize, rawmutptr<i32[min max]> colorCount);
+public fn RaylibColorsResult LoadImagePalette(Image image, i32[min max] maxPaletteSize) {
+    if (maxPaletteSize <= 0)
+    {
+        return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    unsafe {
+        stack mut i32[min max] colorCount = 0;
+        stack rawmutptr<Color> colors = stark_raylib_LoadImagePalette(image, maxPaletteSize, &colorCount);
+        if (colors == null || colorCount < 0)
+        {
+            return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibColorsResult.Ok(new RaylibOwnedColors()
+        {
+            Data = colors,
+            Count = (u64[0 2 ** 63 - 1])colorCount,
+            Palette = true
+        });
+    }
+}
+
+[LinkName("UnloadImageColors")]
+internal unsafe ffi fn void stark_raylib_UnloadImageColors(rawmutptr<Color> colors);
+[LinkName("UnloadImagePalette")]
+internal unsafe ffi fn void stark_raylib_UnloadImagePalette(rawmutptr<Color> colors);
+[LinkName("GetImageAlphaBorder")]
+internal unsafe ffi fn Rectangle stark_raylib_GetImageAlphaBorder(Image image, f32 threshold);
+public fn Rectangle GetImageAlphaBorder(Image image, f32 threshold) {
+    unsafe {
+        return stark_raylib_GetImageAlphaBorder(image, threshold);
+    }
+}
+
+[LinkName("GetImageColor")]
+internal unsafe ffi fn Color stark_raylib_GetImageColor(Image image, i32[min max] x, i32[min max] y);
+public fn Color GetImageColor(Image image, i32[min max] x, i32[min max] y) {
+    unsafe {
+        return stark_raylib_GetImageColor(image, x, y);
+    }
+}
+
+[LinkName("ImageClearBackground")]
+internal unsafe ffi fn void stark_raylib_ImageClearBackground(rawmutptr<Image> dst, Color color);
+public fn Image ImageClearBackground(Image dst, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageClearBackground(&result, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawPixel")]
+internal unsafe ffi fn void stark_raylib_ImageDrawPixel(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, Color color);
+public fn Image ImageDrawPixel(Image dst, i32[min max] posX, i32[min max] posY, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawPixel(&result, posX, posY, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawPixelV")]
+internal unsafe ffi fn void stark_raylib_ImageDrawPixelV(rawmutptr<Image> dst, Vector2 position, Color color);
+public fn Image ImageDrawPixelV(Image dst, Vector2 position, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawPixelV(&result, position, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawLine")]
+internal unsafe ffi fn void stark_raylib_ImageDrawLine(rawmutptr<Image> dst, i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, Color color);
+public fn Image ImageDrawLine(Image dst, i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawLine(&result, startPosX, startPosY, endPosX, endPosY, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawLineV")]
+internal unsafe ffi fn void stark_raylib_ImageDrawLineV(rawmutptr<Image> dst, Vector2 start, Vector2 end, Color color);
+public fn Image ImageDrawLineV(Image dst, Vector2 start, Vector2 end, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawLineV(&result, start, end, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawLineEx")]
+internal unsafe ffi fn void stark_raylib_ImageDrawLineEx(rawmutptr<Image> dst, Vector2 start, Vector2 end, i32[min max] thick, Color color);
+public fn Image ImageDrawLineEx(Image dst, Vector2 start, Vector2 end, i32[min max] thick, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawLineEx(&result, start, end, thick, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawCircle")]
+internal unsafe ffi fn void stark_raylib_ImageDrawCircle(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color);
+public fn Image ImageDrawCircle(Image dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawCircle(&result, centerX, centerY, radius, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawCircleV")]
+internal unsafe ffi fn void stark_raylib_ImageDrawCircleV(rawmutptr<Image> dst, Vector2 center, i32[min max] radius, Color color);
+public fn Image ImageDrawCircleV(Image dst, Vector2 center, i32[min max] radius, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawCircleV(&result, center, radius, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawCircleLines")]
+internal unsafe ffi fn void stark_raylib_ImageDrawCircleLines(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color);
+public fn Image ImageDrawCircleLines(Image dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawCircleLines(&result, centerX, centerY, radius, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawCircleLinesV")]
+internal unsafe ffi fn void stark_raylib_ImageDrawCircleLinesV(rawmutptr<Image> dst, Vector2 center, i32[min max] radius, Color color);
+public fn Image ImageDrawCircleLinesV(Image dst, Vector2 center, i32[min max] radius, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawCircleLinesV(&result, center, radius, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawRectangle")]
+internal unsafe ffi fn void stark_raylib_ImageDrawRectangle(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color);
+public fn Image ImageDrawRectangle(Image dst, i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawRectangle(&result, posX, posY, width, height, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawRectangleV")]
+internal unsafe ffi fn void stark_raylib_ImageDrawRectangleV(rawmutptr<Image> dst, Vector2 position, Vector2 size, Color color);
+public fn Image ImageDrawRectangleV(Image dst, Vector2 position, Vector2 size, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawRectangleV(&result, position, size, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawRectangleRec")]
+internal unsafe ffi fn void stark_raylib_ImageDrawRectangleRec(rawmutptr<Image> dst, Rectangle rec, Color color);
+public fn Image ImageDrawRectangleRec(Image dst, Rectangle rec, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawRectangleRec(&result, rec, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawRectangleLines")]
+internal unsafe ffi fn void stark_raylib_ImageDrawRectangleLines(rawmutptr<Image> dst, Rectangle rec, i32[min max] thick, Color color);
+public fn Image ImageDrawRectangleLines(Image dst, Rectangle rec, i32[min max] thick, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawRectangleLines(&result, rec, thick, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawTriangle")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTriangle(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color);
+public fn Image ImageDrawTriangle(Image dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawTriangle(&result, v1, v2, v3, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawTriangleEx")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTriangleEx(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color c1, Color c2, Color c3);
+public fn Image ImageDrawTriangleEx(Image dst, Vector2 v1, Vector2 v2, Vector2 v3, Color c1, Color c2, Color c3) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawTriangleEx(&result, v1, v2, v3, c1, c2, c3);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawTriangleLines")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTriangleLines(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color);
+public fn Image ImageDrawTriangleLines(Image dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawTriangleLines(&result, v1, v2, v3, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawTriangleFan")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTriangleFan(rawmutptr<Image> dst, rawptr<Vector2> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus ImageDrawTriangleFan(Image dst, borrow Vector2[] points, Color color, out Image result) {
+    stack mut Image working = dst;
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        result = working;
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        result = working;
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_ImageDrawTriangleFan(&working, &points[0], (i32[min max])points.Length, color);
+    }
+    result = working;
+    return RaylibStatus.Ok;
+}
+
+[LinkName("ImageDrawTriangleStrip")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTriangleStrip(rawmutptr<Image> dst, rawptr<Vector2> points, i32[min max] pointCount, Color color);
+public fn RaylibStatus ImageDrawTriangleStrip(Image dst, borrow Vector2[] points, Color color, out Image result) {
+    stack mut Image working = dst;
+    if (points.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        result = working;
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (points.Length == 0) {
+        result = working;
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_ImageDrawTriangleStrip(&working, &points[0], (i32[min max])points.Length, color);
+    }
+    result = working;
+    return RaylibStatus.Ok;
+}
+
+[LinkName("ImageDraw")]
+internal unsafe ffi fn void stark_raylib_ImageDraw(rawmutptr<Image> dst, Image src, Rectangle srcRec, Rectangle dstRec, Color tint);
+public fn Image ImageDraw(Image dst, Image src, Rectangle srcRec, Rectangle dstRec, Color tint) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDraw(&result, src, srcRec, dstRec, tint);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawText")]
+internal unsafe ffi fn void stark_raylib_ImageDrawText(rawmutptr<Image> dst, ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color);
+public fn Image ImageDrawText(Image dst, ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawText(&result, text, posX, posY, fontSize, color);
+    }
+    return result;
+}
+
+[LinkName("ImageDrawTextEx")]
+internal unsafe ffi fn void stark_raylib_ImageDrawTextEx(rawmutptr<Image> dst, Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint);
+public fn Image ImageDrawTextEx(Image dst, Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
+    stack mut Image result = dst;
+    unsafe {
+        stark_raylib_ImageDrawTextEx(&result, font, text, position, fontSize, spacing, tint);
+    }
+    return result;
+}
+
+[LinkName("LoadTexture")]
+internal unsafe ffi fn Texture2D stark_raylib_LoadTexture(ascii fileName);
+public fn Texture2D LoadTexture(ascii fileName) {
+    unsafe {
+        return stark_raylib_LoadTexture(fileName);
+    }
+}
+
+[LinkName("LoadTextureFromImage")]
+internal unsafe ffi fn Texture2D stark_raylib_LoadTextureFromImage(Image image);
+public fn Texture2D LoadTextureFromImage(Image image) {
+    unsafe {
+        return stark_raylib_LoadTextureFromImage(image);
+    }
+}
+
+[LinkName("LoadTextureCubemap")]
+internal unsafe ffi fn TextureCubemap stark_raylib_LoadTextureCubemap(Image image, i32[min max] layout);
+public fn TextureCubemap LoadTextureCubemap(Image image, i32[min max] layout) {
+    unsafe {
+        return stark_raylib_LoadTextureCubemap(image, layout);
+    }
+}
+
+public fn TextureCubemap LoadTextureCubemap(Image image, CubemapLayout layout) {
+    return LoadTextureCubemap(image, CubemapLayoutNative(layout));
+}
+
+[LinkName("LoadRenderTexture")]
+internal unsafe ffi fn RenderTexture2D stark_raylib_LoadRenderTexture(i32[min max] width, i32[min max] height);
+public fn RenderTexture2D LoadRenderTexture(i32[min max] width, i32[min max] height) {
+    unsafe {
+        return stark_raylib_LoadRenderTexture(width, height);
+    }
+}
+
+[LinkName("IsTextureValid")]
+internal unsafe ffi fn bool stark_raylib_IsTextureValid(Texture2D texture);
+public fn bool IsTextureValid(Texture2D texture) {
+    unsafe {
+        return stark_raylib_IsTextureValid(texture);
+    }
+}
+
+[LinkName("UnloadTexture")]
+internal unsafe ffi fn void stark_raylib_UnloadTexture(Texture2D texture);
+public fn void UnloadTexture(Texture2D texture) {
+    unsafe {
+        stark_raylib_UnloadTexture(texture);
+    }
+    return;
+}
+
+[LinkName("IsRenderTextureValid")]
+internal unsafe ffi fn bool stark_raylib_IsRenderTextureValid(RenderTexture2D target);
+public fn bool IsRenderTextureValid(RenderTexture2D target) {
+    unsafe {
+        return stark_raylib_IsRenderTextureValid(target);
+    }
+}
+
+[LinkName("UnloadRenderTexture")]
+internal unsafe ffi fn void stark_raylib_UnloadRenderTexture(RenderTexture2D target);
+public fn void UnloadRenderTexture(RenderTexture2D target) {
+    unsafe {
+        stark_raylib_UnloadRenderTexture(target);
+    }
+    return;
+}
+
+[LinkName("UpdateTexture")]
+internal unsafe ffi fn void stark_raylib_UpdateTexture(Texture2D texture, rawptr<i8[min max]> pixels);
+public fn RaylibStatus UpdateTexture(Texture2D texture, borrow i8[min max][] pixels) {
+    if (pixels.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
+    }
+
+    unsafe {
+        stark_raylib_UpdateTexture(texture, ReadI8OrNull(pixels));
+    }
+
+    return RaylibStatus.Ok;
+}
+
+[LinkName("UpdateTextureRec")]
+internal unsafe ffi fn void stark_raylib_UpdateTextureRec(Texture2D texture, Rectangle rec, rawptr<i8[min max]> pixels);
+public fn RaylibStatus UpdateTextureRec(Texture2D texture, Rectangle rec, borrow i8[min max][] pixels) {
+    if (pixels.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
+    }
+
+    unsafe {
+        stark_raylib_UpdateTextureRec(texture, rec, ReadI8OrNull(pixels));
+    }
+
+    return RaylibStatus.Ok;
+}
+
+[LinkName("GenTextureMipmaps")]
+internal unsafe ffi fn void stark_raylib_GenTextureMipmaps(rawmutptr<Texture2D> texture);
+public fn Texture2D GenTextureMipmaps(Texture2D texture) {
+    stack mut Texture2D result = texture;
+    unsafe {
+        stark_raylib_GenTextureMipmaps(&result);
+    }
+    return result;
+}
+
+[LinkName("SetTextureFilter")]
+internal unsafe ffi fn void stark_raylib_SetTextureFilter(Texture2D texture, i32[min max] filter);
+public fn void SetTextureFilter(Texture2D texture, i32[min max] filter) {
+    unsafe {
+        stark_raylib_SetTextureFilter(texture, filter);
+    }
+    return;
+}
+
+public fn void SetTextureFilter(Texture2D texture, TextureFilter filter) {
+    SetTextureFilter(texture, TextureFilterNative(filter));
+    return;
+}
+
+[LinkName("SetTextureWrap")]
+internal unsafe ffi fn void stark_raylib_SetTextureWrap(Texture2D texture, i32[min max] wrap);
+public fn void SetTextureWrap(Texture2D texture, i32[min max] wrap) {
+    unsafe {
+        stark_raylib_SetTextureWrap(texture, wrap);
+    }
+    return;
+}
+
+public fn void SetTextureWrap(Texture2D texture, TextureWrap wrap) {
+    SetTextureWrap(texture, TextureWrapNative(wrap));
+    return;
+}
+
+[LinkName("DrawTexture")]
+internal unsafe ffi fn void stark_raylib_DrawTexture(Texture2D texture, i32[min max] posX, i32[min max] posY, Color tint);
+public fn void DrawTexture(Texture2D texture, i32[min max] posX, i32[min max] posY, Color tint) {
+    unsafe {
+        stark_raylib_DrawTexture(texture, posX, posY, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextureV")]
+internal unsafe ffi fn void stark_raylib_DrawTextureV(Texture2D texture, Vector2 position, Color tint);
+public fn void DrawTextureV(Texture2D texture, Vector2 position, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextureV(texture, position, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextureEx")]
+internal unsafe ffi fn void stark_raylib_DrawTextureEx(Texture2D texture, Vector2 position, f32 rotation, f32 scale, Color tint);
+public fn void DrawTextureEx(Texture2D texture, Vector2 position, f32 rotation, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextureEx(texture, position, rotation, scale, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextureRec")]
+internal unsafe ffi fn void stark_raylib_DrawTextureRec(Texture2D texture, Rectangle source, Vector2 position, Color tint);
+public fn void DrawTextureRec(Texture2D texture, Rectangle source, Vector2 position, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextureRec(texture, source, position, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTexturePro")]
+internal unsafe ffi fn void stark_raylib_DrawTexturePro(Texture2D texture, Rectangle source, Rectangle dest, Vector2 origin, f32 rotation, Color tint);
+public fn void DrawTexturePro(Texture2D texture, Rectangle source, Rectangle dest, Vector2 origin, f32 rotation, Color tint) {
+    unsafe {
+        stark_raylib_DrawTexturePro(texture, source, dest, origin, rotation, tint);
+    }
+    return;
+}
+
+[LinkName("DrawTextureNPatch")]
+internal unsafe ffi fn void stark_raylib_DrawTextureNPatch(Texture2D texture, NPatchInfo nPatchInfo, Rectangle dest, Vector2 origin, f32 rotation, Color tint);
+public fn void DrawTextureNPatch(Texture2D texture, NPatchInfo nPatchInfo, Rectangle dest, Vector2 origin, f32 rotation, Color tint) {
+    unsafe {
+        stark_raylib_DrawTextureNPatch(texture, nPatchInfo, dest, origin, rotation, tint);
+    }
+    return;
+}
+
+[LinkName("ColorIsEqual")]
+internal unsafe ffi fn bool stark_raylib_ColorIsEqual(Color col1, Color col2);
+public fn bool ColorIsEqual(Color col1, Color col2) {
+    unsafe {
+        return stark_raylib_ColorIsEqual(col1, col2);
+    }
+}
+
+[LinkName("Fade")]
+internal unsafe ffi fn Color stark_raylib_Fade(Color color, f32 alpha);
+public fn Color Fade(Color color, f32 alpha) {
+    unsafe {
+        return stark_raylib_Fade(color, alpha);
+    }
+}
+
+[LinkName("ColorToInt")]
+internal unsafe ffi fn i32[min max] stark_raylib_ColorToInt(Color color);
+public fn i32[min max] ColorToInt(Color color) {
+    unsafe {
+        return stark_raylib_ColorToInt(color);
+    }
+}
+
+[LinkName("ColorNormalize")]
+internal unsafe ffi fn Vector4 stark_raylib_ColorNormalize(Color color);
+public fn Vector4 ColorNormalize(Color color) {
+    unsafe {
+        return stark_raylib_ColorNormalize(color);
+    }
+}
+
+[LinkName("ColorFromNormalized")]
+internal unsafe ffi fn Color stark_raylib_ColorFromNormalized(Vector4 normalized);
+public fn Color ColorFromNormalized(Vector4 normalized) {
+    unsafe {
+        return stark_raylib_ColorFromNormalized(normalized);
+    }
+}
+
+[LinkName("ColorToHSV")]
+internal unsafe ffi fn Vector3 stark_raylib_ColorToHSV(Color color);
+public fn Vector3 ColorToHSV(Color color) {
+    unsafe {
+        return stark_raylib_ColorToHSV(color);
+    }
+}
+
+[LinkName("ColorFromHSV")]
+internal unsafe ffi fn Color stark_raylib_ColorFromHSV(f32 hue, f32 saturation, f32 value);
+public fn Color ColorFromHSV(f32 hue, f32 saturation, f32 value) {
+    unsafe {
+        return stark_raylib_ColorFromHSV(hue, saturation, value);
+    }
+}
+
+[LinkName("ColorTint")]
+internal unsafe ffi fn Color stark_raylib_ColorTint(Color color, Color tint);
+public fn Color ColorTint(Color color, Color tint) {
+    unsafe {
+        return stark_raylib_ColorTint(color, tint);
+    }
+}
+
+[LinkName("ColorBrightness")]
+internal unsafe ffi fn Color stark_raylib_ColorBrightness(Color color, f32 factor);
+public fn Color ColorBrightness(Color color, f32 factor) {
+    unsafe {
+        return stark_raylib_ColorBrightness(color, factor);
+    }
+}
+
+[LinkName("ColorContrast")]
+internal unsafe ffi fn Color stark_raylib_ColorContrast(Color color, f32 contrast);
+public fn Color ColorContrast(Color color, f32 contrast) {
+    unsafe {
+        return stark_raylib_ColorContrast(color, contrast);
+    }
+}
+
+[LinkName("ColorAlpha")]
+internal unsafe ffi fn Color stark_raylib_ColorAlpha(Color color, f32 alpha);
+public fn Color ColorAlpha(Color color, f32 alpha) {
+    unsafe {
+        return stark_raylib_ColorAlpha(color, alpha);
+    }
+}
+
+[LinkName("ColorAlphaBlend")]
+internal unsafe ffi fn Color stark_raylib_ColorAlphaBlend(Color dst, Color src, Color tint);
+public fn Color ColorAlphaBlend(Color dst, Color src, Color tint) {
+    unsafe {
+        return stark_raylib_ColorAlphaBlend(dst, src, tint);
+    }
+}
+
+[LinkName("ColorLerp")]
+internal unsafe ffi fn Color stark_raylib_ColorLerp(Color color1, Color color2, f32 factor);
+public fn Color ColorLerp(Color color1, Color color2, f32 factor) {
+    unsafe {
+        return stark_raylib_ColorLerp(color1, color2, factor);
+    }
+}
+
+[LinkName("GetColor")]
+internal unsafe ffi fn Color stark_raylib_GetColor(u32[0 max] hexValue);
+public fn Color GetColor(u32[0 max] hexValue) {
+    unsafe {
+        return stark_raylib_GetColor(hexValue);
+    }
+}
+
+[LinkName("GetPixelColor")]
+internal unsafe ffi fn Color stark_raylib_GetPixelColor(rawptr<i8[min max]> srcPtr, i32[min max] format);
+public fn Color GetPixelColor(borrow i8[min max][] source, i32[min max] format) {
+    if (source.Length == 0)
+    {
+        return BLANK();
+    }
+
+    unsafe {
+        return stark_raylib_GetPixelColor(ReadI8OrNull(source), format);
+    }
+}
+
+public fn Color GetPixelColor(borrow i8[min max][] source, PixelFormat format) {
+    return GetPixelColor(source, PixelFormatNative(format));
+}
+
+[LinkName("SetPixelColor")]
+internal unsafe ffi fn void stark_raylib_SetPixelColor(rawmutptr<i8[min max]> dstPtr, Color color, i32[min max] format);
+public fn RaylibStatus SetPixelColor(borrow mut i8[min max][] destination, Color color, i32[min max] format) {
+    if (destination.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
+    }
+
+    unsafe {
+        stark_raylib_SetPixelColor(MutI8OrNull(destination), color, format);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+public fn RaylibStatus SetPixelColor(borrow mut i8[min max][] destination, Color color, PixelFormat format) {
+    return SetPixelColor(destination, color, PixelFormatNative(format));
+}
+
+[LinkName("GetPixelDataSize")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetPixelDataSize(i32[min max] width, i32[min max] height, i32[min max] format);
+public fn i32[min max] GetPixelDataSize(i32[min max] width, i32[min max] height, i32[min max] format) {
+    unsafe {
+        return stark_raylib_GetPixelDataSize(width, height, format);
+    }
+}
+
+public fn i32[min max] GetPixelDataSize(i32[min max] width, i32[min max] height, PixelFormat format) {
+    return GetPixelDataSize(width, height, PixelFormatNative(format));
+}

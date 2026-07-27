@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "kind": "development",
+  "sdkVersion": "cross-stage-fixture",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-i128:128-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+aes", "+neon"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [],
+  "packages": [],
+  "developmentSourceRoots": []
+}

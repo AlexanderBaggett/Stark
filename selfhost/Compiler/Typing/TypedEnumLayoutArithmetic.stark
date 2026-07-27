@@ -1,0 +1,67 @@
+module Compiler.Typing.TypedEnumLayoutArithmetic
+
+internal finite law u64[0 max] TypedEnumLayoutScalarSizeBytes(u32[0 max] bitWidth)
+{
+    return (u64[0 max])((bitWidth + 7) / 8);
+}
+
+internal finite law u64[0 max] TypedEnumLayoutScalarAlignmentBytes(u64[0 max] sizeBytes)
+{
+    if (sizeBytes <= 1)
+    {
+        return 1;
+    }
+
+    if (sizeBytes == 2)
+    {
+        return 2;
+    }
+
+    if (sizeBytes <= 4)
+    {
+        return 4;
+    }
+
+    if (sizeBytes <= 8)
+    {
+        return 8;
+    }
+
+    return 16;
+}
+
+internal finite law u64[0 max] TypedEnumLayoutAlignTo(u64[0 max] value, u64[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u64[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return value + (alignment - remainder);
+}
+
+internal finite law bool TypedEnumLayoutStorageIsMisaligned(u64[0 max] offsetBytes, u64[0 max] naturalAlignmentBytes)
+{
+    return naturalAlignmentBytes > 1 && (offsetBytes % naturalAlignmentBytes) != 0;
+}
+
+internal finite law u32[0 max] TypedEnumLayoutTagBitWidth(u32[0 max] variantCount)
+{
+    if (variantCount <= 128)
+    {
+        return 8;
+    }
+
+    if (variantCount <= 32768)
+    {
+        return 16;
+    }
+
+    return 32;
+}

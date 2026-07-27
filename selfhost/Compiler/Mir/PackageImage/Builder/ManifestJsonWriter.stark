@@ -1,0 +1,142 @@
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import System.Json
+import System.Text
+module Compiler.Mir.PackageImage.Builder.ManifestJsonWriter
+
+// Reusable JSON member writers for the logical package manifest. Section
+// builders use these primitives without depending on the package-image facade.
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteStringMember(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    borrow LogicalPackageImageStringTableBuilder strings,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return LogicalPackageImageStringTableBuilderWriteTextValue(strings, stringIndex, writer, scratch);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteBoolMember(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    bool value)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.BoolValue(value);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteU32Member(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    u32[0 max] value)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.I64Value((i64[min max])value);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteI64Member(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    i64[min max] value)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.I64Value(value);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteEmptyArrayMember(
+    mut borrow JsonWriter writer,
+    ascii memberName)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteEmptyObjectArrayMember(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    u32[0 max] count)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < count)
+    {
+        stack JsonStatus beginObjectStatus = writer.BeginObject();
+        switch (beginObjectStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus endObjectStatus = writer.EndObject();
+        switch (endObjectStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        index = index + 1;
+    }
+
+    return writer.EndArray();
+}

@@ -1,0 +1,450 @@
+import System.Text
+module Compiler.AsmFacts
+
+public enum StarkAsmArchitecture
+{
+    Unknown,
+    X86_64,
+    AArch64,
+    RiscV64,
+    X86,
+    Arm32,
+}
+
+public enum StarkAsmRegisterClass
+{
+    Unknown,
+    GeneralPurpose,
+    FloatingPoint,
+}
+
+internal inline finite law bool IsAsciiTrimUnit(i8[min max] unit)
+{
+    return unit == 9
+        || unit == 10
+        || unit == 11
+        || unit == 12
+        || unit == 13
+        || unit == 32;
+}
+
+internal inline finite law i8[min max] AsciiLowerUnit(i8[min max] unit)
+{
+    if (unit >= 65 && unit <= 90)
+    {
+        return unit + 32;
+    }
+
+    return unit;
+}
+
+internal finite law bool EqualsTrimmedAsciiIgnoreCase(ascii value, ascii expectedLower)
+    where overlap(value, expectedLower)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        stack i64[min max] expectedLength = System.Text.AsciiLength(expectedLower);
+        if (valueLength < 0 || expectedLength < 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        if (valueLength == 0)
+        {
+            return expectedLength == 0;
+        }
+
+        if (valueData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && IsAsciiTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        if (end - start != expectedLength)
+        {
+            return false;
+        }
+
+        if (expectedLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expectedLower);
+        if (expectedData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+        {
+            if (AsciiLowerUnit(*(&valueData[start + index])) != *(&expectedData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+internal finite law bool MatchesTrimmedAsciiPrefixDecimalInRange(
+    ascii value,
+    ascii prefixLower,
+    u32[0 max] min,
+    u32[0 max] max)
+    where overlap(value, prefixLower)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        stack i64[min max] prefixLength = System.Text.AsciiLength(prefixLower);
+        if (valueLength < 0 || prefixLength <= 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        stack rawptr<i8[min max]> prefixData = System.Text.AsciiData(prefixLower);
+        if (valueData == null || prefixData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && IsAsciiTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        stack i64[min max] trimmedLength = end - start;
+        if (trimmedLength <= prefixLength)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < prefixLength; index += 1)
+        {
+            if (AsciiLowerUnit(*(&valueData[start + index])) != *(&prefixData[index]))
+            {
+                return false;
+            }
+        }
+
+        stack i64[min max] firstDigit = start + prefixLength;
+        stack i64[min max] digitCount = end - firstDigit;
+        if (digitCount > 1 && *(&valueData[firstDigit]) == 48)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] number = 0;
+        for willexit (stack mut i64[min max] cursor = firstDigit; cursor < end; cursor += 1)
+        {
+            stack i8[min max] unit = *(&valueData[cursor]);
+            if (unit < 48 || unit > 57)
+            {
+                return false;
+            }
+
+            number = number * 10 + (u32[0 max])(unit - 48);
+            if (number > max)
+            {
+                return false;
+            }
+        }
+
+        return number >= min;
+    }
+}
+
+internal finite law i64[min max] FindTrimmedAsciiDash(ascii value)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        if (valueLength <= 0)
+        {
+            return -1;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        if (valueData == null)
+        {
+            return -1;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && IsAsciiTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        for willexit (stack mut i64[min max] index = start; index < end; index += 1)
+        {
+            if (*(&valueData[index]) == 45)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+}
+
+public finite law ascii ArchitectureName(StarkAsmArchitecture architecture)
+{
+    switch (architecture)
+    {
+        case StarkAsmArchitecture.X86_64:
+            return "x86_64";
+        case StarkAsmArchitecture.AArch64:
+            return "aarch64";
+        case StarkAsmArchitecture.RiscV64:
+            return "riscv64";
+        case StarkAsmArchitecture.X86:
+            return "x86";
+        case StarkAsmArchitecture.Arm32:
+            return "arm";
+        default:
+            return "unknown";
+    }
+}
+
+public finite law StarkAsmArchitecture ParseArchitectureName(ascii architectureText)
+{
+    if (EqualsTrimmedAsciiIgnoreCase(architectureText, "x86_64")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "x64")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "amd64"))
+    {
+        return StarkAsmArchitecture.X86_64;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(architectureText, "aarch64")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "arm64"))
+    {
+        return StarkAsmArchitecture.AArch64;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(architectureText, "riscv64"))
+    {
+        return StarkAsmArchitecture.RiscV64;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(architectureText, "x86")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "i386")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "i486")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "i586")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "i686"))
+    {
+        return StarkAsmArchitecture.X86;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(architectureText, "arm")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "arm32")
+        || EqualsTrimmedAsciiIgnoreCase(architectureText, "thumb"))
+    {
+        return StarkAsmArchitecture.Arm32;
+    }
+
+    return StarkAsmArchitecture.Unknown;
+}
+
+public fn bool TryParseArchitectureName(ascii architectureText, out StarkAsmArchitecture architecture)
+{
+    stack StarkAsmArchitecture parsed = ParseArchitectureName(architectureText);
+    architecture = parsed;
+    return parsed != StarkAsmArchitecture.Unknown;
+}
+
+public finite law StarkAsmArchitecture ParseTargetTripleArchitecture(ascii triple)
+{
+    stack i64[min max] dash = FindTrimmedAsciiDash(triple);
+    if (dash >= 0)
+    {
+        if (dash <= 0)
+        {
+            return StarkAsmArchitecture.Unknown;
+        }
+
+        return ParseArchitectureName(triple[0, dash]);
+    }
+
+    return ParseArchitectureName(triple);
+}
+
+public fn bool TryParseTargetTripleArchitecture(ascii triple, out StarkAsmArchitecture architecture)
+{
+    stack StarkAsmArchitecture parsed = ParseTargetTripleArchitecture(triple);
+    architecture = parsed;
+    return parsed != StarkAsmArchitecture.Unknown;
+}
+
+public inline finite law bool RegisterNamesEqual(ascii left, ascii right)
+    where overlap(left, right)
+{
+    return EqualsTrimmedAsciiIgnoreCase(left, right);
+}
+
+internal finite law bool IsX86_64GeneralPurposeRegister(ascii registerName)
+{
+    return EqualsTrimmedAsciiIgnoreCase(registerName, "rax")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rbx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rcx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rdx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rsi")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rdi")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rbp")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "rsp")
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "r", 8, 15);
+}
+
+internal finite law bool IsX86GeneralPurposeRegister(ascii registerName)
+{
+    return EqualsTrimmedAsciiIgnoreCase(registerName, "eax")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "ebx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "ecx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "edx")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "esi")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "edi")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "ebp")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "esp");
+}
+
+internal finite law bool IsAArch64GeneralPurposeRegister(ascii registerName)
+{
+    return EqualsTrimmedAsciiIgnoreCase(registerName, "sp")
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "x", 0, 30)
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "w", 0, 30);
+}
+
+internal finite law bool IsRiscV64GeneralPurposeRegister(ascii registerName)
+{
+    return MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "x", 0, 31)
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "zero")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "ra")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "sp")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "gp")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "tp")
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "t", 0, 6)
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "s", 0, 11)
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "a", 0, 7)
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "fp");
+}
+
+internal finite law bool IsArm32GeneralPurposeRegister(ascii registerName)
+{
+    return MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "r", 0, 12)
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "sp")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "lr")
+        || EqualsTrimmedAsciiIgnoreCase(registerName, "pc");
+}
+
+internal finite law bool IsX86_64FloatingPointRegister(ascii registerName)
+{
+    return MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "xmm", 0, 15);
+}
+
+internal finite law bool IsX86FloatingPointRegister(ascii registerName)
+{
+    return MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "xmm", 0, 7);
+}
+
+internal finite law bool IsAArch64FloatingPointRegister(ascii registerName)
+{
+    return MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "s", 0, 31)
+        || MatchesTrimmedAsciiPrefixDecimalInRange(registerName, "d", 0, 31);
+}
+
+public finite law StarkAsmRegisterClass GetRegisterClass(
+    StarkAsmArchitecture architecture,
+    ascii registerName)
+{
+    switch (architecture)
+    {
+        case StarkAsmArchitecture.X86_64:
+            if (IsX86_64GeneralPurposeRegister(registerName))
+            {
+                return StarkAsmRegisterClass.GeneralPurpose;
+            }
+
+            if (IsX86_64FloatingPointRegister(registerName))
+            {
+                return StarkAsmRegisterClass.FloatingPoint;
+            }
+        case StarkAsmArchitecture.AArch64:
+            if (IsAArch64GeneralPurposeRegister(registerName))
+            {
+                return StarkAsmRegisterClass.GeneralPurpose;
+            }
+
+            if (IsAArch64FloatingPointRegister(registerName))
+            {
+                return StarkAsmRegisterClass.FloatingPoint;
+            }
+        case StarkAsmArchitecture.RiscV64:
+            if (IsRiscV64GeneralPurposeRegister(registerName))
+            {
+                return StarkAsmRegisterClass.GeneralPurpose;
+            }
+        case StarkAsmArchitecture.X86:
+            if (IsX86GeneralPurposeRegister(registerName))
+            {
+                return StarkAsmRegisterClass.GeneralPurpose;
+            }
+
+            if (IsX86FloatingPointRegister(registerName))
+            {
+                return StarkAsmRegisterClass.FloatingPoint;
+            }
+        case StarkAsmArchitecture.Arm32:
+            if (IsArm32GeneralPurposeRegister(registerName))
+            {
+                return StarkAsmRegisterClass.GeneralPurpose;
+            }
+        default:
+            return StarkAsmRegisterClass.Unknown;
+    }
+
+    return StarkAsmRegisterClass.Unknown;
+}
+
+public fn bool TryGetRegisterClass(
+    StarkAsmArchitecture architecture,
+    ascii registerName,
+    out StarkAsmRegisterClass registerClass)
+{
+    stack StarkAsmRegisterClass resolved = GetRegisterClass(architecture, registerName);
+    registerClass = resolved;
+    return resolved != StarkAsmRegisterClass.Unknown;
+}
+
+public finite law bool IsValidRegister(StarkAsmArchitecture architecture, ascii registerName)
+{
+    return GetRegisterClass(architecture, registerName) != StarkAsmRegisterClass.Unknown;
+}

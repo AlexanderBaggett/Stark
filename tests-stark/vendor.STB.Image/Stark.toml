@@ -1,0 +1,14 @@
+[project]
+name = "vendor-stb-image-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "StbImageTests.stark"
+output = "vendor-stb-image-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/StbImageImplementation.c"]

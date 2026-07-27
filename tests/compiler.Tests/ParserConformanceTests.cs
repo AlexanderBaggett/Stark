@@ -138,6 +138,31 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "raw and multiline text literals",
+            """""
+            module Demo
+
+            finite law ascii RawPath()
+            {
+                return raw"c:\compiler\stage1";
+            }
+
+            finite law ascii Template()
+            {
+                return raw"""
+                define fastcc i32 @main() {
+                  ret i32 0
+                }
+                """;
+            }
+
+            finite law ascii Label()
+            {
+                return $raw"Score: {100}\n";
+            }
+            """""
+        },
+        {
             "fixed-capacity stack text concatenation declaration",
             """
             module Demo
@@ -155,6 +180,100 @@ public sealed class ParserConformanceTests
             module Native
 
             public ffi varargs fn i32[min max] printf(ascii format);
+            """
+        },
+        {
+            "ffi abi modifiers parse on functions and function pointer types",
+            """
+            module Native
+
+            public unsafe ffi(c) fn i32[min max] puts(ascii text);
+            public unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max] write(ascii text);
+            public fn void Register(fnptr<ffi(c) fn i32[min max](ascii)> callback);
+            public fn void RegisterPlatform(fnptr<ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max](ascii)> callback);
+            """
+        },
+        {
+            "ffi link name attribute parses on imported functions",
+            """
+            module Native
+
+            [LinkName("InitWindow")]
+            public unsafe ffi(c) fn void RaylibInitWindow(i32[min max] width, i32[min max] height, ascii title);
+
+            [LinkName("?Decorated@@YAHH@Z")]
+            internal unsafe ffi(c) fn i32[min max] Decorated(i32[min max] value);
+            """
+        },
+        {
+            "c layout aggregate ffi boundary declarations parse",
+            """
+            module Native
+
+            [StructLayout(C)]
+            public struct Vector2
+            {
+                public f32 X;
+                public f32 Y;
+            }
+
+            [StructLayout(C)]
+            public struct Rectangle
+            {
+                public f32 X;
+                public f32 Y;
+                public f32 Width;
+                public f32 Height;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+            [LinkName("DrawRectangleRec")]
+            internal unsafe ffi(c) fn void raylib_DrawRectangleRec(Rectangle rec, Vector2 origin);
+            """
+        },
+        {
+            "underscore-leading ffi symbols parse while bare discard remains a pattern",
+            """
+            module Native
+
+            internal unsafe ffi fn rawmutptr<i32[min max]> __error();
+
+            enum Token
+            {
+                Number(i32[min max]),
+            }
+
+            fn bool MatchesAny(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(_):
+                        return true;
+                }
+            }
+            """
+        },
+        {
+            "ffi struct layout attributes parse on structs and fields",
+            """
+            module Native
+
+            [StructLayout(C), Pack(1), Align(4)]
+            public struct Packet
+            {
+                public u8[0 max] Tag;
+                public u32[0 max] Length;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            public struct WordParts
+            {
+                [FieldOffset(0)] public u32[0 max] Whole;
+                [FieldOffset(0)] public u16[0 max] Low;
+                [FieldOffset(2)] public u16[0 max] High;
+            }
             """
         },
         {
@@ -269,6 +388,36 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "labeled control-flow statements parse",
+            """
+            module Flow
+
+            fn void Run(i32[min max] value)
+            {
+                outer: while willexit (value > 0)
+                {
+                    inner: for willexit (stack mut i32[min max] i = 0; i < value; i += 1)
+                    {
+                        if (i == 2)
+                        {
+                            continue outer;
+                        }
+
+                        break inner;
+                    }
+
+                    selector: switch (value)
+                    {
+                        case 1:
+                            break selector;
+                        default:
+                            break outer;
+                    }
+                }
+            }
+            """
+        },
+        {
             "memory separation contracts parse",
             """
             module Memory
@@ -322,6 +471,58 @@ public sealed class ParserConformanceTests
                     case var value when value > 10:
                         return value;
                     default:
+                        return 0;
+                }
+            }
+            """
+        },
+        {
+            "switch labels may contain or-pattern alternatives",
+            """
+            module Branching
+
+            fn i32[min max] Pick(u8[0 3] state, bool allow)
+            {
+                switch (state)
+                {
+                    case 0 | 1 when allow:
+                        return 10;
+                    case 2 | 3:
+                        return 20;
+                }
+            }
+            """
+        },
+        {
+            "switch labels may contain inclusive integer range patterns",
+            """
+            module Branching
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            fn i32[min max] Pick(Token token, u8[0 40] state, bool allow)
+            {
+                switch (state)
+                {
+                    case 0..9:
+                        return 10;
+                    case 10..20 | 30..40 when allow:
+                        return 20;
+                    default:
+                        return 0;
+                }
+
+                switch (token)
+                {
+                    case Token.Number(0..9):
+                        return 1;
+                    case Token.Number(_):
+                        return 2;
+                    case Token.End:
                         return 0;
                 }
             }
@@ -646,6 +847,17 @@ public sealed class ParserConformanceTests
                 {
                     ;
                 }
+            }
+            """
+        },
+        {
+            "labels only attach to loops and switches",
+            """
+            module Demo
+
+            fn void Run()
+            {
+                done: return;
             }
             """
         },

@@ -7,16 +7,11 @@ code.
 
 ```stark
 import System.Console
-import System.IO
 module Demo.App
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello");
     return 0;
 }
 ```
@@ -38,25 +33,34 @@ import module internal public export
 Functions and modifiers:
 
 ```text
-fn finite law inline noinline inlinehint hot cold ffi varargs unsafe strictfp asm static
+fn finite law tail inline noinline inlinehint hot cold ffi varargs unsafe strictfp asm static
 ```
 
 Data declarations:
 
 ```text
-struct record enum trait doctrine alias drop const
+struct record enum trait doctrine alias drop const from
 ```
 
 Storage and access:
 
 ```text
-stack heap register arena borrow retborrow storeborrow frozen shared out init mut rawptr rawmutptr fnptr sizeof alignof
+stack heap register arena borrow retborrow storeborrow frozen shared out init mut rawptr rawmutptr fnptr sizeof alignof dead_on_return
 ```
+
+Memory contracts (in `where` clauses; contextual, not reserved):
+
+```text
+overlap(a, b) overlap_all(name) same(a, b) disjoint(p[start, count], q[start, count])
+```
+
+`overlap_all(name)` expands to pairwise `overlap(name, other)` against every
+other memory-backed parameter; other pairs keep the default non-overlap.
 
 Control flow and patterns:
 
 ```text
-if else switch case default when while for infinite non-deterministic willexit return break continue where var
+if else switch case default when while for infinite non-deterministic willexit return become break continue where var try is comptime
 ```
 
 Builtins and literals:
@@ -68,6 +72,17 @@ u8 u16 u24 u32 u48 u64 u96 u128 u192 u256 u384 u512 u768 u1024
 f16 f32 f64 f80 f128
 ```
 
+## Common Attributes
+
+```stark
+[LinkName("foreign_symbol")]
+unsafe ffi(c) fn i32[min max] LocalName();
+```
+
+- `[LinkName("...")]` is valid on imported FFI declarations and changes only
+  the external linker symbol.
+- Use it for symbol aliases, not ABI adaptation.
+
 ## Function Kinds
 
 | Kind | Use |
@@ -77,6 +92,22 @@ f16 f32 f64 f80 f128
 | `law` | Pure/read-only, no visible side effects |
 | `finite law` | Pure/read-only and guaranteed to return |
 
+`tail` is a callable modifier that composes with any function kind. Use
+`become` for a guaranteed tail-transfer edge; the statement must be a single
+tail-position call to a tail-callable target.
+
+```stark
+tail finite i64[min max] CountDown(i64[0 max] value)
+{
+    if (value == 0)
+    {
+        return 0;
+    }
+
+    become CountDown(value - 1);
+}
+```
+
 The keyword order is fixed:
 
 ```stark
@@ -85,6 +116,76 @@ finite law i32[min max] Clamp(i32[min max] value)
     return value;
 }
 ```
+
+## Thread-Safety Law Declarations
+
+The implemented declaration surface recognizes the compiler-known laws
+`Transferable(T)` and `Shareable(T)`.
+
+Use law predicates in callable `where` clauses:
+
+```stark
+fn T Move<T>(T value) where Transferable(T), Shareable(T)
+{
+    return value;
+}
+```
+
+Use `[Grant(...)]` and `[Deny(...)]` on struct/record fields, or on the limited
+type-level opaque/zero-field case:
+
+```stark
+[Grant(Transferable)]
+public struct OpaqueToken
+{
+}
+
+public struct Guarded<T>
+{
+    [Grant(Shareable) where Transferable(T)]
+    T Payload;
+
+    [Deny(Transferable)]
+    i32[min max] LocalSlot;
+}
+```
+
+The compiler computes thread-safety facts at type-check time: plain fields derive
+structurally, generic templates carry conditional requirements, generic
+instantiations substitute concrete arguments, raw pointers and `storeborrow`
+deny both laws by default, and compiler-known `System.Threading.Atomic*` types
+receive both laws by intrinsic grant. Call-site enforcement and thread-boundary
+diagnostics are specified in
+`docs/Userfacing/LanguageReference.md`; remaining compiler work is tracked in
+`docs/Self-host-Prep/TASKS.md`.
+
+## Traits And Associated Types
+
+```stark
+trait Reader
+{
+    alias Item;
+
+    finite law Self.Item Read(borrow Self self);
+}
+
+struct Counter : Reader
+{
+    alias Item = i32[min max];
+
+    finite law i32[min max] Read(borrow Counter self)
+    {
+        return 0;
+    }
+}
+```
+
+- `alias Name;` is a required associated type in a trait.
+- `alias Name = Type;` defines a concrete/default associated type in a trait,
+  doctrine, struct, or record.
+- Use `Self.Name` or `T.Name` in type positions.
+- Ordinary trait dispatch is static; `dyn trait` is explicit runtime dispatch
+  and currently cannot declare associated types.
 
 ## Visibility
 
@@ -182,6 +283,7 @@ System.Console.Write   // qualified name
 values[index]          // index
 values[start, length]  // slice/window
 new Box()              // constructor/object creation
+new(arena, count)      // arena-backed dynamic storage allocation
 sizeof(T)              // size query
 alignof(T)             // alignment query
 ```
@@ -197,6 +299,73 @@ stack i32[min max][3] values =
 stack i32[min max][] view = values;
 ```
 
+Generic parameter lists can include typed compile-time value parameters. The
+implemented slice supports range-typed integer `comptime` parameters in
+fixed-array lengths, infers them from fixed-array arguments, and accepts
+explicit integer value arguments at generic type/function use sites. Package
+images preserve these declarations and imported-template substitutions:
+
+```stark
+finite law u8[0 max] Probe<T, comptime u8[1 4] N>(borrow T[N] values)
+{
+    return N;
+}
+
+stack i32[min max][3] values = { 1, 2, 3 };
+stack u8[0 max] count = Probe<i32[min max], 3>(values);
+```
+
+## Loop Shapes
+
+Loops require an explicit behavior keyword: `infinite`, `non-deterministic`,
+or `willexit`.
+
+```stark
+while willexit (keepGoing)
+{
+    Step();
+}
+
+for willexit (stack mut u64[0 max] index = 0; index < count; index += 1)
+{
+    Visit(index);
+}
+
+for willexit (borrow Item item in items)
+{
+    Visit(item);
+}
+
+for willexit (borrow mut Item item in items)
+{
+    Mutate(item);
+}
+
+for willexit (stack u64[0 max] index, borrow Item item in items)
+{
+    Visit(index, item);
+}
+```
+
+`for ... in ...` traverses fixed arrays, slices, and dynamic storage as a
+counted loop. The element binding must be `borrow T` or `borrow mut T`;
+mutable traversal requires mutable element storage.
+
+Inside `comptime`, loops must be `willexit`. Accepted compile-time loops have a
+compiler iteration budget and report STK3053 if exhausted; recursive
+compile-time `law` / `finite law` calls also report STK3053.
+`for willexit (... in fixedArray)` executes inside CTFE for fixed-array
+constants, including read-only borrowed elements, mutable borrowed elements with
+source writeback, and explicit index bindings. CTFE place updates cover locals,
+fixed-array elements, and named aggregate fields. Slice and dynamic-storage
+traversal remain runtime-only in CTFE.
+Inside `comptime`, `switch` supports literals, ranges, or-labels, fixed-array
+list patterns, aggregate property/positional patterns, enum patterns, `default`,
+`when`, `_`, and `var` captures; slice/dynamic list patterns are runtime switch
+lowering only. Pattern-condition `if (expr is pattern)` and `while willexit
+(expr is pattern)` use the same CTFE pattern subset, with captures scoped to the
+matched branch or loop iteration.
+
 ## Switch Shapes
 
 ```stark
@@ -204,6 +373,8 @@ switch (token)
 {
     case Token.End:
         return 0;
+    case Token.Integer(0..9) | Token.Integer(10..19):
+        return 1;
     case Token.Integer(var value):
         return value;
     case Token.Move
@@ -215,7 +386,54 @@ switch (token)
 ```
 
 Supported patterns include literals, enum cases, aggregate fields, `_`,
-`var` captures, `default`, and `when` guards.
+`var` captures, switch-label or-patterns (`case A | B:`), inclusive integer
+range patterns (`case 0..10:`), aggregate property patterns
+(`case Box { Field: pattern }:`), exact-length list patterns
+(`case [first, second]:`), `default`, and `when` guards. Range patterns are
+integer-only and can appear inside enum/aggregate/list field patterns.
+Property patterns must name every aggregate field exactly once. List patterns
+match fixed arrays, slices, and dynamic storage by exact length; fixed-array
+length mismatches are compile-time errors.
+
+Switches must be exhaustive (cover every enum variant / bool value / ranged-integer
+value, for example with `case 0..3:`, or add `default`), and non-`void`
+functions must return on every path.
+`when`-guarded arms do not count toward coverage.
+
+## Error Propagation And Pattern Conditions
+
+Safe optional values use `System.Option<T>` with `Some(T)` / `None`; safe
+references and borrows are never nullable. Raw `null` is only for raw pointers
+and FFI.
+
+```stark
+enum Outcome<T>
+{
+    [Ok] Got(T),
+    [Err] Failed(FetchError),
+}
+
+stack i32[min max] value = try Fetch(x);
+
+if (Lookup(key) is Option<Value>.Some(var found))
+{
+    Use(found);
+}
+
+while willexit (queue.Pop() is Option<Job>.Some(var job))
+{
+    Run(job);
+}
+```
+
+- `[Ok]`/`[Err]` variant attributes make any two-variant enum propagatable.
+- `try expr` unwraps the `[Ok]` payload or early-returns the `[Err]` failure,
+  rewrapped in the enclosing return type's `[Err]` variant (`from` funnels
+  convert differing error types).
+- `try` sits only at statement boundaries: binding initializer, assignment
+  right side, `return` operand, or bare expression statement.
+- `expr is pattern` in `if`/`while` conditions binds captures on the matching
+  path only.
 
 ## Text Forms
 
@@ -233,6 +451,7 @@ stack Ascii label[64] = $"Score: {score}";
 
 ```stark
 fnptr<finite law i32[min max](i32[min max])>
+fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>
 inline closure<fn i32[min max](i32[min max])>
 borrow closure<fn i32[min max](i32[min max])>
 mut borrow closure<mut fn i32[min max](i32[min max])>
@@ -240,5 +459,6 @@ heap closure<fn i32[min max](i32[min max])>
 heap closure<once fn i32[min max]()>
 ```
 
-Use direct calls first. Use `fnptr` for thin non-capturing callbacks. Use
-closures when capture is needed.
+Use direct calls first. Use `fnptr` for thin non-capturing callbacks. `unsafe`
+inside `fnptr<...>` is part of the pointer type and requires an unsafe context at
+the indirect call site. Use closures when capture is needed.

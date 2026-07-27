@@ -1,0 +1,413 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierLookup
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLocals
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedIdentifierRows
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierUnknown(
+    mut borrow TypedIdentifierExpressionTable table,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken)
+{
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.Unknown,
+        0,
+        0,
+        0,
+        0,
+        0,
+        DeclarationKind.Unknown,
+        TypedGlobalStorageKind.Unknown,
+        TypedGlobalBindingKind.Unknown,
+        TypedSignatureTypeKind.Unknown,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromParameter(
+    mut borrow TypedIdentifierExpressionTable table,
+    borrow TypedFunctionSignatureTable signatures,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken,
+    u32[0 max] slotPlusOne,
+    u32[0 max] parameterOrdinalPlusOne)
+{
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(slotPlusOne - 1);
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.Parameter,
+        ownerDeclarationIndex,
+        slotPlusOne,
+        signatures.TypeSlotParamNameTokenAt(slot),
+        0,
+        parameterOrdinalPlusOne,
+        DeclarationKind.Unknown,
+        TypedGlobalStorageKind.Unknown,
+        TypedGlobalBindingKind.Unknown,
+        signatures.TypeKindAt(slot),
+        signatures.TypeHeadTokenAt(slot),
+        signatures.TypePrimaryTokenAt(slot),
+        signatures.TypeStartTokenAt(slot),
+        signatures.TypeEndTokenAt(slot),
+        signatures.RangeStartTokenAt(slot),
+        signatures.RangeEndTokenAt(slot),
+        signatures.ElementCountStartTokenAt(slot),
+        signatures.ElementCountEndTokenAt(slot),
+        signatures.BitWidthAt(slot),
+        signatures.TypeArgumentCountAt(slot),
+        signatures.ComptimeArgumentCountAt(slot),
+        signatures.TypeFlagsAt(slot));
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromLocal(
+    mut borrow TypedIdentifierExpressionTable table,
+    borrow TypedLocalDeclarationTable locals,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken,
+    u32[0 max] localIndexPlusOne)
+{
+    stack u64[0 2 ** 63 - 1] local = (u64[0 2 ** 63 - 1])(localIndexPlusOne - 1);
+    stack mut TypedGlobalBindingKind bindingKind = TypedGlobalBindingKind.Immutable;
+    if (locals.StorageKindAt(local) == TypedGlobalStorageKind.Const)
+    {
+        bindingKind = TypedGlobalBindingKind.Const;
+    }
+    else if (locals.IsMutableAt(local))
+    {
+        bindingKind = TypedGlobalBindingKind.Mutable;
+    }
+
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.Local,
+        ownerDeclarationIndex,
+        localIndexPlusOne,
+        locals.NameTokenAt(local),
+        locals.StatementIndexPlusOneAt(local),
+        0,
+        DeclarationKind.Unknown,
+        locals.StorageKindAt(local),
+        bindingKind,
+        locals.TypeKindAt(local),
+        locals.TypeHeadTokenAt(local),
+        locals.TypePrimaryTokenAt(local),
+        locals.TypeStartTokenAt(local),
+        locals.TypeEndTokenAt(local),
+        locals.RangeStartTokenAt(local),
+        locals.RangeEndTokenAt(local),
+        locals.ElementCountStartTokenAt(local),
+        locals.ElementCountEndTokenAt(local),
+        locals.BitWidthAt(local),
+        locals.TypeArgumentCountAt(local),
+        locals.ComptimeArgumentCountAt(local),
+        locals.TypeFlagsAt(local));
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromGlobal(
+    mut borrow TypedIdentifierExpressionTable table,
+    borrow TypedGlobalDeclarationTable globals,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken,
+    u32[0 max] globalIndexPlusOne)
+{
+    stack u64[0 2 ** 63 - 1] global = (u64[0 2 ** 63 - 1])(globalIndexPlusOne - 1);
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.Global,
+        globals.DeclarationIndexAt(global),
+        globalIndexPlusOne,
+        globals.NameTokenAt(global),
+        0,
+        0,
+        globals.DeclarationKindAt(global),
+        globals.StorageKindAt(global),
+        globals.BindingKindAt(global),
+        globals.TypeKindAt(global),
+        globals.TypeHeadTokenAt(global),
+        globals.TypePrimaryTokenAt(global),
+        globals.TypeStartTokenAt(global),
+        globals.TypeEndTokenAt(global),
+        globals.RangeStartTokenAt(global),
+        globals.RangeEndTokenAt(global),
+        globals.ElementCountStartTokenAt(global),
+        globals.ElementCountEndTokenAt(global),
+        globals.BitWidthAt(global),
+        globals.TypeArgumentCountAt(global),
+        globals.ComptimeArgumentCountAt(global),
+        globals.TypeFlagsAt(global));
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromFunction(
+    mut borrow TypedIdentifierExpressionTable table,
+    borrow TypedFunctionSignatureTable signatures,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken,
+    u32[0 max] declarationIndex,
+    u32[0 max] signatureIndexPlusOne)
+{
+    stack mut u32[0 max] targetNameToken = nameToken;
+    if (signatureIndexPlusOne != 0)
+    {
+        targetNameToken = signatures.NameTokenAt((u64[0 2 ** 63 - 1])(signatureIndexPlusOne - 1));
+    }
+
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.Function,
+        declarationIndex,
+        signatureIndexPlusOne,
+        targetNameToken,
+        0,
+        0,
+        DeclarationKind.Function,
+        TypedGlobalStorageKind.Unknown,
+        TypedGlobalBindingKind.Unknown,
+        TypedSignatureTypeKind.Unknown,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromTypeDeclaration(
+    mut borrow TypedIdentifierExpressionTable table,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        nameToken,
+        TypedIdentifierTargetKind.TypeDeclaration,
+        declarationIndex,
+        0,
+        item.NameToken,
+        0,
+        0,
+        item.Kind,
+        TypedGlobalStorageKind.Unknown,
+        TypedGlobalBindingKind.Unknown,
+        TypedSignatureTypeKind.Named,
+        item.NameToken,
+        item.NameToken,
+        item.NameToken,
+        (u32[0 max])(item.NameToken + 1),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromTopLevel(
+    mut borrow TypedIdentifierExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedGlobalDeclarationTable globals,
+    TypedIdentifierContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] nameToken)
+{
+    stack u32[0 max] declarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, nameToken);
+    if (declarationIndexPlusOne == 0)
+    {
+        return AppendTypedIdentifierUnknown(table, context, ownerDeclarationIndex, ownerNameToken, functionNameToken, statementIndexPlusOne, exprNode, nameToken);
+    }
+
+    stack u32[0 max] declarationIndex = (u32[0 max])(declarationIndexPlusOne - 1);
+    stack DeclItem item = declarations.ItemAt((u64[0 2 ** 63 - 1])declarationIndex);
+    if (TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        stack u32[0 max] globalIndexPlusOne = TypedIdentifierGlobalIndexByDeclarationIndex(globals, declarationIndex);
+        if (globalIndexPlusOne != 0)
+        {
+            return AppendTypedIdentifierFromGlobal(table, globals, context, ownerDeclarationIndex, ownerNameToken, functionNameToken, statementIndexPlusOne, exprNode, nameToken, globalIndexPlusOne);
+        }
+    }
+    else if (item.Kind == DeclarationKind.Function)
+    {
+        stack u32[0 max] signatureIndexPlusOne = TypedIdentifierSignatureIndexForFunction(signatures, 0, item.NameToken, item.KeywordToken);
+        return AppendTypedIdentifierFromFunction(table, signatures, context, ownerDeclarationIndex, ownerNameToken, functionNameToken, statementIndexPlusOne, exprNode, nameToken, declarationIndex, signatureIndexPlusOne);
+    }
+    else if (TypedIdentifierDeclarationKindIsType(item.Kind))
+    {
+        return AppendTypedIdentifierFromTypeDeclaration(table, context, ownerDeclarationIndex, ownerNameToken, functionNameToken, statementIndexPlusOne, exprNode, nameToken, item, declarationIndex);
+    }
+
+    return AppendTypedIdentifierUnknown(table, context, ownerDeclarationIndex, ownerNameToken, functionNameToken, statementIndexPlusOne, exprNode, nameToken);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedIdentifierFromBodyNode(
+    mut borrow TypedIdentifierExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedGlobalDeclarationTable globals,
+    borrow TypedLocalDeclarationTable locals,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] signatureIndexPlusOne,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex,
+    u32[0 max] node)
+{
+    stack u32[0 max] nameToken = body.ExprTokenAt(node);
+    stack u32[0 max] localIndexPlusOne = TypedIdentifierLocalIndexForName(
+        source,
+        stream,
+        locals,
+        body,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndex,
+        nameToken);
+    if (localIndexPlusOne != 0)
+    {
+        return AppendTypedIdentifierFromLocal(
+            table,
+            locals,
+            TypedIdentifierContext.FunctionBody,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            (u32[0 max])(statementIndex + 1),
+            node,
+            nameToken,
+            localIndexPlusOne);
+    }
+
+    stack mut u32[0 max] parameterOrdinalPlusOne = 0;
+    stack u32[0 max] paramSlotPlusOne = TypedIdentifierParameterTypeSlotByName(source, stream, signatures, signatureIndexPlusOne, nameToken, parameterOrdinalPlusOne);
+    if (paramSlotPlusOne != 0)
+    {
+        return AppendTypedIdentifierFromParameter(
+            table,
+            signatures,
+            TypedIdentifierContext.FunctionBody,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            (u32[0 max])(statementIndex + 1),
+            node,
+            nameToken,
+            paramSlotPlusOne,
+            parameterOrdinalPlusOne);
+    }
+
+    return AppendTypedIdentifierFromTopLevel(
+        table,
+        source,
+        stream,
+        declarations,
+        signatures,
+        globals,
+        TypedIdentifierContext.FunctionBody,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        (u32[0 max])(statementIndex + 1),
+        node,
+        nameToken);
+}

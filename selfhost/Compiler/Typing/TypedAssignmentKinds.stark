@@ -1,0 +1,85 @@
+module Compiler.Typing.TypedAssignmentKinds
+
+public enum TypedAssignmentContext
+{
+    GlobalInitializer,
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedAssignmentOperatorKind
+{
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    AndAssign,
+    OrAssign,
+    XorAssign,
+    WrapAddAssign,
+    WrapSubAssign,
+    WrapMulAssign,
+    SatAddAssign,
+    SatSubAssign,
+    SatMulAssign,
+    Unknown,
+}
+
+public enum TypedAssignmentTargetKind
+{
+    Identifier,
+    Field,
+    IndexElement,
+    IndexSlice,
+    Unknown,
+}
+
+public enum TypedAssignmentValueKind
+{
+    Identifier,
+    Member,
+    Call,
+    Index,
+    Literal,
+    New,
+    Conversion,
+    Assignment,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagTargetResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagValueResolved()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagSimple()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagCompound()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagPlaceTarget()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedAssignmentFlagNumericCompound()
+{
+    return 32;
+}
+
+internal inline finite law bool TypedAssignmentFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}

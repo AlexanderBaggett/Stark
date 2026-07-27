@@ -1,0 +1,230 @@
+import System.Memory
+import System.Text
+module Compiler.Sdk.TargetDescriptor
+
+public enum SdkTargetEndianness
+{
+    Unknown,
+    Little,
+    Big,
+}
+
+public struct SdkTargetDescriptor
+{
+    OwnedAscii IdValue;
+    OwnedAscii LlvmTripleValue;
+    OwnedAscii DataLayoutValue;
+    OwnedAscii ArchitectureValue;
+    OwnedAscii OperatingSystemValue;
+    OwnedAscii AbiValue;
+    OwnedAscii BaselineCpuValue;
+    dynamic OwnedAscii BaselineFeatureValues;
+    OwnedAscii RelocationModelValue;
+    OwnedAscii CodeModelValue;
+    OwnedAscii CDataModelValue;
+    OwnedAscii MinimumOperatingSystemVersionValue;
+    u32[0 max] PointerBitWidthValue;
+    SdkTargetEndianness EndiannessValue;
+
+    SdkTargetDescriptor()
+    {
+        self.IdValue = new();
+        self.LlvmTripleValue = new();
+        self.DataLayoutValue = new();
+        self.ArchitectureValue = new();
+        self.OperatingSystemValue = new();
+        self.AbiValue = new();
+        self.BaselineCpuValue = new();
+        self.BaselineFeatureValues = new();
+        self.RelocationModelValue = new();
+        self.CodeModelValue = new();
+        self.CDataModelValue = new();
+        self.MinimumOperatingSystemVersionValue = new();
+        self.PointerBitWidthValue = 0;
+        self.EndiannessValue = SdkTargetEndianness.Unknown;
+    }
+
+    public fn ascii Id(mut borrow SdkTargetDescriptor self)
+    {
+        return self.IdValue.View();
+    }
+
+    public fn ascii LlvmTriple(mut borrow SdkTargetDescriptor self)
+    {
+        return self.LlvmTripleValue.View();
+    }
+
+    public fn ascii DataLayout(mut borrow SdkTargetDescriptor self)
+    {
+        return self.DataLayoutValue.View();
+    }
+
+    public fn ascii Architecture(mut borrow SdkTargetDescriptor self)
+    {
+        return self.ArchitectureValue.View();
+    }
+
+    public fn ascii OperatingSystem(mut borrow SdkTargetDescriptor self)
+    {
+        return self.OperatingSystemValue.View();
+    }
+
+    public fn ascii Abi(mut borrow SdkTargetDescriptor self)
+    {
+        return self.AbiValue.View();
+    }
+
+    public fn ascii BaselineCpu(mut borrow SdkTargetDescriptor self)
+    {
+        return self.BaselineCpuValue.View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] BaselineFeatureCount(borrow SdkTargetDescriptor self)
+    {
+        return self.BaselineFeatureValues.Length;
+    }
+
+    public fn ascii BaselineFeatureAt(mut borrow SdkTargetDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.BaselineFeatureValues.Length)
+        {
+            return "";
+        }
+
+        return self.BaselineFeatureValues[0, self.BaselineFeatureValues.Length][index].View();
+    }
+
+    public fn ascii RelocationModel(mut borrow SdkTargetDescriptor self)
+    {
+        return self.RelocationModelValue.View();
+    }
+
+    public fn ascii CodeModel(mut borrow SdkTargetDescriptor self)
+    {
+        return self.CodeModelValue.View();
+    }
+
+    public fn ascii CDataModel(mut borrow SdkTargetDescriptor self)
+    {
+        return self.CDataModelValue.View();
+    }
+
+    public fn ascii MinimumOperatingSystemVersion(mut borrow SdkTargetDescriptor self)
+    {
+        return self.MinimumOperatingSystemVersionValue.View();
+    }
+
+    public inline finite law u32[0 max] PointerBitWidth(borrow SdkTargetDescriptor self)
+    {
+        return self.PointerBitWidthValue;
+    }
+
+    public inline finite law SdkTargetEndianness Endianness(borrow SdkTargetDescriptor self)
+    {
+        return self.EndiannessValue;
+    }
+}
+
+internal fn MemoryStatus CopyTargetText(mut borrow OwnedAscii destination, ascii value)
+{
+    return destination.AppendAscii(value);
+}
+
+public fn MemoryStatus InitializeSdkTargetDescriptor(
+    mut borrow SdkTargetDescriptor destination,
+    ascii id,
+    ascii llvmTriple,
+    ascii dataLayout,
+    ascii architecture,
+    ascii operatingSystem,
+    ascii abi,
+    u32[0 max] pointerBitWidth,
+    SdkTargetEndianness endianness,
+    ascii baselineCpu,
+    ascii relocationModel,
+    ascii codeModel,
+    ascii cDataModel,
+    ascii minimumOperatingSystemVersion)
+    where overlap_all(destination)
+{
+    switch (CopyTargetText(destination.IdValue, id))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.LlvmTripleValue, llvmTriple))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.DataLayoutValue, dataLayout))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.ArchitectureValue, architecture))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.OperatingSystemValue, operatingSystem))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.AbiValue, abi))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.BaselineCpuValue, baselineCpu))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.RelocationModelValue, relocationModel))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.CodeModelValue, codeModel))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.CDataModelValue, cDataModel))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (CopyTargetText(destination.MinimumOperatingSystemVersionValue, minimumOperatingSystemVersion))
+    {
+        case MemoryStatus.Err(var error): return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    destination.PointerBitWidthValue = pointerBitWidth;
+    destination.EndiannessValue = endianness;
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AddSdkTargetBaselineFeature(
+    mut borrow SdkTargetDescriptor destination,
+    ascii feature)
+{
+    stack mut OwnedAscii copied = new();
+    switch (copied.AppendAscii(feature))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    if (!destination.BaselineFeatureValues.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    init destination.BaselineFeatureValues[destination.BaselineFeatureValues.Length] = copied;
+    return MemoryStatus.Ok;
+}

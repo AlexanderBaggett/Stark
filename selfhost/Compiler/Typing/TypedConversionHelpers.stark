@@ -1,0 +1,196 @@
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedConversionHelpers
+
+internal finite law TypedIdentifierContext TypedConversionIdentifierContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal finite law TypedLiteralContext TypedConversionLiteralContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedLiteralContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedLiteralContext.FunctionBody;
+    }
+
+    return TypedLiteralContext.Unknown;
+}
+
+internal finite law TypedMemberContext TypedConversionMemberContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedMemberContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedMemberContext.FunctionBody;
+    }
+
+    return TypedMemberContext.Unknown;
+}
+
+internal finite law TypedIndexContext TypedConversionIndexContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedIndexContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedIndexContext.FunctionBody;
+    }
+
+    return TypedIndexContext.Unknown;
+}
+
+internal fn u32[0 max] TypedConversionExpressionIndexForNode(
+    borrow TypedConversionExpressionTable table,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.ContextAt(index) == context
+            && table.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && table.OwnerNameTokenAt(index) == ownerNameToken
+            && table.FunctionNameTokenAt(index) == functionNameToken
+            && table.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && table.ConversionNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedConversionLiteralIndexForNode(
+    borrow TypedLiteralExpressionTable literals,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedLiteralContext literalContext = TypedConversionLiteralContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == literalContext
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedConversionTargetFactsFromConversion(
+    borrow TypedConversionExpressionTable conversions,
+    u32[0 max] conversionIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (conversionIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(conversionIndexPlusOne - 1);
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.TypeKind = conversions.TargetTypeKindAt(index);
+    facts.TypeHeadToken = conversions.TargetTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = conversions.TargetTypePrimaryTokenAt(index);
+    facts.TypeStartToken = conversions.TargetTypeStartTokenAt(index);
+    facts.TypeEndToken = conversions.TargetTypeEndTokenAt(index);
+    facts.RangeStartToken = conversions.TargetRangeStartTokenAt(index);
+    facts.RangeEndToken = conversions.TargetRangeEndTokenAt(index);
+    facts.ElementCountStartToken = conversions.TargetElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = conversions.TargetElementCountEndTokenAt(index);
+    facts.BitWidth = conversions.TargetBitWidthAt(index);
+    facts.TypeArgumentCount = conversions.TargetTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = conversions.TargetComptimeArgumentCountAt(index);
+    facts.TypeFlags = conversions.TargetTypeFlagsAt(index);
+}
+
+internal finite law bool TypedConversionTypeKindIsNumeric(TypedSignatureTypeKind kind)
+{
+    return kind == TypedSignatureTypeKind.Integer || kind == TypedSignatureTypeKind.Float;
+}
+
+internal fn u32[0 max] TypedConversionFlagsFromFacts(borrow TypedMemberTypeFacts targetFacts, borrow TypedMemberTypeFacts operandFacts)
+{
+    stack mut u32[0 max] flags = TypedConversionFlagExplicit();
+    if (targetFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedConversionFlagTargetResolved();
+    }
+
+    if (operandFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedConversionFlagOperandResolved();
+    }
+
+    if (TypedConversionTypeKindIsNumeric(targetFacts.TypeKind)
+        && TypedConversionTypeKindIsNumeric(operandFacts.TypeKind))
+    {
+        flags = flags | TypedConversionFlagNumeric();
+    }
+
+    if ((targetFacts.TypeKind == TypedSignatureTypeKind.RawPointer
+            && (operandFacts.TypeKind == TypedSignatureTypeKind.RawPointer || operandFacts.TypeKind == TypedSignatureTypeKind.Integer))
+        || (operandFacts.TypeKind == TypedSignatureTypeKind.RawPointer
+            && (targetFacts.TypeKind == TypedSignatureTypeKind.RawPointer || targetFacts.TypeKind == TypedSignatureTypeKind.Integer)))
+    {
+        flags = flags | TypedConversionFlagPointer();
+    }
+
+    if (targetFacts.TypeKind == TypedSignatureTypeKind.Text && operandFacts.TypeKind == TypedSignatureTypeKind.Text)
+    {
+        flags = flags | TypedConversionFlagText();
+    }
+
+    if (targetFacts.TypeKind == TypedSignatureTypeKind.Slice && operandFacts.TypeKind == TypedSignatureTypeKind.FixedArray)
+    {
+        flags = flags | TypedConversionFlagArrayToSlice();
+    }
+
+    return flags;
+}

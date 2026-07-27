@@ -1,0 +1,1410 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceTryPropagation
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchPatternConditions
+
+internal fn bool TryGetSourceSwitchEnumTagType(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    out MirType tagType)
+{
+    tagType = MirType.I8;
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.EnumLayouts.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (moduleFacts.EnumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && moduleFacts.EnumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant)
+        {
+            stack u32[0 max] bitWidth = moduleFacts.EnumLayouts.BitWidthAt(index);
+            if (bitWidth <= 1)
+            {
+                tagType = MirType.I1;
+                return true;
+            }
+
+            if (bitWidth <= 8)
+            {
+                tagType = MirType.I8;
+                return true;
+            }
+
+            if (bitWidth <= 16)
+            {
+                tagType = MirType.I16;
+                return true;
+            }
+
+            if (bitWidth <= 32)
+            {
+                tagType = MirType.I32;
+                return true;
+            }
+
+            if (bitWidth <= 64)
+            {
+                tagType = MirType.I64;
+                return true;
+            }
+
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseSourceSwitchEnumPayloadScalarPattern(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] payloadTypeCode,
+    u64[0 2 ** 63 - 1] valueStart,
+    out u32[0 max] patternKind,
+    out i64[min max] minValue,
+    out i64[min max] maxValue,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+    minValue = 0;
+    maxValue = 0;
+    nextToken = valueStart;
+    if (stream.KindAt(valueStart) == TokenKind.Discard)
+    {
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (payloadTypeCode == SourceResolvedFieldTypeCodeBool())
+    {
+        stack mut u32[0 max] boolValue = 0;
+        if (!TryParseTerminalSwitchBooleanCaseLabel(stream, valueStart, boolValue, nextToken))
+        {
+            return false;
+        }
+
+        patternKind = SourceSwitchEnumPayloadPatternKindScalarInterval();
+        minValue = (i64[min max])boolValue;
+        maxValue = (i64[min max])boolValue;
+        return true;
+    }
+
+    if (SourceSwitchResolvedFieldTypeCodeIsInteger(payloadTypeCode))
+    {
+        if (!TryParseTerminalSwitchIntegerCaseInterval(stream, source, valueStart, minValue, maxValue, nextToken))
+        {
+            return false;
+        }
+
+        patternKind = SourceSwitchEnumPayloadPatternKindScalarInterval();
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchScalarIntervalsAreDisjoint(
+    i64[min max] leftMin,
+    i64[min max] leftMax,
+    i64[min max] rightMin,
+    i64[min max] rightMax)
+{
+    return leftMax < rightMin || rightMax < leftMin;
+}
+
+internal fn bool TryParseTerminalSwitchIntegerCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    stack TokenKind kind = stream.KindAt(valueStart);
+    if (kind == TokenKind.IntegerLiteral)
+    {
+        value = ParseDigitSpan(source, stream.StartAt(valueStart), stream.LengthAt(valueStart));
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.Minus && stream.KindAt(valueStart + 1) == TokenKind.IntegerLiteral)
+    {
+        value = 0 - ParseDigitSpan(source, stream.StartAt(valueStart + 1), stream.LengthAt(valueStart + 1));
+        nextToken = valueStart + 2;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTerminalSwitchIntegerCaseInterval(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] minValue,
+    out i64[min max] maxValue,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    minValue = 0;
+    maxValue = 0;
+    nextToken = valueStart;
+    stack mut i64[min max] first = 0;
+    stack mut u64[0 2 ** 63 - 1] afterFirst = valueStart;
+    if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, valueStart, first, afterFirst))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterFirst) == TokenKind.Range)
+    {
+        stack mut i64[min max] last = 0;
+        stack mut u64[0 2 ** 63 - 1] afterLast = afterFirst + 1;
+        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, afterFirst + 1, last, afterLast)
+            || first > last)
+        {
+            return false;
+        }
+
+        minValue = first;
+        maxValue = last;
+        nextToken = afterLast;
+        return true;
+    }
+
+    minValue = first;
+    maxValue = first;
+    nextToken = afterFirst;
+    return true;
+}
+internal fn bool TryParseTerminalSwitchBooleanCaseLabel(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] valueStart,
+    out u32[0 max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    stack TokenKind kind = stream.KindAt(valueStart);
+    if (kind == TokenKind.True)
+    {
+        value = 1;
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.False)
+    {
+        value = 0;
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TerminalSwitchCaseIntervalOverlaps(
+    borrow IrTable<i64[min max]> caseMinValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
+    i64[min max] minValue,
+    i64[min max] maxValue)
+{
+    stack u64[0 2 ** 63 - 1] count = caseMinValues.Count();
+    if (caseMaxValues.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack i64[min max] currentMin = caseMinValues.Get((u32[0 max])(i + 1));
+        stack i64[min max] currentMax = caseMaxValues.Get((u32[0 max])(i + 1));
+        if (!(maxValue < currentMin || minValue > currentMax))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool CopyCaseValuesToCaseMaxValues(
+    borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (index < count)
+    {
+        stack i64[min max] value = caseValues.Get((u32[0 max])(index + 1));
+        if (caseMaxValues.Add(value) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn MirValueId LowerIntegerSwitchCaseCondition(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId scrutineeValue,
+    i64[min max] minValue,
+    i64[min max] maxValue)
+{
+    if (minValue == maxValue)
+    {
+        stack MirValueId caseConstant = MirConstInt(instrs, minValue);
+        return LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+    }
+
+    stack MirValueId lowerConstant = MirConstInt(instrs, minValue);
+    stack MirValueId lowerCondition = LowerComparison(instrs, TokenKind.Gte, scrutineeValue, lowerConstant);
+    stack MirValueId upperConstant = MirConstInt(instrs, maxValue);
+    stack MirValueId upperCondition = LowerComparison(instrs, TokenKind.Lte, scrutineeValue, upperConstant);
+    return MirAndTyped(instrs, MirType.I1, lowerCondition, upperCondition);
+}
+
+internal fn MirValueId LowerIntegerSwitchCaseConditionTyped(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId scrutineeValue,
+    i64[min max] minValue,
+    i64[min max] maxValue,
+    MirType type)
+{
+    if (minValue == maxValue)
+    {
+        stack MirValueId caseConstant = MirConstIntTyped(instrs, type, minValue);
+        return LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+    }
+
+    stack MirValueId lowerConstant = MirConstIntTyped(instrs, type, minValue);
+    stack MirValueId lowerCondition = LowerComparison(instrs, TokenKind.Gte, scrutineeValue, lowerConstant);
+    stack MirValueId upperConstant = MirConstIntTyped(instrs, type, maxValue);
+    stack MirValueId upperCondition = LowerComparison(instrs, TokenKind.Lte, scrutineeValue, upperConstant);
+    return MirAndTyped(instrs, MirType.I1, lowerCondition, upperCondition);
+}
+
+internal fn bool TryLowerTypedEnumAggregateSwitchCaseCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId enumValue,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] typedAggregateRow,
+    out MirValueId condition)
+{
+    condition = MirValueIdOf(0);
+    if (!moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedAggregateRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedAggregateRow - 1);
+    stack mut u32[0 max] ownerTypeToken = moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypeHeadTokenAt(typedIndex);
+    if (ownerTypeToken == 0)
+    {
+        ownerTypeToken = moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypePrimaryTokenAt(typedIndex);
+    }
+
+    stack u32[0 max] variantOrdinalPlusOne = moduleFacts.SwitchPatterns.AggregatePatterns.EnumVariantOrdinalPlusOneAt(typedIndex);
+    stack u32[0 max] memberStart = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(typedIndex);
+    stack u32[0 max] memberCount = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(typedIndex);
+    stack mut u32[0 max] resolvedOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumItem = new();
+    if (ownerTypeToken == 0
+        || variantOrdinalPlusOne == 0
+        || (memberCount != 0 && memberStart == 0)
+        || !TryGetSourceEnumOwnerDeclarationForToken(
+            stream,
+            source,
+            moduleFacts,
+            ownerTypeToken,
+            resolvedOwnerDeclarationIndex,
+            enumItem)
+        || resolvedOwnerDeclarationIndex != ownerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] variantOrdinal = variantOrdinalPlusOne - 1;
+    stack mut MirType tagType = MirType.I8;
+    stack mut u64[0 max] tagValue = 0;
+    if (!TryGetSourceSwitchEnumTagType(moduleFacts, ownerDeclarationIndex, tagType)
+        || !moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+    {
+        return false;
+    }
+
+    stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+    stack MirValueId nestedTagValue = MirEnumTagRead(instrs, ownerType, enumValue, tagType);
+    stack mut MirValueId currentCondition = LowerIntegerSwitchCaseConditionTyped(
+        instrs,
+        nestedTagValue,
+        (i64[min max])tagValue,
+        (i64[min max])tagValue,
+        tagType);
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < memberCount)
+    {
+        if (memberStart > 4294967295 - offset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = memberStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+        if (memberKind == TypedSwitchPatternKind.Discard)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Capture)
+        {
+            return false;
+        }
+
+        if (memberKind != TypedSwitchPatternKind.Literal
+            && memberKind != TypedSwitchPatternKind.Range)
+        {
+            return false;
+        }
+
+        stack u32[0 max] payloadOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack u32[0 max] patternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+        stack u32[0 max] patternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+        stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+        stack mut i64[min max] minValue = 0;
+        stack mut i64[min max] maxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterPattern = patternStart;
+        if (!TryGetSourceEnumPayloadTypeCode(
+                stream,
+                source,
+                moduleFacts,
+                ownerDeclarationIndex,
+                variantOrdinal,
+                payloadOrdinal,
+                payloadTypeCode)
+            || payloadTypeCode == SourceResolvedFieldTypeCodeInvalid()
+            || SourceResolvedFieldTypeCodeIsEnum(payloadTypeCode)
+            || patternStart == 0
+            || patternEnd <= patternStart
+            || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                stream,
+                source,
+                payloadTypeCode,
+                patternStart,
+                patternKind,
+                minValue,
+                maxValue,
+                afterPattern)
+            || afterPattern != (u64[0 2 ** 63 - 1])patternEnd
+            || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack MirType payloadType = MirTypeForResolvedFieldTypeCode(payloadTypeCode);
+        stack MirValueId payloadValue = MirEnumPayloadExtract(
+            instrs,
+            ownerType,
+            variantOrdinal,
+            payloadOrdinal,
+            enumValue,
+            payloadType);
+        stack MirValueId payloadCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            payloadValue,
+            minValue,
+            maxValue,
+            payloadType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, payloadCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryLowerEnumSwitchPayloadCaseCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId enumValue,
+    MirValueId tagValue,
+    u32[0 max] ownerDeclarationIndex,
+    MirType tagType,
+    i64[min max] expectedTagValue,
+    u32[0 max] expectedVariantOrdinal,
+    u32[0 max] payloadPatternStart,
+    u32[0 max] payloadPatternCount,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    u32[0 max] nestedStart,
+    u32[0 max] nestedCount,
+    borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    borrow IrTable<u32[0 max]> nestedKinds,
+    borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    out MirValueId condition)
+{
+    stack mut MirValueId currentCondition = LowerIntegerSwitchCaseConditionTyped(instrs, tagValue, expectedTagValue, expectedTagValue, tagType);
+    stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < payloadPatternCount)
+    {
+        stack u32[0 max] row = payloadPatternStart + offset;
+        if (!payloadPatternVariantOrdinals.Contains(row)
+            || !payloadPatternOrdinals.Contains(row)
+            || !payloadPatternTypeCodes.Contains(row)
+            || !payloadPatternKinds.Contains(row)
+            || !payloadPatternMinValues.Contains(row)
+            || !payloadPatternMaxValues.Contains(row))
+        {
+            return false;
+        }
+
+        stack u32[0 max] patternKind = payloadPatternKinds.Get(row);
+        if (patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] payloadTypeCode = payloadPatternTypeCodes.Get(row);
+        stack MirType payloadType = MirTypeForResolvedFieldTypeCode(payloadTypeCode);
+        stack u32[0 max] variantOrdinal = payloadPatternVariantOrdinals.Get(row);
+        stack u32[0 max] payloadOrdinal = payloadPatternOrdinals.Get(row);
+        if (variantOrdinal != expectedVariantOrdinal)
+        {
+            return false;
+        }
+
+        stack MirValueId payloadValue = MirEnumPayloadExtract(
+            instrs,
+            ownerType,
+            variantOrdinal,
+            payloadOrdinal,
+            enumValue,
+            payloadType);
+        stack i64[min max] payloadMinValue = payloadPatternMinValues.Get(row);
+        stack i64[min max] payloadMaxValue = payloadPatternMaxValues.Get(row);
+        stack MirValueId payloadCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            payloadValue,
+            payloadMinValue,
+            payloadMaxValue,
+            payloadType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, payloadCondition);
+        offset = offset + 1;
+    }
+
+    offset = 0;
+    while willexit (offset < nestedCount)
+    {
+        if (nestedStart == 0 || nestedStart > 4294967295 - offset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] row = nestedStart + offset;
+        if (!nestedVariantOrdinals.Contains(row)
+            || !nestedPayloadOrdinals.Contains(row)
+            || !nestedKinds.Contains(row)
+            || !nestedAggregateDescriptorRows.Contains(row)
+            || !nestedListDescriptorRows.Contains(row)
+            )
+        {
+            return false;
+        }
+
+        stack u32[0 max] nestedVariantOrdinal = nestedVariantOrdinals.Get(row);
+        stack u32[0 max] payloadOrdinal = nestedPayloadOrdinals.Get(row);
+        stack u32[0 max] nestedKind = nestedKinds.Get(row);
+        stack u32[0 max] nestedAggregateDescriptorRow = nestedAggregateDescriptorRows.Get(row);
+        stack u32[0 max] nestedListDescriptorRow = nestedListDescriptorRows.Get(row);
+        if (nestedVariantOrdinal != expectedVariantOrdinal
+            || nestedKind != SourceSwitchPatternDecisionKindEnumAggregate()
+            || nestedListDescriptorRow != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryGetSourceEnumPayloadTypeCode(
+                stream,
+                source,
+                moduleFacts,
+                ownerDeclarationIndex,
+                nestedVariantOrdinal,
+                payloadOrdinal,
+                payloadTypeCode)
+            || !SourceResolvedFieldTypeCodeIsEnum(payloadTypeCode))
+        {
+            return false;
+        }
+
+        stack u32[0 max] nestedOwnerDeclarationIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(payloadTypeCode);
+        stack MirValueId payloadEnumValue = MirEnumPayloadExtract(
+            instrs,
+            ownerType,
+            nestedVariantOrdinal,
+            payloadOrdinal,
+            enumValue,
+            MirType.EnumValue);
+        stack mut MirValueId nestedCondition = MirValueIdOf(0);
+        if (!TryLowerTypedEnumAggregateSwitchCaseCondition(
+                stream,
+                source,
+                moduleFacts,
+                instrs,
+                payloadEnumValue,
+                nestedOwnerDeclarationIndex,
+                nestedAggregateDescriptorRow,
+                nestedCondition))
+        {
+            return false;
+        }
+
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, nestedCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool SourceSwitchElementPatternRangesAreProvablyDisjoint(
+    u32[0 max] leftStart,
+    u32[0 max] leftCount,
+    u32[0 max] rightStart,
+    u32[0 max] rightCount,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues)
+{
+    if (leftCount == 0 || rightCount == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] leftOffset = 0;
+    while willexit (leftOffset < leftCount)
+    {
+        stack u32[0 max] leftRow = leftStart + leftOffset;
+        if (!elementPatternIndices.Contains(leftRow)
+            || !elementPatternTypeCodes.Contains(leftRow)
+            || !elementPatternKinds.Contains(leftRow)
+            || !elementPatternMinValues.Contains(leftRow)
+            || !elementPatternMaxValues.Contains(leftRow)
+            || elementPatternKinds.Get(leftRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftElementIndex = elementPatternIndices.Get(leftRow);
+        stack u32[0 max] leftTypeCode = elementPatternTypeCodes.Get(leftRow);
+        stack i64[min max] leftMin = elementPatternMinValues.Get(leftRow);
+        stack i64[min max] leftMax = elementPatternMaxValues.Get(leftRow);
+
+        stack mut u32[0 max] rightOffset = 0;
+        while willexit (rightOffset < rightCount)
+        {
+            stack u32[0 max] rightRow = rightStart + rightOffset;
+            if (!elementPatternIndices.Contains(rightRow)
+                || !elementPatternTypeCodes.Contains(rightRow)
+                || !elementPatternKinds.Contains(rightRow)
+                || !elementPatternMinValues.Contains(rightRow)
+                || !elementPatternMaxValues.Contains(rightRow)
+                || elementPatternKinds.Get(rightRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+            {
+                return false;
+            }
+
+            stack u32[0 max] rightElementIndex = elementPatternIndices.Get(rightRow);
+            stack u32[0 max] rightTypeCode = elementPatternTypeCodes.Get(rightRow);
+            if (leftElementIndex == rightElementIndex && leftTypeCode == rightTypeCode)
+            {
+                stack i64[min max] rightMin = elementPatternMinValues.Get(rightRow);
+                stack i64[min max] rightMax = elementPatternMaxValues.Get(rightRow);
+                if (SourceSwitchScalarIntervalsAreDisjoint(leftMin, leftMax, rightMin, rightMax))
+                {
+                    return true;
+                }
+            }
+
+            rightOffset = rightOffset + 1;
+        }
+
+        leftOffset = leftOffset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchListPatternDescriptorsAreProvablyDisjoint(
+    SourceSwitchListPatternDescriptor left,
+    SourceSwitchListPatternDescriptor right,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues)
+{
+    if (left.ElementTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || left.ElementTypeCode != right.ElementTypeCode
+        || left.FixedLength == 0
+        || left.FixedLength != right.FixedLength)
+    {
+        return false;
+    }
+
+    return SourceSwitchElementPatternRangesAreProvablyDisjoint(
+        left.ElementPatternStart,
+        left.ElementPatternCount,
+        right.ElementPatternStart,
+        right.ElementPatternCount,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues);
+}
+
+internal fn bool SourceSwitchPatternDecisionLeafNodesAreProvablyDisjoint(
+    SourceSwitchPatternDecisionNode left,
+    SourceSwitchPatternDecisionNode right,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors)
+{
+    if (left.Kind == SourceSwitchPatternDecisionKindScalarInterval()
+        && right.Kind == SourceSwitchPatternDecisionKindScalarInterval()
+        && left.TypeCode == right.TypeCode)
+    {
+        return SourceSwitchScalarIntervalsAreDisjoint(
+            left.MinValue,
+            left.MaxValue,
+            right.MinValue,
+            right.MaxValue);
+    }
+
+    if (left.Kind == SourceSwitchPatternDecisionKindEnumAggregate()
+        && right.Kind == SourceSwitchPatternDecisionKindEnumAggregate()
+        && left.AggregateDescriptorRow != 0
+        && right.AggregateDescriptorRow != 0
+        && aggregateDescriptors.Contains(left.AggregateDescriptorRow)
+        && aggregateDescriptors.Contains(right.AggregateDescriptorRow))
+    {
+        stack SourceSwitchAggregatePatternDescriptor leftDescriptor =
+            aggregateDescriptors.Get(left.AggregateDescriptorRow);
+        stack SourceSwitchAggregatePatternDescriptor rightDescriptor =
+            aggregateDescriptors.Get(right.AggregateDescriptorRow);
+        return leftDescriptor.OwnerTypeToken != 0
+            && leftDescriptor.OwnerTypeToken == rightDescriptor.OwnerTypeToken
+            && leftDescriptor.EnumVariantOrdinalPlusOne != 0
+            && rightDescriptor.EnumVariantOrdinalPlusOne != 0
+            && leftDescriptor.EnumVariantOrdinalPlusOne != rightDescriptor.EnumVariantOrdinalPlusOne;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchPatternDecisionLeafMemberSpansAreProvablyDisjoint(
+    u32[0 max] leftStart,
+    u32[0 max] leftCount,
+    u32[0 max] rightStart,
+    u32[0 max] rightCount,
+    borrow IrTable<SourceSwitchPatternDecisionNode> nodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> members,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors)
+{
+    if (leftCount == 0 || rightCount == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] leftOffset = 0;
+    while willexit (leftOffset < leftCount)
+    {
+        if (leftStart > 4294967295 - leftOffset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftRow = leftStart + leftOffset;
+        if (!members.Contains(leftRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchPatternDecisionMember leftMember = members.Get(leftRow);
+        if (!nodes.Contains(leftMember.NodeRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchPatternDecisionNode leftNode = nodes.Get(leftMember.NodeRow);
+        stack mut u32[0 max] rightOffset = 0;
+        while willexit (rightOffset < rightCount)
+        {
+            if (rightStart > 4294967295 - rightOffset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] rightRow = rightStart + rightOffset;
+            if (!members.Contains(rightRow))
+            {
+                return false;
+            }
+
+            stack SourceSwitchPatternDecisionMember rightMember = members.Get(rightRow);
+            if (leftMember.Ordinal == rightMember.Ordinal)
+            {
+                if (!nodes.Contains(rightMember.NodeRow))
+                {
+                    return false;
+                }
+
+                stack SourceSwitchPatternDecisionNode rightNode = nodes.Get(rightMember.NodeRow);
+                if (SourceSwitchPatternDecisionLeafNodesAreProvablyDisjoint(
+                        leftNode,
+                        rightNode,
+                        aggregateDescriptors))
+                {
+                    return true;
+                }
+            }
+
+            rightOffset = rightOffset + 1;
+        }
+
+        leftOffset = leftOffset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchAggregatePatternDecisionDescriptorsAreProvablyDisjoint(
+    SourceSwitchAggregatePatternDescriptor left,
+    SourceSwitchAggregatePatternDescriptor right,
+    borrow IrTable<SourceSwitchPatternDecisionNode> nodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> members,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors)
+{
+    if (left.OwnerTypeToken == 0
+        || left.OwnerTypeToken != right.OwnerTypeToken)
+    {
+        return false;
+    }
+
+    if (left.EnumVariantOrdinalPlusOne != right.EnumVariantOrdinalPlusOne)
+    {
+        return left.EnumVariantOrdinalPlusOne != 0 && right.EnumVariantOrdinalPlusOne != 0;
+    }
+
+    return SourceSwitchPatternDecisionLeafMemberSpansAreProvablyDisjoint(
+        left.FieldPatternStart,
+        left.FieldPatternCount,
+        right.FieldPatternStart,
+        right.FieldPatternCount,
+        nodes,
+        members,
+        aggregateDescriptors);
+}
+
+internal fn bool SourceSwitchListPatternDecisionDescriptorsAreProvablyDisjoint(
+    SourceSwitchListPatternDescriptor left,
+    SourceSwitchListPatternDescriptor right,
+    borrow IrTable<SourceSwitchPatternDecisionNode> nodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> members,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors)
+{
+    if (left.ElementTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || left.ElementTypeCode != right.ElementTypeCode
+        || left.FixedLength == 0
+        || left.FixedLength != right.FixedLength)
+    {
+        return false;
+    }
+
+    return SourceSwitchPatternDecisionLeafMemberSpansAreProvablyDisjoint(
+        left.ElementPatternStart,
+        left.ElementPatternCount,
+        right.ElementPatternStart,
+        right.ElementPatternCount,
+        nodes,
+        members,
+        aggregateDescriptors);
+}
+
+internal fn bool SourceSwitchPatternDecisionNodesAreProvablyDisjoint(
+    SourceSwitchPatternDecisionNode left,
+    SourceSwitchPatternDecisionNode right,
+    borrow IrTable<SourceSwitchPatternDecisionNode> nodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> members,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors)
+{
+    if (SourceSwitchPatternDecisionLeafNodesAreProvablyDisjoint(left, right, aggregateDescriptors))
+    {
+        return true;
+    }
+
+    if ((left.Kind == SourceSwitchPatternDecisionKindAggregate()
+            || left.Kind == SourceSwitchPatternDecisionKindEnumAggregate())
+        && left.Kind == right.Kind
+        && left.AggregateDescriptorRow != 0
+        && right.AggregateDescriptorRow != 0
+        && aggregateDescriptors.Contains(left.AggregateDescriptorRow)
+        && aggregateDescriptors.Contains(right.AggregateDescriptorRow))
+    {
+        stack SourceSwitchAggregatePatternDescriptor leftDescriptor =
+            aggregateDescriptors.Get(left.AggregateDescriptorRow);
+        stack SourceSwitchAggregatePatternDescriptor rightDescriptor =
+            aggregateDescriptors.Get(right.AggregateDescriptorRow);
+        return SourceSwitchAggregatePatternDecisionDescriptorsAreProvablyDisjoint(
+            leftDescriptor,
+            rightDescriptor,
+            nodes,
+            members,
+            aggregateDescriptors,
+            listDescriptors);
+    }
+
+    if (left.Kind == SourceSwitchPatternDecisionKindList()
+        && right.Kind == SourceSwitchPatternDecisionKindList()
+        && left.ListDescriptorRow != 0
+        && right.ListDescriptorRow != 0
+        && listDescriptors.Contains(left.ListDescriptorRow)
+        && listDescriptors.Contains(right.ListDescriptorRow))
+    {
+        stack SourceSwitchListPatternDescriptor leftDescriptor = listDescriptors.Get(left.ListDescriptorRow);
+        stack SourceSwitchListPatternDescriptor rightDescriptor = listDescriptors.Get(right.ListDescriptorRow);
+        return SourceSwitchListPatternDecisionDescriptorsAreProvablyDisjoint(
+            leftDescriptor,
+            rightDescriptor,
+            nodes,
+            members,
+            aggregateDescriptors,
+            listDescriptors);
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchPatternDecisionMemberSpansAreProvablyDisjoint(
+    u32[0 max] leftStart,
+    u32[0 max] leftCount,
+    u32[0 max] rightStart,
+    u32[0 max] rightCount,
+    borrow IrTable<SourceSwitchPatternDecisionNode> nodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> members,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors)
+{
+    if (leftCount == 0 || rightCount == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] leftOffset = 0;
+    while willexit (leftOffset < leftCount)
+    {
+        if (leftStart > 4294967295 - leftOffset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftRow = leftStart + leftOffset;
+        if (!members.Contains(leftRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchPatternDecisionMember leftMember = members.Get(leftRow);
+        if (!nodes.Contains(leftMember.NodeRow))
+        {
+            return false;
+        }
+
+        stack SourceSwitchPatternDecisionNode leftNode = nodes.Get(leftMember.NodeRow);
+        stack mut u32[0 max] rightOffset = 0;
+        while willexit (rightOffset < rightCount)
+        {
+            if (rightStart > 4294967295 - rightOffset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] rightRow = rightStart + rightOffset;
+            if (!members.Contains(rightRow))
+            {
+                return false;
+            }
+
+            stack SourceSwitchPatternDecisionMember rightMember = members.Get(rightRow);
+            if (leftMember.Ordinal == rightMember.Ordinal)
+            {
+                if (!nodes.Contains(rightMember.NodeRow))
+                {
+                    return false;
+                }
+
+                stack SourceSwitchPatternDecisionNode rightNode = nodes.Get(rightMember.NodeRow);
+                if (SourceSwitchPatternDecisionNodesAreProvablyDisjoint(
+                        leftNode,
+                        rightNode,
+                        nodes,
+                        members,
+                        aggregateDescriptors,
+                        listDescriptors))
+                {
+                    return true;
+                }
+            }
+
+            rightOffset = rightOffset + 1;
+        }
+
+        leftOffset = leftOffset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchListPatternCaseOverlapsPreviousCase(
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        stack u32[0 max] previousStart = casePatternStarts.Get(caseSlot);
+        stack u32[0 max] previousCount = casePatternCounts.Get(caseSlot);
+        if (!SourceSwitchElementPatternRangesAreProvablyDisjoint(
+                previousStart,
+                previousCount,
+                patternStart,
+                patternCount,
+                elementPatternIndices,
+                elementPatternTypeCodes,
+                elementPatternKinds,
+                elementPatternMinValues,
+                elementPatternMaxValues))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal finite law bool SourceSwitchGuardNodeIsUnconditional(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] guardNode)
+{
+    if (guardNode == 0)
+    {
+        return true;
+    }
+
+    if (!nodes.Contains(guardNode))
+    {
+        return true;
+    }
+
+    stack ExprNode node = nodes.Get(guardNode);
+    return node.Kind == Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr && node.Imm == 1;
+}
+
+internal fn bool SourceSwitchPatternDecisionCaseOverlapsPreviousUnguardedCase(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> caseDecisionMemberStarts,
+    borrow IrTable<u32[0 max]> caseDecisionMemberCounts,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<SourceSwitchPatternDecisionNode> decisionNodes,
+    borrow IrTable<SourceSwitchPatternDecisionMember> decisionMembers,
+    borrow IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors,
+    borrow IrTable<SourceSwitchListPatternDescriptor> listDescriptors,
+    u32[0 max] decisionMemberStart,
+    u32[0 max] decisionMemberCount)
+{
+    stack u64[0 2 ** 63 - 1] count = caseDecisionMemberStarts.Count();
+    if (caseDecisionMemberCounts.Count() != count
+        || caseGuardNodes.Count() != count
+        || !SourceSwitchPatternDecisionMemberSpanIsValid(
+            decisionMemberStart,
+            decisionMemberCount,
+            decisionNodes,
+            decisionMembers,
+            aggregateDescriptors,
+            listDescriptors))
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        stack u32[0 max] previousGuardNode = caseGuardNodes.Get(caseSlot);
+        if (SourceSwitchGuardNodeIsUnconditional(nodes, previousGuardNode))
+        {
+            stack u32[0 max] previousStart = caseDecisionMemberStarts.Get(caseSlot);
+            stack u32[0 max] previousCount = caseDecisionMemberCounts.Get(caseSlot);
+            if (!SourceSwitchPatternDecisionMemberSpanIsValid(
+                    previousStart,
+                    previousCount,
+                    decisionNodes,
+                    decisionMembers,
+                    aggregateDescriptors,
+                    listDescriptors)
+                || !SourceSwitchPatternDecisionMemberSpansAreProvablyDisjoint(
+                    previousStart,
+                    previousCount,
+                    decisionMemberStart,
+                    decisionMemberCount,
+                    decisionNodes,
+                    decisionMembers,
+                    aggregateDescriptors,
+                    listDescriptors))
+            {
+                return true;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count || caseGuardNodes.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        stack u32[0 max] previousGuardNode = caseGuardNodes.Get(caseSlot);
+        if (SourceSwitchGuardNodeIsUnconditional(nodes, previousGuardNode))
+        {
+            stack u32[0 max] previousStart = casePatternStarts.Get(caseSlot);
+            stack u32[0 max] previousCount = casePatternCounts.Get(caseSlot);
+            if (!SourceSwitchElementPatternRangesAreProvablyDisjoint(
+                    previousStart,
+                    previousCount,
+                    patternStart,
+                    patternCount,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues))
+            {
+                return true;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchStructFieldPatternRangesAreProvablyDisjoint(
+    u32[0 max] leftStart,
+    u32[0 max] leftCount,
+    u32[0 max] rightStart,
+    u32[0 max] rightCount,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues)
+{
+    if (leftCount == 0 || rightCount == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] leftOffset = 0;
+    while willexit (leftOffset < leftCount)
+    {
+        stack u32[0 max] leftRow = leftStart + leftOffset;
+        if (!fieldPatternIndices.Contains(leftRow)
+            || !fieldPatternTypeCodes.Contains(leftRow)
+            || !fieldPatternKinds.Contains(leftRow)
+            || !fieldPatternMinValues.Contains(leftRow)
+            || !fieldPatternMaxValues.Contains(leftRow)
+            || fieldPatternKinds.Get(leftRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftFieldIndex = fieldPatternIndices.Get(leftRow);
+        stack u32[0 max] leftTypeCode = fieldPatternTypeCodes.Get(leftRow);
+        stack i64[min max] leftMin = fieldPatternMinValues.Get(leftRow);
+        stack i64[min max] leftMax = fieldPatternMaxValues.Get(leftRow);
+
+        stack mut u32[0 max] rightOffset = 0;
+        while willexit (rightOffset < rightCount)
+        {
+            stack u32[0 max] rightRow = rightStart + rightOffset;
+            if (!fieldPatternIndices.Contains(rightRow)
+                || !fieldPatternTypeCodes.Contains(rightRow)
+                || !fieldPatternKinds.Contains(rightRow)
+                || !fieldPatternMinValues.Contains(rightRow)
+                || !fieldPatternMaxValues.Contains(rightRow)
+                || fieldPatternKinds.Get(rightRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+            {
+                return false;
+            }
+
+            stack u32[0 max] rightFieldIndex = fieldPatternIndices.Get(rightRow);
+            stack u32[0 max] rightTypeCode = fieldPatternTypeCodes.Get(rightRow);
+            if (leftFieldIndex == rightFieldIndex && leftTypeCode == rightTypeCode)
+            {
+                stack i64[min max] rightMin = fieldPatternMinValues.Get(rightRow);
+                stack i64[min max] rightMax = fieldPatternMaxValues.Get(rightRow);
+                if (SourceSwitchScalarIntervalsAreDisjoint(leftMin, leftMax, rightMin, rightMax))
+                {
+                    return true;
+                }
+            }
+
+            rightOffset = rightOffset + 1;
+        }
+
+        leftOffset = leftOffset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchAggregatePatternDescriptorsAreProvablyDisjoint(
+    SourceSwitchAggregatePatternDescriptor left,
+    SourceSwitchAggregatePatternDescriptor right,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues)
+{
+    if (left.OwnerTypeToken == 0
+        || left.OwnerTypeToken != right.OwnerTypeToken
+        || left.EnumVariantOrdinalPlusOne != right.EnumVariantOrdinalPlusOne)
+    {
+        return false;
+    }
+
+    return SourceSwitchStructFieldPatternRangesAreProvablyDisjoint(
+        left.FieldPatternStart,
+        left.FieldPatternCount,
+        right.FieldPatternStart,
+        right.FieldPatternCount,
+        fieldPatternIndices,
+        fieldPatternTypeCodes,
+        fieldPatternKinds,
+        fieldPatternMinValues,
+        fieldPatternMaxValues);
+}
+
+internal fn bool SourceSwitchStructPatternCaseOverlapsPreviousCase(
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        stack u32[0 max] previousStart = casePatternStarts.Get(caseSlot);
+        stack u32[0 max] previousCount = casePatternCounts.Get(caseSlot);
+        if (!SourceSwitchStructFieldPatternRangesAreProvablyDisjoint(
+                previousStart,
+                previousCount,
+                patternStart,
+                patternCount,
+                fieldPatternIndices,
+                fieldPatternTypeCodes,
+                fieldPatternKinds,
+                fieldPatternMinValues,
+                fieldPatternMaxValues))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchStructPatternCaseOverlapsPreviousUnguardedCase(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> casePatternStarts,
+    borrow IrTable<u32[0 max]> casePatternCounts,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount)
+{
+    stack u64[0 2 ** 63 - 1] count = casePatternStarts.Count();
+    if (casePatternCounts.Count() != count || caseGuardNodes.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        stack u32[0 max] previousGuardNode = caseGuardNodes.Get(caseSlot);
+        if (SourceSwitchGuardNodeIsUnconditional(nodes, previousGuardNode))
+        {
+            stack u32[0 max] previousStart = casePatternStarts.Get(caseSlot);
+            stack u32[0 max] previousCount = casePatternCounts.Get(caseSlot);
+            if (!SourceSwitchStructFieldPatternRangesAreProvablyDisjoint(
+                    previousStart,
+                    previousCount,
+                    patternStart,
+                    patternCount,
+                    fieldPatternIndices,
+                    fieldPatternTypeCodes,
+                    fieldPatternKinds,
+                    fieldPatternMinValues,
+                    fieldPatternMaxValues))
+            {
+                return true;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal finite law bool SourceSwitchStructPatternCanUseFlatOverlapPreflight(
+    borrow IrTable<u32[0 max]> caseNestedCounts,
+    u32[0 max] nestedCount)
+{
+    if (nestedCount != 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = caseNestedCounts.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (caseNestedCounts.Get((u32[0 max])(index + 1)) != 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}

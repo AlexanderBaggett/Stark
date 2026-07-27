@@ -25,7 +25,7 @@ internal static class SyntaxModelFactory
 
         foreach (var declaration in root.topLevelDeclaration())
         {
-            AddDeclarationModels(declarations, declaration, diagnostics);
+            AddDeclarationModels(declarations, declaration, diagnostics, targetInfo);
         }
 
         declarations = ApplyAsmSelection(
@@ -78,11 +78,28 @@ internal static class SyntaxModelFactory
         {
             var attribute = attributes[index];
             var attributeContext = attributeContexts[index];
+            if (string.Equals(attribute.Name, "Collection", StringComparison.Ordinal))
+            {
+                // [Collection("...")] on a module tags every generated test
+                // fact in the file; the test runner generator validates the
+                // names. It is inert outside test projects.
+                if (attribute.Arguments.Count == 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        "Module attribute '[Collection]' must name at least one collection.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
-                    $"Unsupported module attribute '[{attribute.Name}]'. v1 module attributes only support '[Backend(Opaque)]'.",
+                    $"Unsupported module attribute '[{attribute.Name}]'. v1 module attributes only support '[Backend(Opaque)]' and '[Collection(...)]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;
@@ -247,8 +264,9 @@ internal static class SyntaxModelFactory
     {
         var function = declaration.Function!;
         var nameToken = context.Identifier().Symbol;
-        var modifiers = context.functionModifier().Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
-        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi" and not "unsafe");
+        var hasUnsupportedModifier = context.functionModifier().Any(static modifier =>
+            !IsBareFfiModifier(modifier)
+            && modifier.Start.Type != StarkParser.UNSAFE);
 
         if (function.Asm!.Architecture == StarkAsmArchitecture.Unknown)
         {
@@ -276,6 +294,12 @@ internal static class SyntaxModelFactory
         }
 
         return true;
+    }
+
+    private static bool IsBareFfiModifier(StarkParser.FunctionModifierContext modifier)
+    {
+        return modifier.ffiModifier() is { } ffiModifier
+            && ffiModifier.ffiAbiSpecifier() is null;
     }
 
     private static bool ValidateAsmOperandBindings(
@@ -685,15 +709,181 @@ internal static class SyntaxModelFactory
         return attributes;
     }
 
+    private static IReadOnlyList<ThreadSafetyLawAttributeModel> CreateThreadSafetyLawAttributes(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var attributes = new List<ThreadSafetyLawAttributeModel>();
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (!TryCreateThreadSafetyLawAttribute(attribute, targetDescription, diagnostics, out var model))
+            {
+                continue;
+            }
+
+            attributes.Add(model);
+        }
+
+        return attributes;
+    }
+
+    private static bool TryCreateThreadSafetyLawAttribute(
+        StarkParser.AttributeContext attribute,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics,
+        out ThreadSafetyLawAttributeModel model)
+    {
+        model = default!;
+        var attributeName = attribute.qualifiedName().GetText();
+        if (!TryParseThreadSafetyLawAttributeKind(attributeName, out var kind))
+        {
+            if (attribute.attributeCondition() is not null)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK3050",
+                    $"Attribute '[{attributeName}]' on {targetDescription} cannot use a thread-safety law condition. Only [Grant(...)] may use 'where Transferable(T)' or 'where Shareable(T)'.",
+                    attribute.Start.Line,
+                    attribute.Start.Column + 1));
+            }
+
+            return false;
+        }
+
+        if (attribute.attributeArgument() is not [var lawArgument])
+        {
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                $"Attribute '[{attributeName}]' on {targetDescription} must name exactly one thread-safety law: Transferable or Shareable.",
+                attribute.Start.Line,
+                attribute.Start.Column + 1));
+            return false;
+        }
+
+        var lawName = lawArgument.GetText();
+        if (!IsThreadSafetyLawName(lawName))
+        {
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                $"Unknown thread-safety law '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.",
+                lawArgument.Start.Line,
+                lawArgument.Start.Column + 1));
+            return false;
+        }
+
+        ThreadSafetyLawPredicateModel? condition = null;
+        if (attribute.attributeCondition() is { } conditionContext)
+        {
+            if (kind != ThreadSafetyLawAttributeKind.Grant)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK3050",
+                    $"Attribute '[Deny({lawName})]' on {targetDescription} cannot be conditional; only [Grant(...)] may use a thread-safety law condition.",
+                    conditionContext.Start.Line,
+                    conditionContext.Start.Column + 1));
+                return false;
+            }
+
+            condition = CreateThreadSafetyLawPredicate(
+                conditionContext.lawPredicateContract(),
+                targetDescription,
+                diagnostics);
+            if (condition is null)
+            {
+                return false;
+            }
+        }
+
+        model = new ThreadSafetyLawAttributeModel(kind, lawName, condition);
+        return true;
+    }
+
+    private static ThreadSafetyLawPredicateModel? CreateThreadSafetyLawPredicate(
+        StarkParser.LawPredicateContractContext predicate,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var lawName = predicate.Identifier().GetText();
+        if (!IsThreadSafetyLawName(lawName))
+        {
+            var message = IsKnownDoctrineName(lawName)
+                ? $"'{lawName}' is a doctrine, not a `where` law predicate. Call its static members directly on an unbounded generic (e.g. `{lawName}.Equals(a, b)`) instead of using it as a `where` bound. Supported `where` laws are Transferable and Shareable."
+                : $"Unknown thread-safety law predicate '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.";
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                message,
+                predicate.Identifier().Symbol.Line,
+                predicate.Identifier().Symbol.Column + 1));
+            return null;
+        }
+
+        return new ThreadSafetyLawPredicateModel(lawName, predicate.type_().GetText());
+    }
+
+    private static bool TryParseThreadSafetyLawAttributeKind(string attributeName, out ThreadSafetyLawAttributeKind kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Grant;
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Deny;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
+    private static bool IsThreadSafetyLawAttribute(string attributeName)
+    {
+        return string.Equals(attributeName, "Grant", StringComparison.Ordinal)
+            || string.Equals(attributeName, "Deny", StringComparison.Ordinal);
+    }
+
+    private static bool IsLinkNameAttribute(string attributeName)
+    {
+        return string.Equals(attributeName, "LinkName", StringComparison.Ordinal);
+    }
+
+    private static bool IsThreadSafetyLawName(string lawName)
+    {
+        return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Copyable", StringComparison.Ordinal);
+    }
+
+    // Recognizes well-known doctrine names so a `where DoctrineName(T)` clause can be
+    // explained as a misuse (doctrines expose static members; they are not `where` law
+    // predicates). This single-module syntactic pass cannot see doctrines declared in
+    // other modules (e.g. the stdlib), so the set is a curated list of stable doctrine
+    // names rather than a full cross-module lookup.
+    private static bool IsKnownDoctrineName(string lawName)
+    {
+        return string.Equals(lawName, "DictionaryKey", StringComparison.Ordinal);
+    }
+
     private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics,
-        bool allowTestingAttributes = false)
+        bool allowTestingAttributes = false,
+        bool allowTestingPlatformAttributes = false,
+        bool allowStructLayoutAttributes = false,
+        bool allowThreadSafetyLawAttributes = false,
+        bool allowCopyableAssertion = false,
+        bool allowLinkNameAttribute = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
+        var isTestingCallable = allowTestingAttributes
+            && attributes.Any(static attribute => IsTestingAttribute(attribute.Name));
+        var isTheoryCallable = allowTestingAttributes
+            && attributes.Any(static attribute => string.Equals(attribute.Name, "Theory", StringComparison.Ordinal));
 
         for (var index = 0; index < attributes.Count; index++)
         {
@@ -703,9 +893,138 @@ internal static class SyntaxModelFactory
             {
                 if (attribute.Arguments.Count != 0)
                 {
+                    if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2113",
+                            $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+                    else if (allowTestingAttributes
+                             && !allowTestingPlatformAttributes
+                             && !isTestingCallable)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2110",
+                            $"Attribute '[Platform(...)]' on {targetDescription} is a test gate and requires '[Fact]' or '[Theory]'.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+                }
+
+                continue;
+            }
+
+            if (IsTestingPlatformAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Platform test gates are supported only on fact-bearing functions, structs, and records.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+                else if (allowTestingAttributes
+                         && !allowTestingPlatformAttributes
+                         && !isTestingCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} is a test gate and requires '[Fact]' or '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
+            if (IsTestingSchedulingAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Test scheduling attributes are supported only on fact-bearing functions, structs, and records.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+                else if (allowTestingAttributes
+                         && !allowTestingPlatformAttributes
+                         && !isTestingCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} is test scheduling metadata and requires '[Fact]' or '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attributeContext.attributeCondition() is not null)
+                {
                     diagnostics.Add(new SyntaxModelDiagnostic(
                         "STK2113",
-                        $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} cannot use an attribute condition.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                if (string.Equals(attribute.Name, "Collection", StringComparison.Ordinal))
+                {
+                    if (attribute.Arguments.Count == 0)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2113",
+                            $"Attribute '[Collection]' on {targetDescription} must name at least one test collection.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Serial]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
+            if (IsTestingDataAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Test data attributes are supported only on [Theory] functions and methods.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (!isTheoryCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} requires '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attributeContext.attributeCondition() is not null)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} cannot use an attribute condition.",
                         attributeContext.Start.Line,
                         attributeContext.Start.Column + 1));
                 }
@@ -737,12 +1056,81 @@ internal static class SyntaxModelFactory
                 continue;
             }
 
+            if (IsStructLayoutAttribute(attribute.Name))
+            {
+                if (allowStructLayoutAttributes)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Layout attributes are only supported on structs.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (IsThreadSafetyLawAttribute(attribute.Name))
+            {
+                if (allowThreadSafetyLawAttributes)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Thread-safety law attributes are supported only on type declarations and fields.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (IsLinkNameAttribute(attribute.Name))
+            {
+                if (allowLinkNameAttribute)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[LinkName]' on {targetDescription}. LinkName is supported only on imported FFI function declarations.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (string.Equals(attribute.Name, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
+            {
+                if (!allowCopyableAssertion)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[Copyable]' on {targetDescription}. The Copyable assertion is supported only on struct, record, and enum declarations.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Copyable]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
                     allowTestingAttributes
-                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[Fact]', and '[Theory]'."
+                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[SkipPlatform]', '[Collection]', '[Serial]', '[Fact]', '[Theory]', '[InlineData]', and '[MemberData]'."
                         : $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
@@ -783,16 +1171,67 @@ internal static class SyntaxModelFactory
             || string.Equals(name, "Theory", StringComparison.Ordinal);
     }
 
+    private static bool IsTestingPlatformAttribute(string name)
+    {
+        return string.Equals(name, "SkipPlatform", StringComparison.Ordinal);
+    }
+
+    private static bool IsTestingSchedulingAttribute(string name)
+    {
+        return string.Equals(name, "Collection", StringComparison.Ordinal)
+            || string.Equals(name, "Serial", StringComparison.Ordinal);
+    }
+
+    private static bool IsTestingDataAttribute(string name)
+    {
+        return string.Equals(name, "InlineData", StringComparison.Ordinal)
+            || string.Equals(name, "MemberData", StringComparison.Ordinal);
+    }
+
+    private static bool IsStructLayoutAttribute(string name)
+    {
+        return string.Equals(name, "StructLayout", StringComparison.Ordinal)
+            || string.Equals(name, "Pack", StringComparison.Ordinal)
+            || string.Equals(name, "Align", StringComparison.Ordinal);
+    }
+
+    private static bool IsFieldLayoutAttribute(string name)
+    {
+        return string.Equals(name, "FieldOffset", StringComparison.Ordinal);
+    }
+
     private static void AddUnsupportedAttributeDiagnostics(
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        bool allowThreadSafetyLawAttributes = false,
+        bool allowCopyableAssertion = false)
     {
         for (var index = 0; index < attributes.Count; index++)
         {
             var attribute = attributes[index];
+            if (allowThreadSafetyLawAttributes && IsThreadSafetyLawAttribute(attribute.Name))
+            {
+                continue;
+            }
+
             var attributeContext = attributeContexts[index];
+            if (allowCopyableAssertion
+                && string.Equals(attribute.Name, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
+            {
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Copyable]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2110",
                 $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support modules, callables, structs, records, and doctrines.",
@@ -804,7 +1243,8 @@ internal static class SyntaxModelFactory
     private static void AddDeclarationModels(
         List<TopLevelDeclarationModel> declarations,
         StarkParser.TopLevelDeclarationContext declaration,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        LlvmTargetInfo? targetInfo)
     {
         var visibility = ParseVisibility(declaration.visibilityModifier());
         var declarationAttributes = CreateAttributes(declaration.attributeList());
@@ -819,7 +1259,8 @@ internal static class SyntaxModelFactory
                 declarationAttributeContexts,
                 $"function '{function.Identifier().GetText()}'",
                 diagnostics,
-                allowTestingAttributes: true);
+                allowTestingAttributes: true,
+                allowLinkNameAttribute: true);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
@@ -836,9 +1277,11 @@ internal static class SyntaxModelFactory
                     function.functionModifier(),
                     function.functionBody(),
                     declarationAttributes,
+                    declarationAttributeContexts,
                     backendOptimizationMode,
                     $"function '{function.Identifier().GetText()}'",
-                    diagnostics),
+                    diagnostics,
+                    targetInfo),
                 Attributes: declarationAttributes,
                 BackendOptimizationMode: backendOptimizationMode));
             return;
@@ -846,11 +1289,19 @@ internal static class SyntaxModelFactory
 
         if (declaration.structDeclaration() is { } structDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"struct '{structDeclaration.Identifier().GetText()}'",
+                diagnostics);
             var backendOptimizationMode = ResolveBackendOptimizationMode(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"struct '{structDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowTestingPlatformAttributes: true,
+                allowStructLayoutAttributes: true,
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
@@ -862,7 +1313,8 @@ internal static class SyntaxModelFactory
                     backendOptimizationMode,
                     diagnostics),
                 Attributes: declarationAttributes,
-                BackendOptimizationMode: backendOptimizationMode));
+                BackendOptimizationMode: backendOptimizationMode,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
 
             foreach (var member in structDeclaration.structBody().structMember())
             {
@@ -882,7 +1334,8 @@ internal static class SyntaxModelFactory
                     memberAttributeContexts,
                     $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                     diagnostics,
-                    allowTestingAttributes: true);
+                    allowTestingAttributes: true,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -905,9 +1358,11 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -917,11 +1372,18 @@ internal static class SyntaxModelFactory
 
         if (declaration.recordDeclaration() is { } recordDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"record '{recordDeclaration.Identifier().GetText()}'",
+                diagnostics);
             var backendOptimizationMode = ResolveBackendOptimizationMode(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"record '{recordDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowTestingPlatformAttributes: true,
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
@@ -933,7 +1395,8 @@ internal static class SyntaxModelFactory
                     backendOptimizationMode,
                     diagnostics),
                 Attributes: declarationAttributes,
-                BackendOptimizationMode: backendOptimizationMode));
+                BackendOptimizationMode: backendOptimizationMode,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
 
             foreach (var member in recordDeclaration.recordBody().recordMember())
             {
@@ -953,7 +1416,8 @@ internal static class SyntaxModelFactory
                     memberAttributeContexts,
                     $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                     diagnostics,
-                    allowTestingAttributes: true);
+                    allowTestingAttributes: true,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -976,9 +1440,11 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -988,16 +1454,24 @@ internal static class SyntaxModelFactory
 
         if (declaration.enumDeclaration() is { } enumDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"enum '{enumDeclaration.Identifier().GetText()}'",
+                diagnostics);
             AddUnsupportedAttributeDiagnostics(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"enum '{enumDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 enumDeclaration.Identifier().GetText(),
                 DeclarationKind.Enum,
                 visibility,
-                null));
+                null,
+                Attributes: declarationAttributes,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
             return;
         }
 
@@ -1017,6 +1491,16 @@ internal static class SyntaxModelFactory
             foreach (var member in traitDeclaration.traitBody().traitMember())
             {
                 var method = member.traitMethodDeclaration();
+                if (method is null)
+                {
+                    AddUnsupportedAttributeDiagnostics(
+                        CreateAttributes(member.attributeList()),
+                        member.attributeList().SelectMany(static attributeList => attributeList.attribute()).ToArray(),
+                        $"associated type '{traitDeclaration.Identifier().GetText()}.{member.associatedTypeDeclaration().Identifier().GetText()}'",
+                        diagnostics);
+                    continue;
+                }
+
                 var memberAttributes = CreateAttributes(member.attributeList());
                 var memberAttributeContexts = member.attributeList()
                     .SelectMany(static attributeList => attributeList.attribute())
@@ -1025,7 +1509,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowLinkNameAttribute: true);
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
@@ -1042,9 +1527,11 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -1070,6 +1557,16 @@ internal static class SyntaxModelFactory
             foreach (var member in doctrineDeclaration.doctrineBody().doctrineMember())
             {
                 var method = member.doctrineMethodDeclaration();
+                if (method is null)
+                {
+                    AddUnsupportedAttributeDiagnostics(
+                        CreateAttributes(member.attributeList()),
+                        member.attributeList().SelectMany(static attributeList => attributeList.attribute()).ToArray(),
+                        $"associated type '{doctrineDeclaration.Identifier().GetText()}.{member.associatedTypeDeclaration().Identifier().GetText()}'",
+                        diagnostics);
+                    continue;
+                }
+
                 var memberAttributes = CreateAttributes(member.attributeList());
                 var memberAttributeContexts = member.attributeList()
                     .SelectMany(static attributeList => attributeList.attribute())
@@ -1078,7 +1575,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -1100,9 +1598,11 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -1174,6 +1674,18 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (member.fieldDeclaration() is not null)
+        {
+            ValidateFieldMemberAttributes(attributes, attributeContexts, "struct field", diagnostics);
+            return;
+        }
+
+        if (member.associatedTypeDeclaration() is not null)
+        {
+            AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct associated type", diagnostics);
+            return;
+        }
+
         AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct member", diagnostics);
     }
 
@@ -1195,13 +1707,55 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (member.fieldDeclaration() is not null)
+        {
+            ValidateFieldMemberAttributes(attributes, attributeContexts, "record field", diagnostics);
+            return;
+        }
+
+        if (member.associatedTypeDeclaration() is not null)
+        {
+            AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "record associated type", diagnostics);
+            return;
+        }
+
         AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "record member", diagnostics);
+    }
+
+    private static void ValidateFieldMemberAttributes(
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        foreach (var attribute in attributeContexts)
+        {
+            _ = TryCreateThreadSafetyLawAttribute(attribute, targetDescription, diagnostics, out _);
+        }
+
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            if (IsFieldLayoutAttribute(attribute.Name)
+                || IsThreadSafetyLawAttribute(attribute.Name))
+            {
+                continue;
+            }
+
+            var attributeContext = attributeContexts[index];
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK2110",
+                $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Fields support '[FieldOffset(N)]', '[Grant(Transferable)]', '[Grant(Shareable)]', '[Deny(Transferable)]', and '[Deny(Shareable)]'.",
+                attributeContext.Start.Line,
+                attributeContext.Start.Column + 1));
+        }
     }
 
     private static TypeAliasDeclarationModel CreateTypeAliasModel(StarkParser.TypeAliasDeclarationContext typeAliasDeclaration)
     {
         var genericParameters = typeAliasDeclaration.typeParameterList() is { } typeParameterList
             ? typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is null)
                 .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray()
             : [];
@@ -1210,6 +1764,144 @@ internal static class SyntaxModelFactory
             typeAliasDeclaration.Identifier().GetText(),
             typeAliasDeclaration.type_().GetText(),
             genericParameters);
+    }
+
+    private static string? ResolveLinkNameAttribute(
+        string functionName,
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        bool isFfi,
+        bool isAsm,
+        bool hasBody,
+        string targetDescription,
+        List<SyntaxModelDiagnostic>? diagnostics)
+    {
+        string? linkName = null;
+        StarkParser.AttributeContext? firstLinkName = null;
+
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            if (!IsLinkNameAttribute(attribute.Name))
+            {
+                continue;
+            }
+
+            var attributeContext = index < attributeContexts.Count ? attributeContexts[index] : null;
+            if (attributeContext is null)
+            {
+                continue;
+            }
+
+            if (firstLinkName is not null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Function '{functionName}' declares [LinkName(...)] more than once.");
+                continue;
+            }
+
+            firstLinkName = attributeContext;
+
+            if (!isFfi)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} is only valid on imported FFI function declarations. Use 'unsafe ffi fn' for a foreign import; Stark function definitions and exports keep their Stark symbol name.");
+            }
+
+            if (isAsm)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot be used with 'ffi asm(...)' because asm declarations provide inline assembly instead of linking to a foreign function symbol.");
+            }
+
+            if (hasBody)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} requires an imported FFI declaration ending in ';', not a function body.");
+            }
+
+            if (attributeContext.attributeCondition() is not null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot use an attribute condition.");
+            }
+
+            var arguments = attributeContext.attributeArgument();
+            if (arguments is not [var argument] || argument.StringLiteral() is null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} requires exactly one compile-time string literal argument, for example [LinkName(\"puts\")].");
+                continue;
+            }
+
+            if (!TextLiteralDecoder.TryDecode(argument.StringLiteral().GetText(), TextLiteralKind.String, out var decoded, out _))
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} contains an invalid string literal.");
+                continue;
+            }
+
+            if (decoded.Value.Length == 0)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot use an empty foreign symbol name.");
+                continue;
+            }
+
+            if (!IsValidLinkNameSymbol(decoded.Value))
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} must name a printable ASCII linker symbol with no whitespace or control characters.");
+                continue;
+            }
+
+            linkName = decoded.Value;
+        }
+
+        return linkName;
+    }
+
+    private static bool IsValidLinkNameSymbol(string symbol)
+    {
+        foreach (var ch in symbol)
+        {
+            if (ch < 0x21 || ch > 0x7E)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void AddLinkNameDiagnostic(
+        List<SyntaxModelDiagnostic>? diagnostics,
+        StarkParser.AttributeContext attribute,
+        string message)
+    {
+        diagnostics?.Add(new SyntaxModelDiagnostic(
+            "STK2114",
+            message,
+            attribute.Start.Line,
+            attribute.Start.Column + 1));
     }
 
     private static FunctionDeclarationModel CreateFunctionModel(
@@ -1224,11 +1916,48 @@ internal static class SyntaxModelFactory
         IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
         StarkParser.FunctionBodyContext functionBody,
         IReadOnlyList<ModuleAttributeModel>? attributes = null,
+        IReadOnlyList<StarkParser.AttributeContext>? attributeContexts = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         string? targetDescription = null,
-        List<SyntaxModelDiagnostic>? diagnostics = null)
+        List<SyntaxModelDiagnostic>? diagnostics = null,
+        LlvmTargetInfo? targetInfo = null)
     {
         var modifiers = modifiersList.Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
+        var isFfi = modifiersList.Any(FfiAbiSyntaxFacts.IsFfiModifier);
+        var isAsm = asmSpecifier is not null;
+        StarkFfiAbi? ffiAbi = null;
+        if (isFfi)
+        {
+            if (FfiAbiSyntaxFacts.TryResolveFunctionAbi(
+                    modifiersList,
+                    targetInfo,
+                    out var abiResolution,
+                    out var errorMessage,
+                    out var errorContext))
+            {
+                if (isAsm && abiResolution.HasExplicitAbi)
+                {
+                    diagnostics?.Add(new SyntaxModelDiagnostic(
+                        "STK2112",
+                        $"Asm declaration '{name}' cannot also specify an FFI ABI. Use bare 'ffi asm(...)' because asm declarations provide register constraints directly.",
+                        errorContext.Start.Line,
+                        errorContext.Start.Column + 1));
+                }
+                else if (!isAsm)
+                {
+                    ffiAbi = abiResolution.Abi;
+                }
+            }
+            else
+            {
+                diagnostics?.Add(new SyntaxModelDiagnostic(
+                    "STK2111",
+                    errorMessage,
+                    errorContext.Start.Line,
+                    errorContext.Start.Column + 1));
+            }
+        }
+
         AddBackendOpaqueModifierDiagnostics(
             backendOptimizationMode,
             modifiersList,
@@ -1245,8 +1974,18 @@ internal static class SyntaxModelFactory
         var genericParameters = typeParameterList is null
             ? []
             : typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is null)
                 .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray();
+        var linkName = ResolveLinkNameAttribute(
+            name,
+            attributes ?? [],
+            attributeContexts ?? [],
+            isFfi,
+            isAsm,
+            functionBody.block() is not null,
+            targetDescription ?? $"function '{name}'",
+            diagnostics);
 
         return new FunctionDeclarationModel(
             Name: name,
@@ -1260,10 +1999,12 @@ internal static class SyntaxModelFactory
                 hasExplicitInlinePreference,
                 modifiers.Contains("hot"),
                 modifiers.Contains("cold"),
-                modifiers.Contains("ffi"),
+                isFfi,
                 modifiers.Contains("varargs"),
                 modifiers.Contains("strictfp"),
-                modifiers.Contains("unsafe")),
+                modifiers.Contains("unsafe"),
+                FfiAbi: ffiAbi,
+                IsTailCallable: modifiers.Contains("tail")),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
             GenericParameterNames: genericParameters,
@@ -1271,8 +2012,15 @@ internal static class SyntaxModelFactory
             Attributes: attributes,
             BackendOptimizationMode: backendOptimizationMode,
             DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
-            OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
-            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses));
+            OverlapParameterGroups: CreateOverlapParameterGroups(parameterList, memoryContractClauses),
+            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses),
+            PointeeDeadOnReturnParameterNames: CreatePointeeDeadOnReturnParameterNames(memoryContractClauses),
+            ValueParameterContracts: CreateValueParameterContracts(memoryContractClauses),
+            ThreadSafetyLawPredicates: CreateThreadSafetyLawPredicates(
+                memoryContractClauses,
+                targetDescription ?? $"function '{name}'",
+                diagnostics),
+            ExternalLinkName: linkName);
     }
 
     private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)
@@ -1345,13 +2093,71 @@ internal static class SyntaxModelFactory
     }
 
     private static IReadOnlyList<ParameterOverlapGroup> CreateOverlapParameterGroups(
+        StarkParser.ParameterListContext? parameterList,
         IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
     {
-        return CreateParameterRelationGroups(
+        var groups = CreateParameterRelationGroups(
                 memoryContractClauses,
                 static contract => contract.overlapContract()?.expressionList())
             .Select(static group => new ParameterOverlapGroup(group))
-            .ToArray();
+            .ToList();
+
+        // `where overlap_all(name)` currently parses through the law-predicate
+        // contract shape (a dedicated grammar rule needs the antlr4 toolchain to
+        // regenerate the parser — see the note next to `overlapContract` in
+        // Stark.g4) and expands here into pairwise whole-parameter overlap
+        // groups against every other parameter. Pairs whose partner is not
+        // memory-backed are inert to every downstream consumer, so the
+        // expansion is purely name-driven; the type checker validates that the
+        // named parameter exists and is memory-backed.
+        var parameterNames = parameterList?.parameter()
+            .Select(static parameter => parameter.Identifier().GetText())
+            .ToArray() ?? [];
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var target = predicate.type_().GetText();
+                foreach (var other in parameterNames)
+                {
+                    if (!string.Equals(other, target, StringComparison.Ordinal))
+                    {
+                        groups.Add(new ParameterOverlapGroup([target, other]));
+                    }
+                }
+            }
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<ParameterValueContract> CreateValueParameterContracts(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        var contracts = new List<ParameterValueContract>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.valueContract() is not { } valueContract)
+                {
+                    continue;
+                }
+
+                contracts.Add(new ParameterValueContract(
+                    valueContract.shiftExpression(0).GetText(),
+                    valueContract.valueContractOperator().GetText(),
+                    valueContract.shiftExpression(1).GetText()));
+            }
+        }
+
+        return contracts;
     }
 
     private static IReadOnlyList<ParameterSameGroup> CreateSameParameterGroups(
@@ -1362,6 +2168,62 @@ internal static class SyntaxModelFactory
                 static contract => contract.sameContract()?.expressionList())
             .Select(static group => new ParameterSameGroup(group))
             .ToArray();
+    }
+
+    private static IReadOnlyList<string> CreatePointeeDeadOnReturnParameterNames(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return memoryContractClauses
+            .SelectMany(static clause => clause.parameterMemoryContract())
+            .Select(static contract => contract.deadOnReturnContract()?.expressionList())
+            .Where(static expressionList => expressionList is not null)
+            .SelectMany(static expressionList => expressionList!.expression())
+            .Select(static expression => expression.GetText())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawPredicateModel> CreateThreadSafetyLawPredicates(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
+        string targetDescription,
+        List<SyntaxModelDiagnostic>? diagnostics)
+    {
+        var predicates = new List<ThreadSafetyLawPredicateModel>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate)
+                {
+                    continue;
+                }
+
+                // `where overlap_all(name)` is a memory contract riding the
+                // law-predicate parse shape; it expands into pairwise overlap
+                // groups (see CreateOverlapParameterGroups) and is not a
+                // thread-safety law.
+                if (string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (diagnostics is null)
+                {
+                    predicates.Add(new ThreadSafetyLawPredicateModel(
+                        predicate.Identifier().GetText(),
+                        predicate.type_().GetText()));
+                    continue;
+                }
+
+                var model = CreateThreadSafetyLawPredicate(predicate, targetDescription, diagnostics);
+                if (model is not null)
+                {
+                    predicates.Add(model);
+                }
+            }
+        }
+
+        return predicates;
     }
 
     private static IReadOnlyList<IReadOnlyList<string>> CreateParameterRelationGroups(

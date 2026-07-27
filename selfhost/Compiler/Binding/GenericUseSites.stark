@@ -1,0 +1,819 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TypeResolution
+import System.Memory
+module Compiler.Binding.GenericUseSites
+
+public enum GenericUseSiteArgumentKind
+{
+    Type,
+    ComptimeValue,
+}
+
+public struct GenericUseSiteTable
+{
+    internal dynamic u32[0 max] OwnerTokens;
+    internal dynamic u32[0 max] OpenTokens;
+    internal dynamic u32[0 max] CloseTokens;
+    internal dynamic u32[0 max] ArgumentStartSlots;
+    internal dynamic u32[0 max] ArgumentCounts;
+    internal dynamic GenericUseSiteArgumentKind ArgumentKinds;
+    internal dynamic u32[0 max] ArgumentStartTokens;
+    internal dynamic u32[0 max] ArgumentEndTokens;
+
+    GenericUseSiteTable()
+    {
+        self.OwnerTokens = new();
+        self.OpenTokens = new();
+        self.CloseTokens = new();
+        self.ArgumentStartSlots = new();
+        self.ArgumentCounts = new();
+        self.ArgumentKinds = new();
+        self.ArgumentStartTokens = new();
+        self.ArgumentEndTokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow GenericUseSiteTable self)
+    {
+        return self.OwnerTokens.Length;
+    }
+
+    public finite law u32[0 max] OwnerTokenAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerTokens.Length)
+        {
+            token = self.OwnerTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] OpenTokenAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OpenTokens.Length)
+        {
+            token = self.OpenTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] CloseTokenAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CloseTokens.Length)
+        {
+            token = self.CloseTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] ArgumentCountAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ArgumentCounts.Length)
+        {
+            count = self.ArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public finite law GenericUseSiteArgumentKind ArgumentKindAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] site, u32[0 max] arg)
+    {
+        stack mut GenericUseSiteArgumentKind kind = GenericUseSiteArgumentKind.Type;
+        if (site < self.ArgumentStartSlots.Length && arg < self.ArgumentCountAt(site))
+        {
+            stack u32[0 max] start = self.ArgumentStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + arg);
+                if (slot < self.ArgumentKinds.Length)
+                {
+                    kind = self.ArgumentKinds[slot];
+                }
+            }
+        }
+
+        return kind;
+    }
+
+    public finite law u32[0 max] ArgumentStartTokenAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] site, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        if (site < self.ArgumentStartSlots.Length && arg < self.ArgumentCountAt(site))
+        {
+            stack u32[0 max] start = self.ArgumentStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + arg);
+                if (slot < self.ArgumentStartTokens.Length)
+                {
+                    token = self.ArgumentStartTokens[slot];
+                }
+            }
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] ArgumentEndTokenAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] site, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        if (site < self.ArgumentStartSlots.Length && arg < self.ArgumentCountAt(site))
+        {
+            stack u32[0 max] start = self.ArgumentStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + arg);
+                if (slot < self.ArgumentEndTokens.Length)
+                {
+                    token = self.ArgumentEndTokens[slot];
+                }
+            }
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] TypeArgumentCountAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] args = self.ArgumentCountAt(site);
+        for willexit (stack mut u32[0 max] arg = 0; arg < args; arg += 1)
+        {
+            if (self.ArgumentKindAt(site, arg) == GenericUseSiteArgumentKind.Type)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    public finite law u32[0 max] ComptimeValueArgumentCountAt(borrow GenericUseSiteTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] args = self.ArgumentCountAt(site);
+        for willexit (stack mut u32[0 max] arg = 0; arg < args; arg += 1)
+        {
+            if (self.ArgumentKindAt(site, arg) == GenericUseSiteArgumentKind.ComptimeValue)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    public finite law u32[0 max] TotalTypeArgumentCount(borrow GenericUseSiteTable self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < count; site += 1)
+        {
+            total = (u32[0 max])(total + self.TypeArgumentCountAt(site));
+        }
+
+        return total;
+    }
+
+    public finite law u32[0 max] TotalComptimeValueArgumentCount(borrow GenericUseSiteTable self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < count; site += 1)
+        {
+            total = (u32[0 max])(total + self.ComptimeValueArgumentCountAt(site));
+        }
+
+        return total;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendSite(mut borrow GenericUseSiteTable self, u32[0 max] ownerToken, u32[0 max] openToken, u32[0 max] closeToken, out u32[0 max] siteIndex)
+    {
+        siteIndex = 0;
+        if (!self.OwnerTokens.TryReserve(1)
+            || !self.OpenTokens.TryReserve(1)
+            || !self.CloseTokens.TryReserve(1)
+            || !self.ArgumentStartSlots.TryReserve(1)
+            || !self.ArgumentCounts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        siteIndex = (u32[0 max])(self.OwnerTokens.Length + 1);
+        init self.OwnerTokens[self.OwnerTokens.Length] = ownerToken;
+        init self.OpenTokens[self.OpenTokens.Length] = openToken;
+        init self.CloseTokens[self.CloseTokens.Length] = closeToken;
+        init self.ArgumentStartSlots[self.ArgumentStartSlots.Length] = (u32[0 max])(self.ArgumentKinds.Length + 1);
+        init self.ArgumentCounts[self.ArgumentCounts.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendArgument(mut borrow GenericUseSiteTable self, u32[0 max] siteIndex, GenericUseSiteArgumentKind kind, u32[0 max] startToken, u32[0 max] endToken)
+    {
+        if (siteIndex == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.ArgumentKinds.TryReserve(1)
+            || !self.ArgumentStartTokens.TryReserve(1)
+            || !self.ArgumentEndTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.ArgumentKinds[self.ArgumentKinds.Length] = kind;
+        init self.ArgumentStartTokens[self.ArgumentStartTokens.Length] = startToken;
+        init self.ArgumentEndTokens[self.ArgumentEndTokens.Length] = endToken;
+
+        stack u64[0 2 ** 63 - 1] siteSlot = (u64[0 2 ** 63 - 1])(siteIndex - 1);
+        if (siteSlot < self.ArgumentCounts.Length)
+        {
+            self.ArgumentCounts[siteSlot] = (u32[0 max])(self.ArgumentCounts[siteSlot] + 1);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesInTypeSpan(mut borrow GenericUseSiteTable facts, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Lt
+            && index > start
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index - 1)) == TokenKind.Identifier)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack mut u32[0 max] siteIndex = 0;
+            switch (facts.AppendSite((u32[0 max])(index - 1), index, close, siteIndex))
+            {
+                case System.Memory.MemoryStatus.Err(var siteError):
+                    return System.Memory.MemoryStatus.Err(siteError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut u32[0 max] segmentStart = (u32[0 max])(index + 1);
+            stack mut u32[0 max] segmentDepth = 0;
+            stack mut u32[0 max] segmentCursor = (u32[0 max])(index + 1);
+            while willexit (segmentCursor <= close)
+            {
+                stack mut bool boundary = false;
+                if (segmentCursor == close)
+                {
+                    boundary = true;
+                }
+                else
+                {
+                    stack TokenKind segmentKind = stream.KindAt((u64[0 2 ** 63 - 1])segmentCursor);
+                    if (segmentKind == TokenKind.Lt || segmentKind == TokenKind.LBrack || segmentKind == TokenKind.LParen || segmentKind == TokenKind.LBrace)
+                    {
+                        segmentDepth = (u32[0 max])(segmentDepth + 1);
+                    }
+                    else if (segmentKind == TokenKind.Gt || segmentKind == TokenKind.RBrack || segmentKind == TokenKind.RParen || segmentKind == TokenKind.RBrace)
+                    {
+                        if (segmentDepth > 0)
+                        {
+                            segmentDepth = (u32[0 max])(segmentDepth - 1);
+                        }
+                    }
+                    else if (segmentDepth == 0 && segmentKind == TokenKind.Comma)
+                    {
+                        boundary = true;
+                    }
+                }
+
+                if (boundary)
+                {
+                    if (segmentStart < segmentCursor)
+                    {
+                        stack mut GenericUseSiteArgumentKind argKind = GenericUseSiteArgumentKind.Type;
+                        if (GenericArgumentSegmentIsValue(stream, segmentStart, segmentCursor))
+                        {
+                            argKind = GenericUseSiteArgumentKind.ComptimeValue;
+                        }
+
+                        switch (facts.AppendArgument(siteIndex, argKind, segmentStart, segmentCursor))
+                        {
+                            case System.Memory.MemoryStatus.Err(var argError):
+                                return System.Memory.MemoryStatus.Err(argError);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+
+                    }
+
+                    segmentStart = (u32[0 max])(segmentCursor + 1);
+                }
+
+                segmentCursor = (u32[0 max])(segmentCursor + 1);
+            }
+
+            stack u64[0 2 ** 63 - 1] siteSlot = (u64[0 2 ** 63 - 1])(siteIndex - 1);
+            stack u32[0 max] argCount = facts.ArgumentCountAt(siteSlot);
+            for willexit (stack mut u32[0 max] arg = 0; arg < argCount; arg += 1)
+            {
+                if (facts.ArgumentKindAt(siteSlot, arg) == GenericUseSiteArgumentKind.Type)
+                {
+                    switch (CollectGenericUseSitesInTypeSpan(
+                        facts,
+                        stream,
+                        facts.ArgumentStartTokenAt(siteSlot, arg),
+                        facts.ArgumentEndTokenAt(siteSlot, arg)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var nestedError):
+                            return System.Memory.MemoryStatus.Err(nestedError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+
+            index = (u32[0 max])(close + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromSpans(mut borrow GenericUseSiteTable facts, borrow TokenStream stream, borrow TypeSpanList spans)
+{
+    stack u64[0 2 ** 63 - 1] count = spans.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (CollectGenericUseSitesInTypeSpan(facts, stream, spans.StartTokenAt(index), spans.EndTokenAt(index)))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromFunction(u32[0 max] fnKeyword, mut borrow GenericUseSiteTable facts, borrow TokenStream stream)
+{
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (CollectGenericUseSitesInTypeSpan(facts, stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt()))
+            {
+                case System.Memory.MemoryStatus.Err(var returnError):
+                    return System.Memory.MemoryStatus.Err(returnError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+            for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+            {
+                switch (CollectGenericUseSitesInTypeSpan(facts, stream, signature.ParamTypeStartTokenAt(param), signature.ParamTypeEndTokenAt(param)))
+                {
+                    case System.Memory.MemoryStatus.Err(var paramError):
+                        return System.Memory.MemoryStatus.Err(paramError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            switch (CollectWhereConstraintTypeSpans(stream, fnKeyword))
+            {
+                case ParseResult<TypeSpanList>.Err(var whereError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case ParseResult<TypeSpanList>.Ok(var whereSpans):
+                    switch (CollectGenericUseSitesFromSpans(facts, stream, whereSpans))
+                    {
+                        case System.Memory.MemoryStatus.Err(var whereCollectError):
+                            return System.Memory.MemoryStatus.Err(whereCollectError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+            }
+
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return System.Memory.MemoryStatus.Ok;
+                case ParseResult<StatementList>.Ok(var body):
+                    stack u64[0 2 ** 63 - 1] bodyCount = body.Count();
+                    for willexit (stack mut u64[0 2 ** 63 - 1] stmt = 0; stmt < bodyCount; stmt += 1)
+                    {
+                        switch (CollectGenericUseSitesInTypeSpan(facts, stream, body.TypeStartTokenAt(stmt), body.TypeEndTokenAt(stmt)))
+                        {
+                            case System.Memory.MemoryStatus.Err(var localError):
+                                return System.Memory.MemoryStatus.Err(localError);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromDataDeclaration(u32[0 max] declKeyword, mut borrow GenericUseSiteTable facts, borrow TokenStream stream)
+{
+    switch (ParseStructFields(stream, declKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] count = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < count; field += 1)
+            {
+                switch (CollectGenericUseSitesInTypeSpan(facts, stream, fields.TypeStartAt(field), fields.TypeEndAt(field)))
+                {
+                    case System.Memory.MemoryStatus.Err(var fieldError):
+                        return System.Memory.MemoryStatus.Err(fieldError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+    }
+
+    switch (CollectGenericUseSitesFromConformanceBaseList(facts, stream, declKeyword))
+    {
+        case System.Memory.MemoryStatus.Err(var baseError):
+            return System.Memory.MemoryStatus.Err(baseError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectWhereConstraintTypeSpans(stream, declKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var whereError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<TypeSpanList>.Ok(var whereSpans):
+            return CollectGenericUseSitesFromSpans(facts, stream, whereSpans);
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromEnum(u32[0 max] enumKeyword, mut borrow GenericUseSiteTable facts, borrow TokenStream stream)
+{
+    switch (ParseEnumPayloadTypeSpans(stream, enumKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var payloadError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<TypeSpanList>.Ok(var payloadSpans):
+            switch (CollectGenericUseSitesFromSpans(facts, stream, payloadSpans))
+            {
+                case System.Memory.MemoryStatus.Err(var collectError):
+                    return System.Memory.MemoryStatus.Err(collectError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+    }
+
+    switch (CollectWhereConstraintTypeSpans(stream, enumKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var whereError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<TypeSpanList>.Ok(var whereSpans):
+            return CollectGenericUseSitesFromSpans(facts, stream, whereSpans);
+    }
+}
+
+internal finite law u32[0 max] FindVariableTypeTokenForBinding(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] typeToken = 0;
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind tokenKind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (tokenKind == TokenKind.EndOfFile)
+        {
+            break;
+        }
+
+        if (depth == 0 && (tokenKind == TokenKind.Assign || tokenKind == TokenKind.Semi))
+        {
+            break;
+        }
+
+        if (tokenKind == TokenKind.Lt || tokenKind == TokenKind.LBrack)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (tokenKind == TokenKind.Gt || tokenKind == TokenKind.RBrack)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && typeToken == 0 && IsTypeStartToken(tokenKind))
+        {
+            typeToken = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return typeToken;
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromVariableDeclaration(DeclItem item, mut borrow GenericUseSiteTable facts, borrow TokenStream stream)
+{
+    if (item.NameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] start = FindVariableTypeTokenForBinding(stream, (u32[0 max])(item.KeywordToken + 1));
+    if (start == 0 || start >= item.NameToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return CollectGenericUseSitesInTypeSpan(facts, stream, start, item.NameToken);
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromAlias(DeclItem item, mut borrow GenericUseSiteTable facts, borrow TokenStream stream)
+{
+    stack mut u32[0 max] assign = 0;
+    stack mut u32[0 max] scan = item.KeywordToken;
+    while willexit (scan <= item.EndToken)
+    {
+        if (assign == 0 && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Assign)
+        {
+            assign = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    if (assign == 0 || (u32[0 max])(assign + 1) >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return CollectGenericUseSitesInTypeSpan(facts, stream, (u32[0 max])(assign + 1), item.EndToken);
+}
+
+public fn BindResult<GenericUseSiteTable> BuildGenericUseSiteSyntaxFacts(borrow TokenStream stream)
+{
+    stack mut GenericUseSiteTable facts = new();
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return BindResult<GenericUseSiteTable>.Err(BindError.OutOfMemory);
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return BindResult<GenericUseSiteTable>.Err(BindError.OutOfMemory);
+        case ParseResult<DeclarationList>.Ok(var decls):
+            stack u64[0 2 ** 63 - 1] count = decls.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack DeclItem item = decls.ItemAt(index);
+                stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
+                if (item.Kind == DeclarationKind.Function)
+                {
+                    status = CollectGenericUseSitesFromFunction(item.KeywordToken, facts, stream);
+                }
+                else if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+                {
+                    status = CollectGenericUseSitesFromDataDeclaration(item.KeywordToken, facts, stream);
+                }
+                else if (item.Kind == DeclarationKind.Enum)
+                {
+                    status = CollectGenericUseSitesFromEnum(item.KeywordToken, facts, stream);
+                }
+                else if (item.Kind == DeclarationKind.Static || item.Kind == DeclarationKind.GlobalVariable || item.Kind == DeclarationKind.Const)
+                {
+                    status = CollectGenericUseSitesFromVariableDeclaration(item, facts, stream);
+                }
+                else if (item.Kind == DeclarationKind.Alias)
+                {
+                    status = CollectGenericUseSitesFromAlias(item, facts, stream);
+                }
+
+                switch (status)
+                {
+                    case System.Memory.MemoryStatus.Err(var error):
+                        return BindResult<GenericUseSiteTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+    }
+
+    return BindResult<GenericUseSiteTable>.Ok(facts);
+}
+
+internal finite law u32[0 max] TypedGenericOwnerTerminatorToken(borrow TokenStream stream, u32[0 max] ownerKeywordToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = ownerKeywordToken;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return scan;
+        }
+
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi))
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return ownerKeywordToken;
+}
+
+internal fn u32[0 max] TypedTraitConformanceFirstIdentifierAfterKeyword(borrow TokenStream stream, u32[0 max] keywordToken, u32[0 max] endToken)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(keywordToken + 1);
+    while willexit (scan <= endToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Identifier)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn bool TypedTraitConformanceBaseListBounds(
+    borrow TokenStream stream,
+    u32[0 max] ownerNameToken,
+    u32[0 max] ownerEndToken,
+    out u32[0 max] listStartToken,
+    out u32[0 max] listEndToken)
+{
+    listStartToken = 0;
+    listEndToken = 0;
+    if (ownerNameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(ownerNameToken + 1);
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan <= ownerEndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.Where || kind == TokenKind.EndOfFile))
+        {
+            return false;
+        }
+
+        if (depth == 0 && kind == TokenKind.Colon)
+        {
+            stack u32[0 max] startAfterColon = (u32[0 max])(scan + 1);
+            listStartToken = startAfterColon;
+            stack mut u32[0 max] endScan = startAfterColon;
+            stack mut u32[0 max] endDepth = 0;
+            while willexit (endScan <= ownerEndToken)
+            {
+                stack TokenKind endKind = stream.KindAt((u64[0 2 ** 63 - 1])endScan);
+                if (endDepth == 0 && (endKind == TokenKind.Where || endKind == TokenKind.LBrace || endKind == TokenKind.Semi || endKind == TokenKind.EndOfFile))
+                {
+                    listEndToken = endScan;
+                    return startAfterColon < endScan;
+                }
+
+                if (endKind == TokenKind.Lt || endKind == TokenKind.LBrack || endKind == TokenKind.LParen)
+                {
+                    endDepth = (u32[0 max])(endDepth + 1);
+                }
+                else if (endKind == TokenKind.Gt || endKind == TokenKind.RBrack || endKind == TokenKind.RParen)
+                {
+                    if (endDepth > 0)
+                    {
+                        endDepth = (u32[0 max])(endDepth - 1);
+                    }
+                }
+
+                endScan = (u32[0 max])(endScan + 1);
+            }
+
+            listEndToken = ownerEndToken;
+            return startAfterColon < ownerEndToken;
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectGenericUseSitesFromConformanceBaseList(mut borrow GenericUseSiteTable facts, borrow TokenStream stream, u32[0 max] declKeyword)
+{
+    stack u32[0 max] ownerEndToken = TypedGenericOwnerTerminatorToken(stream, declKeyword);
+    stack u32[0 max] ownerNameToken = TypedTraitConformanceFirstIdentifierAfterKeyword(stream, declKeyword, ownerEndToken);
+    stack mut u32[0 max] listStartToken = 0;
+    stack mut u32[0 max] listEndToken = 0;
+    if (!TypedTraitConformanceBaseListBounds(stream, ownerNameToken, ownerEndToken, listStartToken, listEndToken))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] segmentStart = listStartToken;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = listStartToken;
+    while willexit (scan <= listEndToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == listEndToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan)
+            {
+                switch (CollectGenericUseSitesInTypeSpan(facts, stream, segmentStart, scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var collectError):
+                        return System.Memory.MemoryStatus.Err(collectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

@@ -1,0 +1,194 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatureModel
+import Compiler.Typing.TypedTypeResolution
+import System.Memory
+module Compiler.Typing.TypedSignatureRows
+
+internal fn System.Memory.MemoryStatus AppendTypedSignatureTypeSlot(
+    mut borrow TypedFunctionSignatureTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] signatureIndexPlusOne,
+    TypedSignatureSlotKind slotKind,
+    u32[0 max] paramOrdinal,
+    u32[0 max] paramNameToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    bool tailCallable,
+    u32[0 max] deadOnReturnCount,
+    bool signatureDeadOnReturn,
+    u32[0 max] functionGenericOpenToken,
+    u32[0 max] ownerGenericOpenToken)
+{
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(stream, typeStartToken, typeEndToken, rangeStartToken, rangeEndToken, elementCountStartToken, elementCountEndToken, arrayKind);
+
+    stack u32[0 max] semanticPrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typePrimaryToken);
+    stack TypedSignatureTypeKind typeKind = TypedSignatureKindForType(source, stream, semanticPrimaryToken, typeHeadToken, functionGenericOpenToken, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])semanticPrimaryToken) == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, semanticPrimaryToken);
+    }
+    else if (stream.KindAt((u64[0 2 ** 63 - 1])semanticPrimaryToken) == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, semanticPrimaryToken);
+    }
+
+    stack mut u32[0 max] genericArgCount = 0;
+    stack mut u32[0 max] comptimeArgCount = 0;
+    if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), genericArgCount, comptimeArgCount);
+    }
+
+    stack u32[0 max] flags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        semanticPrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        functionGenericOpenToken,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        tailCallable,
+        deadOnReturnCount,
+        signatureDeadOnReturn);
+
+    stack mut u32[0 max] slotIndex = 0;
+    switch (table.AppendTypeSlot(
+        signatureIndexPlusOne,
+        slotKind,
+        paramOrdinal,
+        paramNameToken,
+        typeKind,
+        typeHeadToken,
+        semanticPrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        genericArgCount,
+        comptimeArgCount,
+        deadOnReturnCount,
+        flags,
+        slotIndex))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedFunctionSignature(
+    mut borrow TypedFunctionSignatureTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] fnKeyword,
+    TypedSignatureOwnerKind ownerKind,
+    u32[0 max] ownerNameToken,
+    u32[0 max] ownerGenericOpenToken)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    if (signature.Name() == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] functionGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, signature.Name());
+    stack mut u32[0 max] genericParamCount = 0;
+    stack mut u32[0 max] comptimeGenericParamCount = 0;
+    TypedSignatureCountGenericParametersInList(stream, functionGenericOpenToken, genericParamCount, comptimeGenericParamCount);
+
+    stack mut u32[0 max] signatureIndex = 0;
+    switch (table.AppendSignature(
+        ownerKind,
+        ownerNameToken,
+        fnKeyword,
+        signature.Name(),
+        (u32[0 max])signature.ParamCount(),
+        genericParamCount,
+        comptimeGenericParamCount,
+        0,
+        signatureIndex))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (AppendTypedSignatureTypeSlot(
+        table,
+        source,
+        stream,
+        signatureIndex,
+        TypedSignatureSlotKind.Return,
+        0,
+        0,
+        signature.ReturnType(),
+        signature.ReturnTypeTokenAt(),
+        signature.ReturnTypeStartTokenAt(),
+        signature.ReturnTypeEndTokenAt(),
+        signature.ReturnTypeTailCallable(),
+        signature.ReturnTypeDeadOnReturnParamCount(),
+        false,
+        functionGenericOpenToken,
+        ownerGenericOpenToken))
+    {
+        case System.Memory.MemoryStatus.Err(var returnError):
+            return System.Memory.MemoryStatus.Err(returnError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        switch (AppendTypedSignatureTypeSlot(
+            table,
+            source,
+            stream,
+            signatureIndex,
+            TypedSignatureSlotKind.Parameter,
+            (u32[0 max])param,
+            signature.ParamNameAt(param),
+            signature.ParamTypeAt(param),
+            signature.ParamTypeTokenAt(param),
+            signature.ParamTypeStartTokenAt(param),
+            signature.ParamTypeEndTokenAt(param),
+            signature.ParamTypeTailCallable(param),
+            signature.ParamTypeDeadOnReturnParamCount(param),
+            TypedSignatureParamHasDeadOnReturnContract(source, stream, signature, param),
+            functionGenericOpenToken,
+            ownerGenericOpenToken))
+        {
+            case System.Memory.MemoryStatus.Err(var paramError):
+                return System.Memory.MemoryStatus.Err(paramError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

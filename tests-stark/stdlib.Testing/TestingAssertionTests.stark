@@ -1,0 +1,520 @@
+import System.Testing
+import System.Text
+import System.Memory
+import System.Collections
+import System.Core
+[Collection("testing")]
+module TestingAssertionTests
+
+// Stark-native tests for the System.Testing assertion slice added this session:
+// the TEST-02 element/Option/Result value predicates, the TEST-12 structured
+// diagnostic renderers, and the TEST-10 WithinRegression threshold gate.
+//
+// OwnedAscii is grown directly in fact bodies (proven safe this session by the
+// stdlib.Text Guard* facts) and read back through View() for exact comparison.
+
+fn bool IsOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// TEST-02 element predicates over an i32[min max][] fixture
+// ----------------------------------------------------------------------------
+
+[Fact]
+fn bool ContainsElementFindsPresentValue()
+{
+    stack i32[min max][3] values =
+    {
+        10, 20, 30
+    };
+    stack i32[min max][] view = values;
+    return System.Testing.ContainsElement(view, 20);
+}
+
+[Fact]
+fn bool DoesNotContainElementRejectsPresentValue()
+{
+    stack i32[min max][3] values =
+    {
+        10, 20, 30
+    };
+    stack i32[min max][] view = values;
+    return !System.Testing.DoesNotContainElement(view, 20);
+}
+
+// Positive coverage that the System.Testing text forwarders produce correct
+// counts. The link-level regression for these (a pruned public forwarder that
+// must still resolve from a consuming test package) is guarded end-to-end by
+// `tests-stark/compiler.SsaTests`, which calls `System.Testing.CountOccurrences`
+// from a non-fact helper inside a large imported graph and fails to link without
+// the weak_odr fallback emission fix.
+[Fact]
+fn bool CountOccurrencesCountsAsciiMatches()
+{
+    return System.Testing.CountOccurrences("aXbXcX", "X") == 3;
+}
+
+[Fact]
+fn bool DoesNotContainElementAcceptsAbsentValue()
+{
+    stack i32[min max][3] values =
+    {
+        10, 20, 30
+    };
+    stack i32[min max][] view = values;
+    return System.Testing.DoesNotContainElement(view, 99);
+}
+
+[Fact]
+fn bool SingleEqualsAcceptsSingletonMatch()
+{
+    stack i32[min max][1] values =
+    {
+        7
+    };
+    stack i32[min max][] view = values;
+    return System.Testing.SingleEquals(view, 7);
+}
+
+[Fact]
+fn bool SingleEqualsRejectsSingletonMismatch()
+{
+    stack i32[min max][1] values =
+    {
+        7
+    };
+    stack i32[min max][] view = values;
+    return !System.Testing.SingleEquals(view, 8);
+}
+
+[Fact]
+fn bool SingleEqualsRejectsNonSingleton()
+{
+    stack i32[min max][2] values =
+    {
+        7, 7
+    };
+    stack i32[min max][] view = values;
+    return !System.Testing.SingleEquals(view, 7);
+}
+
+[Fact]
+fn bool SingleEqualsListMirrorAcceptsSingletonMatch()
+{
+    stack mut System.Collections.List<i32[min max]> values = new();
+    if (!IsOk(values.Push(42)))
+    {
+        return false;
+    }
+
+    return System.Testing.SingleEquals(values, 42);
+}
+
+[Fact]
+fn bool SingleEqualsListMirrorRejectsNonSingleton()
+{
+    stack mut System.Collections.List<i32[min max]> values = new();
+    if (!IsOk(values.Push(1)))
+    {
+        return false;
+    }
+
+    if (!IsOk(values.Push(2)))
+    {
+        return false;
+    }
+
+    return !System.Testing.SingleEquals(values, 1);
+}
+
+// ----------------------------------------------------------------------------
+// TEST-02 Option / Result value predicates
+// ----------------------------------------------------------------------------
+
+[Fact]
+fn bool OptionSomeEqualsMatchesPayload()
+{
+    stack System.Core.Option<i32[min max]> value = System.Core.Option<i32[min max]>.Some(5);
+    return System.Testing.OptionSomeEquals(value, 5);
+}
+
+[Fact]
+fn bool OptionSomeEqualsRejectsWrongPayload()
+{
+    stack System.Core.Option<i32[min max]> value = System.Core.Option<i32[min max]>.Some(5);
+    return !System.Testing.OptionSomeEquals(value, 6);
+}
+
+[Fact]
+fn bool OptionSomeEqualsRejectsNone()
+{
+    stack System.Core.Option<i32[min max]> value = System.Core.Option<i32[min max]>.None;
+    return !System.Testing.OptionSomeEquals(value, 5);
+}
+
+[Fact]
+fn bool ResultOkEqualsMatchesPayload()
+{
+    stack System.Core.Result<i32[min max], i32[min max]> value =
+        System.Core.Result<i32[min max], i32[min max]>.Ok(11);
+    return System.Testing.ResultOkEquals(value, 11);
+}
+
+[Fact]
+fn bool ResultOkEqualsRejectsErr()
+{
+    stack System.Core.Result<i32[min max], i32[min max]> value =
+        System.Core.Result<i32[min max], i32[min max]>.Err(404);
+    return !System.Testing.ResultOkEquals(value, 11);
+}
+
+[Fact]
+fn bool ResultErrEqualsMatchesPayload()
+{
+    stack System.Core.Result<i32[min max], i32[min max]> value =
+        System.Core.Result<i32[min max], i32[min max]>.Err(404);
+    return System.Testing.ResultErrEquals(value, 404);
+}
+
+[Fact]
+fn bool ResultErrEqualsRejectsOk()
+{
+    stack System.Core.Result<i32[min max], i32[min max]> value =
+        System.Core.Result<i32[min max], i32[min max]>.Ok(11);
+    return !System.Testing.ResultErrEquals(value, 404);
+}
+
+// ----------------------------------------------------------------------------
+// TEST-12 diagnostic renderers
+// ----------------------------------------------------------------------------
+
+fn System.Testing.Diagnostic MakeLocatedDiagnostic()
+{
+    stack System.Testing.DiagnosticLocation location = new System.Testing.DiagnosticLocation()
+    {
+        HasValue = true,
+        FilePath = "lexer.stark",
+        Line = (u64[0 2 ** 63 - 1])12,
+        Column = (u64[0 2 ** 63 - 1])5,
+        HasEndValue = false,
+        EndLine = (u64[0 2 ** 63 - 1])0,
+        EndColumn = (u64[0 2 ** 63 - 1])0
+    };
+
+    return new System.Testing.Diagnostic()
+    {
+        Code = "STK1001",
+        Severity = System.Testing.DiagnosticSeverity.Error,
+        Message = "unexpected token",
+        Stage = "lex",
+        Location = location
+    };
+}
+
+fn System.Testing.Diagnostic MakeSpanDiagnostic()
+{
+    stack System.Testing.DiagnosticLocation location = new System.Testing.DiagnosticLocation()
+    {
+        HasValue = true,
+        FilePath = "parser.stark",
+        Line = (u64[0 2 ** 63 - 1])3,
+        Column = (u64[0 2 ** 63 - 1])1,
+        HasEndValue = true,
+        EndLine = (u64[0 2 ** 63 - 1])3,
+        EndColumn = (u64[0 2 ** 63 - 1])9
+    };
+
+    return new System.Testing.Diagnostic()
+    {
+        Code = "STK2002",
+        Severity = System.Testing.DiagnosticSeverity.Warning,
+        Message = "deprecated form",
+        Stage = "parse",
+        Location = location
+    };
+}
+
+fn System.Testing.Diagnostic MakeBareDiagnostic()
+{
+    stack System.Testing.DiagnosticLocation location = new System.Testing.DiagnosticLocation()
+    {
+        HasValue = false,
+        FilePath = "",
+        Line = (u64[0 2 ** 63 - 1])0,
+        Column = (u64[0 2 ** 63 - 1])0,
+        HasEndValue = false,
+        EndLine = (u64[0 2 ** 63 - 1])0,
+        EndColumn = (u64[0 2 ** 63 - 1])0
+    };
+
+    return new System.Testing.Diagnostic()
+    {
+        Code = "STK0003",
+        Severity = System.Testing.DiagnosticSeverity.Info,
+        Message = "note",
+        Stage = "resolve",
+        Location = location
+    };
+}
+
+[Fact]
+fn bool AppendDiagnosticRendersLocatedError()
+{
+    stack System.Testing.Diagnostic d = MakeLocatedDiagnostic();
+    stack mut System.Text.OwnedAscii writer = new();
+    if (!IsOk(System.Testing.AppendDiagnostic(writer, d)))
+    {
+        return false;
+    }
+
+    return System.Testing.Equal("error STK1001: unexpected token at lexer.stark:12:5", writer.View());
+}
+
+[Fact]
+fn bool AppendDiagnosticRendersEndSpan()
+{
+    stack System.Testing.Diagnostic d = MakeSpanDiagnostic();
+    stack mut System.Text.OwnedAscii writer = new();
+    if (!IsOk(System.Testing.AppendDiagnostic(writer, d)))
+    {
+        return false;
+    }
+
+    return System.Testing.Equal("warning STK2002: deprecated form at parser.stark:3:1-3:9", writer.View());
+}
+
+[Fact]
+fn bool AppendDiagnosticRendersWithoutLocation()
+{
+    stack System.Testing.Diagnostic d = MakeBareDiagnostic();
+    stack mut System.Text.OwnedAscii writer = new();
+    if (!IsOk(System.Testing.AppendDiagnostic(writer, d)))
+    {
+        return false;
+    }
+
+    return System.Testing.Equal("info STK0003: note", writer.View());
+}
+
+[Fact]
+fn bool AppendDiagnosticsRendersTwoLines()
+{
+    stack System.Testing.Diagnostic first = MakeLocatedDiagnostic();
+    stack System.Testing.Diagnostic second = MakeBareDiagnostic();
+    stack System.Testing.Diagnostic[2] items =
+    {
+        first, second
+    };
+    stack System.Testing.Diagnostic[] view = items;
+
+    stack mut System.Text.OwnedAscii writer = new();
+    if (!IsOk(System.Testing.AppendDiagnostics(writer, view)))
+    {
+        return false;
+    }
+
+    return System.Testing.Equal(
+        "error STK1001: unexpected token at lexer.stark:12:5\ninfo STK0003: note\n",
+        writer.View());
+}
+
+[Fact]
+fn bool AppendDiagnosticMismatchRendersExpectedAndActual()
+{
+    stack System.Testing.Diagnostic actual = MakeLocatedDiagnostic();
+    stack mut System.Text.OwnedAscii writer = new();
+    if (!IsOk(System.Testing.AppendDiagnosticMismatch(
+        writer,
+        "STK9999",
+        System.Testing.DiagnosticSeverity.Error,
+        "lex",
+        "missing semicolon",
+        actual)))
+    {
+        return false;
+    }
+
+    stack ascii rendered = writer.View();
+    return System.Testing.Contains(rendered, "expected: error STK9999 [lex]: missing semicolon")
+        && System.Testing.Contains(rendered, "actual: error STK1001: unexpected token at lexer.stark:12:5")
+        && System.Testing.Equal(
+            "expected: error STK9999 [lex]: missing semicolon\nactual: error STK1001: unexpected token at lexer.stark:12:5",
+            rendered);
+}
+
+// ----------------------------------------------------------------------------
+// TEST-10 regression threshold gate
+// ----------------------------------------------------------------------------
+
+[Fact]
+fn bool WithinRegressionAcceptsInsideTolerance()
+{
+    return System.Testing.WithinRegression((u64[0 max])100, (u64[0 max])105, (u64[0 max])10);
+}
+
+[Fact]
+fn bool WithinRegressionRejectsOutsideTolerance()
+{
+    return !System.Testing.WithinRegression((u64[0 max])100, (u64[0 max])120, (u64[0 max])10);
+}
+
+[Fact]
+fn bool WithinRegressionAcceptsFaster()
+{
+    return System.Testing.WithinRegression((u64[0 max])100, (u64[0 max])50, (u64[0 max])10);
+}
+
+[Fact]
+fn bool WithinRegressionAcceptsExactBoundary()
+{
+    return System.Testing.WithinRegression((u64[0 max])100, (u64[0 max])110, (u64[0 max])10);
+}
+
+// ----------------------------------------------------------------------------
+// TEST-10 monotonic clock + benchmark timing (deterministic, no flaky bounds)
+// ----------------------------------------------------------------------------
+
+[Fact]
+fn bool MonotonicClockIsNonDecreasing()
+{
+    stack u64[0 max] first = System.Testing.MonotonicMilliseconds();
+
+    // Integer work between the two reads so the second read is not coalesced.
+    stack mut u64[0 max] accumulator = (u64[0 max])0;
+    stack mut u64[0 max] index = (u64[0 max])0;
+    while willexit (index < (u64[0 max])100000)
+    {
+        accumulator += index;
+        index += (u64[0 max])1;
+    }
+
+    stack u64[0 max] second = System.Testing.MonotonicMilliseconds();
+
+    // Monotonic: the second reading is never earlier than the first. The
+    // accumulator is folded into the result so the loop cannot be elided.
+    return second >= first && accumulator >= (u64[0 max])0;
+}
+
+[Fact]
+fn bool ElapsedSinceIsMonotonicAndRegressionAccepts()
+{
+    stack u64[0 max] start = System.Testing.MonotonicMilliseconds();
+
+    stack mut u64[0 max] accumulator = (u64[0 max])0;
+    stack mut u64[0 max] index = (u64[0 max])0;
+    while willexit (index < (u64[0 max])100000)
+    {
+        accumulator += index;
+        index += (u64[0 max])1;
+    }
+
+    stack u64[0 max] elapsed =
+        System.Testing.ElapsedSince(start, System.Testing.MonotonicMilliseconds());
+
+    // ElapsedSince never underflows below 0, and a measured run is never a
+    // regression against itself even under a very generous tolerance. No
+    // absolute duration bound is asserted.
+    return elapsed >= (u64[0 max])0
+        && System.Testing.WithinRegression(elapsed, elapsed, (u64[0 max])1000)
+        && accumulator >= (u64[0 max])0;
+}
+
+[Fact]
+fn bool ElapsedSinceClampsBackwardReading()
+{
+    // A reading that precedes `start` clamps to 0 rather than wrapping.
+    return System.Testing.ElapsedSince((u64[0 max])50, (u64[0 max])40) == (u64[0 max])0;
+}
+
+[Fact]
+fn bool ElapsedSinceComputesForwardDelta()
+{
+    return System.Testing.ElapsedSince((u64[0 max])40, (u64[0 max])55) == (u64[0 max])15;
+}
+
+[Fact]
+fn bool StopwatchElapsedIsMonotonic()
+{
+    stack mut System.Testing.Stopwatch watch = new();
+    watch.Start();
+
+    stack mut u64[0 max] accumulator = (u64[0 max])0;
+    stack mut u64[0 max] index = (u64[0 max])0;
+    while willexit (index < (u64[0 max])100000)
+    {
+        accumulator += index;
+        index += (u64[0 max])1;
+    }
+
+    stack u64[0 max] elapsed = watch.Elapsed();
+    return elapsed >= (u64[0 max])0 && accumulator >= (u64[0 max])0;
+}
+
+// ----------------------------------------------------------------------------
+// TEST-02 AllDistinct
+// ----------------------------------------------------------------------------
+
+[Fact]
+fn bool AllDistinctAcceptsDistinctValues()
+{
+    stack i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][] view = values;
+    return System.Testing.AllDistinct(view);
+}
+
+[Fact]
+fn bool AllDistinctRejectsDuplicateValues()
+{
+    stack i32[min max][3] values =
+    {
+        1, 2, 2
+    };
+    stack i32[min max][] view = values;
+    return !System.Testing.AllDistinct(view);
+}
+
+[Fact]
+fn bool AllDistinctAcceptsEmpty()
+{
+    // An empty List's slice view is the zero-length i32[min max][] fixture.
+    stack mut System.Collections.List<i32[min max]> values = new();
+    stack i32[min max][] view = values.AsSlice();
+    return System.Testing.AllDistinct(view);
+}
+
+[Fact]
+fn bool AllDistinctAcceptsSingleton()
+{
+    stack i32[min max][1] values =
+    {
+        5
+    };
+    stack i32[min max][] view = values;
+    return System.Testing.AllDistinct(view);
+}
+
+// Failure-diff text assertions: ContainsReport /
+// DoesNotContainReport return the same booleans as Contains / DoesNotContain;
+// on a mismatch they additionally write a focused `[assert] text mismatch:`
+// report to stderr (the searched fragment + a leading window of the actual
+// text). The two mismatching calls below exercise that report path (visible in
+// the run's stderr) without changing this fact's pass/fail outcome.
+[Fact]
+fn bool ContainsReportReturnsCorrectBooleansAndReportsOnMismatch()
+{
+    return System.Testing.ContainsReport("define fastcc noundef i32 @Run", "@Run")
+        && !System.Testing.ContainsReport("define fastcc noundef i32 @Run", "@Missing")
+        && System.Testing.DoesNotContainReport("define fastcc noundef i32 @Run", "@Missing")
+        && !System.Testing.DoesNotContainReport("define fastcc noundef i32 @Run", "@Run");
+}

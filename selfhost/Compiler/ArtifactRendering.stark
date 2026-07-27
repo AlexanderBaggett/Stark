@@ -1,0 +1,1453 @@
+import Compiler.Binding
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir
+import Compiler.Parsing
+import Compiler.Typing
+import System.Memory
+import System.Text
+module Compiler.ArtifactRendering
+
+public finite law ascii SyntaxKindName(SyntaxKind kind)
+{
+    switch (kind)
+    {
+        case SyntaxKind.ImportDeclaration:
+            return "import";
+        case SyntaxKind.ModuleDeclaration:
+            return "module";
+    }
+}
+
+public finite law ascii DeclarationKindName(DeclarationKind kind)
+{
+    switch (kind)
+    {
+        case DeclarationKind.Struct:
+            return "struct";
+        case DeclarationKind.Enum:
+            return "enum";
+        case DeclarationKind.Record:
+            return "record";
+        case DeclarationKind.Trait:
+            return "trait";
+        case DeclarationKind.Doctrine:
+            return "doctrine";
+        case DeclarationKind.Alias:
+            return "alias";
+        case DeclarationKind.Function:
+            return "function";
+        case DeclarationKind.Const:
+            return "const";
+        case DeclarationKind.Static:
+            return "static";
+        case DeclarationKind.GlobalVariable:
+            return "global";
+        case DeclarationKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii SyntaxDiagnosticKindName(SyntaxDiagnosticKind kind)
+{
+    switch (kind)
+    {
+        case SyntaxDiagnosticKind.UnexpectedToken:
+            return "unexpected-token";
+        case SyntaxDiagnosticKind.ExpectedName:
+            return "expected-name";
+        case SyntaxDiagnosticKind.ExpectedExpression:
+            return "expected-expression";
+        case SyntaxDiagnosticKind.InvalidTextLiteral:
+            return "invalid-text-literal";
+        case SyntaxDiagnosticKind.UnexpectedTextAfterExpression:
+            return "unexpected-text-after-expression";
+        case SyntaxDiagnosticKind.LexUnexpectedCharacter:
+            return "lex-unexpected-character";
+        case SyntaxDiagnosticKind.LexUnterminatedString:
+            return "lex-unterminated-string";
+        case SyntaxDiagnosticKind.LexUnterminatedCharacter:
+            return "lex-unterminated-character";
+        case SyntaxDiagnosticKind.LexUnterminatedBlockComment:
+            return "lex-unterminated-block-comment";
+    }
+}
+
+public finite law ascii ExprKindName(Compiler.Parsing.ExprKind kind)
+{
+    switch (kind)
+    {
+        case Compiler.Parsing.ExprKind.IntLiteral:
+            return "int-literal";
+        case Compiler.Parsing.ExprKind.FloatLiteral:
+            return "float-literal";
+        case Compiler.Parsing.ExprKind.StringLiteral:
+            return "string-literal";
+        case Compiler.Parsing.ExprKind.CharacterLiteral:
+            return "character-literal";
+        case Compiler.Parsing.ExprKind.BoolLiteral:
+            return "bool-literal";
+        case Compiler.Parsing.ExprKind.NullLiteral:
+            return "null-literal";
+        case Compiler.Parsing.ExprKind.Identifier:
+            return "identifier";
+        case Compiler.Parsing.ExprKind.Unary:
+            return "unary";
+        case Compiler.Parsing.ExprKind.Binary:
+            return "binary";
+        case Compiler.Parsing.ExprKind.Member:
+            return "member";
+        case Compiler.Parsing.ExprKind.Call:
+            return "call";
+        case Compiler.Parsing.ExprKind.Index:
+            return "index";
+        case Compiler.Parsing.ExprKind.New:
+            return "new";
+        case Compiler.Parsing.ExprKind.StorageSelector:
+            return "storage-selector";
+        case Compiler.Parsing.ExprKind.Conversion:
+            return "conversion";
+        case Compiler.Parsing.ExprKind.Assign:
+            return "assign";
+        case Compiler.Parsing.ExprKind.Conditional:
+            return "conditional";
+        case Compiler.Parsing.ExprKind.Error:
+            return "error";
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendBoolText(mut borrow OwnedAscii writer, bool value)
+{
+    if (value)
+    {
+        return writer.AppendAscii("true");
+    }
+
+    return writer.AppendAscii("false");
+}
+
+internal fn System.Memory.MemoryStatus AppendU32Text(mut borrow OwnedAscii writer, u32[0 max] value)
+{
+    return writer.AppendU64((u64[0 max])value);
+}
+
+internal fn System.Memory.MemoryStatus AppendU64Text(
+    mut borrow OwnedAscii writer,
+    u64[0 2 ** 63 - 1] value)
+{
+    return writer.AppendU64((u64[0 max])value);
+}
+
+internal fn System.Memory.MemoryStatus AppendU64MaxText(mut borrow OwnedAscii writer, u64[0 max] value)
+{
+    return writer.AppendU64(value);
+}
+
+internal fn System.Memory.MemoryStatus AppendI64Text(mut borrow OwnedAscii writer, i64[min max] value)
+{
+    return writer.AppendI64(value);
+}
+
+internal fn System.Memory.MemoryStatus AppendOptionalTokenText(
+    mut borrow OwnedAscii writer,
+    ascii label,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token)
+{
+    try writer.AppendAscii(label);
+    try AppendU32Text(writer, token);
+    if (token != 0)
+    {
+        try writer.AppendAscii(" text=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token));
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public finite law ascii ModuleOriginName(ModuleOrigin origin)
+{
+    switch (origin)
+    {
+        case ModuleOrigin.Source:
+            return "source";
+        case ModuleOrigin.Package:
+            return "package";
+    }
+}
+
+public finite law ascii TypedModuleSymbolVisibilityName(TypedModuleSymbolVisibility visibility)
+{
+    switch (visibility)
+    {
+        case TypedModuleSymbolVisibility.ModulePrivate:
+            return "module-private";
+        case TypedModuleSymbolVisibility.Internal:
+            return "internal";
+        case TypedModuleSymbolVisibility.Public:
+            return "public";
+        case TypedModuleSymbolVisibility.Export:
+            return "export";
+    }
+}
+
+public finite law ascii TypedDeclarationSymbolClassName(TypedDeclarationSymbolClass class)
+{
+    switch (class)
+    {
+        case TypedDeclarationSymbolClass.Type:
+            return "type";
+        case TypedDeclarationSymbolClass.Function:
+            return "function";
+        case TypedDeclarationSymbolClass.Value:
+            return "value";
+        case TypedDeclarationSymbolClass.Alias:
+            return "alias";
+        case TypedDeclarationSymbolClass.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedDeclarationFunctionKindName(TypedDeclarationFunctionKind kind)
+{
+    switch (kind)
+    {
+        case TypedDeclarationFunctionKind.Fn:
+            return "fn";
+        case TypedDeclarationFunctionKind.Finite:
+            return "finite";
+        case TypedDeclarationFunctionKind.Law:
+            return "law";
+        case TypedDeclarationFunctionKind.FiniteLaw:
+            return "finite-law";
+    }
+}
+
+public finite law ascii TypedDeclarationStorageKindName(TypedDeclarationStorageKind kind)
+{
+    switch (kind)
+    {
+        case TypedDeclarationStorageKind.None:
+            return "none";
+        case TypedDeclarationStorageKind.Const:
+            return "const";
+        case TypedDeclarationStorageKind.Static:
+            return "static";
+        case TypedDeclarationStorageKind.Heap:
+            return "heap";
+        case TypedDeclarationStorageKind.Stack:
+            return "stack";
+        case TypedDeclarationStorageKind.Register:
+            return "register";
+        case TypedDeclarationStorageKind.Arena:
+            return "arena";
+    }
+}
+
+public finite law ascii TypedSignatureOwnerKindName(TypedSignatureOwnerKind kind)
+{
+    switch (kind)
+    {
+        case TypedSignatureOwnerKind.TopLevelFunction:
+            return "top-level-function";
+        case TypedSignatureOwnerKind.MemberMethod:
+            return "member-method";
+        case TypedSignatureOwnerKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedSignatureSlotKindName(TypedSignatureSlotKind kind)
+{
+    switch (kind)
+    {
+        case TypedSignatureSlotKind.Return:
+            return "return";
+        case TypedSignatureSlotKind.Parameter:
+            return "parameter";
+    }
+}
+
+public finite law ascii TypedSignatureTypeKindName(TypedSignatureTypeKind kind)
+{
+    switch (kind)
+    {
+        case TypedSignatureTypeKind.Void:
+            return "void";
+        case TypedSignatureTypeKind.Bool:
+            return "bool";
+        case TypedSignatureTypeKind.Integer:
+            return "integer";
+        case TypedSignatureTypeKind.Float:
+            return "float";
+        case TypedSignatureTypeKind.Text:
+            return "text";
+        case TypedSignatureTypeKind.Named:
+            return "named";
+        case TypedSignatureTypeKind.GenericParameter:
+            return "generic-parameter";
+        case TypedSignatureTypeKind.RawPointer:
+            return "raw-pointer";
+        case TypedSignatureTypeKind.FunctionPointer:
+            return "function-pointer";
+        case TypedSignatureTypeKind.Closure:
+            return "closure";
+        case TypedSignatureTypeKind.Dynamic:
+            return "dynamic";
+        case TypedSignatureTypeKind.FixedArray:
+            return "fixed-array";
+        case TypedSignatureTypeKind.Slice:
+            return "slice";
+        case TypedSignatureTypeKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedGlobalBindingKindName(TypedGlobalBindingKind kind)
+{
+    switch (kind)
+    {
+        case TypedGlobalBindingKind.Const:
+            return "const";
+        case TypedGlobalBindingKind.Immutable:
+            return "immutable";
+        case TypedGlobalBindingKind.Mutable:
+            return "mutable";
+        case TypedGlobalBindingKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedGlobalStorageKindName(TypedGlobalStorageKind kind)
+{
+    switch (kind)
+    {
+        case TypedGlobalStorageKind.Const:
+            return "const";
+        case TypedGlobalStorageKind.Static:
+            return "static";
+        case TypedGlobalStorageKind.Heap:
+            return "heap";
+        case TypedGlobalStorageKind.Stack:
+            return "stack";
+        case TypedGlobalStorageKind.Register:
+            return "register";
+        case TypedGlobalStorageKind.Arena:
+            return "arena";
+        case TypedGlobalStorageKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedEnumPayloadKindName(TypedEnumPayloadKind kind)
+{
+    switch (kind)
+    {
+        case TypedEnumPayloadKind.Positional:
+            return "positional";
+        case TypedEnumPayloadKind.Named:
+            return "named";
+        case TypedEnumPayloadKind.From:
+            return "from";
+        case TypedEnumPayloadKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii TypedEnumVariantRoleName(TypedEnumVariantRole role)
+{
+    switch (role)
+    {
+        case TypedEnumVariantRole.None:
+            return "none";
+        case TypedEnumVariantRole.Ok:
+            return "ok";
+        case TypedEnumVariantRole.Err:
+            return "err";
+        case TypedEnumVariantRole.OkErr:
+            return "ok-err";
+    }
+}
+
+public finite law ascii TypedEnumLayoutRowKindName(TypedEnumLayoutRowKind kind)
+{
+    switch (kind)
+    {
+        case TypedEnumLayoutRowKind.Variant:
+            return "variant";
+        case TypedEnumLayoutRowKind.Payload:
+            return "payload";
+        case TypedEnumLayoutRowKind.Unknown:
+            return "unknown";
+    }
+}
+
+public finite law ascii AbiKindName(AbiKind kind)
+{
+    switch (kind)
+    {
+        case AbiKind.StarkAbi:
+            return "stark";
+        case AbiKind.CAbi:
+            return "c";
+        case AbiKind.PlatformAbi:
+            return "platform";
+    }
+}
+
+public finite law ascii MirOpName(MirOp op)
+{
+    switch (op)
+    {
+        case MirOp.ConstInt:
+            return "const-int";
+        case MirOp.Param:
+            return "param";
+        case MirOp.SliceParamBase:
+            return "slice-param-base";
+        case MirOp.SliceParamLength:
+            return "slice-param-length";
+        case MirOp.SliceValue:
+            return "slice-value";
+        case MirOp.TextConstantValue:
+            return "text-constant-value";
+        case MirOp.FloatConstantValue:
+            return "float-constant-value";
+        case MirOp.FixedArrayParamElement:
+            return "fixed-array-param-element";
+        case MirOp.StructParamField:
+            return "struct-param-field";
+        case MirOp.FixedArrayParamSlot:
+            return "fixed-array-param-slot";
+        case MirOp.FixedArrayLoad:
+            return "fixed-array-load";
+        case MirOp.StructValueLoad:
+            return "struct-value-load";
+        case MirOp.Add:
+            return "add";
+        case MirOp.Sub:
+            return "sub";
+        case MirOp.Mul:
+            return "mul";
+        case MirOp.WrappingAdd:
+            return "wrapping-add";
+        case MirOp.WrappingSub:
+            return "wrapping-sub";
+        case MirOp.WrappingMul:
+            return "wrapping-mul";
+        case MirOp.SaturatingAdd:
+            return "saturating-add";
+        case MirOp.SaturatingSub:
+            return "saturating-sub";
+        case MirOp.SaturatingMul:
+            return "saturating-mul";
+        case MirOp.SDiv:
+            return "sdiv";
+        case MirOp.UDiv:
+            return "udiv";
+        case MirOp.SRem:
+            return "srem";
+        case MirOp.And:
+            return "and";
+        case MirOp.Or:
+            return "or";
+        case MirOp.Xor:
+            return "xor";
+        case MirOp.Shl:
+            return "shl";
+        case MirOp.AShr:
+            return "ashr";
+        case MirOp.CmpEq:
+            return "cmp-eq";
+        case MirOp.CmpNe:
+            return "cmp-ne";
+        case MirOp.CmpLt:
+            return "cmp-lt";
+        case MirOp.CmpLe:
+            return "cmp-le";
+        case MirOp.CmpGt:
+            return "cmp-gt";
+        case MirOp.CmpGe:
+            return "cmp-ge";
+        case MirOp.ZExt:
+            return "zext";
+        case MirOp.LoadGlobal:
+            return "load-global";
+        case MirOp.StoreGlobal:
+            return "store-global";
+        case MirOp.StackAlloc:
+            return "stack-alloc";
+        case MirOp.HeapAlloc:
+            return "heap-alloc";
+        case MirOp.PtrOffset:
+            return "ptr-offset";
+        case MirOp.PtrIndexOffset:
+            return "ptr-index-offset";
+        case MirOp.PtrIndexOffsetUnbounded:
+            return "ptr-index-offset-unbounded";
+        case MirOp.LoadPtr:
+            return "load-ptr";
+        case MirOp.StorePtr:
+            return "store-ptr";
+        case MirOp.LoadEnumPtr:
+            return "load-enum-ptr";
+        case MirOp.StoreEnumPtr:
+            return "store-enum-ptr";
+        case MirOp.ArenaFrameEnter:
+            return "arena-frame-enter";
+        case MirOp.ArenaAlloc:
+            return "arena-alloc";
+        case MirOp.ArenaDynamicStorageInit:
+            return "arena-dynamic-storage-init";
+        case MirOp.ArenaDynamicStorageReserve:
+            return "arena-dynamic-storage-reserve";
+        case MirOp.ArenaDynamicStorageTryReserve:
+            return "arena-dynamic-storage-try-reserve";
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            return "arena-dynamic-storage-try-reserve-capacity";
+        case MirOp.ArenaFrameLeave:
+            return "arena-frame-leave";
+        case MirOp.Phi:
+            return "phi";
+        case MirOp.CallArg:
+            return "call-arg";
+        case MirOp.Call:
+            return "call";
+        case MirOp.CallWide:
+            return "call-wide";
+        case MirOp.TailCall:
+            return "tail-call";
+        case MirOp.TailCallWide:
+            return "tail-call-wide";
+        case MirOp.EnumVariantTag:
+            return "enum-variant-tag";
+        case MirOp.EnumPayloadInsert:
+            return "enum-payload-insert";
+        case MirOp.EnumTagRead:
+            return "enum-tag-read";
+        case MirOp.EnumPayloadExtract:
+            return "enum-payload-extract";
+        case MirOp.Return:
+            return "return";
+    }
+}
+
+public finite law ascii MirTypeName(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return "i1";
+        case MirType.I8:
+            return "i8";
+        case MirType.I16:
+            return "i16";
+        case MirType.I32:
+            return "i32";
+        case MirType.I64:
+            return "i64";
+        case MirType.F32:
+            return "f32";
+        case MirType.F64:
+            return "f64";
+        case MirType.Ptr:
+            return "ptr";
+        case MirType.EnumValue:
+            return "enum";
+    }
+}
+
+public finite law ascii MirTermKindName(MirTermKind kind)
+{
+    switch (kind)
+    {
+        case MirTermKind.Unterminated:
+            return "unterminated";
+        case MirTermKind.Return:
+            return "return";
+        case MirTermKind.ReturnVoid:
+            return "return-void";
+        case MirTermKind.Branch:
+            return "branch";
+        case MirTermKind.CondBranch:
+            return "cond-branch";
+        case MirTermKind.TailCall:
+            return "tail-call";
+    }
+}
+
+public fn System.Memory.MemoryStatus AppendMirInstructionArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirInstruction> instructions)
+{
+    try writer.AppendAscii("mir instructions\n");
+    try writer.AppendAscii("  instructions: ");
+    try AppendU64Text(writer, instructions.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= instructions.Count())
+    {
+        stack MirInstruction instruction = instructions.Get(index);
+        try writer.AppendAscii("    ");
+        try AppendU32Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(MirOpName(instruction.Opcode()));
+        try writer.AppendAscii(" type=");
+        try writer.AppendAscii(MirTypeName(instruction.ResultType()));
+        try writer.AppendAscii(" a=");
+        try AppendU32Text(writer, instruction.OperandAIndex());
+        try writer.AppendAscii(" b=");
+        try AppendU32Text(writer, instruction.OperandBIndex());
+        try writer.AppendAscii(" c=");
+        try AppendU32Text(writer, instruction.OperandCIndex());
+        try writer.AppendAscii(" d=");
+        try AppendU32Text(writer, instruction.OperandDIndex());
+        try writer.AppendAscii(" imm=");
+        try AppendI64Text(writer, instruction.Immediate());
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendMirBlockArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirBlock> blocks)
+{
+    try writer.AppendAscii("mir blocks\n");
+    try writer.AppendAscii("  blocks: ");
+    try AppendU64Text(writer, blocks.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= blocks.Count())
+    {
+        stack MirBlock block = blocks.Get(index);
+        try writer.AppendAscii("    ");
+        try AppendU32Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(MirTermKindName(block.Terminator()));
+        try writer.AppendAscii(" slot0=");
+        try AppendU32Text(writer, block.Slot0Index());
+        try writer.AppendAscii(" slot1=");
+        try AppendU32Text(writer, block.Slot1Index());
+        try writer.AppendAscii(" slot2=");
+        try AppendU32Text(writer, block.Slot2Index());
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendMirFunctionArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirFunction> functions)
+{
+    try writer.AppendAscii("mir functions\n");
+    try writer.AppendAscii("  functions: ");
+    try AppendU64Text(writer, functions.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= functions.Count())
+    {
+        stack MirFunction function = functions.Get(index);
+        try writer.AppendAscii("    ");
+        try AppendU32Text(writer, index);
+        try writer.AppendAscii(": entry=");
+        try AppendU32Text(writer, function.EntryIndex());
+        try writer.AppendAscii(" blocks=");
+        try AppendU32Text(writer, function.FirstBlockIndex());
+        try writer.AppendAscii("+");
+        try AppendU32Text(writer, function.OwnedBlockCount());
+        try writer.AppendAscii(" instructions=");
+        try AppendU32Text(writer, function.FirstInstrIndex());
+        try writer.AppendAscii("+");
+        try AppendU32Text(writer, function.OwnedInstrCount());
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendMirArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions)
+{
+    try AppendMirInstructionArtifact(writer, instructions);
+    try AppendMirBlockArtifact(writer, blocks);
+    return AppendMirFunctionArtifact(writer, functions);
+}
+
+public fn System.Memory.MemoryStatus AppendSsaValueFactsArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<ValueFacts> facts)
+{
+    try writer.AppendAscii("ssa value-facts\n");
+    try writer.AppendAscii("  values: ");
+    try AppendU64Text(writer, facts.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= facts.Count())
+    {
+        stack ValueFacts row = facts.Get(index);
+        try writer.AppendAscii("    ");
+        try AppendU32Text(writer, index);
+        try writer.AppendAscii(": align-present=");
+        try AppendBoolText(writer, row.HasAlignment());
+        try writer.AppendAscii(" align=");
+        try AppendU32Text(writer, row.AlignmentBytes());
+        try writer.AppendAscii(" abi-present=");
+        try AppendBoolText(writer, row.HasCallingAbi());
+        try writer.AppendAscii(" abi=");
+        try writer.AppendAscii(AbiKindName(row.CallingAbi()));
+        try writer.AppendAscii(" noalias=");
+        try AppendBoolText(writer, row.HasNoAlias());
+        try writer.AppendAscii(" volatile=");
+        try AppendBoolText(writer, row.Volatile());
+        try writer.AppendAscii(" range-present=");
+        try AppendBoolText(writer, row.HasIntegerRange());
+        try writer.AppendAscii(" range=");
+        try AppendI64Text(writer, row.IntegerRangeLower());
+        try writer.AppendAscii("..");
+        try AppendI64Text(writer, row.IntegerRangeUpperExclusive());
+        try writer.AppendAscii(" text-present=");
+        try AppendBoolText(writer, row.HasTextConstant());
+        try writer.AppendAscii(" text-row=");
+        try AppendU32Text(writer, row.TextConstantRowIndex());
+        try writer.AppendAscii(" text-start=");
+        try AppendU32Text(writer, row.TextConstantPayloadStart());
+        try writer.AppendAscii(" text-bytes=");
+        try AppendU32Text(writer, row.TextConstantPayloadByteLength());
+        try writer.AppendAscii(" text-codepoints=");
+        try AppendU32Text(writer, row.TextConstantCodePointLength());
+        try writer.AppendAscii(" text-encoding=");
+        try AppendU32Text(writer, row.TextConstantStorageEncodingCode());
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendLlvmModuleArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions,
+    borrow IrTable<MirGlobal> globals)
+{
+    try writer.AppendAscii("llvm module\n");
+    return EmitLlvmModuleWithGlobals(instructions, blocks, functions, globals, writer);
+}
+
+public fn System.Memory.MemoryStatus AppendLlvmModuleArtifactWithEnumLayouts(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts)
+{
+    try writer.AppendAscii("llvm module\n");
+    return EmitLlvmModuleWithGlobalsAndEnumLayouts(instructions, blocks, functions, globals, enumLayoutFacts, writer);
+}
+
+public fn System.Memory.MemoryStatus AppendPackageImageArtifact(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<u8[0 max]> image)
+{
+    try writer.AppendAscii("package image\n");
+    return InspectPackageImage(image, writer);
+}
+
+internal fn System.Memory.MemoryStatus AppendCommonTypeTokenFacts(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    TypedSignatureTypeKind kind,
+    u32[0 max] headToken,
+    u32[0 max] primaryToken,
+    u32[0 max] startToken,
+    u32[0 max] endToken,
+    u32[0 max] rangeStartToken,
+    u32[0 max] rangeEndToken,
+    u32[0 max] elementCountStartToken,
+    u32[0 max] elementCountEndToken,
+    u32[0 max] bitWidth,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeArgumentCount,
+    u32[0 max] flags)
+{
+    try writer.AppendAscii(" type=");
+    try writer.AppendAscii(TypedSignatureTypeKindName(kind));
+    try AppendOptionalTokenText(writer, " head=", source, stream, headToken);
+    try AppendOptionalTokenText(writer, " primary=", source, stream, primaryToken);
+    try writer.AppendAscii(" span=");
+    try AppendU32Text(writer, startToken);
+    try writer.AppendAscii("..");
+    try AppendU32Text(writer, endToken);
+    try writer.AppendAscii(" range=");
+    try AppendU32Text(writer, rangeStartToken);
+    try writer.AppendAscii("..");
+    try AppendU32Text(writer, rangeEndToken);
+    try writer.AppendAscii(" elements=");
+    try AppendU32Text(writer, elementCountStartToken);
+    try writer.AppendAscii("..");
+    try AppendU32Text(writer, elementCountEndToken);
+    try writer.AppendAscii(" bits=");
+    try AppendU32Text(writer, bitWidth);
+    try writer.AppendAscii(" type-args=");
+    try AppendU32Text(writer, typeArgumentCount);
+    try writer.AppendAscii(" comptime-args=");
+    try AppendU32Text(writer, comptimeArgumentCount);
+    try writer.AppendAscii(" flags=");
+    try AppendU32Text(writer, flags);
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedModuleSymbolArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedModuleSymbolTable symbols)
+{
+    try writer.AppendAscii("semantic typed-module-symbols\n");
+    try writer.AppendAscii("  module-present: ");
+    try AppendBoolText(writer, symbols.HasModuleName());
+    try writer.AppendAscii("\n  origin: ");
+    try writer.AppendAscii(ModuleOriginName(symbols.ModuleOriginKind()));
+    try writer.AppendAscii("\n  origin-index: ");
+    try AppendU32Text(writer, symbols.ModuleOriginIndex());
+    try writer.AppendAscii("\n  symbols: ");
+    try AppendU64Text(writer, symbols.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < symbols.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(DeclarationKindName(symbols.KindAt(index)));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index)));
+        try writer.AppendAscii(" visibility=");
+        try writer.AppendAscii(TypedModuleSymbolVisibilityName(symbols.VisibilityAt(index)));
+        try writer.AppendAscii(" decl=");
+        try AppendU32Text(writer, symbols.DeclIndexAt(index));
+        try writer.AppendAscii(" tokens=");
+        try AppendU32Text(writer, symbols.StartTokenAt(index));
+        try writer.AppendAscii("..");
+        try AppendU32Text(writer, symbols.EndTokenAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedDeclarationSymbolArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable symbols)
+{
+    try writer.AppendAscii("semantic typed-declaration-symbols\n");
+    try writer.AppendAscii("  declarations: ");
+    try AppendU64Text(writer, symbols.Count());
+    try writer.AppendAscii("\n  functions: ");
+    try AppendU32Text(writer, symbols.FunctionCount());
+    try writer.AppendAscii("\n  exports: ");
+    try AppendU32Text(writer, symbols.ExportCount());
+    try writer.AppendAscii("\n  ffi: ");
+    try AppendU32Text(writer, symbols.FfiCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < symbols.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(TypedDeclarationSymbolClassName(symbols.ClassAt(index)));
+        try writer.AppendAscii(" ");
+        try writer.AppendAscii(DeclarationKindName(symbols.DeclarationKindAt(index)));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index)));
+        try writer.AppendAscii(" visibility=");
+        try writer.AppendAscii(TypedModuleSymbolVisibilityName(symbols.VisibilityAt(index)));
+        try writer.AppendAscii(" function-kind=");
+        try writer.AppendAscii(TypedDeclarationFunctionKindName(symbols.FunctionKindAt(index)));
+        try writer.AppendAscii(" storage=");
+        try writer.AppendAscii(TypedDeclarationStorageKindName(symbols.StorageKindAt(index)));
+        try writer.AppendAscii(" params=");
+        try AppendU32Text(writer, symbols.ParamCountAt(index));
+        try writer.AppendAscii(" module-symbol=");
+        try AppendU32Text(writer, symbols.ModuleSymbolIndexPlusOneAt(index));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            TypedSignatureTypeKind.Unknown,
+            symbols.TypeHeadTokenAt(index),
+            symbols.TypePrimaryTokenAt(index),
+            symbols.TypeStartTokenAt(index),
+            symbols.TypeEndTokenAt(index),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            symbols.FlagsAt(index));
+        try writer.AppendAscii(" external=");
+        try AppendBoolText(writer, symbols.IsExternalAt(index));
+        try writer.AppendAscii(" unsafe=");
+        try AppendBoolText(writer, symbols.IsUnsafeAt(index));
+        try writer.AppendAscii(" ffi=");
+        try AppendBoolText(writer, symbols.IsFfiAt(index));
+        try writer.AppendAscii(" c-abi=");
+        try AppendBoolText(writer, symbols.IsCAbiAt(index));
+        try writer.AppendAscii(" tail=");
+        try AppendBoolText(writer, symbols.IsTailCallableAt(index));
+        try writer.AppendAscii(" mutable=");
+        try AppendBoolText(writer, symbols.IsMutableStorageAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedFunctionSignatureArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures)
+{
+    try writer.AppendAscii("type function-signatures\n");
+    try writer.AppendAscii("  signatures: ");
+    try AppendU64Text(writer, signatures.Count());
+    try writer.AppendAscii("\n  type-slots: ");
+    try AppendU64Text(writer, signatures.TypeSlotCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] signatureIndex = 0;
+    while willexit (signatureIndex < signatures.Count())
+    {
+        try writer.AppendAscii("    sig ");
+        try AppendU64Text(writer, signatureIndex);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(TypedSignatureOwnerKindName(signatures.OwnerKindAt(signatureIndex)));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signatures.NameTokenAt(signatureIndex)));
+        try writer.AppendAscii(" params=");
+        try AppendU32Text(writer, signatures.ParamCountAt(signatureIndex));
+        try writer.AppendAscii(" generics=");
+        try AppendU32Text(writer, signatures.GenericParamCountAt(signatureIndex));
+        try writer.AppendAscii(" comptime-generics=");
+        try AppendU32Text(writer, signatures.ComptimeGenericParamCountAt(signatureIndex));
+        try writer.AppendAscii(" return-slot=");
+        try AppendU32Text(writer, signatures.ReturnTypeSlotIndexPlusOneAt(signatureIndex));
+        try writer.AppendAscii(" flags=");
+        try AppendU32Text(writer, signatures.FlagsAt(signatureIndex));
+        try writer.AppendAscii("\n");
+        signatureIndex += 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] slot = 0;
+    while willexit (slot < signatures.TypeSlotCount())
+    {
+        try writer.AppendAscii("    slot ");
+        try AppendU64Text(writer, slot);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(TypedSignatureSlotKindName(signatures.TypeSlotKindAt(slot)));
+        try writer.AppendAscii(" signature=");
+        try AppendU32Text(writer, signatures.TypeSlotSignatureIndexPlusOneAt(slot));
+        try writer.AppendAscii(" param=");
+        try AppendU32Text(writer, signatures.TypeSlotParamOrdinalAt(slot));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            signatures.TypeKindAt(slot),
+            signatures.TypeHeadTokenAt(slot),
+            signatures.TypePrimaryTokenAt(slot),
+            signatures.TypeStartTokenAt(slot),
+            signatures.TypeEndTokenAt(slot),
+            signatures.RangeStartTokenAt(slot),
+            signatures.RangeEndTokenAt(slot),
+            signatures.ElementCountStartTokenAt(slot),
+            signatures.ElementCountEndTokenAt(slot),
+            signatures.BitWidthAt(slot),
+            signatures.TypeArgumentCountAt(slot),
+            signatures.ComptimeArgumentCountAt(slot),
+            signatures.TypeFlagsAt(slot));
+        try writer.AppendAscii(" signed=");
+        try AppendBoolText(writer, signatures.IsIntegerSignedAt(slot));
+        try writer.AppendAscii(" unsigned=");
+        try AppendBoolText(writer, signatures.IsIntegerUnsignedAt(slot));
+        try writer.AppendAscii(" ranged=");
+        try AppendBoolText(writer, signatures.HasIntegerRangeAt(slot));
+        try writer.AppendAscii(" borrow=");
+        try AppendBoolText(writer, signatures.IsBorrowAt(slot));
+        try writer.AppendAscii(" out=");
+        try AppendBoolText(writer, signatures.IsOutAt(slot));
+        try writer.AppendAscii(" rawmut=");
+        try AppendBoolText(writer, signatures.IsRawMutablePointerAt(slot));
+        try writer.AppendAscii(" counted=");
+        try AppendBoolText(writer, signatures.HasElementCountExpressionAt(slot));
+        try writer.AppendAscii(" tail=");
+        try AppendBoolText(writer, signatures.IsTailCallableAt(slot));
+        try writer.AppendAscii(" dead-on-return=");
+        try AppendBoolText(writer, signatures.IsDeadOnReturnAt(slot));
+        try writer.AppendAscii(" generic-head=");
+        try AppendBoolText(writer, signatures.TypeHeadIsGenericParameterAt(slot));
+        try writer.AppendAscii("\n");
+        slot += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedGlobalDeclarationArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedGlobalDeclarationTable globals)
+{
+    try writer.AppendAscii("type global-declarations\n");
+    try writer.AppendAscii("  globals: ");
+    try AppendU64Text(writer, globals.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < globals.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(TypedGlobalBindingKindName(globals.BindingKindAt(index)));
+        try writer.AppendAscii(" storage=");
+        try writer.AppendAscii(TypedGlobalStorageKindName(globals.StorageKindAt(index)));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])globals.NameTokenAt(index)));
+        try writer.AppendAscii(" declaration=");
+        try AppendU32Text(writer, globals.DeclarationIndexAt(index));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            globals.TypeKindAt(index),
+            globals.TypeHeadTokenAt(index),
+            globals.TypePrimaryTokenAt(index),
+            globals.TypeStartTokenAt(index),
+            globals.TypeEndTokenAt(index),
+            globals.RangeStartTokenAt(index),
+            globals.RangeEndTokenAt(index),
+            globals.ElementCountStartTokenAt(index),
+            globals.ElementCountEndTokenAt(index),
+            globals.BitWidthAt(index),
+            globals.TypeArgumentCountAt(index),
+            globals.ComptimeArgumentCountAt(index),
+            globals.TypeFlagsAt(index));
+        try writer.AppendAscii(" initializer=");
+        try AppendBoolText(writer, globals.HasInitializerAt(index));
+        try writer.AppendAscii(" signed=");
+        try AppendBoolText(writer, globals.IsIntegerSignedAt(index));
+        try writer.AppendAscii(" unsigned=");
+        try AppendBoolText(writer, globals.IsIntegerUnsignedAt(index));
+        try writer.AppendAscii(" ranged=");
+        try AppendBoolText(writer, globals.HasIntegerRangeAt(index));
+        try writer.AppendAscii(" owned-text=");
+        try AppendBoolText(writer, globals.IsOwnedTextAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedFieldDeclarationArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFieldDeclarationTable fields)
+{
+    try writer.AppendAscii("type field-declarations\n");
+    try writer.AppendAscii("  fields: ");
+    try AppendU64Text(writer, fields.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < fields.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": owner=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.OwnerNameTokenAt(index)));
+        try writer.AppendAscii(" owner-kind=");
+        try writer.AppendAscii(DeclarationKindName(fields.OwnerKindAt(index)));
+        try writer.AppendAscii(" ordinal=");
+        try AppendU32Text(writer, fields.FieldOrdinalAt(index));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(index)));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            fields.TypeKindAt(index),
+            fields.TypeHeadTokenAt(index),
+            fields.TypePrimaryTokenAt(index),
+            fields.TypeStartTokenAt(index),
+            fields.TypeEndTokenAt(index),
+            fields.RangeStartTokenAt(index),
+            fields.RangeEndTokenAt(index),
+            fields.ElementCountStartTokenAt(index),
+            fields.ElementCountEndTokenAt(index),
+            fields.BitWidthAt(index),
+            fields.TypeArgumentCountAt(index),
+            fields.ComptimeArgumentCountAt(index),
+            fields.TypeFlagsAt(index));
+        try writer.AppendAscii(" capacity=");
+        try AppendBoolText(writer, fields.HasStorageCapacityAt(index));
+        try writer.AppendAscii(" signed=");
+        try AppendBoolText(writer, fields.IsIntegerSignedAt(index));
+        try writer.AppendAscii(" unsigned=");
+        try AppendBoolText(writer, fields.IsIntegerUnsignedAt(index));
+        try writer.AppendAscii(" ranged=");
+        try AppendBoolText(writer, fields.HasIntegerRangeAt(index));
+        try writer.AppendAscii(" borrow=");
+        try AppendBoolText(writer, fields.IsBorrowAt(index));
+        try writer.AppendAscii(" counted=");
+        try AppendBoolText(writer, fields.HasElementCountExpressionAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedEnumPayloadArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumPayloadTable payloads)
+{
+    try writer.AppendAscii("type enum-payloads\n");
+    try writer.AppendAscii("  payloads: ");
+    try AppendU64Text(writer, payloads.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < payloads.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": owner=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])payloads.OwnerNameTokenAt(index)));
+        try writer.AppendAscii(" variant=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])payloads.VariantNameTokenAt(index)));
+        try writer.AppendAscii(" variant-ordinal=");
+        try AppendU32Text(writer, payloads.VariantOrdinalAt(index));
+        try writer.AppendAscii(" payload-ordinal=");
+        try AppendU32Text(writer, payloads.PayloadOrdinalAt(index));
+        try writer.AppendAscii(" payload-kind=");
+        try writer.AppendAscii(TypedEnumPayloadKindName(payloads.PayloadKindAt(index)));
+        try writer.AppendAscii(" role=");
+        try writer.AppendAscii(TypedEnumVariantRoleName(payloads.VariantRoleAt(index)));
+        try writer.AppendAscii(" error-funnel=");
+        try AppendBoolText(writer, payloads.IsErrorFunnelAt(index));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            payloads.TypeKindAt(index),
+            payloads.TypeHeadTokenAt(index),
+            payloads.TypePrimaryTokenAt(index),
+            payloads.TypeStartTokenAt(index),
+            payloads.TypeEndTokenAt(index),
+            payloads.RangeStartTokenAt(index),
+            payloads.RangeEndTokenAt(index),
+            payloads.ElementCountStartTokenAt(index),
+            payloads.ElementCountEndTokenAt(index),
+            payloads.BitWidthAt(index),
+            payloads.TypeArgumentCountAt(index),
+            payloads.ComptimeArgumentCountAt(index),
+            payloads.TypeFlagsAt(index));
+        try writer.AppendAscii(" signed=");
+        try AppendBoolText(writer, payloads.IsIntegerSignedAt(index));
+        try writer.AppendAscii(" unsigned=");
+        try AppendBoolText(writer, payloads.IsIntegerUnsignedAt(index));
+        try writer.AppendAscii(" ranged=");
+        try AppendBoolText(writer, payloads.HasIntegerRangeAt(index));
+        try writer.AppendAscii(" generic-head=");
+        try AppendBoolText(writer, payloads.TypeHeadIsGenericParameterAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendTypedEnumLayoutArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumLayoutTable layouts)
+{
+    try writer.AppendAscii("type enum-layouts\n");
+    try writer.AppendAscii("  rows: ");
+    try AppendU64Text(writer, layouts.Count());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < layouts.Count())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(TypedEnumLayoutRowKindName(layouts.RowKindAt(index)));
+        try writer.AppendAscii(" owner=");
+        try writer.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])layouts.OwnerNameTokenAt(index)));
+        try writer.AppendAscii(" variant=");
+        try AppendU32Text(writer, layouts.VariantOrdinalAt(index));
+        try writer.AppendAscii(" tag=");
+        try AppendU32Text(writer, layouts.VariantTagAt(index));
+        try writer.AppendAscii(" payloads=");
+        try AppendU32Text(writer, layouts.PayloadCountAt(index));
+        try writer.AppendAscii(" payload=");
+        try AppendU32Text(writer, layouts.PayloadOrdinalAt(index));
+        try writer.AppendAscii(" storage-field=");
+        try AppendU32Text(writer, layouts.StorageFieldOrdinalAt(index));
+        try writer.AppendAscii(" offset=");
+        try AppendU64MaxText(writer, layouts.OffsetBytesAt(index));
+        try writer.AppendAscii(" size=");
+        try AppendU64MaxText(writer, layouts.SizeBytesAt(index));
+        try writer.AppendAscii(" align=");
+        try AppendU64MaxText(writer, layouts.AlignmentBytesAt(index));
+        try writer.AppendAscii(" concrete=");
+        try AppendBoolText(writer, layouts.HasConcreteLayoutAt(index));
+        try writer.AppendAscii(" misaligned=");
+        try AppendBoolText(writer, layouts.IsMisalignedAt(index));
+        try writer.AppendAscii(" payload-kind=");
+        try writer.AppendAscii(TypedEnumPayloadKindName(layouts.PayloadKindAt(index)));
+        try writer.AppendAscii(" role=");
+        try writer.AppendAscii(TypedEnumVariantRoleName(layouts.VariantRoleAt(index)));
+        try AppendCommonTypeTokenFacts(
+            writer,
+            source,
+            stream,
+            layouts.TypeKindAt(index),
+            layouts.TypeHeadTokenAt(index),
+            layouts.TypePrimaryTokenAt(index),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            layouts.BitWidthAt(index),
+            0,
+            0,
+            layouts.TypeFlagsAt(index));
+        try writer.AppendAscii(" layout-flags=");
+        try AppendU32Text(writer, layouts.LayoutFlagsAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendHeaderName(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow CompilationUnitSyntax syntax,
+    HeaderItem item)
+{
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < item.NameTokenCount)
+    {
+        try writer.AppendAscii(syntax.TokenTextAt(source, (u64[0 2 ** 63 - 1])(item.NameStart + offset)));
+        offset += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendCompilationUnitDiagnostics(
+    mut borrow OwnedAscii writer,
+    borrow CompilationUnitSyntax syntax)
+{
+    try writer.AppendAscii("  diagnostics: ");
+    try AppendU64Text(writer, syntax.DiagnosticCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < syntax.DiagnosticCount())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(SyntaxDiagnosticKindName(syntax.DiagnosticKindAt(index)));
+        try writer.AppendAscii(" token=");
+        try AppendU32Text(writer, syntax.DiagnosticTokenAt(index));
+        try writer.AppendAscii(" line=");
+        try AppendU32Text(writer, syntax.DiagnosticLineAt(index));
+        try writer.AppendAscii(" column=");
+        try AppendU32Text(writer, syntax.DiagnosticColumnAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendCompilationUnitSyntaxArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow CompilationUnitSyntax syntax)
+{
+    try writer.AppendAscii("syntax compilation-unit\n");
+    try writer.AppendAscii("  succeeded: ");
+    try AppendBoolText(writer, syntax.Succeeded());
+    try writer.AppendAscii("\n  tokens: ");
+    try AppendU64Text(writer, syntax.TokenCount());
+    try writer.AppendAscii("\n  headers: ");
+    try AppendU64Text(writer, syntax.HeaderCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] headerIndex = 0;
+    while willexit (headerIndex < syntax.HeaderCount())
+    {
+        stack HeaderItem item = syntax.HeaderItemAt(headerIndex);
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, headerIndex);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(SyntaxKindName(item.Kind));
+        try writer.AppendAscii(" ");
+        try AppendHeaderName(writer, source, syntax, item);
+        try writer.AppendAscii(" start=");
+        try AppendU32Text(writer, item.StartToken);
+        try writer.AppendAscii(" keyword=");
+        try AppendU32Text(writer, item.KeywordToken);
+        try writer.AppendAscii(" name-start=");
+        try AppendU32Text(writer, item.NameStart);
+        try writer.AppendAscii(" name-tokens=");
+        try AppendU32Text(writer, item.NameTokenCount);
+        try writer.AppendAscii(" segments=");
+        try AppendU32Text(writer, item.NameSegments);
+        try writer.AppendAscii(" exported=");
+        try AppendBoolText(writer, item.IsExported);
+        try writer.AppendAscii("\n");
+        headerIndex += 1;
+    }
+
+    try writer.AppendAscii("  declarations: ");
+    try AppendU64Text(writer, syntax.DeclarationCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] declarationIndex = 0;
+    while willexit (declarationIndex < syntax.DeclarationCount())
+    {
+        stack DeclItem item = syntax.DeclarationAt(declarationIndex);
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, declarationIndex);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(DeclarationKindName(item.Kind));
+        try writer.AppendAscii(" name=");
+        try writer.AppendAscii(syntax.TokenTextAt(source, (u64[0 2 ** 63 - 1])item.NameToken));
+        try writer.AppendAscii(" keyword=");
+        try AppendU32Text(writer, item.KeywordToken);
+        try writer.AppendAscii(" start=");
+        try AppendU32Text(writer, item.StartToken);
+        try writer.AppendAscii(" end=");
+        try AppendU32Text(writer, item.EndToken);
+        try writer.AppendAscii(" tail=");
+        try AppendBoolText(writer, item.IsTailCallable);
+        try writer.AppendAscii("\n");
+        declarationIndex += 1;
+    }
+
+    return AppendCompilationUnitDiagnostics(writer, syntax);
+}
+
+internal fn System.Memory.MemoryStatus AppendExpressionDiagnostics(
+    mut borrow OwnedAscii writer,
+    borrow ExpressionSyntax syntax)
+{
+    try writer.AppendAscii("  diagnostics: ");
+    try AppendU64Text(writer, syntax.DiagnosticCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < syntax.DiagnosticCount())
+    {
+        try writer.AppendAscii("    ");
+        try AppendU64Text(writer, index);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(SyntaxDiagnosticKindName(syntax.DiagnosticKindAt(index)));
+        try writer.AppendAscii(" token=");
+        try AppendU32Text(writer, syntax.DiagnosticTokenAt(index));
+        try writer.AppendAscii(" line=");
+        try AppendU32Text(writer, syntax.DiagnosticLineAt(index));
+        try writer.AppendAscii(" column=");
+        try AppendU32Text(writer, syntax.DiagnosticColumnAt(index));
+        try writer.AppendAscii("\n");
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendExpressionSyntaxArtifact(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    borrow ExpressionSyntax syntax)
+{
+    try writer.AppendAscii("syntax expression\n");
+    try writer.AppendAscii("  succeeded: ");
+    try AppendBoolText(writer, syntax.Succeeded());
+    try writer.AppendAscii("\n  tokens: ");
+    try AppendU64Text(writer, syntax.TokenCount());
+    try writer.AppendAscii("\n  root: ");
+    try AppendU32Text(writer, syntax.RootNode());
+    try writer.AppendAscii("\n  nodes: ");
+    try AppendU64Text(writer, syntax.NodeCount());
+    try writer.AppendAscii("\n");
+
+    stack mut u32[0 max] node = 1;
+    while willexit ((u64[0 2 ** 63 - 1])node <= syntax.NodeCount())
+    {
+        stack u32[0 max] token = syntax.TokenAt(node);
+        try writer.AppendAscii("    n");
+        try AppendU32Text(writer, node);
+        try writer.AppendAscii(": ");
+        try writer.AppendAscii(ExprKindName(syntax.NodeKindAt(node)));
+        try writer.AppendAscii(" token=");
+        try AppendU32Text(writer, token);
+        try writer.AppendAscii(" text=");
+        try writer.AppendAscii(syntax.TokenTextAt(source, (u64[0 2 ** 63 - 1])token));
+        try writer.AppendAscii(" left=");
+        try AppendU32Text(writer, syntax.LeftAt(node));
+        try writer.AppendAscii(" right=");
+        try AppendU32Text(writer, syntax.RightAt(node));
+        try writer.AppendAscii(" aux=");
+        try AppendU32Text(writer, syntax.AuxAt(node));
+        try writer.AppendAscii("\n");
+        node += 1;
+    }
+
+    return AppendExpressionDiagnostics(writer, syntax);
+}

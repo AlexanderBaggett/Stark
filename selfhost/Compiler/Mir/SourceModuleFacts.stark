@@ -1,0 +1,768 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedFieldModel
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import Compiler.Typing.TypedSwitchPatterns
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Model
+import Compiler.Mir.SourceMemberFacts
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceModuleFacts
+
+// The per-module source-lowering input bundle. Every fact table the source
+// lowering passes consume module-wide lives here: the parsed declaration
+// list, the typed enum payload/layout tables, the typed switch-pattern rows,
+// the MIR enum layout facts, and the prevalidated member-path facts with
+// their dense member-name-token index. The bundle is built once per module
+// and travels through the lowering
+// recursion as one `borrow` parameter, so importing the next module-level
+// fact table is a one-field change here instead of an N-signature threading
+// change. This is the single sanctioned struct-of-tables at the source
+// lowering boundary; the tables themselves stay flat, and helpers below this
+// module keep individual-table parameters fed by field reads.
+public struct SourceModuleLoweringFacts
+{
+    DeclarationList Declarations;
+    TypedLiteralExpressionTable LiteralExpressions;
+    IrTable<u32[0 max]> LiteralRowsByToken;
+    IrTable<u8[0 max]> TextPayloadBytes;
+    IrTable<MirTextConstant> TextConstants;
+    IrTable<u32[0 max]> TextConstantRowsByLiteralRow;
+    IrTable<u8[0 max]> FloatPayloadBytes;
+    IrTable<MirFloatConstant> FloatConstants;
+    IrTable<u32[0 max]> FloatConstantRowsByLiteralRow;
+    TypedEnumPayloadTable EnumPayloads;
+    TypedEnumLayoutTable EnumLayouts;
+    TypedSwitchPatternTables SwitchPatterns;
+    IrTable<u32[0 max]> SwitchAggregatePatternRowsByStartToken;
+    IrTable<u32[0 max]> SwitchListPatternRowsByStartToken;
+    IrTable<MirEnumLayoutFact> EnumLayoutFacts;
+    IrTable<u32[0 max]> MemberFactRowsByToken;
+    IrTable<SourceMemberPathFact> MemberPathFacts;
+
+    SourceModuleLoweringFacts()
+    {
+        self.Declarations = new();
+        self.LiteralExpressions = new();
+        self.LiteralRowsByToken = new();
+        self.TextPayloadBytes = new();
+        self.TextConstants = new();
+        self.TextConstantRowsByLiteralRow = new();
+        self.FloatPayloadBytes = new();
+        self.FloatConstants = new();
+        self.FloatConstantRowsByLiteralRow = new();
+        self.EnumPayloads = new();
+        self.EnumLayouts = new();
+        self.SwitchPatterns = new();
+        self.SwitchAggregatePatternRowsByStartToken = new();
+        self.SwitchListPatternRowsByStartToken = new();
+        self.EnumLayoutFacts = new();
+        self.MemberFactRowsByToken = new();
+        self.MemberPathFacts = new();
+    }
+}
+
+// Parses the module's declarations and builds the typed enum payload/layout
+// tables plus the MIR enum layout facts they lower to. Moved verbatim from
+// the module-lowering orchestrator so the bundle builder below can share it
+// with the standalone declaration probes.
+internal fn bool BuildSourceModuleEnumLayoutInputs(
+    ascii sourceText,
+    borrow TokenStream stream,
+    out DeclarationList declarations,
+    out TypedEnumPayloadTable enumPayloads,
+    out TypedEnumLayoutTable enumLayouts,
+    out IrTable<MirEnumLayoutFact> enumLayoutFacts)
+{
+    declarations = new();
+    enumPayloads = new();
+    enumLayouts = new();
+    enumLayoutFacts = new();
+
+    stack mut CompilationUnitHeader header = new();
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
+            header = parsedHeader;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(stream, header.NextToken))
+    {
+        case ParseResult<DeclarationList>.Err(var declarationError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var builtDeclarations):
+            parsedDeclarations = builtDeclarations;
+    }
+
+    stack mut TypedEnumPayloadTable typedPayloads = new();
+    switch (BuildTypedEnumPayloads(sourceText, stream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return false;
+        case ParseResult<TypedEnumPayloadTable>.Ok(var builtPayloads):
+            typedPayloads = builtPayloads;
+    }
+
+    stack mut TypedEnumLayoutTable typedLayouts = new();
+    switch (BuildTypedEnumLayouts(sourceText, stream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            typedLayouts = builtLayouts;
+    }
+
+    stack mut IrTable<MirEnumLayoutFact> mirLayoutFacts = new();
+    if (!BuildMirEnumLayoutFactsFromTypedLayouts(typedLayouts, mirLayoutFacts))
+    {
+        return false;
+    }
+
+    declarations = parsedDeclarations;
+    enumPayloads = typedPayloads;
+    enumLayouts = typedLayouts;
+    enumLayoutFacts = mirLayoutFacts;
+    return true;
+}
+
+public fn u32[0 max] SourceTypedLiteralRowForToken(borrow SourceModuleLoweringFacts facts, u32[0 max] literalToken)
+{
+    stack u32[0 max] slot = literalToken + 1;
+    if (!facts.LiteralRowsByToken.Contains(slot))
+    {
+        return 0;
+    }
+
+    return facts.LiteralRowsByToken.Get(slot);
+}
+
+public fn u32[0 max] SourceTextConstantRowForTypedLiteralRow(borrow SourceModuleLoweringFacts facts, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!facts.TextConstantRowsByLiteralRow.Contains(typedLiteralRowIndexPlusOne))
+    {
+        return 0;
+    }
+
+    return facts.TextConstantRowsByLiteralRow.Get(typedLiteralRowIndexPlusOne);
+}
+
+public fn u32[0 max] SourceFloatConstantRowForTypedLiteralRow(borrow SourceModuleLoweringFacts facts, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!facts.FloatConstantRowsByLiteralRow.Contains(typedLiteralRowIndexPlusOne))
+    {
+        return 0;
+    }
+
+    return facts.FloatConstantRowsByLiteralRow.Get(typedLiteralRowIndexPlusOne);
+}
+
+public fn bool SourceModuleTextLiteralConstantRowsAreAligned(borrow SourceModuleLoweringFacts facts)
+{
+    return facts.TextConstantRowsByLiteralRow.Count() == facts.LiteralExpressions.Count();
+}
+
+public fn bool SourceModuleFloatLiteralConstantRowsAreAligned(borrow SourceModuleLoweringFacts facts)
+{
+    return facts.FloatConstantRowsByLiteralRow.Count() == facts.LiteralExpressions.Count();
+}
+
+public fn u32[0 max] SourceSwitchAggregatePatternRowForStartToken(
+    borrow SourceModuleLoweringFacts facts,
+    u32[0 max] patternStartToken)
+{
+    if (patternStartToken == 4294967295)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] slot = patternStartToken + 1;
+    if (!facts.SwitchAggregatePatternRowsByStartToken.Contains(slot))
+    {
+        return 0;
+    }
+
+    return facts.SwitchAggregatePatternRowsByStartToken.Get(slot);
+}
+
+public fn u32[0 max] SourceSwitchListPatternRowForStartToken(
+    borrow SourceModuleLoweringFacts facts,
+    u32[0 max] patternStartToken)
+{
+    if (patternStartToken == 4294967295)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] slot = patternStartToken + 1;
+    if (!facts.SwitchListPatternRowsByStartToken.Contains(slot))
+    {
+        return 0;
+    }
+
+    return facts.SwitchListPatternRowsByStartToken.Get(slot);
+}
+
+internal fn bool BuildSourceSwitchPatternRowsByStartToken(
+    borrow TokenStream stream,
+    borrow TypedSwitchPatternTables switchPatterns,
+    out IrTable<u32[0 max]> aggregateRowsByStartToken,
+    out IrTable<u32[0 max]> listRowsByStartToken)
+{
+    aggregateRowsByStartToken = new();
+    listRowsByStartToken = new();
+
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] tokenIndex = 0; tokenIndex < tokenCount; tokenIndex += 1)
+    {
+        if (aggregateRowsByStartToken.Add(0) == 0
+            || listRowsByStartToken.Add(0) == 0)
+        {
+            return false;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] aggregateCount = switchPatterns.AggregatePatterns.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < aggregateCount; index += 1)
+    {
+        stack u32[0 max] token = switchPatterns.AggregatePatterns.PatternStartTokenAt(index);
+        if (token == 4294967295 || (u64[0 2 ** 63 - 1])token >= tokenCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] slot = token + 1;
+        if (!aggregateRowsByStartToken.Contains(slot)
+            || aggregateRowsByStartToken.Get(slot) != 0)
+        {
+            return false;
+        }
+
+        if (!aggregateRowsByStartToken.Replace(slot, (u32[0 max])(index + 1)))
+        {
+            return false;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] listCount = switchPatterns.ListPatterns.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < listCount; index += 1)
+    {
+        stack u32[0 max] token = switchPatterns.ListPatterns.PatternStartTokenAt(index);
+        if (token == 4294967295 || (u64[0 2 ** 63 - 1])token >= tokenCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] slot = token + 1;
+        if (!listRowsByStartToken.Contains(slot)
+            || listRowsByStartToken.Get(slot) != 0)
+        {
+            return false;
+        }
+
+        if (!listRowsByStartToken.Replace(slot, (u32[0 max])(index + 1)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public fn bool BuildSourceTypedLiteralRowsByToken(
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    out IrTable<u32[0 max]> literalRowsByToken)
+{
+    literalRowsByToken = new();
+
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] tokenIndex = 0; tokenIndex < tokenCount; tokenIndex += 1)
+    {
+        if (literalRowsByToken.Add(0) == 0)
+        {
+            return false;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] literalCount = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < literalCount; index += 1)
+    {
+        stack u32[0 max] token = literals.LiteralTokenAt(index);
+        stack u32[0 max] slot = token + 1;
+        if (!literalRowsByToken.Contains(slot) || literalRowsByToken.Get(slot) != 0)
+        {
+            return false;
+        }
+
+        if (!literalRowsByToken.Replace(slot, (u32[0 max])(index + 1)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal inline finite law bool SourceTextLiteralLengthFitsMirU32(u64[0 2 ** 63 - 1] length)
+{
+    return length <= (u64[0 2 ** 63 - 1])4294967295;
+}
+
+internal inline finite law i32[min max] SourceTextNormalizeCodePoint(i32[min max] codePoint)
+{
+    if (codePoint < 0)
+    {
+        return 65533;
+    }
+
+    if (55296 <= codePoint && codePoint <= 57343)
+    {
+        return 65533;
+    }
+
+    if (codePoint > 1114111)
+    {
+        return 65533;
+    }
+
+    return codePoint;
+}
+
+internal inline finite law u8[0 max] SourceTextPayloadByteFromSigned(i8[min max] value)
+{
+    stack mut i64[min max] wide = (i64[min max])value;
+    if (wide < 0)
+    {
+        wide = wide + 256;
+    }
+
+    return (u8[0 max])wide;
+}
+
+internal fn bool AppendSourceTextPayloadByte(mut borrow IrTable<u8[0 max]> payloadBytes, u32[0 max] value)
+{
+    if (value > 255)
+    {
+        return false;
+    }
+
+    return payloadBytes.Add((u8[0 max])value) != 0;
+}
+
+internal fn bool AppendSourceDecodedTextPayloadBytes(mut borrow IrTable<u8[0 max]> payloadBytes, borrow OwnedAscii decoded)
+    where overlap(payloadBytes, decoded)
+{
+    stack u64[0 2 ** 63 - 1] length = decoded.Length();
+    stack i8[min max][] bytes = decoded.AsSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        if (payloadBytes.Add(SourceTextPayloadByteFromSigned(bytes[index])) == 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool AppendSourceTextCodePointUtf8Payload(mut borrow IrTable<u8[0 max]> payloadBytes, i32[min max] codePoint)
+{
+    stack i32[min max] scalar = SourceTextNormalizeCodePoint(codePoint);
+    if (scalar <= 127)
+    {
+        return AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])scalar);
+    }
+
+    if (scalar <= 2047)
+    {
+        return AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar >> 6) | 192))
+            && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar & 63) | 128));
+    }
+
+    if (scalar <= 65535)
+    {
+        return AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar >> 12) | 224))
+            && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])(((scalar >> 6) & 63) | 128))
+            && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar & 63) | 128));
+    }
+
+    return AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar >> 18) | 240))
+        && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])(((scalar >> 12) & 63) | 128))
+        && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])(((scalar >> 6) & 63) | 128))
+        && AppendSourceTextPayloadByte(payloadBytes, (u32[0 max])((scalar & 63) | 128));
+}
+
+internal fn bool AppendSourceTextLiteralPayloadBytes(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    u64[0 2 ** 63 - 1] literalIndex,
+    mut borrow IrTable<u8[0 max]> payloadBytes)
+{
+    stack TypedTextLiteralKind textKind = literals.TextLiteralKindAt(literalIndex);
+    if (textKind == TypedTextLiteralKind.String)
+    {
+        stack ascii literal = Compiler.Lexing.TokenTextOf(sourceText, stream, (u64[0 2 ** 63 - 1])literals.LiteralTokenAt(literalIndex));
+        switch (System.Text.DecodeStringLiteralToUtf8(literal))
+        {
+            case System.Text.TextBuildResult<OwnedAscii>.Err(var decodeError):
+                return false;
+            case System.Text.TextBuildResult<OwnedAscii>.Ok(var decoded):
+                if (decoded.Length() != literals.TextByteLengthAt(literalIndex))
+                {
+                    return false;
+                }
+
+                return AppendSourceDecodedTextPayloadBytes(payloadBytes, decoded);
+        }
+    }
+
+    if (textKind == TypedTextLiteralKind.Character)
+    {
+        return AppendSourceTextCodePointUtf8Payload(payloadBytes, literals.CharacterCodePointAt(literalIndex));
+    }
+
+    return false;
+}
+
+public fn bool BuildSourceTextLiteralConstantFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    out IrTable<u8[0 max]> textPayloadBytes,
+    out IrTable<MirTextConstant> textConstants,
+    out IrTable<u32[0 max]> textConstantRowsByLiteralRow)
+{
+    textPayloadBytes = new();
+    textConstants = new();
+    textConstantRowsByLiteralRow = new();
+    stack mut IrTable<u8[0 max]> builtPayloadBytes = new();
+    stack mut IrTable<MirTextConstant> builtTextConstants = new();
+    stack mut IrTable<u32[0 max]> builtTextConstantRowsByLiteralRow = new();
+
+    stack u64[0 2 ** 63 - 1] literalCount = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < literalCount; index += 1)
+    {
+        stack mut u32[0 max] textConstantRow = 0;
+        if (literals.IsTextLiteralAt(index))
+        {
+            if (!literals.ParsedOkAt(index) || !literals.UsesUtf8TextStorageAt(index))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] byteLength64 = literals.TextByteLengthAt(index);
+            stack u64[0 2 ** 63 - 1] codePointLength64 = literals.TextCodePointLengthAt(index);
+            if (!SourceTextLiteralLengthFitsMirU32(byteLength64) || !SourceTextLiteralLengthFitsMirU32(codePointLength64))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] payloadStart = 0;
+            if (byteLength64 != 0)
+            {
+                if (!SourceTextLiteralLengthFitsMirU32(builtPayloadBytes.Count()))
+                {
+                    return false;
+                }
+
+                payloadStart = (u32[0 max])(builtPayloadBytes.Count() + 1);
+            }
+
+            if (!AppendSourceTextLiteralPayloadBytes(sourceText, stream, literals, index, builtPayloadBytes))
+            {
+                return false;
+            }
+
+            stack u32[0 max] byteLength = (u32[0 max])byteLength64;
+            stack u32[0 max] codePointLength = (u32[0 max])codePointLength64;
+            stack mut MirTextConstantStorageEncoding encoding = MirTextConstantStorageEncoding.Utf8Bytes;
+            if (byteLength == codePointLength)
+            {
+                encoding = MirTextConstantStorageEncoding.AsciiBytes;
+            }
+
+            textConstantRow = MirAddTextConstantRange(builtTextConstants, builtPayloadBytes, encoding, payloadStart, byteLength, codePointLength);
+            if (textConstantRow == 0)
+            {
+                return false;
+            }
+        }
+
+        if (builtTextConstantRowsByLiteralRow.Add(textConstantRow) == 0)
+        {
+            return false;
+        }
+    }
+
+    textPayloadBytes = builtPayloadBytes;
+    textConstants = builtTextConstants;
+    textConstantRowsByLiteralRow = builtTextConstantRowsByLiteralRow;
+    return true;
+}
+
+internal finite law ascii SourceFloatLiteralParseText(ascii literal)
+{
+    if (System.Text.EndsWith(literal, "f") || System.Text.EndsWith(literal, "F"))
+    {
+        stack i64[min max] length = System.Text.AsciiLength(literal);
+        if (length > 0)
+        {
+            return literal[0, length - 1];
+        }
+    }
+
+    return literal;
+}
+
+internal fn MirType SourceFloatLiteralMirType(borrow TypedLiteralExpressionTable literals, u64[0 2 ** 63 - 1] literalIndex)
+{
+    if (literals.BitWidthAt(literalIndex) == 32)
+    {
+        return MirType.F32;
+    }
+
+    if (literals.BitWidthAt(literalIndex) == 64)
+    {
+        return MirType.F64;
+    }
+
+    return MirType.I64;
+}
+
+internal fn bool AppendSourceFloatLiteralPayloadBytes(ascii parseText, mut borrow IrTable<u8[0 max]> payloadBytes)
+{
+    stack mut OwnedAscii scratch = new();
+    switch (scratch.AppendAscii(parseText))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] length = scratch.Length();
+    if (length == 0)
+    {
+        return false;
+    }
+
+    stack i8[min max][] bytes = scratch.AsSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        if (payloadBytes.Add(SourceTextPayloadByteFromSigned(bytes[index])) == 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public fn bool BuildSourceFloatLiteralConstantFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    out IrTable<u8[0 max]> floatPayloadBytes,
+    out IrTable<MirFloatConstant> floatConstants,
+    out IrTable<u32[0 max]> floatConstantRowsByLiteralRow)
+{
+    floatPayloadBytes = new();
+    floatConstants = new();
+    floatConstantRowsByLiteralRow = new();
+    stack mut IrTable<u8[0 max]> builtPayloadBytes = new();
+    stack mut IrTable<MirFloatConstant> builtFloatConstants = new();
+    stack mut IrTable<u32[0 max]> builtFloatConstantRowsByLiteralRow = new();
+
+    stack u64[0 2 ** 63 - 1] literalCount = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < literalCount; index += 1)
+    {
+        stack mut u32[0 max] floatConstantRow = 0;
+        if (literals.LiteralKindAt(index) == TypedLiteralKind.Float)
+        {
+            if (!literals.ParsedOkAt(index))
+            {
+                return false;
+            }
+
+            stack MirType literalType = SourceFloatLiteralMirType(literals, index);
+            if (!MirFloatConstantTypeIsSupported(literalType) || !SourceTextLiteralLengthFitsMirU32(builtPayloadBytes.Count()))
+            {
+                return false;
+            }
+
+            stack ascii literal = Compiler.Lexing.TokenTextOf(sourceText, stream, (u64[0 2 ** 63 - 1])literals.LiteralTokenAt(index));
+            stack ascii parseText = SourceFloatLiteralParseText(literal);
+            stack i64[min max] signedByteLength = System.Text.AsciiLength(parseText);
+            if (signedByteLength <= 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] byteLength64 = (u64[0 2 ** 63 - 1])signedByteLength;
+            if (!SourceTextLiteralLengthFitsMirU32(byteLength64))
+            {
+                return false;
+            }
+
+            stack u32[0 max] payloadStart = (u32[0 max])(builtPayloadBytes.Count() + 1);
+            if (!AppendSourceFloatLiteralPayloadBytes(parseText, builtPayloadBytes))
+            {
+                return false;
+            }
+
+            floatConstantRow = MirAddFloatConstantRange(
+                builtFloatConstants,
+                builtPayloadBytes,
+                literalType,
+                payloadStart,
+                (u32[0 max])byteLength64);
+            if (floatConstantRow == 0)
+            {
+                return false;
+            }
+        }
+
+        if (builtFloatConstantRowsByLiteralRow.Add(floatConstantRow) == 0)
+        {
+            return false;
+        }
+    }
+
+    floatPayloadBytes = builtPayloadBytes;
+    floatConstants = builtFloatConstants;
+    floatConstantRowsByLiteralRow = builtFloatConstantRowsByLiteralRow;
+    return true;
+}
+
+// Builds the whole per-module lowering input bundle: enum layout inputs first
+// (declarations, typed payload/layout tables, MIR layout facts), then the
+// member-path facts joined to their member-name-token index. The effect
+// prepass and the main lowering pass both call this once per module, so the
+// two passes cannot drift apart on how the inputs are constructed and the
+// typed member table is built exactly once per pass.
+internal fn bool BuildSourceModuleLoweringFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    out SourceModuleLoweringFacts moduleFacts)
+    where overlap(sourceText, source)
+{
+    moduleFacts = new();
+
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable enumPayloads = new();
+    stack mut TypedEnumLayoutTable enumLayouts = new();
+    stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
+    if (!BuildSourceModuleEnumLayoutInputs(sourceText, stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+    {
+        return false;
+    }
+
+    stack mut TypedLiteralExpressionTable literalExpressions = new();
+    switch (BuildTypedLiteralExpressions(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return false;
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            literalExpressions = builtLiterals;
+    }
+
+    stack mut IrTable<u32[0 max]> literalRowsByToken = new();
+    if (!BuildSourceTypedLiteralRowsByToken(stream, literalExpressions, literalRowsByToken))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> textPayloadBytes = new();
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack mut IrTable<u32[0 max]> textConstantRowsByLiteralRow = new();
+    if (!BuildSourceTextLiteralConstantFacts(sourceText, stream, literalExpressions, textPayloadBytes, textConstants, textConstantRowsByLiteralRow))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> floatPayloadBytes = new();
+    stack mut IrTable<MirFloatConstant> floatConstants = new();
+    stack mut IrTable<u32[0 max]> floatConstantRowsByLiteralRow = new();
+    if (!BuildSourceFloatLiteralConstantFacts(sourceText, stream, literalExpressions, floatPayloadBytes, floatConstants, floatConstantRowsByLiteralRow))
+    {
+        return false;
+    }
+
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return false;
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return false;
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    stack mut TypedSwitchPatternTables switchPatterns = new();
+    switch (BuildTypedSwitchPatternTablesFromDependencies(sourceText, stream, declarations, identifiers, enumLayouts, fields))
+    {
+        case ParseResult<TypedSwitchPatternTables>.Err(var switchPatternError):
+            return false;
+        case ParseResult<TypedSwitchPatternTables>.Ok(var builtSwitchPatterns):
+            switchPatterns = builtSwitchPatterns;
+    }
+
+    stack mut IrTable<u32[0 max]> switchAggregatePatternRowsByStartToken = new();
+    stack mut IrTable<u32[0 max]> switchListPatternRowsByStartToken = new();
+    if (!BuildSourceSwitchPatternRowsByStartToken(
+            stream,
+            switchPatterns,
+            switchAggregatePatternRowsByStartToken,
+            switchListPatternRowsByStartToken))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> memberFactRowsByToken = new();
+    stack mut IrTable<SourceMemberPathFact> memberPathFacts = new();
+    if (!BuildSourceMemberPathFacts(sourceText, stream, source, declarations, memberFactRowsByToken, memberPathFacts))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts built = new();
+    built.Declarations = declarations;
+    built.LiteralExpressions = literalExpressions;
+    built.LiteralRowsByToken = literalRowsByToken;
+    built.TextPayloadBytes = textPayloadBytes;
+    built.TextConstants = textConstants;
+    built.TextConstantRowsByLiteralRow = textConstantRowsByLiteralRow;
+    built.FloatPayloadBytes = floatPayloadBytes;
+    built.FloatConstants = floatConstants;
+    built.FloatConstantRowsByLiteralRow = floatConstantRowsByLiteralRow;
+    built.EnumPayloads = enumPayloads;
+    built.EnumLayouts = enumLayouts;
+    built.SwitchPatterns = switchPatterns;
+    built.SwitchAggregatePatternRowsByStartToken = switchAggregatePatternRowsByStartToken;
+    built.SwitchListPatternRowsByStartToken = switchListPatternRowsByStartToken;
+    built.EnumLayoutFacts = enumLayoutFacts;
+    built.MemberFactRowsByToken = memberFactRowsByToken;
+    built.MemberPathFacts = memberPathFacts;
+    moduleFacts = built;
+    return true;
+}

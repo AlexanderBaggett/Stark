@@ -59,7 +59,7 @@ public sealed class CompilerPipelineFunctionEffectsTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("public strictfp hot noinline finite law f32 Precise(f32 value);", sourceText, StringComparison.Ordinal);
-            Assert.Contains(StrictIntegerSource("export cold unsafe ffi fn void Sink(rawptr<i8> value);"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("export cold unsafe ffi(c) fn void Sink(rawptr<i8> value);"), sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);

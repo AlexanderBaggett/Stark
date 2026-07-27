@@ -1,0 +1,1265 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Json
+import System.Memory
+import System.Process
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module CompilerTestSupport
+
+// Shared harness for the ported feature tests: compiles source against the
+// current C# host compiler through the host test protocol and exposes the
+// outcome for LLVM/diagnostic assertions. Stark-side port of
+// tests/compiler.Tests shared Compile/AssertDiagnostic helpers.
+
+const HostTimeoutMilliseconds = 180000;
+const PackageHostTargetTriple = "x86_64-unknown-linux-gnu";
+const PackageHostTargetDataLayout = "e-p:64:64";
+const PackageRuntimeTargetDataLayout = "e-p:64:64";
+
+// One host compile attempt. `Ok` means the transport and protocol succeeded;
+// facts check `Outcome.CompileSucceeded()` separately where failure is the
+// expectation.
+public struct LlvmCompile
+{
+    HostCompileOutcome Outcome;
+    bool Ok;
+
+    LlvmCompile()
+    {
+        self.Outcome = new();
+        self.Ok = false;
+    }
+}
+
+// Compiles the source through the full pipeline with the LLVM artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn LlvmCompile CompileLlvm(ascii id, ascii source)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Compiles the source through the full pipeline without artifacts. `Ok`
+// covers transport/protocol only, so failing compiles can be asserted with
+// FailsWithDiagnostic.
+public fn LlvmCompile CompileFull(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompile(id, source, "", "");
+    }
+}
+
+// Compiles the source stopping after MIR lowering with the MIR text artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn LlvmCompile CompileMir(ascii id, ascii source)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "lower-mir", "mir");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Compiles the source stopping after type checking, for facts that assert
+// diagnostics. `Ok` covers transport/protocol only.
+public fn LlvmCompile CompileTypeCheck(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompile(id, source, "type-check", "");
+    }
+}
+
+// Compiles the source stopping after semantic validation, for facts whose
+// diagnostics or summaries are emitted after type checking.
+public fn LlvmCompile CompileSemanticValidate(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompile(id, source, "semantic-validate", "");
+    }
+}
+
+// CompileSemanticValidate while appending STARK_PATH to module resolution.
+// Use only for facts that intentionally depend on the source-tree stdlib/vendor roots.
+public fn LlvmCompile CompileSemanticValidateUsingStarkPath(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompileUsingStarkPath(id, source, "semantic-validate", "");
+    }
+}
+
+// CompileTypeCheck with a compile-time loop iteration cap, for facts that
+// assert the comptime interpreter's iteration limit diagnostics.
+public fn LlvmCompile CompileTypeCheckWithLoopLimit(
+    ascii id,
+    ascii source,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
+    unsafe
+    {
+        return RunHostCompileIn(id, source, "type-check", "", "", maximumComptimeLoopIterations);
+    }
+}
+
+// True when the transport succeeded and the compile reported success. For
+// type-check probes this is the positive-polarity assertion.
+public fn bool Succeeds(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
+}
+
+// Compiles `source` stopping after type checking while `moduleSource` is
+// resolvable from a temporary search directory. `moduleDirectory` is empty for
+// root-level modules ("Worker" -> Worker.stark) or a single subdirectory name
+// for dotted modules ("System.Threading" -> System + Threading.stark). Stark-side port of
+// the C# facts built on InMemoryModuleResolver.
+public fn LlvmCompile CompileTypeCheckWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        return RunWithModule(id, source, "type-check", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
+// Compiles `source` stopping after semantic validation while `moduleSource` is
+// resolvable from a temporary search directory.
+public fn LlvmCompile CompileSemanticValidateWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        return RunWithModule(id, source, "semantic-validate", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
+// Full-pipeline variant of CompileTypeCheckWithModule. `Ok` covers
+// transport/protocol only, so failing compiles can be asserted with
+// FailsWithDiagnostic.
+public fn LlvmCompile CompileFullWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        return RunWithModule(id, source, "", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
+// Full-pipeline variant for root sources that need two sibling root-level
+// modules in the temporary search directory.
+public fn LlvmCompile CompileFullWithTwoRootModules(
+    ascii id,
+    ascii source,
+    ascii firstModuleFileName,
+    ascii firstModuleSource,
+    ascii secondModuleFileName,
+    ascii secondModuleSource)
+{
+    unsafe
+    {
+        return RunWithTwoRootModules(
+            id,
+            source,
+            "",
+            "",
+            firstModuleFileName,
+            firstModuleSource,
+            secondModuleFileName,
+            secondModuleSource);
+    }
+}
+
+// Full-pipeline variant of CompileTypeCheckWithModule with the LLVM artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn LlvmCompile CompileLlvmWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunWithModule(id, source, "", "llvm", moduleDirectory, moduleFileName, moduleSource);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunWithTwoRootModules(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii firstModuleFileName,
+    ascii firstModuleSource,
+    ascii secondModuleFileName,
+    ascii secondModuleSource)
+{
+    unsafe
+    {
+        stack mut OwnedAscii root = new();
+        stack mut bool ready = false;
+        switch (System.FileSystem.CreateTempDirectory("stark-feature-modules-"))
+        {
+            case IOResult<OwnedAscii>.Err(var rootError):
+                ready = false;
+            case IOResult<OwnedAscii>.Ok(var created):
+                root = created;
+                ready = true;
+        }
+
+        stack mut OwnedAscii firstPath = new();
+        if (ready)
+        {
+            ready = MemoryOk(firstPath.AppendAscii(root.View()))
+                && MemoryOk(firstPath.AppendByte(47))
+                && MemoryOk(firstPath.AppendAscii(firstModuleFileName));
+        }
+
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(firstPath.View(), firstModuleSource));
+        }
+
+        stack mut OwnedAscii secondPath = new();
+        if (ready)
+        {
+            ready = MemoryOk(secondPath.AppendAscii(root.View()))
+                && MemoryOk(secondPath.AppendByte(47))
+                && MemoryOk(secondPath.AppendAscii(secondModuleFileName));
+        }
+
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(secondPath.View(), secondModuleSource));
+        }
+
+        stack mut LlvmCompile compiled = new();
+        if (ready)
+        {
+            compiled = RunHostCompileIn(id, source, stopAfterPassId, artifactName, root.View(), 0);
+        }
+
+        stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
+        return compiled;
+    }
+}
+
+// Compiles `source` against a dependency supplied only as a typed package image.
+// The producer source is written just long enough to run `--emit-lib
+// --package-typed-only`, then deleted before the consumer compile so the
+// resolver must import package facts rather than source text.
+public fn LlvmCompile CompileLlvmWithTypedOnlyPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        return CompileWithPackage(id, source, "", "llvm", libModuleName, libModuleSource, true);
+    }
+}
+
+// Full CLI/runtime variant for manifest-backed typed-body ports: build the
+// producer as a typed-only package, verify emitted files/package JSON, delete
+// producer source, build a consumer executable against the package image, then
+// run it and check the expected exit code.
+public fn bool CompileAndRunTypedOnlyPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii templateName0,
+    ascii templateName1,
+    i32[min max] expectedExitCode)
+{
+    unsafe
+    {
+        return CompileAndRunTypedOnlyPackageCore(
+            id,
+            source,
+            libModuleName,
+            libModuleSource,
+            templateName0,
+            templateName1,
+            expectedExitCode);
+    }
+}
+
+internal fn LlvmCompile RunWithModule(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        stack mut OwnedAscii root = new();
+        stack mut bool ready = false;
+        // System.Testing also exports CreateTempDirectory/CreateDirectory, so these
+        // two stay qualified to pick the FileSystem ones.
+        switch (System.FileSystem.CreateTempDirectory("stark-feature-modules-"))
+        {
+            case IOResult<OwnedAscii>.Err(var rootError):
+                ready = false;
+            case IOResult<OwnedAscii>.Ok(var created):
+                root = created;
+                ready = true;
+        }
+
+        stack mut OwnedAscii filePath = new();
+        if (ready)
+        {
+            ready = MemoryOk(filePath.AppendAscii(root.View()));
+        }
+
+        if (ready && AsciiLength(moduleDirectory) > 0)
+        {
+            ready = MemoryOk(filePath.AppendByte(47))
+                && MemoryOk(filePath.AppendAscii(moduleDirectory));
+            if (ready)
+            {
+                ready = IOOk(System.FileSystem.CreateDirectory(filePath.View()));
+            }
+        }
+
+        if (ready)
+        {
+            ready = MemoryOk(filePath.AppendByte(47))
+                && MemoryOk(filePath.AppendAscii(moduleFileName));
+        }
+
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(filePath.View(), moduleSource));
+        }
+
+        stack mut LlvmCompile compiled = new();
+        if (ready)
+        {
+            compiled = RunHostCompileIn(id, source, stopAfterPassId, artifactName, root.View(), 0);
+        }
+
+        stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
+        return compiled;
+    }
+}
+
+internal fn bool CompileAndRunTypedOnlyPackageCore(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii templateName0,
+    ascii templateName1,
+    i32[min max] expectedExitCode)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        if (!AppendAscii(sourceName, libModuleName)
+            || !AppendAscii(sourceName, ".stark"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        if (!AppendAscii(libraryName, "lib")
+            || !AppendAscii(libraryName, libModuleName)
+            || !AppendAscii(libraryName, ".a"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii packageName = new();
+        if (!AppendAscii(packageName, "lib")
+            || !AppendAscii(packageName, libModuleName)
+            || !AppendAscii(packageName, ".starkpkg"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii packageJsonName = new();
+        if (!AppendAscii(packageJsonName, packageName.View())
+            || !AppendAscii(packageJsonName, ".json"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii demoName = new();
+        if (!AppendAscii(demoName, "Demo.stark"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii executableName = new();
+        if (!AppendAscii(executableName, "app"))
+        {
+            return false;
+        }
+
+        switch (System.Testing.CreateTempDirectory("compiler-host-pkg-runtime"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return false;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                if (!WriteTempText(tempDir, sourceName.View(), libModuleSource)
+                    || !WriteTempText(tempDir, demoName.View(), source))
+                {
+                    return false;
+                }
+
+                stack mut ProcessOutput libraryOutput = new();
+                if (!BuildTypedOnlyLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    libraryOutput))
+                {
+                    return false;
+                }
+
+                if (!ProcessStdoutContains(libraryOutput, "Emitted static library:")
+                    || !ProcessStderrEmpty(libraryOutput)
+                    || !TempFileExists(tempDir, libraryName.View())
+                    || !TempFileExists(tempDir, packageName.View())
+                    || !TempFileExists(tempDir, packageJsonName.View()))
+                {
+                    return false;
+                }
+
+                if (!PackageJsonHasTypedOnlyTemplate(tempDir, packageJsonName.View(), templateName0, templateName1))
+                {
+                    return false;
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return false;
+                    case IOStatus.Ok:
+                }
+
+                stack mut ProcessOutput compileOutput = new();
+                if (!BuildConsumerExecutable(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    demoName.View(),
+                    executableName.View(),
+                    compileOutput))
+                {
+                    return false;
+                }
+
+                if (!ProcessStdoutContains(compileOutput, "Emitted executable:")
+                    || !ProcessStderrEmpty(compileOutput)
+                    || !TempFileExists(tempDir, executableName.View()))
+                {
+                    return false;
+                }
+
+                stack mut ProcessOutput runOutput = new();
+                if (!RunTempExecutable(tempDir, executableName.View(), runOutput))
+                {
+                    return false;
+                }
+
+                return !runOutput.WasTimedOut()
+                    && ProcessOutputEqual(expectedExitCode, "", "", runOutput);
+        }
+    }
+}
+
+internal fn bool BuildTypedOnlyLibraryPackage(
+    ascii compilerPath,
+    ascii workingDirectory,
+    ascii sourceName,
+    ascii libraryName,
+    ascii packageName,
+    out ProcessOutput output)
+    where overlap(compilerPath, workingDirectory),
+          overlap(compilerPath, sourceName),
+          overlap(compilerPath, libraryName),
+          overlap(compilerPath, packageName),
+          overlap(compilerPath, output),
+          overlap(workingDirectory, sourceName),
+          overlap(workingDirectory, libraryName),
+          overlap(workingDirectory, packageName),
+          overlap(workingDirectory, output),
+          overlap(sourceName, libraryName),
+          overlap(sourceName, packageName),
+          overlap(sourceName, output),
+          overlap(libraryName, packageName),
+          overlap(libraryName, output),
+          overlap(packageName, output)
+{
+    unsafe
+    {
+        stack mut ProcessCommand command = new();
+        switch (Command(compilerPath))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        if (!ProcessStatusOk(command.SetWorkingDirectory(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument(sourceName))
+            || !ProcessStatusOk(command.AddArgument("--emit-lib"))
+            || !ProcessStatusOk(command.AddArgument("-o"))
+            || !ProcessStatusOk(command.AddArgument(libraryName))
+            || !ProcessStatusOk(command.AddArgument("--package-image-output"))
+            || !ProcessStatusOk(command.AddArgument(packageName))
+            || !ProcessStatusOk(command.AddArgument("--package-image-json"))
+            || !ProcessStatusOk(command.AddArgument("--package-typed-only"))
+            || !ProcessStatusOk(command.AddArgument("--target-data-layout"))
+            || !ProcessStatusOk(command.AddArgument(PackageRuntimeTargetDataLayout)))
+        {
+            return false;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+internal fn bool BuildConsumerExecutable(
+    ascii compilerPath,
+    ascii workingDirectory,
+    ascii sourceName,
+    ascii executableName,
+    out ProcessOutput output)
+    where overlap(compilerPath, workingDirectory),
+          overlap(compilerPath, sourceName),
+          overlap(compilerPath, executableName),
+          overlap(compilerPath, output),
+          overlap(workingDirectory, sourceName),
+          overlap(workingDirectory, executableName),
+          overlap(workingDirectory, output),
+          overlap(sourceName, executableName),
+          overlap(sourceName, output),
+          overlap(executableName, output)
+{
+    unsafe
+    {
+        stack mut ProcessCommand command = new();
+        switch (Command(compilerPath))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        if (!ProcessStatusOk(command.SetWorkingDirectory(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument(sourceName))
+            || !ProcessStatusOk(command.AddArgument("--emit-exe"))
+            || !ProcessStatusOk(command.AddArgument("-o"))
+            || !ProcessStatusOk(command.AddArgument(executableName))
+            || !ProcessStatusOk(command.AddArgument("-I"))
+            || !ProcessStatusOk(command.AddArgument(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument("--target-data-layout"))
+            || !ProcessStatusOk(command.AddArgument(PackageRuntimeTargetDataLayout)))
+        {
+            return false;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+internal fn bool RunTempExecutable(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii executableName,
+    out ProcessOutput output)
+    where overlap(tempDir, executableName),
+          overlap(tempDir, output),
+          overlap(executableName, output)
+{
+    unsafe
+    {
+        stack mut OwnedAscii executablePath = new();
+        switch (tempDir.PathFor(executableName))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var path):
+                executablePath = path;
+        }
+
+        stack mut ProcessCommand command = new();
+        switch (Command(executablePath.View()))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return true;
+    }
+}
+
+internal fn bool PackageJsonHasTypedOnlyTemplate(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii packageJsonName,
+    ascii templateName0,
+    ascii templateName1)
+    where overlap(tempDir, packageJsonName),
+          overlap(tempDir, templateName0),
+          overlap(tempDir, templateName1),
+          overlap(packageJsonName, templateName0),
+          overlap(packageJsonName, templateName1),
+          overlap(templateName0, templateName1)
+{
+    unsafe
+    {
+        stack mut OwnedAscii packageJson = new();
+        switch (tempDir.ReadText(packageJsonName))
+        {
+            case IOResult<OwnedAscii>.Err(var readError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var text):
+                packageJson = text;
+        }
+
+        stack ascii json = packageJson.View();
+        if (!System.Testing.Contains(json, "\"GenericTemplates\"")
+            || !System.Testing.Contains(json, "\"TypedBody\"")
+            || System.Testing.Contains(json, "\"BodyText\"")
+            || !System.Testing.Contains(json, templateName0))
+        {
+            return false;
+        }
+
+        if (AsciiLength(templateName1) > 0
+            && !System.Testing.Contains(json, templateName1))
+        {
+            return false;
+        }
+
+        return true;
+    }
+}
+
+internal fn bool TempFileExists(mut borrow System.Testing.TempDirectory tempDir, ascii relativePath)
+    where overlap(tempDir, relativePath)
+{
+    unsafe
+    {
+        stack mut OwnedAscii path = new();
+        switch (tempDir.PathFor(relativePath))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        switch (System.IO.File.Exists(path.View()))
+        {
+            case IOResult<bool>.Err(var existsError):
+                return false;
+            case IOResult<bool>.Ok(var exists):
+                return exists;
+        }
+    }
+}
+
+internal finite law bool ProcessStatusOk(ProcessStatus status)
+{
+    switch (status)
+    {
+        case ProcessStatus.Err(var error):
+            return false;
+        case ProcessStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool WriteTempText(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii relativePath,
+    ascii text)
+    where overlap(tempDir, relativePath),
+          overlap(tempDir, text),
+          overlap(relativePath, text)
+{
+    switch (tempDir.WriteText(relativePath, text))
+    {
+        case IOStatus.Err(var error):
+            return false;
+        case IOStatus.Ok:
+            return true;
+    }
+}
+
+internal fn LlvmCompile CompileWithPackage(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii libModuleName,
+    ascii libModuleSource,
+    bool typedOnlyPackage)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return failed;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        if (!AppendAscii(sourceName, libModuleName)
+            || !AppendAscii(sourceName, ".stark"))
+        {
+            return failed;
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        if (!AppendAscii(libraryName, "lib")
+            || !AppendAscii(libraryName, libModuleName)
+            || !AppendAscii(libraryName, ".a"))
+        {
+            return failed;
+        }
+
+        stack mut OwnedAscii packageName = new();
+        if (!AppendAscii(packageName, "lib")
+            || !AppendAscii(packageName, libModuleName)
+            || !AppendAscii(packageName, ".starkpkg"))
+        {
+            return failed;
+        }
+
+        switch (System.Testing.CreateTempDirectory("compiler-host-pkg"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(sourceName.View(), libModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                switch (BuildLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    PackageHostTargetTriple,
+                    PackageHostTargetDataLayout,
+                    typedOnlyPackage,
+                    HostTimeoutMilliseconds))
+                {
+                    case HostResult<bool>.Err(var buildError):
+                        return failed;
+                    case HostResult<bool>.Ok(var built):
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                stack mut LlvmCompile compiled =
+                    RunHostCompileInForTargetDataLayoutWithOverlappingInputs(
+                        id,
+                        source,
+                        stopAfterPassId,
+                        artifactName,
+                        tempDir.View(),
+                        0,
+                        PackageHostTargetTriple,
+                        PackageHostTargetDataLayout);
+                if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+                {
+                    compiled.Ok = false;
+                }
+
+                return compiled;
+        }
+    }
+}
+
+internal fn bool AppendAscii(mut borrow OwnedAscii destination, ascii value)
+{
+    unsafe
+    {
+        switch (destination.AppendAscii(value))
+        {
+            case MemoryStatus.Err(_):
+                return false;
+            case MemoryStatus.Ok:
+                return true;
+        }
+    }
+}
+
+internal finite law bool MemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+internal finite law bool IOOk(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
+            return true;
+        case IOStatus.Err(var error):
+            return false;
+    }
+}
+
+// Returns the LLVM artifact text of a successful compile, or empty text.
+public fn ascii Llvm(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+// Returns the MIR artifact text of a successful CompileMir, or empty text.
+public fn ascii Mir(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("mir");
+    }
+}
+
+// Counts diagnostics that carry the code and whose message contains the
+// fragment.
+public fn u64[0 2 ** 63 - 1] CountDiagnosticsWithCodeAndMessage(
+    mut borrow LlvmCompile compiled,
+    ascii code,
+    ascii messageFragment)
+{
+    unsafe
+    {
+        stack mut u64[0 2 ** 63 - 1] matches = 0;
+        stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (Equals(compiled.Outcome.DiagnosticCodeAt(index), code)
+                && System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), messageFragment))
+            {
+                matches += 1;
+            }
+        }
+
+        return matches;
+    }
+}
+
+public fn bool AnyDiagnosticMessageContains(mut borrow LlvmCompile compiled, ascii fragment)
+{
+    unsafe
+    {
+        stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), fragment))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+// True when any diagnostic carries the code, regardless of compile outcome.
+public fn bool HasDiagnostic(mut borrow LlvmCompile compiled, ascii code)
+{
+    unsafe
+    {
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
+}
+
+// True when the compile failed and reported the diagnostic code.
+public fn bool FailsWithDiagnostic(mut borrow LlvmCompile compiled, ascii code)
+{
+    unsafe
+    {
+        if (!compiled.Ok || compiled.Outcome.CompileSucceeded())
+        {
+            return false;
+        }
+
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
+}
+
+// True when the compile failed and reported the diagnostic code with a message
+// containing the fragment.
+public fn bool FailsWithDiagnosticMessage(mut borrow LlvmCompile compiled, ascii code, ascii messageFragment)
+{
+    unsafe
+    {
+        if (!FailsWithDiagnostic(compiled, code))
+        {
+            return false;
+        }
+
+        return AnyDiagnosticMessageContains(compiled, messageFragment);
+    }
+}
+
+internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+{
+    unsafe
+    {
+        return RunHostCompileIn(id, source, stopAfterPassId, artifactName, "", 0);
+    }
+}
+
+internal fn LlvmCompile RunHostCompileUsingStarkPath(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName)
+{
+    unsafe
+    {
+        return RunHostCompileInUsingStarkPath(id, source, stopAfterPassId, artifactName, "", 0);
+    }
+}
+
+internal fn LlvmCompile RunHostCompileIn(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInUsingStarkPath(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInUsingStarkPath(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInForTargetDataLayoutWithOverlappingInputs(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
+    ascii targetTriple,
+    ascii targetDataLayout)
+    where overlap(id, source),
+          overlap(id, stopAfterPassId),
+          overlap(id, artifactName),
+          overlap(id, searchDirectory),
+          overlap(id, targetTriple),
+          overlap(id, targetDataLayout),
+          overlap(source, stopAfterPassId),
+          overlap(source, artifactName),
+          overlap(source, searchDirectory),
+          overlap(source, targetTriple),
+          overlap(source, targetDataLayout),
+          overlap(stopAfterPassId, artifactName),
+          overlap(stopAfterPassId, searchDirectory),
+          overlap(stopAfterPassId, targetTriple),
+          overlap(stopAfterPassId, targetDataLayout),
+          overlap(artifactName, searchDirectory),
+          overlap(artifactName, targetTriple),
+          overlap(artifactName, targetDataLayout),
+          overlap(searchDirectory, targetTriple),
+          overlap(searchDirectory, targetDataLayout),
+          overlap(targetTriple, targetDataLayout)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+        stack mut OwnedAscii idCopy = new();
+        stack mut OwnedAscii sourceCopy = new();
+        stack mut OwnedAscii stopCopy = new();
+        stack mut OwnedAscii artifactCopy = new();
+        stack mut OwnedAscii searchCopy = new();
+        stack mut OwnedAscii targetCopy = new();
+        stack mut OwnedAscii layoutCopy = new();
+
+        if (!AppendAscii(idCopy, id)
+            || !AppendAscii(sourceCopy, source)
+            || !AppendAscii(stopCopy, stopAfterPassId)
+            || !AppendAscii(artifactCopy, artifactName)
+            || !AppendAscii(searchCopy, searchDirectory)
+            || !AppendAscii(targetCopy, targetTriple)
+            || !AppendAscii(layoutCopy, targetDataLayout))
+        {
+            return failed;
+        }
+
+        return RunHostCompileInForTargetDataLayout(
+            idCopy.View(),
+            sourceCopy.View(),
+            stopCopy.View(),
+            artifactCopy.View(),
+            searchCopy.View(),
+            maximumComptimeLoopIterations,
+            targetCopy.View(),
+            layoutCopy.View());
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInForTargetDataLayout(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
+    ascii targetTriple,
+    ascii targetDataLayout)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInForTargetWithDataLayout(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds,
+                targetTriple,
+                targetDataLayout))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}

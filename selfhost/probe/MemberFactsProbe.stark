@@ -1,0 +1,130 @@
+import Compiler.Mir
+import System.Console
+import System.Text
+module Compiler.Probe.MemberFacts
+
+fn u8[0 1] Check(ascii name, ascii source, bool expectOk)
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(source, sink);
+    if (ok == expectOk)
+    {
+        Write("ok   ");
+        WriteLine(name);
+        return 0;
+    }
+
+    Write("FAIL ");
+    WriteLine(name);
+    return 1;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] failures = 0;
+
+    failures += (i32[min max])Check(
+        "plain-field-store-load",
+        "struct Box { i64 value; bool flag; } fn i64 main() { stack Box box = new Box(); box.value = 11; return box.value }",
+        true);
+
+    failures += (i32[min max])Check(
+        "missing-leaf-rejected",
+        "struct Inner { i32[min max] value; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.inner.missing }",
+        false);
+
+    failures += (i32[min max])Check(
+        "scalar-intermediate-rejected",
+        "struct Inner { i32[min max] value; } struct Box { i64 scalar; Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.scalar.value }",
+        false);
+
+    failures += (i32[min max])Check(
+        "narrow-store-constant-too-big-rejected",
+        "struct Box { u8[0 2] count; i64 tail; } fn i64 main() { stack Box box = new Box(); box.count = 5; return box.tail }",
+        false);
+
+    failures += (i32[min max])Check(
+        "narrow-store-unproven-param-rejected",
+        "struct Box { u8[0 2] count; i64 tail; } fn i64 main(i64 value) { stack Box box = new Box(); box.count = value; return box.tail }",
+        false);
+
+    failures += (i32[min max])Check(
+        "narrow-store-in-range-accepted",
+        "struct Box { u8[0 2] count; i64 tail; } fn i64 main() { stack Box box = new Box(); box.count = 2; return box.tail }",
+        true);
+
+    failures += (i32[min max])Check(
+        "i64-array-const-index",
+        "struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.values[2] = 17; return 7 }",
+        true);
+
+    failures += (i32[min max])Check(
+        "var-from-i64-field",
+        "struct Box { i64 value; } fn i64 main() { stack Box box = new Box(); box.value = 3; var copy = box.value; return 7 }",
+        true);
+
+    failures += (i32[min max])Check(
+        "var-from-ranged-field",
+        "struct Box { u8[0 2] count; i64 tail; } fn i64 main() { stack Box box = new Box(); box.count = 2; var idx = box.count; return 7 }",
+        true);
+
+    failures += (i32[min max])Check(
+        "ranged-field-direct-index-read-proves-bounds",
+        "struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.count = 2; box.values[2] = 17; return box.values[box.count] }",
+        true);
+
+    failures += (i32[min max])Check(
+        "ranged-field-index-store-proves-bounds",
+        "struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.count = 2; var idx = box.count; box.values[idx] = 17; return 7 }",
+        true);
+
+    failures += (i32[min max])Check(
+        "ranged-field-index-read-proves-bounds",
+        "struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.count = 2; var idx = box.count; box.values[2] = 17; return box.values[idx] }",
+        true);
+
+    failures += (i32[min max])Check(
+        "ranged-elem-read-proves-index-bounds",
+        "struct Box { u8[0 2][4] slots; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.slots[1] = 2; box.values[2] = 17; return box.values[box.slots[1]] }",
+        true);
+
+    failures += (i32[min max])Check(
+        "unranged-elem-index-rejected",
+        "struct Box { i64[min max][4] slots; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.slots[1] = 2; return box.values[box.slots[1]] }",
+        false);
+
+    failures += (i32[min max])Check(
+        "compound-add-full-width-field",
+        "struct Box { i64 value; } fn i64 main() { stack Box box = new Box(); box.value = 3; box.value += 1; return box.value }",
+        true);
+
+    failures += (i32[min max])Check(
+        "compound-add-narrow-field-rejected",
+        "struct Box { u8[0 2] count; i64 pad; } fn i64 main() { stack Box box = new Box(); box.count = 1; box.count += 1; return 7 }",
+        false);
+
+    // The try success payload's declared range proves the field store when it
+    // is a subset of the field's declared range.
+    failures += (i32[min max])Check(
+        "try-store-matching-ranged-field",
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }",
+        true);
+
+    failures += (i32[min max])Check(
+        "try-store-narrow-field-rejected",
+        "enum Outcome { [Ok] Value(u8[0 max]), [Err] Failed(u8[0 max]) } struct Box { u8[0 2] count; i64 pad; } fn Outcome main() { stack Box box = new Box(); box.count = try Outcome.Value(1); return Outcome.Value(0) }",
+        false);
+
+    failures += (i32[min max])Check(
+        "ranged-return-through-declared-load-facts",
+        "struct Box { i32[min max] value; } fn i32[min max] main() { stack Box box = new Box(); box.value = 11; return box.value }",
+        true);
+
+    if (failures == 0)
+    {
+        WriteLine("all member fact probes passed");
+        return 0;
+    }
+
+    return 1;
+}

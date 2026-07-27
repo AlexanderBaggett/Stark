@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "manifestKind": "stark-managed-license-evidence",
+  "outputRoot": "licenses/managed",
+  "packageFamilies": [
+    {
+      "dependencyId": "antlr4-runtime-standard",
+      "packageId": "Antlr4.Runtime.Standard",
+      "version": "4.13.1",
+      "targets": "all",
+      "packageArchiveSha512": "H0gXethck6OjObUJ2qK+9xFUod80Qzfr/gdlEQiC5FAhsRafRglxUiloLiLxF15MrA9AasCOhU4cFWcu4Yuk5w==",
+      "files": [
+        {
+          "sourceKind": "repository-file",
+          "sourcePath": "eng/release/licenses/Antlr4.Runtime.Standard-4.13.1-LICENSE.txt",
+          "upstreamUrl": "https://raw.githubusercontent.com/antlr/antlr4/7ed420ff2c78d62883875c442d75f32e73bc86c8/LICENSE.txt",
+          "upstreamTag": "4.13.1",
+          "upstreamCommit": "7ed420ff2c78d62883875c442d75f32e73bc86c8",
+          "outputName": "LICENSE.txt",
+          "bytes": 1480,
+          "sha256": "3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c"
+        }
+      ]
+    },
+    {
+      "dependencyId": "dotnet-stage0-runtime",
+      "packageIdTemplate": "Microsoft.NETCore.App.Runtime.{rid}",
+      "version": "10.0.10",
+      "selections": [
+        {
+          "target": "linux-arm64",
+          "runtimeIdentifier": "linux-arm64",
+          "packageArchiveSha512": "wvXLiOfFb1gKY6uBDbZ6xyxlmieVXJLvkmVjoxi7CHzo6LEqypq88xRYtCPX1pZvGBcOQIWHGxvQGvdaEn1oCw==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 76623, "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54" }
+          ]
+        },
+        {
+          "target": "linux-x64",
+          "runtimeIdentifier": "linux-x64",
+          "packageArchiveSha512": "xScwy9MuoiEMYwYQd8jG9v76xz8HIJQtxTG6knw+IJoy5mdtdKdjBO5b8z/tcSIXY0JUuMZxfbB9lX7R7gA8uA==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 76623, "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54" }
+          ]
+        },
+        {
+          "target": "macos-arm64",
+          "runtimeIdentifier": "osx-arm64",
+          "packageArchiveSha512": "TDvyn0oygOw20euEuEuo4jLcflyDwNnuV4VARBN0LXVwAJe2CpvaDdXJvqY2lU6C7XJItjz3wgjLKRZl/nYJNw==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 76623, "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54" }
+          ]
+        },
+        {
+          "target": "macos-x64",
+          "runtimeIdentifier": "osx-x64",
+          "packageArchiveSha512": "eb/xl5MprW8gAwcsOgewQ5878WSfk0gf/VfrQa2OKM7/MVKxP38dABzqh2g1fpUsab9OjCFj0z5+OUnlOhFMRg==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 76623, "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54" }
+          ]
+        },
+        {
+          "target": "windows-arm64",
+          "runtimeIdentifier": "win-arm64",
+          "packageArchiveSha512": "AAs8WMOE60soiZkI4mimuCBo0uF1Nfh0JT0wSCeCtfDQZSslCbYOgLQzIiYc+q3KBnquV/hTamotE0h8RG83jQ==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1139, "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 78041, "sha256": "6d15e10a101c6bfff2ab4429ed061bf76c456fc4b23ad6b03e0d0f8377148a21" }
+          ]
+        },
+        {
+          "target": "windows-x64",
+          "runtimeIdentifier": "win-x64",
+          "packageArchiveSha512": "d/6m2bwNP35/bBDmtNPb0GBLwlK0eyM8/Qb7zEtIFJDgjAo960bROUlB6XcuLM4VmfA8hklOgGDU98nUg6xDwA==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.TXT", "outputName": "LICENSE.TXT", "bytes": 1139, "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 78041, "sha256": "6d15e10a101c6bfff2ab4429ed061bf76c456fc4b23ad6b03e0d0f8377148a21" }
+          ]
+        }
+      ]
+    },
+    {
+      "dependencyId": "dotnet-stage0-runtime",
+      "packageIdTemplate": "Microsoft.AspNetCore.App.Runtime.{rid}",
+      "version": "10.0.10",
+      "selections": [
+        {
+          "target": "linux-arm64",
+          "runtimeIdentifier": "linux-arm64",
+          "packageArchiveSha512": "aBtCKth6hLH5uSd0l5zhKXub77x/B9rQtBRR7li1s/j/4/5rBG2UusqHShGzxmcGEsvLIe2YrWHPdgVIm5kf+g==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 55638, "sha256": "52af3d603b6d069e635f8afd08ec44ec01559255b5f3afd161ae9e6fe7e7aa54" }
+          ]
+        },
+        {
+          "target": "linux-x64",
+          "runtimeIdentifier": "linux-x64",
+          "packageArchiveSha512": "Wea7/9BeqipVadzXn54xWlUvMovC7rZVuSqslythntGzwlEFcGLwl0TLm0hol7e7qE2Twjtc7xwAcIcReZgPoQ==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 55638, "sha256": "52af3d603b6d069e635f8afd08ec44ec01559255b5f3afd161ae9e6fe7e7aa54" }
+          ]
+        },
+        {
+          "target": "macos-arm64",
+          "runtimeIdentifier": "osx-arm64",
+          "packageArchiveSha512": "qT5DaWKFw777elmcmj8TQrTw+tdTsBaucL6W+ylWWndGc0+FtcDjs/0WEdZaRlcdTOu7KmjyMgO5YvXxdQ7kUw==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 55638, "sha256": "52af3d603b6d069e635f8afd08ec44ec01559255b5f3afd161ae9e6fe7e7aa54" }
+          ]
+        },
+        {
+          "target": "macos-x64",
+          "runtimeIdentifier": "osx-x64",
+          "packageArchiveSha512": "TGF4ZEiGwjDWFSQcf3ASYnkN8BwokQ9oe8AacafOKY0Pt6r4hvueprXIVj2/7mMjyCSwEv9TEThP4xUfo7Qjjw==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1116, "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 55638, "sha256": "52af3d603b6d069e635f8afd08ec44ec01559255b5f3afd161ae9e6fe7e7aa54" }
+          ]
+        },
+        {
+          "target": "windows-arm64",
+          "runtimeIdentifier": "win-arm64",
+          "packageArchiveSha512": "ofbxEJLm8yVOhCEyhlcD/21u+WU3Ln8TYx6iMujVTBDpyE4PfLsO9kgfYMEwiLbHSqUa6V/9y7LYI/6HSuD4GA==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1139, "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 56748, "sha256": "307d014f65d8482314f1400ddeae7a0cbabb96c2207bcc77f6233cc10588e5d9" }
+          ]
+        },
+        {
+          "target": "windows-x64",
+          "runtimeIdentifier": "win-x64",
+          "packageArchiveSha512": "/2Ht7wInhxWE4zBsv9itb8mLrM0M28BWCDEkFNwbaMtq57qE8FysTU/+aOL+0WcZX9wAywOOBSm4Gw1Au9Staw==",
+          "files": [
+            { "sourceKind": "archive-entry", "archivePath": "LICENSE.txt", "outputName": "LICENSE.txt", "bytes": 1139, "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b" },
+            { "sourceKind": "archive-entry", "archivePath": "THIRD-PARTY-NOTICES.TXT", "outputName": "THIRD-PARTY-NOTICES.TXT", "bytes": 56748, "sha256": "307d014f65d8482314f1400ddeae7a0cbabb96c2207bcc77f6233cc10588e5d9" }
+          ]
+        }
+      ]
+    }
+  ]
+}

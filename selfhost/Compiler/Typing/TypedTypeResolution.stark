@@ -1,0 +1,762 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedDynamicFacts
+import Compiler.Typing.TypedGenerics
+import System.Text
+module Compiler.Typing.TypedTypeResolution
+
+public enum TypedSignatureTypeKind
+{
+    Void,
+    Bool,
+    Integer,
+    Float,
+    Text,
+    Named,
+    GenericParameter,
+    RawPointer,
+    FunctionPointer,
+    Closure,
+    Dynamic,
+    FixedArray,
+    Slice,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagIntegerSigned()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagIntegerUnsigned()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagHasIntegerRange()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagRangeStartsAtMin()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagRangeEndsAtMax()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagBorrow()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagRetborrow()
+{
+    return 64;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagStoreborrow()
+{
+    return 128;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagOut()
+{
+    return 256;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagInit()
+{
+    return 512;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagMutableView()
+{
+    return 1024;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagConst()
+{
+    return 2048;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagShared()
+{
+    return 4096;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagFrozen()
+{
+    return 8192;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagRawMutablePointer()
+{
+    return 16384;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagHasElementCountExpression()
+{
+    return 32768;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagTailCallable()
+{
+    return 65536;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagDeadOnReturn()
+{
+    return 131072;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagOwnedText()
+{
+    return 262144;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagUnicodeText()
+{
+    return 524288;
+}
+
+internal inline finite law u32[0 max] TypedSignatureTypeFlagHeadIsGenericParameter()
+{
+    return 1048576;
+}
+
+internal inline finite law bool TypedSignatureFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+internal finite law bool TypedSignatureTokenTextEquals(ascii source, borrow TokenStream stream, u32[0 max] token, ascii expected)
+{
+    stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    return System.Text.Equals(actual, expected);
+}
+
+internal finite law bool TypedSignatureTokenTextEqualsToken(ascii source, borrow TokenStream stream, u32[0 max] left, u32[0 max] right)
+{
+    stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
+    stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
+    return System.Text.Equals(leftText, rightText);
+}
+
+internal fn bool TypedSignatureIntegerTokenIsUnsigned(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    return TypedSignatureTokenTextEquals(source, stream, token, "u8")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u16")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u24")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u32")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u48")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u64")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u96")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u128")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u192")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u256")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u384")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u512")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u768")
+        || TypedSignatureTokenTextEquals(source, stream, token, "u1024");
+}
+
+internal fn u32[0 max] TypedSignatureIntegerBitWidth(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i8") || TypedSignatureTokenTextEquals(source, stream, token, "u8"))
+    {
+        return 8;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i16") || TypedSignatureTokenTextEquals(source, stream, token, "u16"))
+    {
+        return 16;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i24") || TypedSignatureTokenTextEquals(source, stream, token, "u24"))
+    {
+        return 24;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i32") || TypedSignatureTokenTextEquals(source, stream, token, "u32"))
+    {
+        return 32;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i48") || TypedSignatureTokenTextEquals(source, stream, token, "u48"))
+    {
+        return 48;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i64") || TypedSignatureTokenTextEquals(source, stream, token, "u64"))
+    {
+        return 64;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i96") || TypedSignatureTokenTextEquals(source, stream, token, "u96"))
+    {
+        return 96;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i128") || TypedSignatureTokenTextEquals(source, stream, token, "u128"))
+    {
+        return 128;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i192") || TypedSignatureTokenTextEquals(source, stream, token, "u192"))
+    {
+        return 192;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i256") || TypedSignatureTokenTextEquals(source, stream, token, "u256"))
+    {
+        return 256;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i384") || TypedSignatureTokenTextEquals(source, stream, token, "u384"))
+    {
+        return 384;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i512") || TypedSignatureTokenTextEquals(source, stream, token, "u512"))
+    {
+        return 512;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i768") || TypedSignatureTokenTextEquals(source, stream, token, "u768"))
+    {
+        return 768;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "i1024") || TypedSignatureTokenTextEquals(source, stream, token, "u1024"))
+    {
+        return 1024;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedSignatureFloatBitWidth(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    if (TypedSignatureTokenTextEquals(source, stream, token, "f16"))
+    {
+        return 16;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "f32"))
+    {
+        return 32;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "f64"))
+    {
+        return 64;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "f80"))
+    {
+        return 80;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, token, "f128"))
+    {
+        return 128;
+    }
+
+    return 0;
+}
+
+internal finite law bool TypedSignatureIsContextualTailToken(borrow TokenStream stream, u32[0 max] token)
+{
+    return stream.ContextualKindAt((u64[0 2 ** 63 - 1])token) == ContextualKeywordKind.Tail;
+}
+
+internal finite law bool TypedSignatureTokenCanStartCallableFunctionKind(TokenKind kind)
+{
+    return kind == TokenKind.Fn || kind == TokenKind.Finite || kind == TokenKind.Law;
+}
+
+internal finite law bool TypedSignatureTypeSpanContainsTailCallableSignature(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        if (TypedSignatureIsContextualTailToken(stream, scan)
+            && TypedSignatureTokenCanStartCallableFunctionKind(stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1))))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool TypedSignatureTypeSpanContainsDeadOnReturnContract(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        if (stream.ContextualKindAt((u64[0 2 ** 63 - 1])scan) == ContextualKeywordKind.DeadOnReturn)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool TypedSignatureTypeSpanHasTopLevelText(ascii source, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, ascii expected)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Identifier && TypedSignatureTokenTextEquals(source, stream, scan, expected))
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool TypedSignatureTypeSpanHasTopLevelToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, TokenKind target)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == target)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool TypedSignatureParamHasDeadOnReturnContract(
+    ascii source,
+    borrow TokenStream stream,
+    borrow FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack u32[0 max] paramName = signature.ParamNameAt(paramIndex);
+    stack u64[0 2 ** 63 - 1] contractCount = signature.DeadOnReturnParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < contractCount; index += 1)
+    {
+        if (TypedSignatureTokenTextEqualsToken(source, stream, paramName, signature.DeadOnReturnParamNameAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] TypedSignatureMatchingCloseToken(borrow TokenStream stream, u32[0 max] openToken)
+{
+    stack TokenKind openKind = stream.KindAt((u64[0 2 ** 63 - 1])openToken);
+    stack mut TokenKind closeKind = TokenKind.RParen;
+    if (openKind == TokenKind.LBrack)
+    {
+        closeKind = TokenKind.RBrack;
+    }
+    else if (openKind == TokenKind.LBrace)
+    {
+        closeKind = TokenKind.RBrace;
+    }
+    else if (openKind == TokenKind.Lt)
+    {
+        closeKind = TokenKind.Gt;
+    }
+    else if (openKind != TokenKind.LParen)
+    {
+        return openToken;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = openToken;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return openToken;
+        }
+
+        if (kind == openKind)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == closeKind)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return scan;
+                }
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return openToken;
+}
+
+internal fn void TypedSignatureScanTopLevelTypeFacts(
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out u32[0 max] rangeStartToken,
+    out u32[0 max] rangeEndToken,
+    out u32[0 max] elementCountStartToken,
+    out u32[0 max] elementCountEndToken,
+    out TypedSignatureTypeKind arrayKind)
+{
+    rangeStartToken = 0;
+    rangeEndToken = 0;
+    elementCountStartToken = 0;
+    elementCountEndToken = 0;
+    arrayKind = TypedSignatureTypeKind.Unknown;
+
+    stack mut u32[0 max] depth = 0;
+    stack mut bool consumedIntegerRange = false;
+    stack mut TokenKind previousTopLevel = TokenKind.EndOfFile;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = TypedSignatureMatchingCloseToken(stream, scan);
+            if (previousTopLevel == TokenKind.IntegerType && !consumedIntegerRange)
+            {
+                consumedIntegerRange = true;
+                rangeStartToken = scan;
+                if (close > scan)
+                {
+                    rangeEndToken = close;
+                    scan = (u32[0 max])(close + 1);
+                    continue;
+                }
+            }
+            else if (elementCountStartToken == 0)
+            {
+                elementCountStartToken = scan;
+                if (close > scan)
+                {
+                    elementCountEndToken = close;
+                    if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.RBrack)
+                    {
+                        arrayKind = TypedSignatureTypeKind.Slice;
+                    }
+                    else
+                    {
+                        arrayKind = TypedSignatureTypeKind.FixedArray;
+                    }
+
+                    scan = (u32[0 max])(close + 1);
+                    continue;
+                }
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        if (depth == 0 && kind != TokenKind.LBrack && kind != TokenKind.RBrack)
+        {
+            previousTopLevel = kind;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+}
+
+internal fn u32[0 max] TypedSignatureSemanticPrimaryToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, u32[0 max] fallbackToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.Void
+                || kind == TokenKind.Bool
+                || kind == TokenKind.IntegerType
+                || kind == TokenKind.FloatType
+                || kind == TokenKind.AsciiView
+                || kind == TokenKind.AsciiOwned
+                || kind == TokenKind.UnicodeView
+                || kind == TokenKind.UnicodeOwned
+                || kind == TokenKind.Rawptr
+                || kind == TokenKind.Rawmutptr
+                || kind == TokenKind.Fnptr
+                || kind == TokenKind.Closure
+                || TypedDynamicTokenKind(kind)
+                || kind == TokenKind.Identifier)
+            {
+                return scan;
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return fallbackToken;
+}
+
+internal fn TypedSignatureTypeKind TypedSignatureKindForType(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] functionGenericOpenToken,
+    u32[0 max] ownerGenericOpenToken,
+    TypedSignatureTypeKind arrayKind)
+{
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+    if (arrayKind != TypedSignatureTypeKind.Unknown && primaryKind != TokenKind.Rawptr && primaryKind != TokenKind.Rawmutptr)
+    {
+        return arrayKind;
+    }
+
+    if (TypedDynamicTokenKind(primaryKind))
+    {
+        return TypedSignatureTypeKind.Dynamic;
+    }
+
+    switch (primaryKind)
+    {
+        case TokenKind.Void:
+            return TypedSignatureTypeKind.Void;
+        case TokenKind.Bool:
+            return TypedSignatureTypeKind.Bool;
+        case TokenKind.IntegerType:
+            return TypedSignatureTypeKind.Integer;
+        case TokenKind.FloatType:
+            return TypedSignatureTypeKind.Float;
+        case TokenKind.AsciiView:
+            return TypedSignatureTypeKind.Text;
+        case TokenKind.UnicodeView:
+            return TypedSignatureTypeKind.Text;
+        case TokenKind.AsciiOwned:
+            return TypedSignatureTypeKind.Text;
+        case TokenKind.UnicodeOwned:
+            return TypedSignatureTypeKind.Text;
+        case TokenKind.Rawptr:
+            return TypedSignatureTypeKind.RawPointer;
+        case TokenKind.Rawmutptr:
+            return TypedSignatureTypeKind.RawPointer;
+        case TokenKind.Fnptr:
+            return TypedSignatureTypeKind.FunctionPointer;
+        case TokenKind.Closure:
+            return TypedSignatureTypeKind.Closure;
+        case TokenKind.Identifier:
+            if (TypedSignatureGenericParamListMatches(source, stream, functionGenericOpenToken, typeHeadToken)
+                || TypedSignatureGenericParamListMatches(source, stream, ownerGenericOpenToken, typeHeadToken))
+            {
+                return TypedSignatureTypeKind.GenericParameter;
+            }
+
+            return TypedSignatureTypeKind.Named;
+        default:
+            return TypedSignatureTypeKind.Unknown;
+    }
+}
+
+internal fn u32[0 max] TypedSignatureFlagsForType(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] functionGenericOpenToken,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] rangeStartToken,
+    u32[0 max] rangeEndToken,
+    u32[0 max] elementCountStartToken,
+    bool tailCallable,
+    u32[0 max] deadOnReturnCount,
+    bool signatureDeadOnReturn)
+{
+    stack mut u32[0 max] flags = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        if (TypedSignatureIntegerTokenIsUnsigned(source, stream, typePrimaryToken))
+        {
+            flags = flags | TypedSignatureTypeFlagIntegerUnsigned();
+        }
+        else
+        {
+            flags = flags | TypedSignatureTypeFlagIntegerSigned();
+        }
+    }
+
+    if (rangeStartToken != 0)
+    {
+        flags = flags | TypedSignatureTypeFlagHasIntegerRange();
+        if ((u32[0 max])(rangeStartToken + 1) < rangeEndToken
+            && TypedSignatureTokenTextEquals(source, stream, (u32[0 max])(rangeStartToken + 1), "min"))
+        {
+            flags = flags | TypedSignatureTypeFlagRangeStartsAtMin();
+        }
+
+        if (rangeEndToken > rangeStartToken
+            && TypedSignatureTokenTextEquals(source, stream, (u32[0 max])(rangeEndToken - 1), "max"))
+        {
+            flags = flags | TypedSignatureTypeFlagRangeEndsAtMax();
+        }
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Borrow))
+    {
+        flags = flags | TypedSignatureTypeFlagBorrow();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Retborrow))
+    {
+        flags = flags | TypedSignatureTypeFlagRetborrow();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Storeborrow))
+    {
+        flags = flags | TypedSignatureTypeFlagStoreborrow();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Out))
+    {
+        flags = flags | TypedSignatureTypeFlagOut();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Init))
+    {
+        flags = flags | TypedSignatureTypeFlagInit();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Mut))
+    {
+        flags = flags | TypedSignatureTypeFlagMutableView();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Const))
+    {
+        flags = flags | TypedSignatureTypeFlagConst();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Shared))
+    {
+        flags = flags | TypedSignatureTypeFlagShared();
+    }
+
+    if (TypedSignatureTypeSpanHasTopLevelToken(stream, typeStartToken, typeEndToken, TokenKind.Frozen))
+    {
+        flags = flags | TypedSignatureTypeFlagFrozen();
+    }
+
+    if (primaryKind == TokenKind.Rawmutptr)
+    {
+        flags = flags | TypedSignatureTypeFlagRawMutablePointer();
+    }
+
+    if (elementCountStartToken != 0)
+    {
+        flags = flags | TypedSignatureTypeFlagHasElementCountExpression();
+    }
+
+    if (tailCallable)
+    {
+        flags = flags | TypedSignatureTypeFlagTailCallable();
+    }
+
+    if (deadOnReturnCount > 0 || signatureDeadOnReturn)
+    {
+        flags = flags | TypedSignatureTypeFlagDeadOnReturn();
+    }
+
+    if (primaryKind == TokenKind.AsciiOwned || primaryKind == TokenKind.UnicodeOwned)
+    {
+        flags = flags | TypedSignatureTypeFlagOwnedText();
+    }
+
+    if (primaryKind == TokenKind.UnicodeView || primaryKind == TokenKind.UnicodeOwned)
+    {
+        flags = flags | TypedSignatureTypeFlagUnicodeText();
+    }
+
+    if (typeHeadToken != 0
+        && (TypedSignatureGenericParamListMatches(source, stream, functionGenericOpenToken, typeHeadToken)
+            || TypedSignatureGenericParamListMatches(source, stream, ownerGenericOpenToken, typeHeadToken)))
+    {
+        flags = flags | TypedSignatureTypeFlagHeadIsGenericParameter();
+    }
+
+    return flags;
+}

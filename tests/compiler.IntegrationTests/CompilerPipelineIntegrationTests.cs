@@ -7,7 +7,7 @@ public sealed class CompilerPipelineIntegrationTests
     [Fact]
     public async Task ManifestBackedLibrariesResolveWithoutSourceFiles()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -70,9 +70,10 @@ public sealed class CompilerPipelineIntegrationTests
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    TargetInfo: targetInfo));
 
-            Assert.True(result.Succeeded);
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
             Assert.NotNull(moduleGraph);
             Assert.True(moduleGraph.HasModule("Facade"));

@@ -1,0 +1,194 @@
+import CompilerTestSupport
+import System.Testing
+module IfWhilePatternRuntimeTests
+
+// Ported slice of tests/compiler.IntegrationTests/IfWhilePatternRuntimeTests.cs.
+// The C# originals compile each embedded program to a native executable via the
+// CLI (--emit-exe), run it, and assert on the process exit code. The Stark
+// compile helpers cannot link, run, or observe an exit code, so each Impl drives
+// the embedded program through the closest full-pipeline compile helper and
+// returns the nearest available success signal. See per-method `// PORT-NOTE:`.
+
+// Ported from IfWhilePatternRuntimeTests.IfPatternBindsOnMatchAndTakesElseOnMismatch.
+internal fn bool IfPatternBindsOnMatchAndTakesElseOnMismatchImpl()
+{
+    // PORT-NOTE: original compiles to an executable, runs it, and asserts the
+    // process exit code is 35 (lookup(3) binds x=30 on the `if is Some` arm, then
+    // lookup(0) takes the `else` arm +5). The compile helpers cannot run the linked
+    // program or observe an exit code, so this is reduced to a full-pipeline compile
+    // of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "ifwhile-if-pattern-binds-then-else",
+        raw"""
+module Demo
+enum Option<T> { Some(T), None }
+fn Option<i32[min max]> lookup(i32[min max] x)
+{
+    if (x == 0)
+    {
+        return Option<i32[min max]>.None;
+    }
+    return Option<i32[min max]>.Some(x * 10);
+}
+export fn i32[min max] main()
+{
+    stack mut i32[min max] total = 0;
+    if (lookup(3) is Option<i32[min max]>.Some(var x))
+    {
+        total = total + x;
+    }
+    else
+    {
+        total = total + 1;
+    }
+    if (lookup(0) is Option<i32[min max]>.Some(var y))
+    {
+        total = total + y;
+    }
+    else
+    {
+        total = total + 5;
+    }
+    return total;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from IfWhilePatternRuntimeTests.WhilePatternDrainsUntilNoMatch.
+internal fn bool WhilePatternDrainsUntilNoMatchImpl()
+{
+    // PORT-NOTE: original compiles to an executable, runs it, and asserts the
+    // process exit code is 15 (the `while willexit (next() is Some(var x))` loop
+    // drains 5,4,3,2,1 from the static counter N until None, summing to 15). The
+    // compile helpers cannot run the linked program or observe an exit code, so
+    // this is reduced to a full-pipeline compile of the embedded program returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "ifwhile-while-pattern-drains",
+        raw"""
+module Demo
+enum Option<T> { Some(T), None }
+static mut i32[min max] N = 5;
+fn Option<i32[min max]> next()
+{
+    if (N <= 0)
+    {
+        return Option<i32[min max]>.None;
+    }
+    stack i32[min max] v = N;
+    N = N - 1;
+    return Option<i32[min max]>.Some(v);
+}
+export fn i32[min max] main()
+{
+    stack mut i32[min max] sum = 0;
+    while willexit (next() is Option<i32[min max]>.Some(var x))
+    {
+        sum = sum + x;
+    }
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from IfWhilePatternRuntimeTests.IfPatternSupportsResultNestedStructAndLiteralPatterns.
+internal fn bool IfPatternSupportsResultNestedStructAndLiteralPatternsImpl()
+{
+    // PORT-NOTE: original compiles to an executable, runs it, and asserts the
+    // process exit code is 110 (Ok(Point(4,5)) -> +9 via nested struct pattern,
+    // Err -> +100, then the literal pattern `acc is 109` -> +1). The compile helpers
+    // cannot run the linked program or observe an exit code, so this is reduced to a
+    // full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "ifwhile-if-pattern-result-nested-literal",
+        raw"""
+module Demo
+enum Result<T, E> { Ok(T), Err(E) }
+enum Err1 { Bad }
+struct Point { i32[min max] X; i32[min max] Y; }
+fn Result<Point, Err1> compute(i32[min max] n)
+{
+    if (n < 0)
+    {
+        return Result<Point, Err1>.Err(Err1.Bad);
+    }
+    return Result<Point, Err1>.Ok(new Point() { X = n, Y = n + 1 });
+}
+export fn i32[min max] main()
+{
+    stack mut i32[min max] acc = 0;
+    if (compute(4) is Result<Point, Err1>.Ok(Point(var x, var y)))
+    {
+        acc = acc + x + y;
+    }
+    if (compute(-1) is Result<Point, Err1>.Err(var e))
+    {
+        acc = acc + 100;
+    }
+    if (acc is 109)
+    {
+        acc = acc + 1;
+    }
+    return acc;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from IfWhilePatternRuntimeTests.IfAndWhilePatternsDropOwnedCapturesExactlyOnce.
+internal fn bool IfAndWhilePatternsDropOwnedCapturesExactlyOnceImpl()
+{
+    // PORT-NOTE: original compiles to an executable, runs it, and asserts the
+    // process exit code is 37, proving drop-correctness: the named-local scrutinee
+    // `opt` is moved out by the match so Res{7} drops exactly once (+7, with no
+    // scope re-drop), and the `while willexit` loop binds and drops an owned Res{10}
+    // on each of 3 iterations (+30). The compile helpers cannot run the linked
+    // program or observe drop side effects, so this is reduced to a full-pipeline
+    // compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "ifwhile-drop-owned-captures-once",
+        raw"""
+module Demo
+static mut i32[min max] C = 0;
+fn void Bump(i32[min max] v) { C = C + v; return; }
+struct Res { i32[min max] V; drop { Bump(self.V); } }
+enum Option<T> { Some(T), None }
+
+fn Option<Res> make(bool s, i32[min max] v)
+{
+    if (s)
+    {
+        return Option<Res>.Some(new Res() { V = v });
+    }
+    return Option<Res>.None;
+}
+
+static mut i32[min max] M = 3;
+fn Option<Res> nextRes()
+{
+    if (M <= 0)
+    {
+        return Option<Res>.None;
+    }
+    M = M - 1;
+    return Option<Res>.Some(new Res() { V = 10 });
+}
+
+export fn i32[min max] main()
+{
+    stack mut Option<Res> opt = make(true, 7);
+    if (opt is Option<Res>.Some(var r))
+    {
+        stack i32[min max] used = r.V;
+    }
+    while willexit (nextRes() is Option<Res>.Some(var r))
+    {
+        stack i32[min max] usedLoop = r.V;
+    }
+    return C;
+}
+""");
+    return Succeeds(compiled);
+}

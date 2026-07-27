@@ -64,7 +64,11 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            if (!TryInitializePostfixState(postfixExpression.primaryExpression(), out var root, out var currentName))
+            if (!TryInitializePostfixState(
+                    postfixExpression.primaryExpression(),
+                    out var root,
+                    out var currentName,
+                    preserveConstGlobalAddress: true))
             {
                 return false;
             }
@@ -91,7 +95,9 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var qualifiedName = $"{currentName}.{memberName}";
-                    root = TryResolveNamedValueOperand(qualifiedName);
+                    root = TryResolveNamedValueOperand(
+                        qualifiedName,
+                        preserveConstGlobalAddress: true);
                     if (root is null)
                     {
                         currentName = qualifiedName;
@@ -107,6 +113,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray
@@ -483,6 +496,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray
@@ -612,6 +632,14 @@ internal sealed partial class MidLevelIrLowerer
             out PlaceTarget updated)
         {
             updated = target;
+
+            // A start/count (or empty full-view) bracket is the slice form:
+            // a value expression, never an addressable place step.
+            if (expressionList.expression().Length != 1)
+            {
+                return false;
+            }
+
             var path = target.Path.ToList();
             var currentType = target.Type;
             var usesAddressModel = target.UsesAddressModel;
@@ -753,6 +781,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray
@@ -1205,7 +1240,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? BuildAddressCore(PlaceTarget target)
         {
-            MidLevelIrOperand? currentValue = target.RootValue ?? (target.RootName is null ? null : ResolveNamedOperand(target.RootName));
+            MidLevelIrOperand? currentValue = target.RootValue
+                ?? (target.RootName is null
+                    ? null
+                    : TryResolveNamedValueOperand(
+                        target.RootName,
+                        preserveConstGlobalAddress: true));
             var currentAddressIsMutable = target.IsAddressMutable;
             MidLevelIrOperand? currentAddress = target.RootAddress
                 ?? currentValue switch
@@ -1217,8 +1257,10 @@ internal sealed partial class MidLevelIrLowerer
                 };
             var currentType = target.RootType;
 
-            foreach (var segment in target.Path)
+            for (var segmentIndex = 0; segmentIndex < target.Path.Count; segmentIndex++)
             {
+                var segment = target.Path[segmentIndex];
+                var isLastSegment = segmentIndex == target.Path.Count - 1;
                 switch (segment.Kind)
                 {
                     case PlacePathKind.Field:
@@ -1358,6 +1400,25 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     return null;
                 }
+
+                if (!isLastSegment && StarkTypeSymbols.IsPointerBackedBorrowType(currentType))
+                {
+                    var borrowedValueType = StarkTypeSymbols.BorrowReturnValueType(currentType);
+                    var canMutateBorrowedAddress = currentAddressIsMutable && currentType.IsMutableView;
+                    var borrowedAddressType = AddressType(borrowedValueType, currentType.IsMutableView);
+                    var borrowedValue = EmitTemporary(
+                        new MidLevelIrLoadIndirectRValue(currentAddress, currentType, $"{currentAddress.Text}:load"),
+                        "load");
+                    currentAddress = CoerceOperand(borrowedValue, borrowedAddressType);
+                    if (currentAddress is null)
+                    {
+                        return null;
+                    }
+
+                    currentType = borrowedValueType;
+                    currentAddressIsMutable = canMutateBorrowedAddress;
+                    currentValue = null;
+                }
             }
 
             return currentAddress;
@@ -1370,7 +1431,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (targetType.Kind != StarkTypeKind.Named
                 || targetType.NamedType is null
-                || !_namedTypes.TryGetValue(targetType.NamedType, out var namedType))
+                || !TryGetConcreteNamedTypeForLowering(targetType, out var namedType))
             {
                 return false;
             }

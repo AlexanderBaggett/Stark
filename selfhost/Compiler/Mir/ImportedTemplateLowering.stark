@@ -1,0 +1,3055 @@
+import Compiler.Ir
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.ImportedTemplateScalarLocals
+import Compiler.Mir.ImportedTemplateScalarOperators
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
+import Compiler.Mir.PackageImage.Shared.TypeCodec
+import System.Memory
+import System.Text
+module Compiler.Mir.ImportedTemplateLowering
+
+// Direct package-template lowering is intentionally fact-gated. A caller may use
+// UnsupportedBody to retain the compatibility source path, but malformed graphs
+// and output-table mismatches are compiler/package errors rather than fallbacks.
+public enum ImportedTemplateMirLoweringStatus
+{
+    Ok,
+    UnsupportedBody,
+    MalformedGraph,
+    ReturnTypeMismatch,
+    ReturnFactMismatch,
+    OutputFactMismatch,
+    TemplateNotFound,
+    AmbiguousTemplate,
+    MissingBackendFacts,
+    BackendFactMismatch,
+    OutOfMemory,
+}
+
+internal struct ImportedTemplateScalarEvaluationState
+{
+    u32[0 max] ConversionCursorValue;
+
+    ImportedTemplateScalarEvaluationState()
+    {
+        self.ConversionCursorValue = 0;
+    }
+
+    internal inline finite law u32[0 max] ConversionCursor(
+        borrow ImportedTemplateScalarEvaluationState self)
+    {
+        return self.ConversionCursorValue;
+    }
+
+    internal finite bool TryTakeConversionOrdinal(
+        mut borrow ImportedTemplateScalarEvaluationState self,
+        out u32[0 max] ordinal)
+    {
+        ordinal = self.ConversionCursorValue;
+        if (self.ConversionCursorValue == 4294967295)
+        {
+            return false;
+        }
+
+        self.ConversionCursorValue = self.ConversionCursorValue + 1;
+        return true;
+    }
+}
+
+public inline finite law bool ImportedTemplateMirLoweringSucceeded(
+    ImportedTemplateMirLoweringStatus status)
+{
+    return status == ImportedTemplateMirLoweringStatus.Ok;
+}
+
+internal fn bool ImportedTemplateGenericFactTextEquals(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] textRow,
+    const ascii expected,
+    mut borrow OwnedAscii scratch)
+{
+    if (textRow == 0
+        || (u64[0 2 ** 63 - 1])textRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow row = graph.TextRowAt(textRow);
+    return AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            row,
+            scratch) == MemoryStatus.Ok
+        && System.Text.OwnedAsciiEqualsAscii(scratch, expected);
+}
+
+internal fn bool ImportedTemplateTypeKindEquals(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] typeReferenceRow,
+    const ascii expected,
+    mut borrow OwnedAscii scratch)
+{
+    scratch.Clear();
+    return TryAppendLogicalPackageTypeReferenceText(
+            graph.TypeReferences,
+            typeReferenceRow,
+            LogicalPackageTypeReferenceTextKind.Kind,
+            0,
+            scratch)
+        && System.Text.OwnedAsciiEqualsAscii(scratch, expected);
+}
+
+internal finite law bool ImportedTemplateIntegerFitsMirType(
+    MirType type,
+    i64[min max] value)
+{
+    switch (type)
+    {
+        case MirType.I8:
+            return value >= -128 && value <= 127;
+        case MirType.I16:
+            return value >= -32768 && value <= 32767;
+        case MirType.I32:
+            return value >= (i64[min max])(-(2 ** 31)) && value <= 2147483647;
+        case MirType.I64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TryReadImportedTemplateScalarType(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] typeReferenceRow,
+    mut borrow OwnedAscii scratch,
+    out MirType type,
+    out bool isUnsigned)
+{
+    type = MirType.I64;
+    isUnsigned = false;
+    if (!graph.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceSummary summary =
+        graph.TypeReferenceSummaryAt(typeReferenceRow);
+    if (ImportedTemplateTypeKindEquals(graph, typeReferenceRow, "bool", scratch)
+        || ImportedTemplateTypeKindEquals(graph, typeReferenceRow, "Bool", scratch))
+    {
+        if (summary.HasBitWidth()
+            || summary.HasIsUnsigned()
+            || summary.HasRangeMin()
+            || summary.HasRangeMax())
+        {
+            return false;
+        }
+
+        type = MirType.I1;
+        return true;
+    }
+
+    if ((!ImportedTemplateTypeKindEquals(graph, typeReferenceRow, "integer", scratch)
+            && !ImportedTemplateTypeKindEquals(graph, typeReferenceRow, "Integer", scratch))
+        || !summary.HasBitWidth())
+    {
+        return false;
+    }
+
+    stack mut MirType selectedType = MirType.I64;
+    switch (summary.BitWidth())
+    {
+        case 8:
+            selectedType = MirType.I8;
+        case 16:
+            selectedType = MirType.I16;
+        case 32:
+            selectedType = MirType.I32;
+        case 64:
+            selectedType = MirType.I64;
+        default:
+            return false;
+    }
+
+    type = selectedType;
+    isUnsigned = summary.HasIsUnsigned() && summary.IsUnsigned();
+    return true;
+}
+
+internal fn bool TryReadImportedTemplateScalarRangeBound(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] typeReferenceRow,
+    LogicalPackageTypeReferenceTextKind textKind,
+    MirType type,
+    bool isUnsigned,
+    bool isLower,
+    mut borrow OwnedAscii scratch,
+    out bool isUnboundedStorageEndpoint,
+    out i64[min max] bound)
+{
+    isUnboundedStorageEndpoint = false;
+    bound = 0;
+    scratch.Clear();
+    if (!TryAppendLogicalPackageTypeReferenceText(
+            graph.TypeReferences,
+            typeReferenceRow,
+            textKind,
+            0,
+            scratch))
+    {
+        return false;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(scratch, "min"))
+    {
+        if (!isLower || isUnsigned)
+        {
+            return false;
+        }
+
+        isUnboundedStorageEndpoint = true;
+        return true;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(scratch, "max"))
+    {
+        if (isLower)
+        {
+            return false;
+        }
+
+        isUnboundedStorageEndpoint = true;
+        return true;
+    }
+
+    if (!isLower && isUnsigned)
+    {
+        stack mut bool isNumericStorageMax = false;
+        switch (type)
+        {
+            case MirType.I8:
+                isNumericStorageMax = System.Text.OwnedAsciiEqualsAscii(scratch, "255");
+            case MirType.I16:
+                isNumericStorageMax = System.Text.OwnedAsciiEqualsAscii(scratch, "65535");
+            case MirType.I32:
+                isNumericStorageMax = System.Text.OwnedAsciiEqualsAscii(scratch, "4294967295");
+            case MirType.I64:
+                isNumericStorageMax = System.Text.OwnedAsciiEqualsAscii(
+                    scratch,
+                    "18446744073709551615");
+            default:
+        }
+
+        if (isNumericStorageMax)
+        {
+            isUnboundedStorageEndpoint = true;
+            return true;
+        }
+    }
+
+    switch (System.Text.ParseI64Ascii(scratch.View()))
+    {
+        case System.Text.TextResult<i64[min max]>.Err(var parseError):
+            return false;
+        case System.Text.TextResult<i64[min max]>.Ok(var parsed):
+            bound = parsed;
+            return true;
+    }
+}
+
+internal fn bool ImportedTemplateScalarValueFitsPublishedType(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] typeReferenceRow,
+    MirType type,
+    bool isUnsigned,
+    i64[min max] value,
+    mut borrow OwnedAscii scratch)
+{
+    if (type == MirType.I1)
+    {
+        return !isUnsigned && (value == 0 || value == 1);
+    }
+
+    if ((isUnsigned && value < 0)
+        || !ImportedTemplateIntegerFitsMirType(type, value))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceSummary summary =
+        graph.TypeReferenceSummaryAt(typeReferenceRow);
+    if (summary.HasRangeMin())
+    {
+        stack mut bool isStorageMin = false;
+        stack mut i64[min max] lower = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                typeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMin,
+                type,
+                isUnsigned,
+                true,
+                scratch,
+                isStorageMin,
+                lower)
+            || (!isStorageMin && value < lower))
+        {
+            return false;
+        }
+    }
+
+    if (summary.HasRangeMax())
+    {
+        stack mut bool isStorageMax = false;
+        stack mut i64[min max] upper = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                typeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMax,
+                type,
+                isUnsigned,
+                false,
+                scratch,
+                isStorageMax,
+                upper)
+            || (!isStorageMax && value > upper))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool ImportedTemplateScalarPublishedTypesEqual(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] leftTypeReferenceRow,
+    u32[0 max] rightTypeReferenceRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack mut MirType leftType = MirType.I64;
+    stack mut MirType rightType = MirType.I64;
+    stack mut bool leftIsUnsigned = false;
+    stack mut bool rightIsUnsigned = false;
+    if (!TryReadImportedTemplateScalarType(
+            graph,
+            leftTypeReferenceRow,
+            scratch,
+            leftType,
+            leftIsUnsigned)
+        || !TryReadImportedTemplateScalarType(
+            graph,
+            rightTypeReferenceRow,
+            scratch,
+            rightType,
+            rightIsUnsigned)
+        || leftType != rightType
+        || leftIsUnsigned != rightIsUnsigned)
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceSummary left =
+        graph.TypeReferenceSummaryAt(leftTypeReferenceRow);
+    stack LogicalPackageTypeReferenceSummary right =
+        graph.TypeReferenceSummaryAt(rightTypeReferenceRow);
+    if (left.HasRangeMin() != right.HasRangeMin()
+        || left.HasRangeMax() != right.HasRangeMax())
+    {
+        return false;
+    }
+
+    if (left.HasRangeMin())
+    {
+        stack mut bool leftIsStorageMin = false;
+        stack mut bool rightIsStorageMin = false;
+        stack mut i64[min max] leftMin = 0;
+        stack mut i64[min max] rightMin = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                leftTypeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMin,
+                leftType,
+                leftIsUnsigned,
+                true,
+                scratch,
+                leftIsStorageMin,
+                leftMin)
+            || !TryReadImportedTemplateScalarRangeBound(
+                graph,
+                rightTypeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMin,
+                rightType,
+                rightIsUnsigned,
+                true,
+                scratch,
+                rightIsStorageMin,
+                rightMin)
+            || leftIsStorageMin != rightIsStorageMin
+            || leftMin != rightMin)
+        {
+            return false;
+        }
+    }
+
+    if (left.HasRangeMax())
+    {
+        stack mut bool leftIsStorageMax = false;
+        stack mut bool rightIsStorageMax = false;
+        stack mut i64[min max] leftMax = 0;
+        stack mut i64[min max] rightMax = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                leftTypeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMax,
+                leftType,
+                leftIsUnsigned,
+                false,
+                scratch,
+                leftIsStorageMax,
+                leftMax)
+            || !TryReadImportedTemplateScalarRangeBound(
+                graph,
+                rightTypeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMax,
+                rightType,
+                rightIsUnsigned,
+                false,
+                scratch,
+                rightIsStorageMax,
+                rightMax)
+            || leftIsStorageMax != rightIsStorageMax
+            || leftMax != rightMax)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool TryClampImportedTemplateSaturatingResultToPublishedRange(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] typeReferenceRow,
+    MirType type,
+    bool isUnsigned,
+    i64[min max] value,
+    mut borrow OwnedAscii scratch,
+    out i64[min max] clamped)
+{
+    clamped = 0;
+    // The direct scalar carrier is signed i64. Keep unsigned saturation on the
+    // compatibility path until its complete storage range can be represented
+    // without turning a valid uN result into a negative MIR constant.
+    if (isUnsigned || type == MirType.I1)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] upper = 0;
+    if (!TryMirTypeSignedBounds(type, lower, upper))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceSummary summary =
+        graph.TypeReferenceSummaryAt(typeReferenceRow);
+    if (summary.HasRangeMin())
+    {
+        stack mut bool isStorageMin = false;
+        stack mut i64[min max] publishedLower = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                typeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMin,
+                type,
+                false,
+                true,
+                scratch,
+                isStorageMin,
+                publishedLower))
+        {
+            return false;
+        }
+
+        if (!isStorageMin)
+        {
+            lower = publishedLower;
+        }
+    }
+
+    if (summary.HasRangeMax())
+    {
+        stack mut bool isStorageMax = false;
+        stack mut i64[min max] publishedUpper = 0;
+        if (!TryReadImportedTemplateScalarRangeBound(
+                graph,
+                typeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.RangeMax,
+                type,
+                false,
+                false,
+                scratch,
+                isStorageMax,
+                publishedUpper))
+        {
+            return false;
+        }
+
+        if (!isStorageMax)
+        {
+            upper = publishedUpper;
+        }
+    }
+
+    if (lower > upper)
+    {
+        return false;
+    }
+
+    clamped = ClampI64(value, lower, upper);
+    return true;
+}
+
+internal finite law u32[0 max] ImportedTemplateMirTypeBitWidth(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1: return 1;
+        case MirType.I8: return 8;
+        case MirType.I16: return 16;
+        case MirType.I32: return 32;
+        case MirType.I64: return 64;
+        default: return 0;
+    }
+}
+
+internal fn bool TryConvertImportedTemplateScalarConstant(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    MirType sourceType,
+    bool sourceIsUnsigned,
+    i64[min max] sourceValue,
+    u32[0 max] targetTypeReferenceRow,
+    MirType targetType,
+    bool targetIsUnsigned,
+    mut borrow OwnedAscii scratch,
+    out i64[min max] converted)
+{
+    converted = 0;
+    if (sourceType == MirType.I1 || targetType == MirType.I1)
+    {
+        if (sourceType != MirType.I1
+            || targetType != MirType.I1
+            || sourceIsUnsigned
+            || targetIsUnsigned)
+        {
+            return false;
+        }
+
+        converted = sourceValue;
+        return true;
+    }
+
+    stack mut i64[min max] candidate = sourceValue;
+    if (!ImportedTemplateScalarValueFitsPublishedType(
+            graph,
+            targetTypeReferenceRow,
+            targetType,
+            targetIsUnsigned,
+            candidate,
+            scratch))
+    {
+        stack u32[0 max] bitWidth = ImportedTemplateMirTypeBitWidth(targetType);
+        if (bitWidth == 0 || bitWidth >= 64)
+        {
+            return false;
+        }
+
+        stack i64[min max] modulus = (i64[min max])(2 ** bitWidth);
+        stack i64[min max] signBit = (i64[min max])(2 ** (bitWidth - 1));
+        stack mut i64[min max] normalized = sourceValue % modulus;
+        if (normalized < 0)
+        {
+            normalized = normalized + modulus;
+        }
+
+        candidate = targetIsUnsigned || normalized < signBit
+            ? normalized
+            : normalized - modulus;
+    }
+
+    if (!ImportedTemplateScalarValueFitsPublishedType(
+            graph,
+            targetTypeReferenceRow,
+            targetType,
+            targetIsUnsigned,
+            candidate,
+            scratch))
+    {
+        return false;
+    }
+
+    converted = candidate;
+    return true;
+}
+
+internal fn bool TryReadImportedTemplateScalarLiteral(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageTypedTemplateExpressionRow expression,
+    mut borrow OwnedAscii scratch,
+    out MirType type,
+    out bool isUnsigned,
+    out i64[min max] value)
+{
+    type = MirType.I64;
+    isUnsigned = false;
+    value = 0;
+    stack mut MirType selectedType = MirType.I64;
+    stack mut i64[min max] selectedValue = 0;
+    if (!expression.HasLiteralText()
+        || !expression.HasType()
+        || expression.HasName()
+        || expression.HasAssignmentOperator()
+        || expression.HasOrdinal()
+        || expression.HasTargetExpression()
+        || expression.ArgumentCount() != 0
+        || expression.MemberNameCount() != 0
+        || expression.OperatorNameCount() != 0
+        || expression.TypeArgumentCount() != 0
+        || expression.ComptimeValueArgumentCount() != 0)
+    {
+        return false;
+    }
+
+    if (expression.LiteralTextRow() == 0
+        || (u64[0 2 ** 63 - 1])expression.LiteralTextRow() > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeReferenceRow = expression.TypeReferenceRow();
+    stack mut bool selectedIsUnsigned = false;
+    if (!TryReadImportedTemplateScalarType(
+            graph,
+            typeReferenceRow,
+            scratch,
+            selectedType,
+            selectedIsUnsigned))
+    {
+        return false;
+    }
+
+    if (selectedType == MirType.I1)
+    {
+        scratch.Clear();
+        stack LogicalPackageGenericTemplateFactTextRow boolLiteralText =
+            graph.TextRowAt(expression.LiteralTextRow());
+        if (AppendLogicalPackageGenericTemplateFactText(
+                graph,
+                boolLiteralText,
+                scratch) != MemoryStatus.Ok)
+        {
+            return false;
+        }
+
+        if (System.Text.OwnedAsciiEqualsAscii(scratch, "true"))
+        {
+            type = MirType.I1;
+            isUnsigned = false;
+            value = 1;
+            return true;
+        }
+
+        if (System.Text.OwnedAsciiEqualsAscii(scratch, "false"))
+        {
+            type = MirType.I1;
+            isUnsigned = false;
+            value = 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow integerLiteralText =
+        graph.TextRowAt(expression.LiteralTextRow());
+    if (AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            integerLiteralText,
+            scratch) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    switch (System.Text.ParseI64Ascii(scratch.View()))
+    {
+        case System.Text.TextResult<i64[min max]>.Err(var parseError):
+            return false;
+        case System.Text.TextResult<i64[min max]>.Ok(var parsed):
+            selectedValue = parsed;
+    }
+
+    if (selectedIsUnsigned && selectedValue < 0)
+    {
+        return false;
+    }
+
+    // MIR's current integer value-fact carrier is signed i64. Reject values
+    // outside the selected carrier instead of truncating or losing their exact
+    // range before LLVM lowering.
+    if (!ImportedTemplateIntegerFitsMirType(selectedType, selectedValue)
+        || !ImportedTemplateScalarValueFitsPublishedType(
+            graph,
+            typeReferenceRow,
+            selectedType,
+            selectedIsUnsigned,
+            selectedValue,
+            scratch))
+    {
+        return false;
+    }
+
+    type = selectedType;
+    isUnsigned = selectedIsUnsigned;
+    value = selectedValue;
+    return true;
+}
+
+internal fn bool TryReadImportedTemplateScalarOperatorRow(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    u32[0 max] operatorOrdinal,
+    u32[0 max] firstOperatorRow,
+    u32[0 max] lastOperatorRow,
+    mut borrow OwnedAscii scratch,
+    out ImportedTemplateScalarBinaryOp op)
+{
+    op = ImportedTemplateScalarBinaryOp.Unsupported;
+    if (firstOperatorRow == 0
+        || lastOperatorRow < firstOperatorRow
+        || (u64[0 2 ** 63 - 1])lastOperatorRow
+            > graph.TypedTemplateExpressionOperatorNameRowCount())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] operatorTextRow = 0;
+    stack mut u64[0 2 ** 63 - 1] rowIndex = firstOperatorRow;
+    while willexit (rowIndex <= lastOperatorRow)
+    {
+        stack LogicalPackageTypedTemplateExpressionOperatorNameRow row =
+            graph.TypedTemplateExpressionOperatorNameRowAt((u32[0 max])rowIndex);
+        if (row.ExpressionRow() == expressionRow
+            && row.OperatorOrdinal() == operatorOrdinal)
+        {
+            if (operatorTextRow != 0)
+            {
+                return false;
+            }
+
+            operatorTextRow = row.NameTextRow();
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+
+    if (operatorTextRow == 0
+        || (u64[0 2 ** 63 - 1])operatorTextRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow operatorText =
+        graph.TextRowAt(operatorTextRow);
+    if (AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            operatorText,
+            scratch) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack ImportedTemplateScalarBinaryOp selected =
+        ImportedTemplateScalarBinaryOpOf(scratch);
+    if (selected == ImportedTemplateScalarBinaryOp.Unsupported)
+    {
+        return false;
+    }
+
+    op = selected;
+    return true;
+}
+
+internal fn bool TryReadImportedTemplateScalarBinaryOp(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    LogicalPackageTypedTemplateExpressionRow expression,
+    u32[0 max] firstOperatorRow,
+    u32[0 max] lastOperatorRow,
+    mut borrow OwnedAscii scratch,
+    out ImportedTemplateScalarBinaryOp op)
+{
+    op = ImportedTemplateScalarBinaryOp.Unsupported;
+    stack mut u32[0 max] operatorTextRow = 0;
+    if (expression.HasName())
+    {
+        if (expression.OperatorNameCount() != 0)
+        {
+            return false;
+        }
+
+        operatorTextRow = expression.NameTextRow();
+    }
+    else
+    {
+        // Accept the older normalized carrier while package producers migrate;
+        // canonical Stage0 binary rows publish their single operator in Name.
+        return expression.OperatorNameCount() == 1
+            && TryReadImportedTemplateScalarOperatorRow(
+                graph,
+                expressionRow,
+                0,
+                firstOperatorRow,
+                lastOperatorRow,
+                scratch,
+                op);
+    }
+
+    if (operatorTextRow == 0
+        || (u64[0 2 ** 63 - 1])operatorTextRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow operatorText =
+        graph.TextRowAt(operatorTextRow);
+    if (AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            operatorText,
+            scratch) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack ImportedTemplateScalarBinaryOp selected =
+        ImportedTemplateScalarBinaryOpOf(scratch);
+    if (selected == ImportedTemplateScalarBinaryOp.Unsupported)
+    {
+        return false;
+    }
+
+    op = selected;
+    return true;
+}
+
+internal fn bool TryReadImportedTemplateScalarUnaryOp(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageTypedTemplateExpressionRow expression,
+    mut borrow OwnedAscii scratch,
+    out ImportedTemplateScalarUnaryOp op)
+{
+    op = ImportedTemplateScalarUnaryOp.Unsupported;
+    if (!expression.HasName()
+        || expression.NameTextRow() == 0
+        || (u64[0 2 ** 63 - 1])expression.NameTextRow() > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow operatorText =
+        graph.TextRowAt(expression.NameTextRow());
+    if (AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            operatorText,
+            scratch) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack ImportedTemplateScalarUnaryOp selected =
+        ImportedTemplateScalarUnaryOpOf(scratch);
+    if (selected == ImportedTemplateScalarUnaryOp.Unsupported)
+    {
+        return false;
+    }
+
+    op = selected;
+    return true;
+}
+
+internal fn bool TryFindImportedTemplateExpressionArgument(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] firstExpressionRow,
+    u32[0 max] lastExpressionRow,
+    u32[0 max] parentExpressionRow,
+    u32[0 max] argumentOrdinal,
+    out u32[0 max] expressionRow)
+{
+    expressionRow = 0;
+    if (firstExpressionRow == 0
+        || lastExpressionRow < firstExpressionRow
+        || (u64[0 2 ** 63 - 1])lastExpressionRow
+            > graph.TypedTemplateExpressionRowCount())
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] rowIndex = firstExpressionRow;
+    while willexit (rowIndex <= lastExpressionRow)
+    {
+        stack LogicalPackageTypedTemplateExpressionRow row =
+            graph.TypedTemplateExpressionRowAt((u32[0 max])rowIndex);
+        if (row.FunctionTemplateRow() == functionTemplateRow
+            && row.ParentExpressionRow() == parentExpressionRow
+            && row.ParentKind() == LogicalPackageTypedTemplateExpressionParentKind.Argument
+            && row.ExpressionOrdinal() == argumentOrdinal)
+        {
+            if (expressionRow != 0)
+            {
+                return false;
+            }
+
+            expressionRow = (u32[0 max])rowIndex;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+
+    return expressionRow != 0;
+}
+
+internal fn bool TryReadImportedTemplateContiguousExpressionArgument(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] firstExpressionRow,
+    u32[0 max] lastExpressionRow,
+    u32[0 max] parentExpressionRow,
+    u32[0 max] firstArgumentExpressionRow,
+    u32[0 max] argumentOrdinal,
+    out u32[0 max] expressionRow)
+{
+    expressionRow = 0;
+    stack u64[0 2 ** 63 - 1] candidate =
+        (u64[0 2 ** 63 - 1])firstArgumentExpressionRow
+            + (u64[0 2 ** 63 - 1])argumentOrdinal;
+    if (firstArgumentExpressionRow < firstExpressionRow
+        || candidate > lastExpressionRow)
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionRow row =
+        graph.TypedTemplateExpressionRowAt((u32[0 max])candidate);
+    if (row.FunctionTemplateRow() != functionTemplateRow
+        || row.ParentExpressionRow() != parentExpressionRow
+        || row.ParentKind() != LogicalPackageTypedTemplateExpressionParentKind.Argument
+        || row.ExpressionOrdinal() != argumentOrdinal)
+    {
+        return false;
+    }
+
+    expressionRow = (u32[0 max])candidate;
+    return true;
+}
+
+internal fn bool TryEvaluateImportedTemplateScalarExpression(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] firstExpressionRow,
+    u32[0 max] lastExpressionRow,
+    u32[0 max] firstOperatorRow,
+    u32[0 max] lastOperatorRow,
+    u32[0 max] firstConversionRow,
+    u32[0 max] lastConversionRow,
+    mut borrow ImportedTemplateScalarEvaluationState evaluationState,
+    borrow ImportedTemplateScalarLocalState localState,
+    u32[0 max] expressionRow,
+    u32[0 max] expectedParentExpressionRow,
+    LogicalPackageTypedTemplateExpressionParentKind expectedParentKind,
+    u32[0 max] expectedOrdinal,
+    u32[0 max] depth,
+    mut borrow OwnedAscii scratch,
+    mut borrow OwnedAscii nameScratch,
+    out MirType type,
+    out bool isUnsigned,
+    out i64[min max] value,
+    out u32[0 max] visitedExpressionCount)
+{
+    type = MirType.I64;
+    isUnsigned = false;
+    value = 0;
+    visitedExpressionCount = 0;
+    if (depth > 64
+        || expressionRow < firstExpressionRow
+        || expressionRow > lastExpressionRow)
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionRow expression =
+        graph.TypedTemplateExpressionRowAt(expressionRow);
+    if (expression.FunctionTemplateRow() != functionTemplateRow
+        || expression.ParentExpressionRow() != expectedParentExpressionRow
+        || expression.ParentKind() != expectedParentKind
+        || expression.ExpressionOrdinal() != expectedOrdinal)
+    {
+        return false;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "name",
+        scratch))
+    {
+        if (!expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || expression.ArgumentCount() != 0
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != 0
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] resolvedTypeReferenceRow = 0;
+        stack mut MirType resolvedType = MirType.I64;
+        stack mut bool resolvedIsUnsigned = false;
+        stack mut bool resolvedIsMutable = false;
+        stack mut bool resolvedIsInitialized = false;
+        stack mut i64[min max] resolvedValue = 0;
+        if (!localState.TryResolve(
+                graph,
+                expression.NameTextRow(),
+                scratch,
+                nameScratch,
+                resolvedTypeReferenceRow,
+                resolvedType,
+                resolvedIsUnsigned,
+                resolvedIsMutable,
+                resolvedIsInitialized,
+                resolvedValue)
+            || !resolvedIsInitialized
+            || (expression.HasType()
+                && !ImportedTemplateScalarPublishedTypesEqual(
+                    graph,
+                    resolvedTypeReferenceRow,
+                    expression.TypeReferenceRow(),
+                    scratch)))
+        {
+            return false;
+        }
+
+        type = resolvedType;
+        isUnsigned = resolvedIsUnsigned;
+        value = resolvedValue;
+        visitedExpressionCount = 1;
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "literal",
+        scratch))
+    {
+        stack mut MirType literalType = MirType.I64;
+        stack mut bool literalIsUnsigned = false;
+        stack mut i64[min max] literalValue = 0;
+        if (!TryReadImportedTemplateScalarLiteral(
+                graph,
+                expression,
+                scratch,
+                literalType,
+                literalIsUnsigned,
+                literalValue))
+        {
+            return false;
+        }
+
+        type = literalType;
+        isUnsigned = literalIsUnsigned;
+        value = literalValue;
+        visitedExpressionCount = 1;
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "conversion",
+        scratch))
+    {
+        if (!expression.HasType()
+            || expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || expression.ArgumentCount() != 1
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != 0
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0
+            || firstConversionRow == 0
+            || lastConversionRow < firstConversionRow)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] conversionOrdinal = 0;
+        if (!evaluationState.TryTakeConversionOrdinal(conversionOrdinal))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] conversionRowIndex =
+            (u64[0 2 ** 63 - 1])firstConversionRow
+                + (u64[0 2 ** 63 - 1])conversionOrdinal;
+        if (conversionRowIndex > lastConversionRow)
+        {
+            return false;
+        }
+
+        stack LogicalPackageTemplateConversionRow conversionRow =
+            graph.TemplateConversionRowAt((u32[0 max])conversionRowIndex);
+        if (conversionRow.FunctionTemplateRow() != functionTemplateRow
+            || conversionRow.ConversionOrdinal() != conversionOrdinal
+            || conversionRow.PublishedOrdinal() != conversionOrdinal
+            || !ImportedTemplateScalarPublishedTypesEqual(
+                graph,
+                expression.TypeReferenceRow(),
+                conversionRow.TargetTypeReferenceRow(),
+                scratch))
+        {
+            return false;
+        }
+
+        stack mut MirType targetType = MirType.I64;
+        stack mut bool targetIsUnsigned = false;
+        if (!TryReadImportedTemplateScalarType(
+                graph,
+                expression.TypeReferenceRow(),
+                scratch,
+                targetType,
+                targetIsUnsigned))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] operandExpressionRow = 0;
+        if (!TryFindImportedTemplateExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                0,
+                operandExpressionRow))
+        {
+            return false;
+        }
+
+        stack mut MirType operandType = MirType.I64;
+        stack mut bool operandIsUnsigned = false;
+        stack mut i64[min max] operandValue = 0;
+        stack mut u32[0 max] operandVisited = 0;
+        if (!TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                operandExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                0,
+                depth + 1,
+                scratch,
+                nameScratch,
+                operandType,
+                operandIsUnsigned,
+                operandValue,
+                operandVisited)
+            || operandVisited == 4294967295)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] converted = 0;
+        if (!TryConvertImportedTemplateScalarConstant(
+                graph,
+                operandType,
+                operandIsUnsigned,
+                operandValue,
+                expression.TypeReferenceRow(),
+                targetType,
+                targetIsUnsigned,
+                scratch,
+                converted))
+        {
+            return false;
+        }
+
+        type = targetType;
+        isUnsigned = targetIsUnsigned;
+        value = converted;
+        visitedExpressionCount = operandVisited + 1;
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "comptime",
+        scratch))
+    {
+        if (expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || expression.ArgumentCount() != 1
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != 0
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] operandExpressionRow = 0;
+        if (!TryFindImportedTemplateExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                0,
+                operandExpressionRow))
+        {
+            return false;
+        }
+
+        stack mut MirType operandType = MirType.I64;
+        stack mut bool operandIsUnsigned = false;
+        stack mut i64[min max] operandValue = 0;
+        stack mut u32[0 max] operandVisited = 0;
+        if (!TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                operandExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                0,
+                depth + 1,
+                scratch,
+                nameScratch,
+                operandType,
+                operandIsUnsigned,
+                operandValue,
+                operandVisited)
+            || operandVisited == 4294967295)
+        {
+            return false;
+        }
+
+        if (expression.HasType())
+        {
+            stack mut MirType publishedType = MirType.I64;
+            stack mut bool publishedIsUnsigned = false;
+            if (!TryReadImportedTemplateScalarType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    scratch,
+                    publishedType,
+                    publishedIsUnsigned)
+                || publishedType != operandType
+                || publishedIsUnsigned != operandIsUnsigned
+                || !ImportedTemplateScalarValueFitsPublishedType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    operandType,
+                    operandIsUnsigned,
+                    operandValue,
+                    scratch))
+            {
+                return false;
+            }
+        }
+
+        type = operandType;
+        isUnsigned = operandIsUnsigned;
+        value = operandValue;
+        visitedExpressionCount = operandVisited + 1;
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "comparison-chain",
+        scratch))
+    {
+        stack u32[0 max] argumentCount = expression.ArgumentCount();
+        if (expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || argumentCount < 2
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != argumentCount - 1
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] currentExpressionRow = 0;
+        if (!TryFindImportedTemplateExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                0,
+                currentExpressionRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] firstArgumentExpressionRow = currentExpressionRow;
+        stack mut MirType currentType = MirType.I64;
+        stack mut bool currentIsUnsigned = false;
+        stack mut i64[min max] currentValue = 0;
+        stack mut u32[0 max] currentVisited = 0;
+        if (!TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                currentExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                0,
+                depth + 1,
+                scratch,
+                nameScratch,
+                currentType,
+                currentIsUnsigned,
+                currentValue,
+                currentVisited))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] totalVisited = currentVisited;
+        stack mut bool allComparisonsTrue = true;
+        stack mut u32[0 max] argumentOrdinal = 1;
+        while willexit (argumentOrdinal < argumentCount)
+        {
+            stack mut u32[0 max] nextExpressionRow = 0;
+            stack mut MirType nextType = MirType.I64;
+            stack mut bool nextIsUnsigned = false;
+            stack mut i64[min max] nextValue = 0;
+            stack mut u32[0 max] nextVisited = 0;
+            stack mut ImportedTemplateScalarBinaryOp comparisonOp =
+                ImportedTemplateScalarBinaryOp.Unsupported;
+            if (!TryReadImportedTemplateContiguousExpressionArgument(
+                    graph,
+                    functionTemplateRow,
+                    firstExpressionRow,
+                    lastExpressionRow,
+                    expressionRow,
+                    firstArgumentExpressionRow,
+                    argumentOrdinal,
+                    nextExpressionRow)
+                || !TryEvaluateImportedTemplateScalarExpression(
+                    graph,
+                    functionTemplateRow,
+                    firstExpressionRow,
+                    lastExpressionRow,
+                    firstOperatorRow,
+                    lastOperatorRow,
+                    firstConversionRow,
+                    lastConversionRow,
+                    evaluationState,
+                    localState,
+                    nextExpressionRow,
+                    expressionRow,
+                    LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                    argumentOrdinal,
+                    depth + 1,
+                    scratch,
+                    nameScratch,
+                    nextType,
+                    nextIsUnsigned,
+                    nextValue,
+                    nextVisited)
+                || !TryReadImportedTemplateScalarOperatorRow(
+                    graph,
+                    expressionRow,
+                    argumentOrdinal - 1,
+                    firstOperatorRow,
+                    lastOperatorRow,
+                    scratch,
+                    comparisonOp)
+                || !ImportedTemplateScalarOpIsComparison(comparisonOp))
+            {
+                return false;
+            }
+
+            stack mut i64[min max] comparisonValue = 0;
+            if (!TryEvaluateImportedTemplateScalarBinary(
+                    comparisonOp,
+                    MirType.I1,
+                    false,
+                    currentType,
+                    currentIsUnsigned,
+                    currentValue,
+                    nextType,
+                    nextIsUnsigned,
+                    nextValue,
+                    comparisonValue)
+                || totalVisited + (u64[0 2 ** 63 - 1])nextVisited + 1
+                    > 4294967295)
+            {
+                return false;
+            }
+
+            allComparisonsTrue = allComparisonsTrue && comparisonValue != 0;
+            totalVisited = totalVisited + (u64[0 2 ** 63 - 1])nextVisited;
+            currentType = nextType;
+            currentIsUnsigned = nextIsUnsigned;
+            currentValue = nextValue;
+            argumentOrdinal = argumentOrdinal + 1;
+        }
+
+        if (expression.HasType())
+        {
+            stack mut MirType publishedType = MirType.I64;
+            stack mut bool publishedIsUnsigned = false;
+            if (!TryReadImportedTemplateScalarType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    scratch,
+                    publishedType,
+                    publishedIsUnsigned)
+                || publishedType != MirType.I1
+                || publishedIsUnsigned)
+            {
+                return false;
+            }
+        }
+
+        type = MirType.I1;
+        isUnsigned = false;
+        value = allComparisonsTrue ? 1 : 0;
+        visitedExpressionCount = (u32[0 max])(totalVisited + 1);
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "unary",
+        scratch))
+    {
+        if (!expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || expression.ArgumentCount() != 1
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != 0
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0)
+        {
+            return false;
+        }
+
+        stack mut ImportedTemplateScalarUnaryOp unaryOp =
+            ImportedTemplateScalarUnaryOp.Unsupported;
+        stack mut u32[0 max] operandExpressionRow = 0;
+        if (!TryReadImportedTemplateScalarUnaryOp(
+                graph,
+                expression,
+                scratch,
+                unaryOp)
+            || !TryFindImportedTemplateExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                0,
+                operandExpressionRow))
+        {
+            return false;
+        }
+
+        stack mut MirType operandType = MirType.I64;
+        stack mut bool operandIsUnsigned = false;
+        stack mut i64[min max] operandValue = 0;
+        stack mut u32[0 max] operandVisited = 0;
+        if (!TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                operandExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                0,
+                depth + 1,
+                scratch,
+                nameScratch,
+                operandType,
+                operandIsUnsigned,
+                operandValue,
+                operandVisited)
+            || operandVisited == 4294967295)
+        {
+            return false;
+        }
+
+        stack mut MirType resultType = operandType;
+        stack mut bool resultIsUnsigned = operandIsUnsigned;
+        stack mut i64[min max] computed = operandValue;
+        switch (unaryOp)
+        {
+            case ImportedTemplateScalarUnaryOp.Positive:
+                if (operandType == MirType.I1)
+                {
+                    return false;
+                }
+            case ImportedTemplateScalarUnaryOp.Negate:
+                if (operandType == MirType.I1
+                    || operandIsUnsigned
+                    || !TryCheckedSubI64(0, operandValue, computed)
+                    || !ImportedTemplateIntegerFitsMirType(operandType, computed))
+                {
+                    return false;
+                }
+            case ImportedTemplateScalarUnaryOp.WrappingNegate:
+                if (!TryEvaluateImportedTemplateScalarWrappingNegate(
+                        operandType,
+                        operandIsUnsigned,
+                        operandValue,
+                        computed))
+                {
+                    return false;
+                }
+            case ImportedTemplateScalarUnaryOp.LogicalNot:
+                if (operandType != MirType.I1 || operandIsUnsigned)
+                {
+                    return false;
+                }
+
+                resultType = MirType.I1;
+                resultIsUnsigned = false;
+                computed = operandValue == 0 ? 1 : 0;
+            case ImportedTemplateScalarUnaryOp.BitwiseNot:
+                if (operandType == MirType.I1
+                    || operandIsUnsigned
+                    || !TryCheckedSubI64(-1, operandValue, computed)
+                    || !ImportedTemplateIntegerFitsMirType(operandType, computed))
+                {
+                    return false;
+                }
+            default:
+                return false;
+        }
+
+        if (expression.HasType())
+        {
+            stack mut MirType publishedType = MirType.I64;
+            stack mut bool publishedIsUnsigned = false;
+            if (!TryReadImportedTemplateScalarType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    scratch,
+                    publishedType,
+                    publishedIsUnsigned)
+                || publishedType != resultType
+                || publishedIsUnsigned != resultIsUnsigned
+                || !ImportedTemplateScalarValueFitsPublishedType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    resultType,
+                    resultIsUnsigned,
+                    computed,
+                    scratch))
+            {
+                return false;
+            }
+        }
+
+        type = resultType;
+        isUnsigned = resultIsUnsigned;
+        value = computed;
+        visitedExpressionCount = operandVisited + 1;
+        return true;
+    }
+
+    if (ImportedTemplateGenericFactTextEquals(
+        graph,
+        expression.KindTextRow(),
+        "conditional",
+        scratch))
+    {
+        if (expression.HasName()
+            || expression.HasAssignmentOperator()
+            || expression.HasLiteralText()
+            || expression.HasOrdinal()
+            || expression.HasTargetExpression()
+            || expression.ArgumentCount() != 3
+            || expression.MemberNameCount() != 0
+            || expression.OperatorNameCount() != 0
+            || expression.TypeArgumentCount() != 0
+            || expression.ComptimeValueArgumentCount() != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] conditionExpressionRow = 0;
+        stack mut u32[0 max] trueExpressionRow = 0;
+        stack mut u32[0 max] falseExpressionRow = 0;
+        if (!TryFindImportedTemplateExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                0,
+                conditionExpressionRow)
+            || !TryReadImportedTemplateContiguousExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                conditionExpressionRow,
+                1,
+                trueExpressionRow)
+            || !TryReadImportedTemplateContiguousExpressionArgument(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                expressionRow,
+                conditionExpressionRow,
+                2,
+                falseExpressionRow))
+        {
+            return false;
+        }
+
+        stack mut MirType conditionType = MirType.I64;
+        stack mut MirType trueType = MirType.I64;
+        stack mut MirType falseType = MirType.I64;
+        stack mut bool conditionIsUnsigned = false;
+        stack mut bool trueIsUnsigned = false;
+        stack mut bool falseIsUnsigned = false;
+        stack mut i64[min max] conditionValue = 0;
+        stack mut i64[min max] trueValue = 0;
+        stack mut i64[min max] falseValue = 0;
+        stack mut u32[0 max] conditionVisited = 0;
+        stack mut u32[0 max] trueVisited = 0;
+        stack mut u32[0 max] falseVisited = 0;
+        if (!TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                conditionExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                0,
+                depth + 1,
+                scratch,
+                nameScratch,
+                conditionType,
+                conditionIsUnsigned,
+                conditionValue,
+                conditionVisited)
+            || !TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                trueExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                1,
+                depth + 1,
+                scratch,
+                nameScratch,
+                trueType,
+                trueIsUnsigned,
+                trueValue,
+                trueVisited)
+            || !TryEvaluateImportedTemplateScalarExpression(
+                graph,
+                functionTemplateRow,
+                firstExpressionRow,
+                lastExpressionRow,
+                firstOperatorRow,
+                lastOperatorRow,
+                firstConversionRow,
+                lastConversionRow,
+                evaluationState,
+                localState,
+                falseExpressionRow,
+                expressionRow,
+                LogicalPackageTypedTemplateExpressionParentKind.Argument,
+                2,
+                depth + 1,
+                scratch,
+                nameScratch,
+                falseType,
+                falseIsUnsigned,
+                falseValue,
+                falseVisited)
+            || conditionType != MirType.I1
+            || conditionIsUnsigned
+            || trueType != falseType
+            || trueIsUnsigned != falseIsUnsigned
+            || (u64[0 2 ** 63 - 1])conditionVisited
+                + (u64[0 2 ** 63 - 1])trueVisited
+                + (u64[0 2 ** 63 - 1])falseVisited + 1
+                > 4294967295)
+        {
+            return false;
+        }
+
+        stack i64[min max] selectedConditionalValue =
+            conditionValue != 0 ? trueValue : falseValue;
+        if (expression.HasType())
+        {
+            stack mut MirType publishedType = MirType.I64;
+            stack mut bool publishedIsUnsigned = false;
+            if (!TryReadImportedTemplateScalarType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    scratch,
+                    publishedType,
+                    publishedIsUnsigned)
+                || publishedType != trueType
+                || publishedIsUnsigned != trueIsUnsigned
+                || !ImportedTemplateScalarValueFitsPublishedType(
+                    graph,
+                    expression.TypeReferenceRow(),
+                    trueType,
+                    trueIsUnsigned,
+                    selectedConditionalValue,
+                    scratch))
+            {
+                return false;
+            }
+        }
+
+        type = trueType;
+        isUnsigned = trueIsUnsigned;
+        value = selectedConditionalValue;
+        visitedExpressionCount = conditionVisited + trueVisited + falseVisited + 1;
+        return true;
+    }
+
+    if (!ImportedTemplateGenericFactTextEquals(
+            graph,
+            expression.KindTextRow(),
+            "binary",
+            scratch)
+        || expression.HasAssignmentOperator()
+        || expression.HasLiteralText()
+        || expression.HasOrdinal()
+        || expression.HasTargetExpression()
+        || expression.ArgumentCount() != 2
+        || expression.MemberNameCount() != 0
+        || (!expression.HasName() && expression.OperatorNameCount() != 1)
+        || expression.TypeArgumentCount() != 0
+        || expression.ComptimeValueArgumentCount() != 0)
+    {
+        return false;
+    }
+
+    stack mut ImportedTemplateScalarBinaryOp op = ImportedTemplateScalarBinaryOp.Unsupported;
+    stack mut u32[0 max] leftExpressionRow = 0;
+    stack mut u32[0 max] rightExpressionRow = 0;
+    if (!TryReadImportedTemplateScalarBinaryOp(
+            graph,
+            expressionRow,
+            expression,
+            firstOperatorRow,
+            lastOperatorRow,
+            scratch,
+            op)
+        || !TryFindImportedTemplateExpressionArgument(
+            graph,
+            functionTemplateRow,
+            firstExpressionRow,
+            lastExpressionRow,
+            expressionRow,
+            0,
+            leftExpressionRow)
+        || !TryReadImportedTemplateContiguousExpressionArgument(
+            graph,
+            functionTemplateRow,
+            firstExpressionRow,
+            lastExpressionRow,
+            expressionRow,
+            leftExpressionRow,
+            1,
+            rightExpressionRow))
+    {
+        return false;
+    }
+
+    stack mut MirType leftType = MirType.I64;
+    stack mut MirType rightType = MirType.I64;
+    stack mut bool leftIsUnsigned = false;
+    stack mut bool rightIsUnsigned = false;
+    stack mut i64[min max] leftValue = 0;
+    stack mut i64[min max] rightValue = 0;
+    stack mut u32[0 max] leftVisited = 0;
+    stack mut u32[0 max] rightVisited = 0;
+    if (!TryEvaluateImportedTemplateScalarExpression(
+            graph,
+            functionTemplateRow,
+            firstExpressionRow,
+            lastExpressionRow,
+            firstOperatorRow,
+            lastOperatorRow,
+            firstConversionRow,
+            lastConversionRow,
+            evaluationState,
+            localState,
+            leftExpressionRow,
+            expressionRow,
+            LogicalPackageTypedTemplateExpressionParentKind.Argument,
+            0,
+            depth + 1,
+            scratch,
+            nameScratch,
+            leftType,
+            leftIsUnsigned,
+            leftValue,
+            leftVisited)
+        || !TryEvaluateImportedTemplateScalarExpression(
+            graph,
+            functionTemplateRow,
+            firstExpressionRow,
+            lastExpressionRow,
+            firstOperatorRow,
+            lastOperatorRow,
+            firstConversionRow,
+            lastConversionRow,
+            evaluationState,
+            localState,
+            rightExpressionRow,
+            expressionRow,
+            LogicalPackageTypedTemplateExpressionParentKind.Argument,
+            1,
+            depth + 1,
+            scratch,
+            nameScratch,
+            rightType,
+            rightIsUnsigned,
+            rightValue,
+            rightVisited))
+    {
+        return false;
+    }
+
+    stack mut MirType resultType = leftType;
+    stack mut bool resultIsUnsigned = leftIsUnsigned;
+    if (op == ImportedTemplateScalarBinaryOp.LogicalAnd
+        || op == ImportedTemplateScalarBinaryOp.LogicalOr
+        || ImportedTemplateScalarOpIsComparison(op))
+    {
+        resultType = MirType.I1;
+        resultIsUnsigned = false;
+    }
+
+    if (expression.HasType())
+    {
+        stack mut MirType publishedResultType = MirType.I64;
+        stack mut bool publishedResultIsUnsigned = false;
+        if (!TryReadImportedTemplateScalarType(
+                graph,
+                expression.TypeReferenceRow(),
+                scratch,
+                publishedResultType,
+                publishedResultIsUnsigned)
+            || publishedResultType != resultType
+            || publishedResultIsUnsigned != resultIsUnsigned)
+        {
+            return false;
+        }
+    }
+
+    stack mut i64[min max] computed = 0;
+    if (leftVisited > 4294967295 - rightVisited - 1
+        || !TryEvaluateImportedTemplateScalarBinary(
+            op,
+            resultType,
+            resultIsUnsigned,
+            leftType,
+            leftIsUnsigned,
+            leftValue,
+            rightType,
+            rightIsUnsigned,
+            rightValue,
+            computed))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] publishedSaturatingResult = computed;
+    if (ImportedTemplateScalarOpIsSaturating(op)
+        && (!expression.HasType()
+            || !TryClampImportedTemplateSaturatingResultToPublishedRange(
+                graph,
+                expression.TypeReferenceRow(),
+                resultType,
+                resultIsUnsigned,
+                computed,
+                scratch,
+                publishedSaturatingResult)))
+    {
+        return false;
+    }
+
+    computed = publishedSaturatingResult;
+
+    if (expression.HasType()
+        && !ImportedTemplateScalarValueFitsPublishedType(
+            graph,
+            expression.TypeReferenceRow(),
+            resultType,
+            resultIsUnsigned,
+            computed,
+            scratch))
+    {
+        return false;
+    }
+
+    type = resultType;
+    isUnsigned = resultIsUnsigned;
+    value = computed;
+    visitedExpressionCount = leftVisited + rightVisited + 1;
+    return true;
+}
+
+internal fn bool ImportedTemplateHasOnlyScalarExpressionFacts(
+    LogicalPackageFunctionTemplateRow template)
+{
+    return template.DeferredFunctionInstantiationCount() == 0
+        && template.DeferredTypeInstantiationCount() == 0
+        && template.ObjectCreationCount() == 0
+        && template.EnumConstructorCount() == 0
+        && template.EnumCallCount() == 0
+        && template.EnumValueCount() == 0
+        && template.EnumPatternCount() == 0
+        && template.AggregatePatternCount() == 0
+        && template.DirectCallCount() == 0
+        && template.FieldAccessCount() == 0
+        && template.MemberCallCount() == 0
+        && template.FunctionAddressCount() == 0
+        && template.BoundOperationCount() == 0
+        && template.TryPropagationCount() == 0;
+}
+
+internal finite law bool ImportedTemplateScalarStatementHasNoNonBodyAuxiliaryPayload(
+    LogicalPackageTypedTemplateStatementRow statement)
+{
+    return !statement.HasTargetExpression()
+        && !statement.HasTraversalSourceExpression()
+        && !statement.HasName()
+        && !statement.HasAssignmentOperator()
+        && !statement.HasStorageClass()
+        && !statement.HasLoopBehavior()
+        && !statement.HasConstProvenance()
+        && !statement.HasTraversalIndexName()
+        && !statement.HasTraversalIndexStorageClass()
+        && !statement.HasTraversalElementName()
+        && !statement.IsMutable()
+        && !statement.IsConstant()
+        && !statement.HasType()
+        && !statement.HasStorageCapacity()
+        && !statement.HasTraversalIndexType()
+        && !statement.HasTraversalElementType()
+        && !statement.HasConditionPattern()
+        && statement.SwitchCaseCount() == 0
+        && statement.InitializerStatementCount() == 0
+        && statement.IteratorStatementCount() == 0
+        && statement.ThenStatementCount() == 0
+        && statement.ElseStatementCount() == 0
+        && statement.LoopContractCount() == 0;
+}
+
+internal fn bool ImportedTemplateScalarLocalConstantHasExpectedPayload(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageTypedTemplateStatementRow statement,
+    mut borrow OwnedAscii scratch)
+{
+    return statement.HasExpression()
+        && statement.HasName()
+        && !statement.HasAssignmentOperator()
+        && statement.HasStorageClass()
+        && ImportedTemplateGenericFactTextEquals(
+            graph,
+            statement.StorageClassTextRow(),
+            "local",
+            scratch)
+        && !statement.HasLoopBehavior()
+        && statement.HasConstProvenance()
+        && ImportedTemplateGenericFactTextEquals(
+            graph,
+            statement.ConstProvenanceTextRow(),
+            "immutable-binding",
+            scratch)
+        && !statement.HasTraversalIndexName()
+        && !statement.HasTraversalIndexStorageClass()
+        && !statement.HasTraversalElementName()
+        && !statement.IsMutable()
+        && statement.IsConstant()
+        && statement.HasType()
+        && !statement.HasTargetExpression()
+        && !statement.HasTraversalSourceExpression()
+        && !statement.HasStorageCapacity()
+        && !statement.HasTraversalIndexType()
+        && !statement.HasTraversalElementType()
+        && !statement.HasConditionPattern()
+        && statement.SwitchCaseCount() == 0
+        && statement.InitializerStatementCount() == 0
+        && statement.IteratorStatementCount() == 0
+        && statement.BodyStatementCount() == 0
+        && statement.ThenStatementCount() == 0
+        && statement.ElseStatementCount() == 0
+        && statement.LoopContractCount() == 0;
+}
+
+internal fn bool ImportedTemplateScalarLocalVariableHasExpectedPayload(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageTypedTemplateStatementRow statement,
+    mut borrow OwnedAscii scratch)
+{
+    if (!statement.HasName()
+        || statement.HasAssignmentOperator()
+        || !statement.HasStorageClass()
+        || statement.HasLoopBehavior()
+        || statement.HasTraversalIndexName()
+        || statement.HasTraversalIndexStorageClass()
+        || statement.HasTraversalElementName()
+        || statement.IsConstant()
+        || !statement.HasType()
+        || statement.HasTargetExpression()
+        || statement.HasTraversalSourceExpression()
+        || statement.HasStorageCapacity()
+        || statement.HasTraversalIndexType()
+        || statement.HasTraversalElementType()
+        || statement.HasConditionPattern()
+        || statement.SwitchCaseCount() != 0
+        || statement.InitializerStatementCount() != 0
+        || statement.IteratorStatementCount() != 0
+        || statement.BodyStatementCount() != 0
+        || statement.ThenStatementCount() != 0
+        || statement.ElseStatementCount() != 0
+        || statement.LoopContractCount() != 0)
+    {
+        return false;
+    }
+
+    stack bool supportedStorage = ImportedTemplateGenericFactTextEquals(
+        graph,
+        statement.StorageClassTextRow(),
+        "stack",
+        scratch)
+        || ImportedTemplateGenericFactTextEquals(
+            graph,
+            statement.StorageClassTextRow(),
+            "register",
+            scratch);
+    if (!supportedStorage)
+    {
+        return false;
+    }
+
+    if (statement.IsMutable())
+    {
+        return !statement.HasConstProvenance();
+    }
+
+    if (!statement.HasConstProvenance()
+        || !ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.ConstProvenanceTextRow(),
+                "immutable-binding",
+                scratch))
+    {
+        return statement.HasExpression()
+            && statement.HasConstProvenance()
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.ConstProvenanceTextRow(),
+                "permanent-const",
+                scratch);
+    }
+
+    return true;
+}
+
+internal finite law bool ImportedTemplateScalarAssignmentHasExpectedPayload(
+    LogicalPackageTypedTemplateStatementRow statement)
+{
+    return statement.HasExpression()
+        && statement.HasTargetExpression()
+        && statement.HasName()
+        && statement.HasAssignmentOperator()
+        && !statement.HasTraversalSourceExpression()
+        && !statement.HasStorageClass()
+        && !statement.HasLoopBehavior()
+        && !statement.HasConstProvenance()
+        && !statement.HasTraversalIndexName()
+        && !statement.HasTraversalIndexStorageClass()
+        && !statement.HasTraversalElementName()
+        && !statement.IsMutable()
+        && !statement.IsConstant()
+        && !statement.HasType()
+        && !statement.HasStorageCapacity()
+        && !statement.HasTraversalIndexType()
+        && !statement.HasTraversalElementType()
+        && !statement.HasConditionPattern()
+        && statement.SwitchCaseCount() == 0
+        && statement.InitializerStatementCount() == 0
+        && statement.IteratorStatementCount() == 0
+        && statement.BodyStatementCount() == 0
+        && statement.ThenStatementCount() == 0
+        && statement.ElseStatementCount() == 0
+        && statement.LoopContractCount() == 0;
+}
+
+internal fn bool TryReadImportedTemplateScalarAssignmentOperator(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] textRow,
+    mut borrow OwnedAscii scratch,
+    out bool isSimpleAssignment,
+    out bool isInitializationAssignment,
+    out ImportedTemplateScalarBinaryOp op)
+{
+    isSimpleAssignment = false;
+    isInitializationAssignment = false;
+    op = ImportedTemplateScalarBinaryOp.Unsupported;
+    if (textRow == 0
+        || (u64[0 2 ** 63 - 1])textRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow row = graph.TextRowAt(textRow);
+    if (AppendLogicalPackageGenericTemplateFactText(graph, row, scratch)
+        != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    isSimpleAssignment = System.Text.OwnedAsciiEqualsAscii(scratch, "=");
+    isInitializationAssignment = System.Text.OwnedAsciiEqualsAscii(scratch, "init =");
+    if (!isSimpleAssignment && !isInitializationAssignment)
+    {
+        op = ImportedTemplateScalarAssignmentBinaryOpOf(scratch);
+    }
+
+    if (isSimpleAssignment || isInitializationAssignment)
+    {
+        return true;
+    }
+
+    switch (op)
+    {
+        case ImportedTemplateScalarBinaryOp.Unsupported:
+            return false;
+        default:
+            return true;
+    }
+}
+
+internal fn ImportedTemplateMirLoweringStatus InspectImportedTemplateScalarReturn(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    mut borrow OwnedAscii scratch,
+    out MirType literalType,
+    out bool literalIsUnsigned,
+    out i64[min max] literalValue)
+{
+    literalType = MirType.I64;
+    literalIsUnsigned = false;
+    literalValue = 0;
+    if (functionTemplateRow == 0
+        || (u64[0 2 ** 63 - 1])functionTemplateRow > graph.FunctionTemplateRowCount())
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack LogicalPackageFunctionTemplateRow template =
+        graph.FunctionTemplateRowAt(functionTemplateRow);
+    if (!template.HasTypedBody()
+        || !ImportedTemplateHasOnlyScalarExpressionFacts(template))
+    {
+        return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+    }
+
+    stack mut u32[0 max] statementMatchCount = 0;
+    stack mut u32[0 max] topLevelStatementMatchCount = 0;
+    stack mut u32[0 max] firstStatementRow = 0;
+    stack mut u32[0 max] lastStatementRow = 0;
+    stack mut u64[0 2 ** 63 - 1] statementIndex = 1;
+    while willexit (statementIndex <= graph.TypedTemplateStatementRowCount())
+    {
+        stack LogicalPackageTypedTemplateStatementRow candidate =
+            graph.TypedTemplateStatementRowAt((u32[0 max])statementIndex);
+        if (candidate.FunctionTemplateRow() == functionTemplateRow)
+        {
+            if (statementMatchCount == 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (firstStatementRow == 0)
+            {
+                firstStatementRow = (u32[0 max])statementIndex;
+            }
+
+            lastStatementRow = (u32[0 max])statementIndex;
+            statementMatchCount = statementMatchCount + 1;
+            if (candidate.ParentKind()
+                == LogicalPackageTypedTemplateStatementParentKind.TopLevel)
+            {
+                if (topLevelStatementMatchCount == 4294967295)
+                {
+                    return ImportedTemplateMirLoweringStatus.MalformedGraph;
+                }
+
+                topLevelStatementMatchCount = topLevelStatementMatchCount + 1;
+            }
+        }
+
+        statementIndex = statementIndex + 1;
+    }
+
+    if (statementMatchCount == 0
+        || (template.HasTopLevelStatementCount()
+            && template.TopLevelStatementCount() != topLevelStatementMatchCount)
+        || (u64[0 2 ** 63 - 1])lastStatementRow
+            - (u64[0 2 ** 63 - 1])firstStatementRow + 1
+            != statementMatchCount)
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u32[0 max] firstSequenceStatementRow = firstStatementRow;
+    stack mut u32[0 max] sequenceStatementCount = statementMatchCount;
+    stack mut u32[0 max] expectedParentStatementRow = 0;
+    stack mut LogicalPackageTypedTemplateStatementParentKind expectedParentKind =
+        LogicalPackageTypedTemplateStatementParentKind.TopLevel;
+    if (topLevelStatementMatchCount != statementMatchCount)
+    {
+        // The loader's breadth-first rows keep a sole top-level block followed
+        // by its direct body children in source order. Support that flat block
+        // without an index allocation; deeper/mixed nesting retains fallback.
+        if (topLevelStatementMatchCount != 1)
+        {
+            return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+        }
+
+        stack LogicalPackageTypedTemplateStatementRow block =
+            graph.TypedTemplateStatementRowAt(firstStatementRow);
+        if (block.FunctionTemplateRow() != functionTemplateRow
+            || block.ParentStatementRow() != 0
+            || block.ParentSwitchCaseRow() != 0
+            || block.ParentKind()
+                != LogicalPackageTypedTemplateStatementParentKind.TopLevel
+            || block.StatementOrdinal() != 0)
+        {
+            return ImportedTemplateMirLoweringStatus.MalformedGraph;
+        }
+
+        if (!ImportedTemplateGenericFactTextEquals(
+                graph,
+                block.KindTextRow(),
+                "block",
+                scratch)
+            || block.HasExpression()
+            || !ImportedTemplateScalarStatementHasNoNonBodyAuxiliaryPayload(block)
+            || block.BodyStatementCount() == 0)
+        {
+            return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+        }
+
+        stack mut u32[0 max] directBodyStatementCount = 0;
+        stack mut u64[0 2 ** 63 - 1] nestedStatementRow =
+            (u64[0 2 ** 63 - 1])firstStatementRow + 1;
+        while willexit (nestedStatementRow <= lastStatementRow)
+        {
+            stack LogicalPackageTypedTemplateStatementRow nested =
+                graph.TypedTemplateStatementRowAt((u32[0 max])nestedStatementRow);
+            if (nested.ParentStatementRow() == firstStatementRow
+                && nested.ParentKind()
+                    == LogicalPackageTypedTemplateStatementParentKind.Body)
+            {
+                if (directBodyStatementCount == 4294967295)
+                {
+                    return ImportedTemplateMirLoweringStatus.MalformedGraph;
+                }
+
+                directBodyStatementCount = directBodyStatementCount + 1;
+            }
+
+            nestedStatementRow = nestedStatementRow + 1;
+        }
+
+        if (block.BodyStatementCount() != directBodyStatementCount)
+        {
+            return ImportedTemplateMirLoweringStatus.MalformedGraph;
+        }
+
+        if ((u64[0 2 ** 63 - 1])directBodyStatementCount + 1
+            != statementMatchCount)
+        {
+            return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+        }
+
+        firstSequenceStatementRow = firstStatementRow + 1;
+        sequenceStatementCount = directBodyStatementCount;
+        expectedParentStatementRow = firstStatementRow;
+        expectedParentKind = LogicalPackageTypedTemplateStatementParentKind.Body;
+    }
+
+    stack mut u32[0 max] statementOrdinal = 0;
+    while willexit (statementOrdinal < sequenceStatementCount)
+    {
+        stack u64[0 2 ** 63 - 1] currentStatementRow =
+            (u64[0 2 ** 63 - 1])firstSequenceStatementRow
+                + (u64[0 2 ** 63 - 1])statementOrdinal;
+        stack LogicalPackageTypedTemplateStatementRow statement =
+            graph.TypedTemplateStatementRowAt((u32[0 max])currentStatementRow);
+        if (statement.FunctionTemplateRow() != functionTemplateRow
+            || statement.ParentStatementRow() != expectedParentStatementRow
+            || statement.ParentSwitchCaseRow() != 0
+            || statement.ParentKind() != expectedParentKind
+            || statement.StatementOrdinal() != statementOrdinal)
+        {
+            return ImportedTemplateMirLoweringStatus.MalformedGraph;
+        }
+
+        statementOrdinal = statementOrdinal + 1;
+    }
+
+    stack mut u32[0 max] expressionMatchCount = 0;
+    stack mut u32[0 max] firstExpressionRow = 0;
+    stack mut u32[0 max] lastExpressionRow = 0;
+    stack mut u64[0 2 ** 63 - 1] expressionIndex = 1;
+    while willexit (expressionIndex <= graph.TypedTemplateExpressionRowCount())
+    {
+        if (graph.TypedTemplateExpressionRowAt((u32[0 max])expressionIndex)
+                .FunctionTemplateRow() == functionTemplateRow)
+        {
+            if (expressionMatchCount == 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (firstExpressionRow == 0)
+            {
+                firstExpressionRow = (u32[0 max])expressionIndex;
+            }
+
+            lastExpressionRow = (u32[0 max])expressionIndex;
+            expressionMatchCount = expressionMatchCount + 1;
+        }
+
+        expressionIndex = expressionIndex + 1;
+    }
+
+    // The package loader appends one complete typed body before starting the
+    // next template. Validate that invariant once and keep all recursive child
+    // lookups inside the resulting compact span.
+    if (expressionMatchCount == 0
+        || (u64[0 2 ** 63 - 1])lastExpressionRow
+            - (u64[0 2 ** 63 - 1])firstExpressionRow + 1
+            != expressionMatchCount)
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u32[0 max] operatorMatchCount = 0;
+    stack mut u32[0 max] firstOperatorRow = 0;
+    stack mut u32[0 max] lastOperatorRow = 0;
+    stack mut u64[0 2 ** 63 - 1] operatorIndex = 1;
+    while willexit (operatorIndex <= graph.TypedTemplateExpressionOperatorNameRowCount())
+    {
+        stack LogicalPackageTypedTemplateExpressionOperatorNameRow operatorRow =
+            graph.TypedTemplateExpressionOperatorNameRowAt((u32[0 max])operatorIndex);
+        if (operatorRow.ExpressionRow() >= firstExpressionRow
+            && operatorRow.ExpressionRow() <= lastExpressionRow)
+        {
+            if (operatorMatchCount == 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (firstOperatorRow == 0)
+            {
+                firstOperatorRow = (u32[0 max])operatorIndex;
+            }
+
+            lastOperatorRow = (u32[0 max])operatorIndex;
+            operatorMatchCount = operatorMatchCount + 1;
+        }
+
+        operatorIndex = operatorIndex + 1;
+    }
+
+    if (operatorMatchCount != 0
+        && (u64[0 2 ** 63 - 1])lastOperatorRow
+            - (u64[0 2 ** 63 - 1])firstOperatorRow + 1
+            != operatorMatchCount)
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u32[0 max] conversionMatchCount = 0;
+    stack mut u32[0 max] firstConversionRow = 0;
+    stack mut u32[0 max] lastConversionRow = 0;
+    stack mut u64[0 2 ** 63 - 1] conversionIndex = 1;
+    while willexit (conversionIndex <= graph.TemplateConversionRowCount())
+    {
+        stack LogicalPackageTemplateConversionRow conversionRow =
+            graph.TemplateConversionRowAt((u32[0 max])conversionIndex);
+        if (conversionRow.FunctionTemplateRow() == functionTemplateRow)
+        {
+            if (conversionMatchCount == 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (firstConversionRow == 0)
+            {
+                firstConversionRow = (u32[0 max])conversionIndex;
+            }
+
+            lastConversionRow = (u32[0 max])conversionIndex;
+            conversionMatchCount = conversionMatchCount + 1;
+        }
+
+        conversionIndex = conversionIndex + 1;
+    }
+
+    if (conversionMatchCount != template.ConversionCount()
+        || (conversionMatchCount != 0
+            && (u64[0 2 ** 63 - 1])lastConversionRow
+                - (u64[0 2 ** 63 - 1])firstConversionRow + 1
+                != conversionMatchCount))
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u32[0 max] localDeclarationMatchCount = 0;
+    stack mut u32[0 max] firstLocalDeclarationRow = 0;
+    stack mut u32[0 max] lastLocalDeclarationRow = 0;
+    stack mut u64[0 2 ** 63 - 1] localDeclarationIndex = 1;
+    while willexit (localDeclarationIndex <= graph.TemplateLocalDeclarationRowCount())
+    {
+        stack LogicalPackageTemplateLocalDeclarationRow localDeclaration =
+            graph.TemplateLocalDeclarationRowAt((u32[0 max])localDeclarationIndex);
+        if (localDeclaration.FunctionTemplateRow() == functionTemplateRow)
+        {
+            if (localDeclarationMatchCount == 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (firstLocalDeclarationRow == 0)
+            {
+                firstLocalDeclarationRow = (u32[0 max])localDeclarationIndex;
+            }
+
+            lastLocalDeclarationRow = (u32[0 max])localDeclarationIndex;
+            localDeclarationMatchCount = localDeclarationMatchCount + 1;
+        }
+
+        localDeclarationIndex = localDeclarationIndex + 1;
+    }
+
+    if (localDeclarationMatchCount != template.LocalDeclarationCount()
+        || (localDeclarationMatchCount != 0
+            && (u64[0 2 ** 63 - 1])lastLocalDeclarationRow
+                - (u64[0 2 ** 63 - 1])firstLocalDeclarationRow + 1
+                != localDeclarationMatchCount))
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    if (localDeclarationMatchCount > ImportedTemplateScalarLocalCapacity)
+    {
+        return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+    }
+
+    stack mut MirType selectedReturnType = MirType.I64;
+    stack mut bool selectedReturnIsUnsigned = false;
+    stack mut i64[min max] selectedReturnValue = 0;
+    stack mut u64[0 2 ** 63 - 1] visitedExpressionCount = 0;
+    stack mut bool foundReturn = false;
+    stack mut ImportedTemplateScalarEvaluationState evaluationState = new();
+    stack mut ImportedTemplateScalarLocalState localState = new();
+    stack mut OwnedAscii nameScratch = new();
+    stack mut u32[0 max] localDeclarationCursor = 0;
+    statementOrdinal = 0;
+    while willexit (statementOrdinal < sequenceStatementCount)
+    {
+        stack u64[0 2 ** 63 - 1] currentStatementRow =
+            (u64[0 2 ** 63 - 1])firstSequenceStatementRow
+                + (u64[0 2 ** 63 - 1])statementOrdinal;
+        stack LogicalPackageTypedTemplateStatementRow statement =
+            graph.TypedTemplateStatementRowAt((u32[0 max])currentStatementRow);
+        stack bool isLastStatement = statementOrdinal + 1 == sequenceStatementCount;
+        stack bool isEmpty = ImportedTemplateGenericFactTextEquals(
+            graph,
+            statement.KindTextRow(),
+            "empty",
+            scratch);
+        stack bool isExpression = !isEmpty
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.KindTextRow(),
+                "expression",
+                scratch);
+        stack bool isLocalDeclaration = !isEmpty
+            && !isExpression
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.KindTextRow(),
+                "local-variable",
+                scratch);
+        stack bool isLocalConstant = isLocalDeclaration && statement.IsConstant();
+        stack bool isLocalVariable = isLocalDeclaration && !statement.IsConstant();
+        stack bool isAssignment = !isEmpty
+            && !isExpression
+            && !isLocalDeclaration
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.KindTextRow(),
+                "assignment",
+                scratch);
+        stack bool isReturn = !isEmpty
+            && !isExpression
+            && !isLocalDeclaration
+            && !isAssignment
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                statement.KindTextRow(),
+                "return",
+                scratch);
+        stack bool hasExpectedPayload = isLocalConstant
+            ? ImportedTemplateScalarLocalConstantHasExpectedPayload(
+                graph,
+                statement,
+                scratch)
+            : isLocalVariable
+                ? ImportedTemplateScalarLocalVariableHasExpectedPayload(
+                    graph,
+                    statement,
+                    scratch)
+                : isAssignment
+                    ? ImportedTemplateScalarAssignmentHasExpectedPayload(statement)
+                    : ImportedTemplateScalarStatementHasNoNonBodyAuxiliaryPayload(statement);
+
+        if (!hasExpectedPayload
+            || statement.BodyStatementCount() != 0
+            || (isEmpty && (statement.HasExpression() || isLastStatement))
+            || (isExpression && (!statement.HasExpression() || isLastStatement))
+            || (isLocalDeclaration && isLastStatement)
+            || (isAssignment && (!statement.HasExpression() || isLastStatement))
+            || (isReturn && (!statement.HasExpression() || !isLastStatement))
+            || (!isEmpty
+                && !isExpression
+                && !isLocalDeclaration
+                && !isAssignment
+                && !isReturn))
+        {
+            return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+        }
+
+        stack mut MirType statementType = MirType.I64;
+        stack mut bool statementIsUnsigned = false;
+        stack mut i64[min max] statementValue = 0;
+        stack mut u32[0 max] statementVisitedExpressionCount = 0;
+        if (statement.HasExpression())
+        {
+            stack u32[0 max] expressionRow = statement.ExpressionRow();
+            if (expressionRow < firstExpressionRow
+                || expressionRow > lastExpressionRow)
+            {
+                return ImportedTemplateMirLoweringStatus.MalformedGraph;
+            }
+
+            if (!TryEvaluateImportedTemplateScalarExpression(
+                    graph,
+                    functionTemplateRow,
+                    firstExpressionRow,
+                    lastExpressionRow,
+                    firstOperatorRow,
+                    lastOperatorRow,
+                    firstConversionRow,
+                    lastConversionRow,
+                    evaluationState,
+                    localState,
+                    expressionRow,
+                    0,
+                    LogicalPackageTypedTemplateExpressionParentKind.Root,
+                    0,
+                    0,
+                    scratch,
+                    nameScratch,
+                    statementType,
+                    statementIsUnsigned,
+                    statementValue,
+                    statementVisitedExpressionCount)
+                || visitedExpressionCount
+                    + (u64[0 2 ** 63 - 1])statementVisitedExpressionCount
+                    > 4294967295)
+            {
+                return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+            }
+
+            visitedExpressionCount = visitedExpressionCount
+                + (u64[0 2 ** 63 - 1])statementVisitedExpressionCount;
+            if (isAssignment)
+            {
+                stack u32[0 max] targetExpressionRow = statement.TargetExpressionRow();
+                if (targetExpressionRow < firstExpressionRow
+                    || targetExpressionRow > lastExpressionRow)
+                {
+                    return ImportedTemplateMirLoweringStatus.MalformedGraph;
+                }
+
+                stack LogicalPackageTypedTemplateExpressionRow targetExpression =
+                    graph.TypedTemplateExpressionRowAt(targetExpressionRow);
+                if (targetExpression.FunctionTemplateRow() != functionTemplateRow
+                    || targetExpression.ParentExpressionRow() != 0
+                    || targetExpression.ParentKind()
+                        != LogicalPackageTypedTemplateExpressionParentKind.Root
+                    || targetExpression.ExpressionOrdinal() != 1
+                    || !ImportedTemplateGenericFactTextEquals(
+                        graph,
+                        targetExpression.KindTextRow(),
+                        "name",
+                        scratch)
+                    || !targetExpression.HasName()
+                    || targetExpression.HasAssignmentOperator()
+                    || targetExpression.HasLiteralText()
+                    || targetExpression.HasOrdinal()
+                    || targetExpression.HasTargetExpression()
+                    || targetExpression.ArgumentCount() != 0
+                    || targetExpression.MemberNameCount() != 0
+                    || targetExpression.OperatorNameCount() != 0
+                    || targetExpression.TypeArgumentCount() != 0
+                    || targetExpression.ComptimeValueArgumentCount() != 0
+                    || !ImportedTemplateGenericFactTextRowsEqual(
+                        graph,
+                        statement.NameTextRow(),
+                        targetExpression.NameTextRow(),
+                        scratch,
+                        nameScratch))
+                {
+                    return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+                }
+
+                stack mut u32[0 max] targetTypeReferenceRow = 0;
+                stack mut MirType targetType = MirType.I64;
+                stack mut bool targetIsUnsigned = false;
+                stack mut bool targetIsMutable = false;
+                stack mut bool targetIsInitialized = false;
+                stack mut i64[min max] targetValue = 0;
+                stack mut bool isSimpleAssignment = false;
+                stack mut bool isInitializationAssignment = false;
+                stack mut ImportedTemplateScalarBinaryOp assignmentOp =
+                    ImportedTemplateScalarBinaryOp.Unsupported;
+                if (!localState.TryResolve(
+                        graph,
+                        statement.NameTextRow(),
+                        scratch,
+                        nameScratch,
+                        targetTypeReferenceRow,
+                        targetType,
+                        targetIsUnsigned,
+                        targetIsMutable,
+                        targetIsInitialized,
+                        targetValue)
+                    || !targetIsMutable
+                    || targetType != statementType
+                    || targetIsUnsigned != statementIsUnsigned
+                    || (targetExpression.HasType()
+                        && !ImportedTemplateScalarPublishedTypesEqual(
+                            graph,
+                            targetTypeReferenceRow,
+                            targetExpression.TypeReferenceRow(),
+                            scratch))
+                    || !TryReadImportedTemplateScalarAssignmentOperator(
+                        graph,
+                        statement.AssignmentOperatorTextRow(),
+                        scratch,
+                        isSimpleAssignment,
+                        isInitializationAssignment,
+                        assignmentOp))
+                {
+                    return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+                }
+
+                stack mut i64[min max] assignedValue = statementValue;
+                stack bool isDirectAssignment = isSimpleAssignment
+                    || isInitializationAssignment;
+                if ((!isDirectAssignment && !targetIsInitialized)
+                    || (!isDirectAssignment
+                    && !TryEvaluateImportedTemplateScalarBinary(
+                        assignmentOp,
+                        targetType,
+                        targetIsUnsigned,
+                        targetType,
+                        targetIsUnsigned,
+                        targetValue,
+                        statementType,
+                        statementIsUnsigned,
+                        statementValue,
+                        assignedValue)))
+                {
+                    return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+                }
+
+                stack mut i64[min max] publishedAssignedValue = assignedValue;
+                if (ImportedTemplateScalarOpIsSaturating(assignmentOp)
+                    && !TryClampImportedTemplateSaturatingResultToPublishedRange(
+                        graph,
+                        targetTypeReferenceRow,
+                        targetType,
+                        targetIsUnsigned,
+                        assignedValue,
+                        scratch,
+                        publishedAssignedValue))
+                {
+                    return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+                }
+
+                if (!ImportedTemplateScalarValueFitsPublishedType(
+                        graph,
+                        targetTypeReferenceRow,
+                        targetType,
+                        targetIsUnsigned,
+                        publishedAssignedValue,
+                        scratch)
+                    || !localState.TryAssignValue(
+                        graph,
+                        statement.NameTextRow(),
+                        publishedAssignedValue,
+                        scratch,
+                        nameScratch)
+                    || visitedExpressionCount == 4294967295)
+                {
+                    return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+                }
+
+                visitedExpressionCount = visitedExpressionCount + 1;
+            }
+            else if (isReturn)
+            {
+                selectedReturnType = statementType;
+                selectedReturnIsUnsigned = statementIsUnsigned;
+                selectedReturnValue = statementValue;
+                foundReturn = true;
+            }
+        }
+
+        if (isLocalDeclaration)
+        {
+            if (localDeclarationCursor >= localDeclarationMatchCount)
+            {
+                return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+            }
+
+            stack u64[0 2 ** 63 - 1] localDeclarationRowIndex =
+                (u64[0 2 ** 63 - 1])firstLocalDeclarationRow
+                    + (u64[0 2 ** 63 - 1])localDeclarationCursor;
+            stack LogicalPackageTemplateLocalDeclarationRow localDeclaration =
+                graph.TemplateLocalDeclarationRowAt(
+                    (u32[0 max])localDeclarationRowIndex);
+            stack mut MirType publishedLocalType = MirType.I64;
+            stack mut bool publishedLocalIsUnsigned = false;
+            if (localDeclaration.FunctionTemplateRow() != functionTemplateRow
+                || localDeclaration.DeclarationOrdinal() != localDeclarationCursor
+                || (isLocalConstant
+                    && !ImportedTemplateGenericFactTextEquals(
+                        graph,
+                        localDeclaration.KindTextRow(),
+                        "const",
+                        scratch))
+                || (isLocalVariable
+                    && !ImportedTemplateGenericFactTextEquals(
+                        graph,
+                        localDeclaration.KindTextRow(),
+                        "var",
+                        scratch))
+                || !ImportedTemplateScalarPublishedTypesEqual(
+                    graph,
+                    statement.TypeReferenceRow(),
+                    localDeclaration.TypeReferenceRow(),
+                    scratch)
+                || !TryReadImportedTemplateScalarType(
+                    graph,
+                    statement.TypeReferenceRow(),
+                    scratch,
+                    publishedLocalType,
+                    publishedLocalIsUnsigned)
+                || (statement.HasExpression()
+                    && (publishedLocalType != statementType
+                        || publishedLocalIsUnsigned != statementIsUnsigned
+                        || !ImportedTemplateScalarValueFitsPublishedType(
+                            graph,
+                            statement.TypeReferenceRow(),
+                            statementType,
+                            statementIsUnsigned,
+                            statementValue,
+                            scratch)))
+                || !localState.TryAdd(
+                    graph,
+                    statement.NameTextRow(),
+                    statement.TypeReferenceRow(),
+                    publishedLocalType,
+                    publishedLocalIsUnsigned,
+                    statement.IsMutable(),
+                    statement.HasExpression(),
+                    statementValue,
+                    scratch,
+                    nameScratch))
+            {
+                return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+            }
+
+            localDeclarationCursor = localDeclarationCursor + 1;
+        }
+
+        statementOrdinal = statementOrdinal + 1;
+    }
+
+    if (!foundReturn
+        || visitedExpressionCount != expressionMatchCount
+        || evaluationState.ConversionCursor() != conversionMatchCount
+        || localDeclarationCursor != localDeclarationMatchCount
+        || (u32[0 max])localState.Count() != localDeclarationMatchCount)
+    {
+        return ImportedTemplateMirLoweringStatus.UnsupportedBody;
+    }
+
+    literalType = selectedReturnType;
+    literalIsUnsigned = selectedReturnIsUnsigned;
+    literalValue = selectedReturnValue;
+    return ImportedTemplateMirLoweringStatus.Ok;
+}
+
+internal fn MemoryStatus ImportedTemplateReserveMirScalarReturnOutput(
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<MirFunction> functions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    mut borrow IrTable<ValueFacts> functionReturnFacts)
+{
+    try instructions.Reserve(1);
+    try blocks.Reserve(1);
+    try functions.Reserve(1);
+    try valueFacts.Reserve(1);
+    try functionReturnFacts.Reserve(1);
+    return MemoryStatus.Ok;
+}
+
+// Lowers a typed package-template body directly when its complete body is a
+// sequence of empty/pure constant-expression statements followed by one
+// constant integer/bool expression return, either at top level or inside one
+// terminal flat block. Literal, unary, binary,
+// comparison-chain, conditional, comptime, and conversion trees are evaluated
+// during import lowering, so discarded pure roots emit no runtime work and the
+// return emits one constant rather than an operator tree. Integer folding
+// includes checked, power, wrapping, saturating, bitwise, and shift semantics;
+// narrow-range saturation clamps against the published result type. The graph remains
+// authoritative and any template with unconsumed semantic side rows refuses
+// this path. The caller-provided
+// specialized return type, signedness, and range facts must match before any
+// output mutation; scalar-inapplicable fact families are rejected rather than
+// dropped. Exact folded facts are attached both to the MIR value and function
+// return, so LLVM definitions and imported call sites receive the strongest
+// legal range without reconstructed source.
+public fn ImportedTemplateMirLoweringStatus LowerImportedTemplateScalarReturnToMir(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    MirType expectedReturnType,
+    bool expectedReturnIsUnsigned,
+    ValueFacts expectedReturnFacts,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<MirFunction> functions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    mut borrow IrTable<ValueFacts> functionReturnFacts,
+    out MirFuncId loweredFunction)
+{
+    loweredFunction = MirFuncIdOf(0);
+    if (valueFacts.Count() != instructions.Count()
+        || functionReturnFacts.Count() != functions.Count())
+    {
+        return ImportedTemplateMirLoweringStatus.OutputFactMismatch;
+    }
+
+    stack mut OwnedAscii scratch = new();
+    stack mut MirType literalType = MirType.I64;
+    stack mut bool literalIsUnsigned = false;
+    stack mut i64[min max] literalValue = 0;
+    stack ImportedTemplateMirLoweringStatus inspection =
+        InspectImportedTemplateScalarReturn(
+            graph,
+            functionTemplateRow,
+            scratch,
+            literalType,
+            literalIsUnsigned,
+            literalValue);
+    if (inspection != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return inspection;
+    }
+
+    if (literalType != expectedReturnType
+        || literalIsUnsigned != expectedReturnIsUnsigned)
+    {
+        return ImportedTemplateMirLoweringStatus.ReturnTypeMismatch;
+    }
+
+    stack mut ValueFacts exactFacts = new();
+    if (literalValue == 9223372036854775807)
+    {
+        exactFacts.SetIntegerRange(literalValue, (i64[min max])(-(2 ** 63)));
+    }
+    else
+    {
+        exactFacts.SetIntegerRange(literalValue, literalValue + 1);
+    }
+
+    if (expectedReturnFacts.HasAlignment()
+        || expectedReturnFacts.HasCallingAbi()
+        || expectedReturnFacts.HasNoAlias()
+        || expectedReturnFacts.Volatile()
+        || expectedReturnFacts.HasNullability()
+        || expectedReturnFacts.HasTextConstant()
+        || !IntegerRangeFactsSubsetOf(exactFacts, expectedReturnFacts))
+    {
+        return ImportedTemplateMirLoweringStatus.ReturnFactMismatch;
+    }
+
+    switch (ImportedTemplateReserveMirScalarReturnOutput(
+        instructions,
+        blocks,
+        functions,
+        valueFacts,
+        functionReturnFacts))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return ImportedTemplateMirLoweringStatus.OutOfMemory;
+        case MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] firstInstruction = (u32[0 max])instructions.Count() + 1;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack MirValueId literal =
+        MirConstIntTyped(instructions, literalType, literalValue);
+    if (literal.Index() != firstInstruction)
+    {
+        return ImportedTemplateMirLoweringStatus.OutOfMemory;
+    }
+
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, literal, exactFacts))
+    {
+        return ImportedTemplateMirLoweringStatus.OutputFactMismatch;
+    }
+
+    stack MirBlockId entry = MirReturnBlock(blocks, literal);
+    if (entry.Index() != firstBlock)
+    {
+        return ImportedTemplateMirLoweringStatus.OutOfMemory;
+    }
+
+    stack MirFuncId function = MirDefineFunction(
+        functions,
+        entry,
+        entry,
+        1,
+        literal,
+        1);
+    if (!function.IsValid()
+        || functionReturnFacts.Add(exactFacts) != function.Index())
+    {
+        return ImportedTemplateMirLoweringStatus.OutOfMemory;
+    }
+
+    loweredFunction = function;
+    return ImportedTemplateMirLoweringStatus.Ok;
+}

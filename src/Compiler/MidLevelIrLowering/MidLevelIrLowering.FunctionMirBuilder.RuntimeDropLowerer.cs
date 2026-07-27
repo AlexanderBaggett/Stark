@@ -220,6 +220,15 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            // An owning `heap dyn` trait object owns its boxed data and must drop it
+            // (concrete destructor via the vtable Drop slot) and free the box. A
+            // borrowed `dyn` view owns nothing and needs no drop.
+            if (type.Kind == StarkTypeKind.DynTrait
+                && type.DynTraitStorageKind == StarkDynTraitStorageKind.Heap)
+            {
+                return true;
+            }
+
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
             {
                 return false;
@@ -309,9 +318,15 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (_fallbackEnumLayouts.TryGetValue(type.NamedType, out layout!))
+            {
+                return true;
+            }
+
             var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
             return _enumLayoutModel.Layouts.TryGetValue(key, out layout!)
-                || _publishedEnumLayouts.TryGetValue(key, out layout!);
+                || _publishedEnumLayouts.TryGetValue(key, out layout!)
+                || _fallbackEnumLayouts.TryGetValue(key, out layout!);
         }
 
         private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)
@@ -379,6 +394,11 @@ internal sealed partial class MidLevelIrLowerer
                     EmitDynamicStorageElementDropsCore(operand, type, elementType);
                 }
 
+                if (IsArenaBackedDynamicStorageOperand(operand))
+                {
+                    return;
+                }
+
                 Emit(
                     MidLevelIrStatementKind.Evaluate,
                     $"drop {operand.Text}",
@@ -390,6 +410,13 @@ internal sealed partial class MidLevelIrLowerer
                 && type.ClosureStorageKind == StarkClosureStorageKind.Heap)
             {
                 EmitHeapClosureDropCore(operand, type);
+                return;
+            }
+
+            if (type.Kind == StarkTypeKind.DynTrait
+                && type.DynTraitStorageKind == StarkDynTraitStorageKind.Heap)
+            {
+                EmitOwnedDynTraitDropCore(operand, type);
                 return;
             }
 
@@ -422,6 +449,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             EmitStructFieldDropsCore(temporary, type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private bool IsArenaBackedDynamicStorageOperand(MidLevelIrOperand operand)
+        {
+            return operand is MidLevelIrLocalOperand local
+                && _dynamicStorageAllocationKindByLocal.TryGetValue(local.Name, out var allocationKind)
+                && allocationKind == DynamicStorageAllocationKind.Arena;
         }
 
         private void EmitHeapClosureDropCore(MidLevelIrOperand operand, StarkTypeSymbol type)
@@ -461,6 +495,59 @@ internal sealed partial class MidLevelIrLowerer
                 call: new MidLevelIrIndirectCallStatementOperation(
                     dropPointer,
                     [mutableEnvironmentPointer],
+                    StarkTypeSymbols.Void,
+                    $"drop {operand.Text}",
+                    SourceReturnType: StarkTypeSymbols.Void,
+                    MayFree: true));
+        }
+
+        // Drops an owning `heap dyn` trait object: load the vtable's Drop slot (which
+        // follows the method slots) and call it with the erased data pointer. The
+        // thunk runs the boxed value's destructor/field drops and frees the box, so
+        // the call is `MayFree`. Mirrors the heap-closure drop, but the drop function
+        // comes from the shared vtable rather than from the value itself.
+        private void EmitOwnedDynTraitDropCore(MidLevelIrOperand operand, StarkTypeSymbol type)
+        {
+            if (type.DynTraitName is not { } traitName)
+            {
+                return;
+            }
+
+            var erasedDataType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+            var vtablePointerType = StarkTypeSymbols.DynTraitVtablePointerForTraitObject(type);
+            var dropSlotFunctionPointerType = CallableValueFacts.BuildClosureDropFunctionPointerType();
+            var dropSlotIndex = DynTraitFacts.GetVtableLayout(traitName, _typeModel.Functions).Count;
+
+            var dataPointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedDataType,
+                    $"{operand.Text}.data"),
+                "dyn_drop_data");
+            var vtablePointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    vtablePointerType,
+                    $"{operand.Text}.vtable"),
+                "dyn_drop_vtable");
+            var dropPointer = EmitRequiredTemporary(
+                new MidLevelIrDynVTableSlotRValue(
+                    vtablePointer,
+                    dropSlotIndex,
+                    dropSlotFunctionPointerType,
+                    $"{operand.Text}.drop#slot{dropSlotIndex}"),
+                "dyn_drop_fn");
+
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"drop {operand.Text}",
+                call: new MidLevelIrIndirectCallStatementOperation(
+                    dropPointer,
+                    [dataPointer],
                     StarkTypeSymbols.Void,
                     $"drop {operand.Text}",
                     SourceReturnType: StarkTypeSymbols.Void,
@@ -683,11 +770,23 @@ internal sealed partial class MidLevelIrLowerer
         {
             var previousModuleName = _moduleNameOverride;
             var previousGenericTypeSubstitution = _activeGenericTypeSubstitution;
+            var previousGenericValueSubstitution = _activeGenericValueSubstitution;
+            var previousComptimeGenericParameters = _activeComptimeGenericParameters;
             var hadAlias = _nameAliases.TryGetValue(aliasName, out var previousAlias);
             _moduleNameOverride = moduleName;
+            _activeComptimeGenericParameters = BuildNamedTypeComptimeGenericParameters(selfType);
+            _activeGenericValueSubstitution = BuildNamedTypeComptimeValueSubstitution(selfType);
             _activeGenericTypeSubstitution = BuildNamedTypeGenericSubstitution(selfType);
             _nameAliases[aliasName] = localName;
-            return new DestructorContext(this, previousModuleName, previousGenericTypeSubstitution, aliasName, previousAlias, hadAlias);
+            return new DestructorContext(
+                this,
+                previousModuleName,
+                previousGenericTypeSubstitution,
+                previousGenericValueSubstitution,
+                previousComptimeGenericParameters,
+                aliasName,
+                previousAlias,
+                hadAlias);
         }
 
         private void EmitStorageDeadCore(ScopeFrame scope)

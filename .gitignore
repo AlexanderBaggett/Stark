@@ -25,10 +25,13 @@ artifacts/
 .claude/
 .codex
 .stark/
+build/
+Stark.user.toml
 
 # Native/compiler-generated artifacts
 /stark
 /stark.cmd
+/sdk.json
 /examples/breakout/breakout-raylib
 *.ll
 *.bc

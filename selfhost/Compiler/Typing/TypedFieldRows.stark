@@ -1,0 +1,100 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedFieldModel
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedFieldRows
+
+internal fn System.Memory.MemoryStatus AppendTypedFieldDeclaration(
+    mut borrow TypedFieldDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] fieldOrdinal,
+    u32[0 max] nameToken,
+    u32[0 max] fieldStartToken,
+    u32[0 max] fieldEndToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] storageCapacityStartToken,
+    u32[0 max] storageCapacityEndToken)
+{
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    stack u32[0 max] semanticPrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typeHeadToken);
+    stack TypedSignatureTypeKind typeKind = TypedSignatureKindForType(source, stream, semanticPrimaryToken, typeHeadToken, 0, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])semanticPrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, semanticPrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, semanticPrimaryToken);
+    }
+
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+    }
+
+    stack u32[0 max] flags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        semanticPrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        false,
+        0,
+        false);
+
+    return table.Append(
+        ownerDeclarationIndex,
+        owner.Kind,
+        owner.NameToken,
+        fieldOrdinal,
+        nameToken,
+        fieldStartToken,
+        fieldEndToken,
+        typeKind,
+        typeHeadToken,
+        semanticPrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        flags,
+        storageCapacityStartToken,
+        storageCapacityEndToken);
+}

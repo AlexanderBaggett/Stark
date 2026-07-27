@@ -1,0 +1,11 @@
+[project]
+name = "selfhost-diagnostics-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "DiagnosticsTests.stark"
+output = "selfhost-diagnostics-tests"
+
+[dependencies]
+stark-compiler = { path = "../../selfhost" }

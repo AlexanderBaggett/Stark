@@ -1,4 +1,6 @@
+import System.C
 import System.Runtime.Buffer
+import System.Memory
 module System.Runtime.Platform.Windows
 
 internal finite law ascii AsciiView(Ascii source);
@@ -20,6 +22,59 @@ internal struct WinSocketBuffer
     rawptr<i8[min max]> Data;
 }
 
+internal struct WinSecurityAttributes
+{
+    i32[min max] Length;
+    rawptr<i8[min max]> SecurityDescriptor;
+    i32[min max] InheritHandle;
+}
+
+internal struct WinStartupInfo
+{
+    i32[min max] Size;
+    rawptr<i16[min max]> Reserved;
+    rawptr<i16[min max]> Desktop;
+    rawptr<i16[min max]> Title;
+    i32[min max] X;
+    i32[min max] Y;
+    i32[min max] XSize;
+    i32[min max] YSize;
+    i32[min max] XCountChars;
+    i32[min max] YCountChars;
+    i32[min max] FillAttribute;
+    i32[min max] Flags;
+    i16[min max] ShowWindow;
+    i16[min max] ReservedByteCount;
+    rawptr<i8[min max]> ReservedBytes;
+    rawptr<i8[min max]> StdInput;
+    rawptr<i8[min max]> StdOutput;
+    rawptr<i8[min max]> StdError;
+}
+
+internal struct WinProcessInformation
+{
+    rawptr<i8[min max]> ProcessHandle;
+    rawptr<i8[min max]> ThreadHandle;
+    i32[min max] ProcessId;
+    i32[min max] ThreadId;
+}
+
+internal struct WinProcessHandleStorage
+{
+    rawptr<i8[min max]>[256] Handles;
+}
+
+internal struct WinPipeDescriptorStorage
+{
+    rawptr<i8[min max]>[512] Handles;
+    i32[min max][512] Kinds;
+}
+
+internal struct WinEnvironmentStorage
+{
+    i8[min max][32768] Data;
+}
+
 internal unsafe ffi fn rawmutptr<i8[min max]> GetStdHandle(i32[min max] nStdHandle);
 internal unsafe ffi fn i32[min max] WriteFile(rawptr<i8[min max]> hFile, rawptr<i8[min max]> buffer, i32[min max] bytesToWrite, rawmutptr<i32[min max]> bytesWritten, rawptr<i8[min max]> overlapped);
 internal unsafe ffi fn i32[min max] ReadFile(rawptr<i8[min max]> hFile, rawmutptr<i8[min max]> buffer, i32[min max] bytesToRead, rawmutptr<i32[min max]> bytesRead, rawptr<i8[min max]> overlapped);
@@ -28,9 +83,44 @@ internal unsafe ffi fn rawmutptr<i8[min max]> CreateFileW(rawptr<i16[min max]> f
 internal unsafe ffi fn i32[min max] CloseHandle(rawptr<i8[min max]> handle);
 internal unsafe ffi fn i32[min max] FlushFileBuffers(rawptr<i8[min max]> handle);
 internal unsafe ffi fn i32[min max] SetFilePointerEx(rawptr<i8[min max]> handle, i64[min max] distanceToMove, rawmutptr<i64[min max]> newFilePointer, i32[min max] moveMethod);
+internal unsafe ffi fn i32[min max] CreatePipe(
+    rawmutptr<rawmutptr<i8[min max]>> readPipe,
+    rawmutptr<rawmutptr<i8[min max]>> writePipe,
+    rawmutptr<WinSecurityAttributes> pipeAttributes,
+    i32[min max] size);
+internal unsafe ffi fn i32[min max] SetHandleInformation(rawptr<i8[min max]> handle, i32[min max] mask, i32[min max] flags);
+internal unsafe ffi fn i32[min max] CreateProcessW(
+    rawptr<i16[min max]> applicationName,
+    rawmutptr<i16[min max]> commandLine,
+    rawptr<WinSecurityAttributes> processAttributes,
+    rawptr<WinSecurityAttributes> threadAttributes,
+    i32[min max] inheritHandles,
+    i32[min max] creationFlags,
+    rawptr<i8[min max]> environment,
+    rawptr<i16[min max]> currentDirectory,
+    rawmutptr<WinStartupInfo> startupInfo,
+    rawmutptr<WinProcessInformation> processInformation);
+internal unsafe ffi fn i32[min max] TerminateProcess(rawptr<i8[min max]> process, i32[min max] exitCode);
+internal unsafe ffi fn i32[min max] GetExitCodeProcess(rawptr<i8[min max]> process, rawmutptr<i32[min max]> exitCode);
+internal unsafe ffi fn i32[min max] PeekNamedPipe(
+    rawptr<i8[min max]> pipe,
+    rawmutptr<i8[min max]> buffer,
+    i32[min max] bufferSize,
+    rawmutptr<i32[min max]> bytesRead,
+    rawmutptr<i32[min max]> totalBytesAvailable,
+    rawmutptr<i32[min max]> bytesLeftThisMessage);
+internal unsafe ffi fn u64[0 max] GetTickCount64();
+internal unsafe ffi fn i32[min max] SetEnvironmentVariableW(rawptr<i16[min max]> name, rawptr<i16[min max]> value);
+internal unsafe ffi fn i32[min max] GetEnvironmentVariableW(rawptr<i16[min max]> name, rawmutptr<i16[min max]> buffer, i32[min max] bufferLength);
+internal unsafe ffi fn i32[min max] SetCurrentDirectoryW(rawptr<i16[min max]> path);
+internal unsafe ffi fn rawptr<i16[min max]> GetCommandLineW();
 internal unsafe ffi fn i32[min max] DeleteFileW(rawptr<i16[min max]> path);
 internal unsafe ffi fn i32[min max] MoveFileExW(rawptr<i16[min max]> existingPath, rawptr<i16[min max]> newPath, i32[min max] flags);
 internal unsafe ffi fn i32[min max] GetFileAttributesW(rawptr<i16[min max]> path);
+internal unsafe ffi fn i32[min max] GetFileAttributesExW(
+    rawptr<i16[min max]> path,
+    i32[min max] infoLevel,
+    rawmutptr<i8[min max]> fileInformation);
 internal unsafe ffi fn i32[min max] CreateDirectoryW(rawptr<i16[min max]> path, rawptr<i8[min max]> securityAttributes);
 internal unsafe ffi fn i32[min max] RemoveDirectoryW(rawptr<i16[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> FindFirstFileExW(
@@ -43,17 +133,18 @@ internal unsafe ffi fn rawmutptr<i8[min max]> FindFirstFileExW(
 internal unsafe ffi fn i32[min max] FindNextFileW(rawptr<i8[min max]> findHandle, rawmutptr<i8[min max]> findData);
 internal unsafe ffi fn i32[min max] FindClose(rawptr<i8[min max]> findHandle);
 internal unsafe ffi fn i32[min max] GetCurrentDirectoryW(i32[min max] bufferLength, rawmutptr<i16[min max]> buffer);
+internal unsafe ffi fn i32[min max] GetTempPathW(i32[min max] bufferLength, rawmutptr<i16[min max]> buffer);
 internal unsafe ffi fn i32[min max] GetConsoleMode(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> mode);
 internal unsafe ffi fn i32[min max] GetLastError();
 internal unsafe ffi fn void ExitProcess(i32[min max] exitCode);
 internal unsafe ffi fn i32[min max] GetCurrentProcessId();
 internal unsafe ffi fn i32[min max] SwitchToThread();
 internal unsafe ffi fn void Sleep(i32[min max] milliseconds);
-internal unsafe ffi fn rawmutptr<i8[min max]> CreateThread(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn rawmutptr<i8[min max]> CreateThread(
     rawptr<i8[min max]> threadAttributes,
     u64[0 2 ** 63 - 1] stackSize,
-    fnptr<fn i32[min max](fnptr<fn i32[min max]()>)> startAddress,
-    fnptr<fn i32[min max]()> parameter,
+    fnptr<unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<i8[min max]>)> startAddress,
+    rawmutptr<i8[min max]> parameter,
     i32[min max] creationFlags,
     rawmutptr<i32[min max]> threadId);
 internal unsafe ffi fn i32[min max] WaitForSingleObject(rawptr<i8[min max]> handle, i32[min max] milliseconds);
@@ -85,9 +176,9 @@ internal unsafe ffi fn i32[min max] WaitOnAddress(
     i32[min max] milliseconds);
 internal unsafe ffi fn void WakeByAddressSingle(rawmutptr<i32[min max]> address);
 internal unsafe ffi fn void WakeByAddressAll(rawmutptr<i32[min max]> address);
-internal unsafe ffi fn i32[min max] InitOnceExecuteOnce(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] InitOnceExecuteOnce(
     rawmutptr<WinInitOnce> initOnce,
-    fnptr<fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
+    fnptr<unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
     rawptr<i8[min max]> parameter,
     rawmutptr<rawptr<i8[min max]>> context);
 internal unsafe ffi fn i32[min max] WSAStartup(u16[0 max] versionRequested, rawmutptr<i8[min max]> data);
@@ -132,14 +223,30 @@ const WinGenericWrite = 1073741824;
 const WinFileAppendData = 4;
 const WinFileShareRead = 1;
 const WinFileShareWrite = 2;
+const WinCreateNew = 1;
 const WinCreateAlways = 2;
 const WinOpenExisting = 3;
 const WinOpenAlways = 4;
+const WinFileAttributeReadOnly = 1;
 const WinFileAttributeNormal = 128;
 const WinFileAttributeDirectory = 16;
 const WinFileAttributeReparsePoint = 1024;
 const WinMoveFileReplaceExisting = 1;
 const WinInvalidFileAttributes = -1;
+const WinGetFileExInfoStandard = 0;
+const WinFileAttributeDataMinBytes = 36;
+const WinFileAttributeDataAttributesOffset = 0;
+const WinFileAttributeDataLastWriteTimeOffset = 20;
+const WinFileAttributeDataFileSizeHighOffset = 28;
+const WinFileAttributeDataFileSizeLowOffset = 32;
+const WinFileTimeUnixEpochIntervals = 116444736000000000;
+const WinFileTimeIntervalsPerSecond = 10000000;
+const WinFileTimeNanosecondsPerInterval = 100;
+const WinPathMetadataKindOffset = 0;
+const WinPathMetadataPermissionsOffset = 4;
+const WinPathMetadataSizeOffset = 8;
+const WinPathMetadataModifiedSecondsOffset = 16;
+const WinPathMetadataModifiedNanosecondsOffset = 24;
 const WinFindDataFileNameOffset = 44;
 const WinFindDataMaxFileNameLength = 260;
 const WinFindDataMinBytes = 592;
@@ -149,7 +256,16 @@ const WinFindFirstExLargeFetch = 2;
 const WinErrorNoMoreFiles = 18;
 const WinLongPathThreshold = 248;
 const WinWaitObject0 = 0;
+const WinWaitTimeout = 258;
 const WinInfinite = -1;
+const WinHandleFlagInherit = 1;
+const WinStartfUseStdHandles = 256;
+const WinErrorFileNotFound = 2;
+const WinErrorPathNotFound = 3;
+const WinErrorAccessDenied = 5;
+const WinErrorBrokenPipe = 109;
+const WinErrorEnvvarNotFound = 203;
+const WinErrorBadExeFormat = 193;
 const WinNtStatusSuccess = 0;
 const WinNtStatusPending = 259;
 const WinNtStatusEndOfFile = -1073741807;
@@ -162,6 +278,23 @@ const WinSocketProtocolTcp = 6;
 const WinSocketNoHandleInheritFlag = 128;
 const WinSockaddrInLength = 16;
 const WinDefaultTcpListenBacklog = 128;
+const WinProcessHandleCapacity = 256;
+const WinPipeDescriptorCapacity = 512;
+const WinPipeKindRead = 1;
+const WinPipeKindWrite = 2;
+const WinProcessPipeReadableEvent = 1;
+const WinProcessPipeWritableEvent = 2;
+const WinProcessPipeClosedEvent = 4;
+const WinMaxCommandLineWideUnits = 32768;
+const WinMaxCStringBytes = 2 ** 15 - 1;
+const WinEnvironmentWideCapacity = 32768;
+const WinEnvironmentUtf8Capacity = 32768;
+
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
 
 static mut WinInitOnce WinSockInitOnce = new WinInitOnce()
 {
@@ -178,12 +311,22 @@ static mut bool CachedStdoutTerminalInitialized = false;
 static mut bool CachedStderrTerminalInitialized = false;
 static mut bool CachedStdoutTerminal = false;
 static mut bool CachedStderrTerminal = false;
+static mut WinProcessHandleStorage WinProcessHandles = new WinProcessHandleStorage();
+static mut WinPipeDescriptorStorage WinPipeDescriptors = new WinPipeDescriptorStorage();
+static mut WinEnvironmentStorage WinEnvironmentValue = new WinEnvironmentStorage();
 
 internal struct WinIoStatusBlock
 {
     i32[min max] Status;
     i32[min max] Padding;
     i64[min max] Information;
+}
+
+internal struct WinThreadContext
+{
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> Entry;
+    rawmutptr<i8[min max]> Context;
+    fnptr<fn i32[min max]()> ThreadEntry;
 }
 
 internal unsafe fn rawptr<i8[min max]> CachedStdout()
@@ -284,16 +427,97 @@ internal fn i32[min max] ProcessId()
     }
 }
 
-internal unsafe ffi fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+internal fn i32[min max] ThreadNullEntry()
 {
-    return entry();
+    return -1;
+}
+
+internal unsafe fn i32[min max] ThreadNoPayloadContextEntry(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<WinThreadContext> typedContext = (rawmutptr<WinThreadContext>)context;
+    return (*typedContext).ThreadEntry();
+}
+
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] ThreadEntryThunk(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<WinThreadContext> typedContext = (rawmutptr<WinThreadContext>)context;
+    stack rawmutptr<i8[min max]> entryContext = (*typedContext).Context;
+    stack i32[min max] exitCode = (*typedContext).Entry(entryContext);
+    stack System.Memory.Allocation allocation = new System.Memory.Allocation()
+    {
+        Pointer = context,
+        ByteLength = (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        Alignment = alignof(WinThreadContext),
+        Allocator = System.Memory.Allocator.Default()
+    };
+    System.Memory.Free(allocation);
+    return exitCode;
 }
 
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
-    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, entry, 0, null);
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        alignof(WinThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<WinThreadContext> context = (rawmutptr<WinThreadContext>)allocation.Pointer;
+    *context = new WinThreadContext()
+    {
+        Entry = ThreadNoPayloadContextEntry,
+        Context = allocation.Pointer,
+        ThreadEntry = entry
+    };
+
+    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, allocation.Pointer, 0, null);
     if (IsInvalidHandle(handle))
     {
+        System.Memory.Free(allocation);
+        return null;
+    }
+
+    return handle;
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        alignof(WinThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<WinThreadContext> threadContext = (rawmutptr<WinThreadContext>)allocation.Pointer;
+    *threadContext = new WinThreadContext()
+    {
+        Entry = entry,
+        Context = context,
+        ThreadEntry = ThreadNullEntry
+    };
+
+    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, allocation.Pointer, 0, null);
+    if (IsInvalidHandle(handle))
+    {
+        System.Memory.Free(allocation);
         return null;
     }
 
@@ -354,7 +578,7 @@ internal fn i32[min max] NegativeSocketError()
     }
 }
 
-internal unsafe ffi fn i32[min max] WinSockStartupOnce(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] WinSockStartupOnce(
     rawmutptr<WinInitOnce> initOnce,
     rawptr<i8[min max]> parameter,
     rawmutptr<rawptr<i8[min max]>> context)
@@ -976,6 +1200,70 @@ internal fn i32[min max] UnsignedWide(i16[min max] value)
     }
 
     return (i32[min max])value;
+}
+
+internal inline finite law u64[0 max] UnsignedInt(i32[min max] value)
+{
+    if (value < 0)
+    {
+        return (u64[0 max])(((i64[min max])value) + (i64[min max])(2 ** 32));
+    }
+
+    return (u64[0 max])value;
+}
+
+internal inline finite law u64[0 max] CombineUnsignedInts(i32[min max] high, i32[min max] low)
+{
+    return (UnsignedInt(high) << 32) + UnsignedInt(low);
+}
+
+internal inline finite law i64[min max] ClampUnsignedToNonNegativeI64(u64[0 max] value)
+{
+    if (value > (u64[0 max])(2 ** 63 - 1))
+    {
+        return (i64[min max])(2 ** 63 - 1);
+    }
+
+    return (i64[min max])value;
+}
+
+internal inline finite law i64[min max] WindowsFileTimeToUnixSeconds(u64[0 max] fileTime)
+{
+    if (fileTime <= (u64[0 max])WinFileTimeUnixEpochIntervals)
+    {
+        return 0;
+    }
+
+    stack u64[0 max] unixIntervals = fileTime - (u64[0 max])WinFileTimeUnixEpochIntervals;
+    return ClampUnsignedToNonNegativeI64(unixIntervals / (u64[0 max])WinFileTimeIntervalsPerSecond);
+}
+
+internal inline finite law i64[min max] WindowsFileTimeToUnixNanoseconds(u64[0 max] fileTime)
+{
+    if (fileTime <= (u64[0 max])WinFileTimeUnixEpochIntervals)
+    {
+        return 0;
+    }
+
+    stack u64[0 max] unixIntervals = fileTime - (u64[0 max])WinFileTimeUnixEpochIntervals;
+    return (i64[min max])((unixIntervals % (u64[0 max])WinFileTimeIntervalsPerSecond)
+        * (u64[0 max])WinFileTimeNanosecondsPerInterval);
+}
+
+internal inline finite law i32[min max] WindowsPermissionsFromAttributes(i32[min max] attributes)
+{
+    stack mut i32[min max] permissions = 292;
+    if ((attributes & WinFileAttributeReadOnly) == 0)
+    {
+        permissions = 438;
+    }
+
+    if ((attributes & WinFileAttributeDirectory) != 0)
+    {
+        permissions = permissions | 73;
+    }
+
+    return permissions;
 }
 
 internal fn bool IsWideDirectorySeparatorUnit(i32[min max] value)
@@ -2276,12 +2564,12 @@ internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> 
     return FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
+internal unsafe fn FileOpenResult OpenFileWithDispositionResult(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
 {
     stack mut i16[min max][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
     {
-        return null;
+        return FileOpenResult.Err(-206);
     }
 
     stack rawmutptr<i8[min max]> handle = CreateFileW(
@@ -2295,10 +2583,21 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[m
 
     if (IsInvalidHandle(handle))
     {
-        return null;
+        return FileOpenResult.Err(NegativeLastError());
     }
 
-    return (rawptr<i8[min max]>)handle;
+    return FileOpenResult.Ok((rawptr<i8[min max]>)handle);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
+{
+    switch (OpenFileWithDispositionResult(path, desiredAccess, creationDisposition))
+    {
+        case FileOpenResult.Ok(var handle):
+            return handle;
+        case FileOpenResult.Err(var error):
+            return null;
+    }
 }
 
 internal fn i32[min max] WriteStdoutAscii(ascii text)
@@ -2567,9 +2866,29 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     return OpenFileWithDisposition(path, WinGenericRead, WinOpenExisting);
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericRead, WinOpenExisting);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     return OpenFileWithDisposition(path, WinGenericWrite, WinCreateAlways);
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericWrite, WinCreateAlways);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    return OpenFileWithDisposition(path, WinGenericWrite, WinCreateNew);
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericWrite, WinCreateNew);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
@@ -2577,9 +2896,19 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
     return OpenFileWithDisposition(path, WinFileAppendData, WinOpenAlways);
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinFileAppendData, WinOpenAlways);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     return OpenFileWithDisposition(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
 }
 
 internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
@@ -2912,6 +3241,93 @@ internal fn bool IsDirectory(ascii path)
 
         return (attributes & WinFileAttributeDirectory) != 0;
     }
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 attributeBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> attributeData = attributeBuffer.WritePointer();
+    if (attributeData == null || attributeBuffer.Writable() < (u64[0 2 ** 63 - 1])WinFileAttributeDataMinBytes)
+    {
+        return -1;
+    }
+
+    if (GetFileAttributesExW(&pathBuffer[0], WinGetFileExInfoStandard, attributeData) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    stack rawptr<i32[min max]> attributesPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataAttributesOffset]);
+    stack rawptr<i32[min max]> modifiedLowPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataLastWriteTimeOffset]);
+    stack rawptr<i32[min max]> modifiedHighPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataLastWriteTimeOffset + 4]);
+    stack rawptr<i32[min max]> sizeHighPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataFileSizeHighOffset]);
+    stack rawptr<i32[min max]> sizeLowPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataFileSizeLowOffset]);
+
+    stack i32[min max] attributes = *attributesPointer;
+    stack u64[0 max] fileSize = CombineUnsignedInts(*sizeHighPointer, *sizeLowPointer);
+    stack u64[0 max] modifiedFileTime = CombineUnsignedInts(*modifiedHighPointer, *modifiedLowPointer);
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[WinPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[WinPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromWindowsAttributes(attributes);
+    *permissionsPointer = WindowsPermissionsFromAttributes(attributes);
+    *sizeDestination = ClampUnsignedToNonNegativeI64(fileSize);
+    *modifiedSecondsDestination = WindowsFileTimeToUnixSeconds(modifiedFileTime);
+    *modifiedNanosecondsDestination = WindowsFileTimeToUnixNanoseconds(modifiedFileTime);
+    return 0;
+}
+
+// Symlink policy is not yet implemented on the Windows backend (see S10
+// deferred items). These stubs report ERROR_NOT_SUPPORTED (50) so the symlink
+// dispatch resolves and callers receive a recoverable IOError on Windows.
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    return -50;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    return -50;
+}
+
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    // Windows has no POSIX permission bits; executability is determined by the
+    // file extension, so adjusting a mode is a successful no-op.
+    return 0;
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    return -50;
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)
@@ -3350,4 +3766,1477 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     }
 
     return TryCopyWideUtf8(destination, &pathBuffer[0], written);
+}
+
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
+{
+    if (destination == null)
+    {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
+    if (data == null || capacity <= 0)
+    {
+        ResetAsciiDestination(destination);
+        return false;
+    }
+
+    stack mut i16[min max][4096] pathBuffer;
+    stack mut i32[min max] written = GetTempPathW(4096, &pathBuffer[0]);
+    if (written <= 0 || written >= 4096)
+    {
+        ResetAsciiDestination(destination);
+        return false;
+    }
+
+    if (written > 3 && IsWideDirectorySeparatorUnit(UnsignedWide(*(&pathBuffer[written - 1]))))
+    {
+        written -= 1;
+    }
+
+    return TryCopyWideUtf8(destination, &pathBuffer[0], written);
+}
+
+internal unsafe fn void CloseWinHandleIfOpen(rawptr<i8[min max]> handle)
+{
+    if (handle != null)
+    {
+        stack i32[min max] ignoredClose = CloseHandle(handle);
+    }
+
+    return;
+}
+
+internal unsafe fn i64[min max] CCharLength(rawptr<System.C.c_char> source, i64[min max] maxLength)
+{
+    if (source == null || maxLength < 0)
+    {
+        return -1;
+    }
+
+    stack rawptr<i8[min max]> data = (rawptr<i8[min max]>)source;
+    stack mut i64[min max] length = 0;
+    while willexit (length < maxLength)
+    {
+        if (*(&data[length]) == 0)
+        {
+            return length;
+        }
+
+        length += 1;
+    }
+
+    return -1;
+}
+
+internal unsafe fn bool TryCopyCCharUtf8ToWide(
+    rawmutptr<i16[min max]> destination,
+    i64[min max] capacity,
+    rawptr<System.C.c_char> source)
+{
+    if (destination == null || capacity <= 0 || source == null)
+    {
+        return false;
+    }
+
+    stack i64[min max] length = CCharLength(source, WinMaxCStringBytes);
+    if (length < 0)
+    {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> data = (rawptr<i8[min max]>)source;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
+    while willexit (readIndex < length)
+    {
+        stack mut i32[min max] codePoint = 0;
+        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint))
+        {
+            return false;
+        }
+
+        if (!TryAppendWideCodePoint(destination, capacity - 1, &writeIndex, codePoint))
+        {
+            return false;
+        }
+    }
+
+    *(&destination[writeIndex]) = 0;
+    return true;
+}
+
+internal unsafe fn bool TryBuildCCharWindowsWidePath(
+    rawmutptr<i16[min max]> destination,
+    i64[min max] capacity,
+    rawptr<System.C.c_char> source)
+{
+    if (destination == null || capacity <= 0 || source == null)
+    {
+        return false;
+    }
+
+    stack i64[min max] length = CCharLength(source, 4095);
+    if (length < 0 || length >= 4096)
+    {
+        return false;
+    }
+
+    stack mut i8[min max][4096] pathData;
+    stack rawptr<i8[min max]> sourceData = (rawptr<i8[min max]>)source;
+    stack mut i64[min max] index = 0;
+    while willexit (index < length)
+    {
+        *(&pathData[index]) = *(&sourceData[index]);
+        index += 1;
+    }
+
+    stack Ascii view = new Ascii()
+    {
+        Data = &pathData[0],
+        Length = length,
+        Capacity = 4096
+    };
+    return TryBuildWindowsWidePath(destination, capacity, AsciiView(view));
+}
+
+internal unsafe fn bool TryAppendWideRepeated(
+    rawmutptr<i16[min max]> destination,
+    i64[min max] capacity,
+    rawmutptr<i64[min max]> writeIndex,
+    i32[min max] unit,
+    i64[min max] count)
+{
+    if (count < 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < count)
+    {
+        if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])unit))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn bool TryAppendQuotedCCharArgument(
+    rawmutptr<i16[min max]> destination,
+    i64[min max] capacity,
+    rawmutptr<i64[min max]> writeIndex,
+    rawptr<System.C.c_char> argument)
+{
+    if (destination == null || writeIndex == null || argument == null)
+    {
+        return false;
+    }
+
+    stack i64[min max] length = CCharLength(argument, WinMaxCStringBytes);
+    if (length < 0)
+    {
+        return false;
+    }
+
+    stack rawptr<i8[min max]> data = (rawptr<i8[min max]>)argument;
+    stack mut bool needsQuoting = length == 0;
+    stack mut i64[min max] scanIndex = 0;
+    while willexit (!needsQuoting && scanIndex < length)
+    {
+        stack i8[min max] unit = *(&data[scanIndex]);
+        if (unit == (i8[min max])32 || unit == (i8[min max])9 || unit == (i8[min max])34)
+        {
+            needsQuoting = true;
+            break;
+        }
+
+        scanIndex += 1;
+    }
+
+    if (!needsQuoting)
+    {
+        stack mut i64[min max] directReadIndex = 0;
+        while willexit (directReadIndex < length)
+        {
+            stack mut i32[min max] directCodePoint = 0;
+            if (!TryDecodeUtf8CodePoint(data, length, &directReadIndex, &directCodePoint))
+            {
+                return false;
+            }
+
+            if (!TryAppendWideCodePoint(destination, capacity, writeIndex, directCodePoint))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])34))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] readIndex = 0;
+    while willexit (readIndex < length)
+    {
+        stack mut i64[min max] backslashes = 0;
+        while willexit (readIndex < length && *(&data[readIndex]) == (i8[min max])92)
+        {
+            backslashes += 1;
+            readIndex += 1;
+        }
+
+        if (readIndex >= length)
+        {
+            if (!TryAppendWideRepeated(destination, capacity, writeIndex, 92, backslashes * 2))
+            {
+                return false;
+            }
+
+            break;
+        }
+
+        if (*(&data[readIndex]) == (i8[min max])34)
+        {
+            if (!TryAppendWideRepeated(destination, capacity, writeIndex, 92, (backslashes * 2) + 1)
+                || !TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])34))
+            {
+                return false;
+            }
+
+            readIndex += 1;
+            continue;
+        }
+
+        if (!TryAppendWideRepeated(destination, capacity, writeIndex, 92, backslashes))
+        {
+            return false;
+        }
+
+        stack mut i32[min max] codePoint = 0;
+        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint))
+        {
+            return false;
+        }
+
+        if (!TryAppendWideCodePoint(destination, capacity, writeIndex, codePoint))
+        {
+            return false;
+        }
+    }
+
+    return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])34);
+}
+
+internal unsafe fn bool TryBuildProcessCommandLine(
+    rawmutptr<i16[min max]> destination,
+    i64[min max] capacity,
+    borrow rawptr<System.C.c_char>[] argv)
+{
+    if (destination == null || capacity <= 1 || argv.Length == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] writeIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    stack mut bool wroteArgument = false;
+    while willexit (index < argv.Length)
+    {
+        stack rawptr<System.C.c_char> argument = argv[index];
+        if (argument == null)
+        {
+            break;
+        }
+
+        if (wroteArgument)
+        {
+            if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])32))
+            {
+                return false;
+            }
+        }
+
+        if (!TryAppendQuotedCCharArgument(destination, capacity - 1, &writeIndex, argument))
+        {
+            return false;
+        }
+
+        wroteArgument = true;
+        index += 1;
+    }
+
+    if (!wroteArgument || writeIndex >= capacity)
+    {
+        return false;
+    }
+
+    *(&destination[writeIndex]) = 0;
+    return true;
+}
+
+internal unsafe fn i32[min max] AllocateWinProcessHandle(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    stack mut i32[min max] index = 1;
+    while willexit (index < WinProcessHandleCapacity)
+    {
+        if (WinProcessHandles.Handles[index] == null)
+        {
+            WinProcessHandles.Handles[index] = handle;
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return -24;
+}
+
+internal unsafe fn rawptr<i8[min max]> WinProcessHandleForId(i32[min max] processId)
+{
+    if (processId <= 0 || processId >= WinProcessHandleCapacity)
+    {
+        return null;
+    }
+
+    return WinProcessHandles.Handles[processId];
+}
+
+internal unsafe fn void ReleaseWinProcessHandle(i32[min max] processId)
+{
+    if (processId > 0 && processId < WinProcessHandleCapacity)
+    {
+        WinProcessHandles.Handles[processId] = null;
+    }
+
+    return;
+}
+
+internal unsafe fn i32[min max] AllocateWinPipeDescriptor(rawptr<i8[min max]> handle, i32[min max] kind)
+{
+    if (handle == null || kind <= 0)
+    {
+        return -1;
+    }
+
+    stack mut i32[min max] index = 1;
+    while willexit (index < WinPipeDescriptorCapacity)
+    {
+        if (WinPipeDescriptors.Handles[index] == null)
+        {
+            WinPipeDescriptors.Handles[index] = handle;
+            WinPipeDescriptors.Kinds[index] = kind;
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return -24;
+}
+
+internal unsafe fn rawptr<i8[min max]> WinPipeHandleForDescriptor(i32[min max] descriptor)
+{
+    if (descriptor <= 0 || descriptor >= WinPipeDescriptorCapacity)
+    {
+        return null;
+    }
+
+    return WinPipeDescriptors.Handles[descriptor];
+}
+
+internal unsafe fn i32[min max] WinPipeKindForDescriptor(i32[min max] descriptor)
+{
+    if (descriptor <= 0 || descriptor >= WinPipeDescriptorCapacity)
+    {
+        return 0;
+    }
+
+    return WinPipeDescriptors.Kinds[descriptor];
+}
+
+internal unsafe fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    if (descriptor <= 0 || descriptor >= WinPipeDescriptorCapacity)
+    {
+        return -1;
+    }
+
+    stack rawptr<i8[min max]> handle = WinPipeDescriptors.Handles[descriptor];
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    WinPipeDescriptors.Handles[descriptor] = null;
+    WinPipeDescriptors.Kinds[descriptor] = 0;
+    if (CloseHandle(handle) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    return ClampUnsignedToNonNegativeI64(GetTickCount64());
+}
+
+internal unsafe fn i64[min max] ReadRawDescriptorBytes(
+    rawmutptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length,
+    i32[min max] descriptor)
+{
+    if (buffer == null || descriptor <= 0 || WinPipeKindForDescriptor(descriptor) != WinPipeKindRead)
+    {
+        return -1;
+    }
+
+    if (length == 0)
+    {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> handle = WinPipeHandleForDescriptor(descriptor);
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] request = RequestedChunkLength((i64[min max])length);
+    stack mut i32[min max] bytesRead = 0;
+    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0)
+    {
+        stack i32[min max] error = GetLastError();
+        if (error == WinErrorBrokenPipe)
+        {
+            return 0;
+        }
+
+        if (error > 0)
+        {
+            return (i64[min max])(-error);
+        }
+
+        return -1;
+    }
+
+    if (bytesRead <= 0)
+    {
+        return 0;
+    }
+
+    return (i64[min max])bytesRead;
+}
+
+internal unsafe fn i64[min max] WriteRawDescriptorBytes(
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length,
+    i32[min max] descriptor)
+{
+    if (buffer == null || descriptor <= 0 || WinPipeKindForDescriptor(descriptor) != WinPipeKindWrite)
+    {
+        return -1;
+    }
+
+    if (length == 0)
+    {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> handle = WinPipeHandleForDescriptor(descriptor);
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] request = RequestedChunkLength((i64[min max])length);
+    stack mut i32[min max] bytesWritten = 0;
+    if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0)
+    {
+        stack i32[min max] error = GetLastError();
+        if (error > 0)
+        {
+            return (i64[min max])(-error);
+        }
+
+        return -1;
+    }
+
+    if (bytesWritten <= 0)
+    {
+        return 0;
+    }
+
+    return (i64[min max])bytesWritten;
+}
+
+internal unsafe fn i32[min max] MapCreateProcessFailure(i32[min max] error)
+{
+    if (error == WinErrorFileNotFound || error == WinErrorPathNotFound)
+    {
+        return 127;
+    }
+
+    if (error == WinErrorAccessDenied || error == WinErrorBadExeFormat)
+    {
+        return 126;
+    }
+
+    if (error > 0)
+    {
+        return -error;
+    }
+
+    return -1;
+}
+
+internal unsafe fn void CloseProcessStartupHandles(
+    rawptr<i8[min max]> stdinRead,
+    rawptr<i8[min max]> stdinWrite,
+    rawptr<i8[min max]> stdoutRead,
+    rawptr<i8[min max]> stdoutWrite,
+    rawptr<i8[min max]> stderrRead,
+    rawptr<i8[min max]> stderrWrite)
+    where overlap(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite)
+{
+    CloseWinHandleIfOpen(stdinRead);
+    CloseWinHandleIfOpen(stdinWrite);
+    CloseWinHandleIfOpen(stdoutRead);
+    CloseWinHandleIfOpen(stdoutWrite);
+    CloseWinHandleIfOpen(stderrRead);
+    CloseWinHandleIfOpen(stderrWrite);
+    return;
+}
+
+// Windows has no POSIX process groups; grouped spawn behaves like the plain
+// capture spawn, and KillProcessGroup falls back to terminating the direct
+// child only (job-object tree kill is a tracked follow-up).
+internal unsafe fn i32[min max] StartProcessCaptureGrouped(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCapture(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    if (executable == null
+        || argv.Length == 0
+        || processId == null
+        || stdinDescriptor == null
+        || stdoutDescriptor == null
+        || stderrDescriptor == null)
+    {
+        return -1;
+    }
+
+    *processId = -1;
+    *stdinDescriptor = -1;
+    *stdoutDescriptor = -1;
+    *stderrDescriptor = -1;
+
+    stack mut i16[min max][32768] commandLine;
+    if (!TryBuildProcessCommandLine(&commandLine[0], WinMaxCommandLineWideUnits, argv))
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][4096] workingDirectoryBuffer;
+    stack mut rawptr<i16[min max]> workingDirectoryWide = null;
+    if (workingDirectory != null)
+    {
+        if (!TryBuildCCharWindowsWidePath(&workingDirectoryBuffer[0], 4096, workingDirectory))
+        {
+            return 126;
+        }
+
+        workingDirectoryWide = &workingDirectoryBuffer[0];
+    }
+
+    stack mut WinSecurityAttributes inheritableAttributes = new WinSecurityAttributes()
+    {
+        Length = (i32[min max])sizeof(WinSecurityAttributes),
+        SecurityDescriptor = null,
+        InheritHandle = 1
+    };
+    stack mut rawmutptr<i8[min max]> stdinRead = null;
+    stack mut rawmutptr<i8[min max]> stdinWrite = null;
+    stack mut rawmutptr<i8[min max]> stdoutRead = null;
+    stack mut rawmutptr<i8[min max]> stdoutWrite = null;
+    stack mut rawmutptr<i8[min max]> stderrRead = null;
+    stack mut rawmutptr<i8[min max]> stderrWrite = null;
+
+    if (captureStdin)
+    {
+        if (CreatePipe(&stdinRead, &stdinWrite, &inheritableAttributes, 0) == 0)
+        {
+            return NegativeLastError();
+        }
+
+        if (SetHandleInformation(stdinWrite, WinHandleFlagInherit, 0) == 0)
+        {
+            stack i32[min max] status = NegativeLastError();
+            CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+            return status;
+        }
+    }
+
+    if (CreatePipe(&stdoutRead, &stdoutWrite, &inheritableAttributes, 0) == 0)
+    {
+        stack i32[min max] status = NegativeLastError();
+        CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+        return status;
+    }
+
+    if (SetHandleInformation(stdoutRead, WinHandleFlagInherit, 0) == 0)
+    {
+        stack i32[min max] status = NegativeLastError();
+        CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+        return status;
+    }
+
+    if (CreatePipe(&stderrRead, &stderrWrite, &inheritableAttributes, 0) == 0)
+    {
+        stack i32[min max] status = NegativeLastError();
+        CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+        return status;
+    }
+
+    if (SetHandleInformation(stderrRead, WinHandleFlagInherit, 0) == 0)
+    {
+        stack i32[min max] status = NegativeLastError();
+        CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+        return status;
+    }
+
+    stack mut rawptr<i8[min max]> childStdin = null;
+    if (captureStdin)
+    {
+        childStdin = stdinRead;
+    }
+
+    stack mut WinStartupInfo startupInfo = new WinStartupInfo()
+    {
+        Size = (i32[min max])sizeof(WinStartupInfo),
+        Reserved = null,
+        Desktop = null,
+        Title = null,
+        X = 0,
+        Y = 0,
+        XSize = 0,
+        YSize = 0,
+        XCountChars = 0,
+        YCountChars = 0,
+        FillAttribute = 0,
+        Flags = WinStartfUseStdHandles,
+        ShowWindow = 0,
+        ReservedByteCount = 0,
+        ReservedBytes = null,
+        StdInput = childStdin,
+        StdOutput = stdoutWrite,
+        StdError = stderrWrite
+    };
+    stack mut WinProcessInformation processInformation = new WinProcessInformation()
+    {
+        ProcessHandle = null,
+        ThreadHandle = null,
+        ProcessId = 0,
+        ThreadId = 0
+    };
+
+    if (CreateProcessW(
+        null,
+        &commandLine[0],
+        null,
+        null,
+        1,
+        0,
+        null,
+        workingDirectoryWide,
+        &startupInfo,
+        &processInformation) == 0)
+    {
+        stack i32[min max] error = GetLastError();
+        CloseProcessStartupHandles(stdinRead, stdinWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite);
+        return MapCreateProcessFailure(error);
+    }
+
+    CloseWinHandleIfOpen(stdinRead);
+    CloseWinHandleIfOpen(stdoutWrite);
+    CloseWinHandleIfOpen(stderrWrite);
+    CloseWinHandleIfOpen(processInformation.ThreadHandle);
+
+    stack i32[min max] processHandleId = AllocateWinProcessHandle(processInformation.ProcessHandle);
+    if (processHandleId < 0)
+    {
+        stack i32[min max] ignoredTerminate = TerminateProcess(processInformation.ProcessHandle, 126);
+        CloseWinHandleIfOpen(processInformation.ProcessHandle);
+        CloseWinHandleIfOpen(stdinWrite);
+        CloseWinHandleIfOpen(stdoutRead);
+        CloseWinHandleIfOpen(stderrRead);
+        return processHandleId;
+    }
+
+    stack mut i32[min max] stdinId = -1;
+    if (captureStdin)
+    {
+        stdinId = AllocateWinPipeDescriptor(stdinWrite, WinPipeKindWrite);
+        if (stdinId < 0)
+        {
+            ReleaseWinProcessHandle(processHandleId);
+            stack i32[min max] ignoredTerminate = TerminateProcess(processInformation.ProcessHandle, 126);
+            CloseWinHandleIfOpen(processInformation.ProcessHandle);
+            CloseWinHandleIfOpen(stdinWrite);
+            CloseWinHandleIfOpen(stdoutRead);
+            CloseWinHandleIfOpen(stderrRead);
+            return stdinId;
+        }
+    }
+
+    stack i32[min max] stdoutId = AllocateWinPipeDescriptor(stdoutRead, WinPipeKindRead);
+    if (stdoutId < 0)
+    {
+        if (stdinId >= 0)
+        {
+            stack i32[min max] ignoredCloseStdin = CloseRawDescriptor(stdinId);
+        }
+
+        ReleaseWinProcessHandle(processHandleId);
+        stack i32[min max] ignoredTerminate = TerminateProcess(processInformation.ProcessHandle, 126);
+        CloseWinHandleIfOpen(processInformation.ProcessHandle);
+        CloseWinHandleIfOpen(stdoutRead);
+        CloseWinHandleIfOpen(stderrRead);
+        return stdoutId;
+    }
+
+    stack i32[min max] stderrId = AllocateWinPipeDescriptor(stderrRead, WinPipeKindRead);
+    if (stderrId < 0)
+    {
+        if (stdinId >= 0)
+        {
+            stack i32[min max] ignoredCloseStdin = CloseRawDescriptor(stdinId);
+        }
+
+        stack i32[min max] ignoredCloseStdout = CloseRawDescriptor(stdoutId);
+        ReleaseWinProcessHandle(processHandleId);
+        stack i32[min max] ignoredTerminate = TerminateProcess(processInformation.ProcessHandle, 126);
+        CloseWinHandleIfOpen(processInformation.ProcessHandle);
+        CloseWinHandleIfOpen(stderrRead);
+        return stderrId;
+    }
+
+    *processId = processHandleId;
+    *stdinDescriptor = stdinId;
+    *stdoutDescriptor = stdoutId;
+    *stderrDescriptor = stderrId;
+    return 0;
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    stack rawptr<i8[min max]> handle = WinProcessHandleForId(processId);
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0)
+    {
+        return NegativeLastError();
+    }
+
+    stack mut i32[min max] exitCode = 0;
+    if (GetExitCodeProcess(handle, &exitCode) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    ReleaseWinProcessHandle(processId);
+    CloseWinHandleIfOpen(handle);
+    *status = (exitCode & 255) << 8;
+    return processId;
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    stack rawptr<i8[min max]> handle = WinProcessHandleForId(processId);
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] waitResult = WaitForSingleObject(handle, 0);
+    if (waitResult == WinWaitTimeout)
+    {
+        return 0;
+    }
+
+    if (waitResult != WinWaitObject0)
+    {
+        return NegativeLastError();
+    }
+
+    stack mut i32[min max] exitCode = 0;
+    if (GetExitCodeProcess(handle, &exitCode) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    ReleaseWinProcessHandle(processId);
+    CloseWinHandleIfOpen(handle);
+    *status = (exitCode & 255) << 8;
+    return processId;
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    stack rawptr<i8[min max]> handle = WinProcessHandleForId(processId);
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    if (TerminateProcess(handle, 1) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+// See StartProcessCaptureGrouped: no process groups on Windows, so this only
+// terminates the direct child today.
+internal unsafe fn i32[min max] KillProcessGroup(i32[min max] processId)
+{
+    return KillProcess(processId);
+}
+
+internal unsafe fn i16[min max] PollReadPipeEvents(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> handle = WinPipeHandleForDescriptor(descriptor);
+    if (handle == null || WinPipeKindForDescriptor(descriptor) != WinPipeKindRead)
+    {
+        return (i16[min max])WinProcessPipeClosedEvent;
+    }
+
+    stack mut i32[min max] available = 0;
+    if (PeekNamedPipe(handle, null, 0, null, &available, null) == 0)
+    {
+        return (i16[min max])WinProcessPipeClosedEvent;
+    }
+
+    if (available > 0)
+    {
+        return (i16[min max])WinProcessPipeReadableEvent;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i16[min max] PollWritePipeEvents(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> handle = WinPipeHandleForDescriptor(descriptor);
+    if (handle == null || WinPipeKindForDescriptor(descriptor) != WinPipeKindWrite)
+    {
+        return (i16[min max])WinProcessPipeClosedEvent;
+    }
+
+    return (i16[min max])WinProcessPipeWritableEvent;
+}
+
+internal inline finite law i32[min max] PollEventCount(i16[min max] first, i16[min max] second, i16[min max] third)
+{
+    stack mut i32[min max] count = 0;
+    if (first != 0)
+    {
+        count += 1;
+    }
+
+    if (second != 0)
+    {
+        count += 1;
+    }
+
+    if (third != 0)
+    {
+        count += 1;
+    }
+
+    return count;
+}
+
+internal unsafe fn bool PollDeadlineExpired(i64[min max] startMilliseconds, i32[min max] timeoutMilliseconds)
+{
+    if (timeoutMilliseconds < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] now = MonotonicMilliseconds();
+    if (now < 0)
+    {
+        return true;
+    }
+
+    return now - startMilliseconds >= (i64[min max])timeoutMilliseconds;
+}
+
+internal unsafe fn void SleepPollInterval(i64[min max] startMilliseconds, i32[min max] timeoutMilliseconds)
+{
+    if (timeoutMilliseconds < 0)
+    {
+        Sleep(10);
+        return;
+    }
+
+    stack i64[min max] now = MonotonicMilliseconds();
+    if (now < 0)
+    {
+        return;
+    }
+
+    stack i64[min max] elapsed = now - startMilliseconds;
+    stack i64[min max] remaining = ((i64[min max])timeoutMilliseconds) - elapsed;
+    if (remaining <= 0)
+    {
+        return;
+    }
+
+    if (remaining > 10)
+    {
+        Sleep(10);
+        return;
+    }
+
+    Sleep((i32[min max])remaining);
+    return;
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack i64[min max] startMilliseconds = MonotonicMilliseconds();
+    while willexit (true)
+    {
+        *stdoutEvents = PollReadPipeEvents(stdoutDescriptor);
+        *stderrEvents = PollReadPipeEvents(stderrDescriptor);
+        stack i32[min max] count = PollEventCount(0, *stdoutEvents, *stderrEvents);
+        if (count > 0)
+        {
+            return count;
+        }
+
+        if (timeoutMilliseconds == 0 || PollDeadlineExpired(startMilliseconds, timeoutMilliseconds))
+        {
+            return 0;
+        }
+
+        SleepPollInterval(startMilliseconds, timeoutMilliseconds);
+    }
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdinEvents == null || stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack i64[min max] startMilliseconds = MonotonicMilliseconds();
+    while willexit (true)
+    {
+        *stdinEvents = PollWritePipeEvents(stdinDescriptor);
+        *stdoutEvents = PollReadPipeEvents(stdoutDescriptor);
+        *stderrEvents = PollReadPipeEvents(stderrDescriptor);
+        stack i32[min max] count = PollEventCount(*stdinEvents, *stdoutEvents, *stderrEvents);
+        if (count > 0)
+        {
+            return count;
+        }
+
+        if (timeoutMilliseconds == 0 || PollDeadlineExpired(startMilliseconds, timeoutMilliseconds))
+        {
+            return 0;
+        }
+
+        SleepPollInterval(startMilliseconds, timeoutMilliseconds);
+    }
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return (((i32[min max])events) & WinProcessPipeReadableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return (((i32[min max])events) & WinProcessPipeWritableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    return (((i32[min max])events) & WinProcessPipeClosedEvent) != 0;
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    if (name == null || value == null)
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][32768] wideName;
+    stack mut i16[min max][32768] wideValue;
+    if (!TryCopyCCharUtf8ToWide(&wideName[0], WinEnvironmentWideCapacity, name)
+        || !TryCopyCCharUtf8ToWide(&wideValue[0], WinEnvironmentWideCapacity, value))
+    {
+        return -1;
+    }
+
+    if (SetEnvironmentVariableW(&wideName[0], &wideValue[0]) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][32768] wideName;
+    if (!TryCopyCCharUtf8ToWide(&wideName[0], WinEnvironmentWideCapacity, name))
+    {
+        return -1;
+    }
+
+    if (SetEnvironmentVariableW(&wideName[0], null) == 0)
+    {
+        stack i32[min max] error = GetLastError();
+        if (error == WinErrorEnvvarNotFound)
+        {
+            return 0;
+        }
+
+        if (error > 0)
+        {
+            return -error;
+        }
+
+        return -1;
+    }
+
+    return 0;
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return null;
+    }
+
+    stack mut i16[min max][32768] wideName;
+    stack mut i16[min max][32768] wideValue;
+    if (!TryCopyCCharUtf8ToWide(&wideName[0], WinEnvironmentWideCapacity, name))
+    {
+        return null;
+    }
+
+    stack i32[min max] length = GetEnvironmentVariableW(&wideName[0], &wideValue[0], WinEnvironmentWideCapacity);
+    if (length == 0)
+    {
+        stack i32[min max] error = GetLastError();
+        if (error == WinErrorEnvvarNotFound)
+        {
+            return null;
+        }
+    }
+
+    if (length < 0 || length >= WinEnvironmentWideCapacity)
+    {
+        return null;
+    }
+
+    stack mut Ascii destination = new Ascii()
+    {
+        Data = &WinEnvironmentValue.Data[0],
+        Length = 0,
+        Capacity = WinEnvironmentUtf8Capacity - 1
+    };
+    if (!TryCopyWideUtf8(&destination, &wideValue[0], length))
+    {
+        return null;
+    }
+
+    *(&WinEnvironmentValue.Data[destination.Length]) = 0;
+    return (rawptr<System.C.c_char>)(&WinEnvironmentValue.Data[0]);
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    if (path == null)
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][4096] widePath;
+    if (!TryBuildCCharWindowsWidePath(&widePath[0], 4096, path))
+    {
+        return -1;
+    }
+
+    if (SetCurrentDirectoryW(&widePath[0]) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    return 0;
+}
+
+internal fn bool IsCommandLineWhitespace(i32[min max] value)
+{
+    return value == 32 || value == 9;
+}
+
+internal unsafe fn bool AppendByteToDynamic(mut borrow dynamic i8[min max] destination, i8[min max] value)
+{
+    if (!destination.TryReserve(1))
+    {
+        return false;
+    }
+
+    init destination[destination.Length] = value;
+    return true;
+}
+
+internal unsafe fn bool AppendUtf8CodePointToDynamic(mut borrow dynamic i8[min max] destination, i32[min max] codePoint)
+{
+    stack mut i8[min max][4] storage;
+    stack mut i64[min max] writeIndex = 0;
+    WriteUtf8CodePointToPointer(&storage[0], &writeIndex, codePoint);
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])writeIndex;
+    if (!destination.TryReserve(count))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < writeIndex)
+    {
+        init destination[destination.Length] = *(&storage[index]);
+        index += 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn bool AppendWideSourceCodePointToDynamic(
+    rawptr<i16[min max]> source,
+    i64[min max] length,
+    rawmutptr<i64[min max]> index,
+    mut borrow dynamic i8[min max] destination)
+{
+    if (source == null || index == null)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] readIndex = *index;
+    if (readIndex < 0 || readIndex >= length)
+    {
+        return false;
+    }
+
+    stack i32[min max] first = UnsignedWide(*(&source[readIndex]));
+    stack mut i32[min max] codePoint = first;
+    readIndex += 1;
+    if (55296 <= first && first <= 56319)
+    {
+        if (readIndex < length)
+        {
+            stack i32[min max] second = UnsignedWide(*(&source[readIndex]));
+            if (56320 <= second && second <= 57343)
+            {
+                readIndex += 1;
+                codePoint = (((first - 55296) << 10) | (second - 56320)) + (i32[min max])(2 ** 16);
+            }
+            else
+            {
+                codePoint = 65533;
+            }
+        }
+        else
+        {
+            codePoint = 65533;
+        }
+    }
+    else if (56320 <= first && first <= 57343)
+    {
+        codePoint = 65533;
+    }
+
+    *index = readIndex;
+    return AppendUtf8CodePointToDynamic(destination, codePoint);
+}
+
+internal unsafe fn bool AppendRepeatedByteToDynamic(
+    mut borrow dynamic i8[min max] destination,
+    i8[min max] value,
+    i64[min max] count)
+{
+    if (count < 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < count)
+    {
+        if (!AppendByteToDynamic(destination, value))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn bool AppendParsedCommandLineArgument(
+    rawptr<i16[min max]> source,
+    i64[min max] length,
+    rawmutptr<i64[min max]> index,
+    mut borrow dynamic i8[min max] destination)
+{
+    stack mut bool inQuotes = false;
+    while willexit (*index < length)
+    {
+        stack i64[min max] currentIndex = *index;
+        stack i32[min max] current = UnsignedWide(*(&source[currentIndex]));
+        if (!inQuotes && IsCommandLineWhitespace(current))
+        {
+            break;
+        }
+
+        if (current == 92)
+        {
+            stack mut i64[min max] backslashes = 0;
+            while willexit (*index < length)
+            {
+                stack i64[min max] slashIndex = *index;
+                if (UnsignedWide(*(&source[slashIndex])) != 92)
+                {
+                    break;
+                }
+
+                backslashes += 1;
+                *index = slashIndex + 1;
+            }
+
+            stack i64[min max] quoteIndex = *index;
+            if (quoteIndex < length && UnsignedWide(*(&source[quoteIndex])) == 34)
+            {
+                if (!AppendRepeatedByteToDynamic(destination, (i8[min max])92, backslashes / 2))
+                {
+                    return false;
+                }
+
+                if ((backslashes & 1) == 0)
+                {
+                    *index = quoteIndex + 1;
+                    stack i64[min max] doubledQuoteIndex = *index;
+                    if (inQuotes && doubledQuoteIndex < length && UnsignedWide(*(&source[doubledQuoteIndex])) == 34)
+                    {
+                        if (!AppendByteToDynamic(destination, (i8[min max])34))
+                        {
+                            return false;
+                        }
+
+                        *index = doubledQuoteIndex + 1;
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else
+                {
+                    if (!AppendByteToDynamic(destination, (i8[min max])34))
+                    {
+                        return false;
+                    }
+
+                    *index = quoteIndex + 1;
+                }
+
+                continue;
+            }
+
+            if (!AppendRepeatedByteToDynamic(destination, (i8[min max])92, backslashes))
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        if (current == 34)
+        {
+            *index = currentIndex + 1;
+            stack i64[min max] nextQuoteIndex = *index;
+            if (inQuotes && nextQuoteIndex < length && UnsignedWide(*(&source[nextQuoteIndex])) == 34)
+            {
+                if (!AppendByteToDynamic(destination, (i8[min max])34))
+                {
+                    return false;
+                }
+
+                *index = nextQuoteIndex + 1;
+            }
+            else
+            {
+                inQuotes = !inQuotes;
+            }
+
+            continue;
+        }
+
+        if (!AppendWideSourceCodePointToDynamic(source, length, index, destination))
+        {
+            return false;
+        }
+    }
+
+    return AppendByteToDynamic(destination, 0);
+}
+
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    stack rawptr<i16[min max]> commandLine = GetCommandLineW();
+    if (commandLine == null)
+    {
+        return -1;
+    }
+
+    stack i64[min max] length = WindowsWideNullTerminatedLength(commandLine, WinMaxCommandLineWideUnits);
+    if (length >= WinMaxCommandLineWideUnits)
+    {
+        return -1;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < length)
+    {
+        while willexit (index < length && IsCommandLineWhitespace(UnsignedWide(*(&commandLine[index]))))
+        {
+            index += 1;
+        }
+
+        if (index >= length)
+        {
+            break;
+        }
+
+        if (!AppendParsedCommandLineArgument(commandLine, length, &index, destination))
+        {
+            return -12;
+        }
+    }
+
+    return 0;
 }

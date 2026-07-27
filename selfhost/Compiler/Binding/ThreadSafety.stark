@@ -1,0 +1,48 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+export import Compiler.Binding.ThreadSafetyModel
+export import Compiler.Binding.ThreadSafetyLawNames
+export import Compiler.Binding.ThreadSafetyAtomicFacts
+export import Compiler.Binding.ThreadSafetyTypeFacts
+export import Compiler.Binding.ThreadSafetyPredicates
+import System.Memory
+module Compiler.Binding.ThreadSafety
+
+public fn BindResult<ThreadSafetyLawFactTable> BuildThreadSafetyLawFacts(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream)
+{
+    stack mut ThreadSafetyLawFactTable facts = new();
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.NameToken != 0
+            && (item.Kind == DeclarationKind.Struct
+                || item.Kind == DeclarationKind.Record
+                || item.Kind == DeclarationKind.Enum
+                || item.Kind == DeclarationKind.Alias))
+        {
+            switch (facts.AppendPending(item.NameToken))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<ThreadSafetyLawFactTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] factCount = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] fact = 0; fact < factCount; fact += 1)
+    {
+        stack u32[0 max] nameToken = facts.NameTokenAt(fact);
+        ThreadSafetyNamedTypeLawFlagCached(decls, table, source, stream, facts, nameToken, ThreadSafetyLawKind.Transferable, 0);
+        ThreadSafetyNamedTypeLawFlagCached(decls, table, source, stream, facts, nameToken, ThreadSafetyLawKind.Shareable, 0);
+    }
+
+    return BindResult<ThreadSafetyLawFactTable>.Ok(facts);
+}

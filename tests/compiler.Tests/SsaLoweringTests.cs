@@ -37,6 +37,50 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void ArenaMirFrameScopeLowersToExplicitSsaInstructions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run(bool flag)
+            {
+                stack mut dynamic u32[0 max] values = new(arena, 4);
+                if (flag)
+                {
+                    return values.Capacity;
+                }
+
+                values.Reserve(8);
+                return values.Capacity;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+        var entryBlock = Assert.Single(function.Blocks, block => block.Id == function.EntryBlockId);
+
+        Assert.IsType<SsaArenaFrameEnterInstruction>(Assert.Single(entryBlock.Instructions.Take(1)));
+
+        var returnBlocks = function.Blocks
+            .Where(static block => block.Terminator.Kind == SsaTerminatorKind.Return)
+            .ToArray();
+        Assert.Equal(2, returnBlocks.Length);
+        Assert.All(returnBlocks, static block =>
+        {
+            Assert.NotEmpty(block.Instructions);
+            Assert.IsType<SsaArenaFrameLeaveInstruction>(block.Instructions[^1]);
+        });
+
+        Assert.Equal(
+            returnBlocks.Length,
+            function.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaArenaFrameLeaveInstruction>()
+                .Count());
+    }
+
+    [Fact]
     public void CommutativeRepeatedExpressionsShareAValueNumber()
     {
         var result = Compile(
@@ -499,6 +543,10 @@ public sealed class SsaLoweringTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn i32[min max] Run()
@@ -549,6 +597,10 @@ public sealed class SsaLoweringTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn void Touch(Pair value)
@@ -1126,6 +1178,10 @@ public sealed class SsaLoweringTests
         var trueLoadGroup = Assert.Single(trueLoad.ScopedNoAliasGroups ?? []);
 
         Assert.Equal(trueStoreGroup, trueLoadGroup);
+        Assert.Equal(AliasProofCarrierKind.RuntimeDisjointCondition, trueStoreGroup.ProofCarrier.Kind);
+        Assert.Equal(trueStoreGroup.ScopeId, trueStoreGroup.ProofCarrier.ProofId);
+        Assert.Equal(trueStoreGroup.RootKeys, trueStoreGroup.ProofCarrier.RootKeys);
+        Assert.Equal(trueStoreGroup.ProofCarrier, trueLoadGroup.ProofCarrier);
         Assert.Contains("param:left", trueStoreGroup.RootKeys);
         Assert.Contains("param:right", trueStoreGroup.RootKeys);
 
@@ -1136,6 +1192,54 @@ public sealed class SsaLoweringTests
 
         Assert.Null(falseStore.ScopedNoAliasGroups);
         Assert.Null(falseLoad.ScopedNoAliasGroups);
+    }
+
+    [Fact]
+    public void UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Run(
+                rawmutptr<i32[min max]> left,
+                rawmutptr<i32[min max]> right)
+                where overlap(left, right)
+                {
+                    assume disjoint(left, right)
+                {
+                    *left = 7;
+                    return *right;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetSsa(result).Functions);
+        var groupedStores = function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaStoreIndirectInstruction>()
+            .Where(static instruction => instruction.ScopedNoAliasGroups is { Count: > 0 })
+            .ToArray();
+        var groupedLoads = function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Where(static instruction => instruction.Value is SsaLoadIndirectRValue
+                && instruction.ScopedNoAliasGroups is { Count: > 0 })
+            .ToArray();
+
+        var storeGroup = Assert.Single(Assert.Single(groupedStores).ScopedNoAliasGroups ?? []);
+        var loadGroup = Assert.Single(Assert.Single(groupedLoads).ScopedNoAliasGroups ?? []);
+
+        Assert.Equal(storeGroup, loadGroup);
+        Assert.Equal(AliasProofCarrierKind.UnsafeAssumeDisjoint, storeGroup.ProofCarrier.Kind);
+        Assert.Equal(storeGroup.ScopeId, storeGroup.ProofCarrier.ProofId);
+        Assert.Equal(storeGroup.RootKeys, storeGroup.ProofCarrier.RootKeys);
+        Assert.Contains("param:left", storeGroup.RootKeys);
+        Assert.Contains("param:right", storeGroup.RootKeys);
     }
 
     [Fact]

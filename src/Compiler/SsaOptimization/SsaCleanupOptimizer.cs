@@ -80,6 +80,7 @@ internal sealed class SsaCleanupOptimizer
             current = RemoveUnusedPureInstructions(current);
         }
 
+        current = RemoveUnusedArenaFrameInstructions(current);
         return RemoveStalePhiIncomings(PruneUnreachableBlocks(current));
     }
 
@@ -2300,6 +2301,60 @@ internal sealed class SsaCleanupOptimizer
             and not SsaDynamicStorageMoveAtRValue;
     }
 
+    private static SsaFunction RemoveUnusedArenaFrameInstructions(SsaFunction function)
+    {
+        if (UsesArenaFrameStorage(function))
+        {
+            return function;
+        }
+
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                var instructions = block.Instructions
+                    .Where(instruction =>
+                    {
+                        if (instruction is not (SsaArenaFrameEnterInstruction or SsaArenaFrameLeaveInstruction))
+                        {
+                            return true;
+                        }
+
+                        changed = true;
+                        return false;
+                    })
+                    .ToArray();
+
+                return changed && instructions.Length != block.Instructions.Count
+                    ? block with { Instructions = instructions }
+                    : block;
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static bool UsesArenaFrameStorage(SsaFunction function)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                switch (instruction)
+                {
+                    case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static SsaFunction RemoveStoresToWriteOnlyLocalStorage(SsaFunction function)
     {
         var definitions = BuildValueDefinitions(function);
@@ -2468,6 +2523,43 @@ internal sealed class SsaCleanupOptimizer
         if (terminator.Value is not null)
         {
             AddLocalRoots(terminator.Value, definitions, requiredLocals);
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                AddLocalRoots(argument, definitions, requiredLocals);
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+            {
+                AddLocalRoots(address, definitions, requiredLocals);
+            }
+
+            foreach (var localName in terminator.TailDirectCall.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+            {
+                requiredLocals.Add(localName);
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddLocalRoots(terminator.TailIndirectCall.Target, definitions, requiredLocals);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                AddLocalRoots(argument, definitions, requiredLocals);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+            {
+                AddLocalRoots(address, definitions, requiredLocals);
+            }
+
+            foreach (var localName in terminator.TailIndirectCall.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+            {
+                requiredLocals.Add(localName);
+            }
         }
 
         foreach (var switchCase in terminator.SwitchCases ?? [])
@@ -2818,6 +2910,7 @@ internal sealed class SsaCleanupOptimizer
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaDynVTableSlotRValue vtableSlot => [vtableSlot.VtablePointer],
             SsaMakeSliceFromPointerRValue makeSlice => [makeSlice.Pointer, makeSlice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
@@ -2848,6 +2941,40 @@ internal sealed class SsaCleanupOptimizer
         if (terminator.Value is not null)
         {
             yield return terminator.Value;
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            yield return terminator.TailIndirectCall.Target;
+
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
         }
 
         if (terminator.SwitchCases is not null)
@@ -3475,7 +3602,10 @@ internal sealed class SsaCleanupOptimizer
         {
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
-                RewriteRValue(valueInstruction.Value, replacements)),
+                RewriteRValue(valueInstruction.Value, replacements),
+                valueInstruction.Location,
+                valueInstruction.ScopedNoAliasGroups,
+                valueInstruction.LoopAccessGroups),
             SsaCallInstruction call => call with
             {
                 Arguments = call.Arguments
@@ -3595,6 +3725,11 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(insertIndex.Value, replacements),
                 insertIndex.Type,
                 insertIndex.Text),
+            SsaDynVTableSlotRValue vtableSlot => new SsaDynVTableSlotRValue(
+                RewriteValue(vtableSlot.VtablePointer, replacements),
+                vtableSlot.SlotIndex,
+                vtableSlot.Type,
+                vtableSlot.Text),
             SsaMakeSliceFromLocalRValue makeSlice => makeSlice,
             SsaMakeSliceFromPointerRValue makeSlice => new SsaMakeSliceFromPointerRValue(
                 RewriteValue(makeSlice.Pointer, replacements),
@@ -3604,6 +3739,7 @@ internal sealed class SsaCleanupOptimizer
             SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                 RewriteValue(allocation.Capacity, replacements),
                 allocation.Type,
+                allocation.AllocationKind,
                 allocation.Text),
             SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                 RewriteValue(free.Storage, replacements),
@@ -3615,16 +3751,19 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.TargetCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                 RewriteValue(moveLast.StorageAddress, replacements),
@@ -3715,6 +3854,8 @@ internal sealed class SsaCleanupOptimizer
             terminator.Targets.Select(resolveTarget).ToArray(),
             Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
             Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
+            TailDirectCall: RewriteTailDirectCall(terminator.TailDirectCall, replacements),
+            TailIndirectCall: RewriteTailIndirectCall(terminator.TailIndirectCall, replacements),
             SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
                 switchCase.Label,
                 resolveTarget(switchCase.TargetBlockId),
@@ -3727,6 +3868,69 @@ internal sealed class SsaCleanupOptimizer
             LoopBehavior: terminator.LoopBehavior,
             LoopContracts: terminator.LoopContracts,
             LoopAccessGroups: terminator.LoopAccessGroups);
+    }
+
+    private static ISsaDirectCallOperation? RewriteTailDirectCall(
+        ISsaDirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue>? replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaCallInstruction instruction => instruction with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaCallRValue rValue => rValue with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
+    }
+
+    private static ISsaIndirectCallOperation? RewriteTailIndirectCall(
+        ISsaIndirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue>? replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var target = RewriteValue(call.Target, replacements);
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaIndirectCallInstruction instruction => instruction with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaIndirectCallRValue rValue => rValue with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
     }
 
     private static SsaValue RewriteValue(

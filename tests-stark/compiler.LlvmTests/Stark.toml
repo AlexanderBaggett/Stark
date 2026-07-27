@@ -1,0 +1,8 @@
+[project]
+name = "compiler-llvm-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "LlvmEmissionTests.stark"
+output = "compiler-llvm-tests"

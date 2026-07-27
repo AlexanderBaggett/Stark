@@ -1,0 +1,1358 @@
+import Compiler.Sdk
+import System.FileSystem
+import System.IO
+import System.IO.Path
+import System.Memory
+import System.Testing
+import System.Text
+[Collection("sdk")]
+module SdkTests
+
+fn bool InitializeTarget(
+    mut borrow SdkTargetDescriptor target,
+    ascii cpu,
+    ascii abi,
+    u32[0 max] pointerBits,
+    ascii minimum)
+    where overlap_all(target)
+{
+    return InitializeSdkTargetDescriptor(
+        target,
+        "macos-arm64",
+        "arm64-apple-macosx11.0.0",
+        "e-m:o-i64:64-i128:128-n32:64-S128",
+        "arm64",
+        "macos",
+        abi,
+        pointerBits,
+        SdkTargetEndianness.Little,
+        cpu,
+        "pic",
+        "small",
+        "lp64",
+        minimum) == MemoryStatus.Ok;
+}
+
+fn bool InitializeCompatibilityTarget(
+    mut borrow SdkTargetDescriptor target,
+    ascii triple,
+    ascii dataLayout,
+    ascii architecture,
+    ascii operatingSystem,
+    ascii abi,
+    ascii cDataModel,
+    ascii minimum)
+    where overlap_all(target)
+{
+    return InitializeSdkTargetDescriptor(
+        target,
+        "compatibility-test",
+        triple,
+        dataLayout,
+        architecture,
+        operatingSystem,
+        abi,
+        64,
+        SdkTargetEndianness.Little,
+        "generic",
+        "pic",
+        "small",
+        cDataModel,
+        minimum) == MemoryStatus.Ok;
+}
+
+fn bool SdkManifestParseFailsWith(ascii source, SdkDiagnosticCode expected)
+{
+    unsafe
+    {
+        switch (ParseSdkManifestText(source, "sdk.json"))
+        {
+            case SdkManifestLoadResult.Ok(var manifest):
+                return false;
+            case SdkManifestLoadResult.Err(var value):
+                stack mut SdkDiagnosticList diagnostics = value;
+                return diagnostics.Count() == 1 && diagnostics.CodeAt(0) == expected;
+        }
+    }
+}
+
+fn bool SdkDiagnosticsContain(borrow SdkDiagnosticList diagnostics, SdkDiagnosticCode expected)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < diagnostics.Count(); index += 1)
+    {
+        if (diagnostics.CodeAt(index) == expected)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn bool TrySdkFixturePath(
+    mut borrow System.Testing.TempDirectory fixture,
+    ascii relativePath,
+    mut borrow OwnedAscii destination)
+    where overlap_all(fixture)
+{
+    switch (fixture.PathFor(relativePath))
+    {
+        case System.IO.IOResult<OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<OwnedAscii>.Ok(var path):
+            stack mut OwnedAscii ownedPath = path;
+            destination.Clear();
+            return destination.AppendAscii(ownedPath.View()) == MemoryStatus.Ok;
+    }
+}
+
+fn ascii SdkIndexedManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "index-test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [
+    { "name": "System.BitOperations", "package": "System" },
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" }
+  ],
+  "packages": [
+    {
+      "id": "System", "version": "0.1.0", "profile": "dev",
+      "image": "packages/System.starkpkg", "dependencies": [], "native": null
+    },
+    {
+      "id": "Vendor.Raylib", "version": "6.0.0", "profile": "dev",
+      "image": "packages/Vendor.Raylib.starkpkg",
+      "dependencies": [{ "id": "System", "apiHash": null, "contentHash": null }],
+      "native": null
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn ascii SdkInvalidGraphManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "graph-test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [
+    { "name": "Shared", "package": "A" },
+    { "name": "Shared", "package": "B" },
+    { "name": "Missing.Owner", "package": "Missing" },
+    { "name": "Missing.Owner", "package": "A" }
+  ],
+  "packages": [
+    {
+      "id": "A", "version": "1", "profile": "dev", "image": "packages/A.starkpkg",
+      "dependencies": [
+        { "id": "B", "apiHash": null, "contentHash": null },
+        { "id": "Missing", "apiHash": null, "contentHash": null }
+      ]
+    },
+    {
+      "id": "B", "version": "1", "profile": "dev", "image": "packages/B.starkpkg",
+      "dependencies": [
+        { "id": "A", "apiHash": null, "contentHash": null },
+        { "id": "B", "apiHash": null, "contentHash": null }
+      ]
+    },
+    {
+      "id": "A", "version": "duplicate", "profile": "dev",
+      "image": "packages/A-duplicate.starkpkg", "dependencies": []
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn ascii SdkMissingNativePayloadManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "native-test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [{ "name": "Vendor.Native", "package": "Vendor.Native" }],
+  "packages": [{
+    "id": "Vendor.Native", "version": "1", "profile": "dev",
+    "image": "missing/Vendor.Native.starkpkg", "dependencies": [],
+    "native": {
+      "artifacts": ["missing/native.a"],
+      "includeDirectories": ["missing/include"],
+      "libraryDirectories": ["missing/lib"],
+      "runtimeFiles": ["missing/runtime.dylib"],
+      "licenseFiles": ["missing/LICENSE"],
+      "fileChecksums": [
+        {
+          "path": "missing/runtime.dylib",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "path": "missing/undeclared.bin",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    }
+  }],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn bool SdkPathFailsWith(ascii relativePath, SdkDiagnosticCode expected)
+{
+    stack mut OwnedAscii resolved = new();
+    stack mut SdkDiagnosticList diagnostics = new();
+    stack mut bool valid = true;
+    return ValidateSdkRelativePath("../..", relativePath, resolved, diagnostics, valid) == MemoryStatus.Ok
+        && !valid
+        && diagnostics.Count() == 1
+        && diagnostics.CodeAt(0) == expected;
+}
+
+[Fact]
+fn bool SdkDiagnosticIdentifiersMatchStage0Contract()
+{
+    return System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.RootNotFound), "STK7400")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.CompilerIncompatible), "STK7405")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.TargetIncompatible), "STK7430")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.DuplicateModuleOwner), "STK7432")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.DependencyCycle), "STK7453")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.PathUnsafe), "STK7469")
+        && System.Text.Equals(SdkDiagnosticIdentifier(SdkDiagnosticCode.ArtifactCorrupt), "STK7475");
+}
+
+[Fact]
+fn bool SdkRootSelectionUsesExplicitPrecedenceAndRelativeManifest()
+{
+    stack mut SdkRootResolution commandLine = new();
+    stack mut SdkRootResolution environment = new();
+    stack mut SdkRootResolution stage = new();
+    stack mut SdkRootResolution executable = new();
+    if (ResolveSdkRootSelection(commandLine, "/cli", "/env", "/stage", "/bin/stark") != MemoryStatus.Ok
+        || ResolveSdkRootSelection(environment, "", "/env", "/stage", "/bin/stark") != MemoryStatus.Ok
+        || ResolveSdkRootSelection(stage, "", "", "/stage", "/bin/stark") != MemoryStatus.Ok
+        || ResolveSdkRootSelection(executable, "", "", "", "/sdk/stark") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return commandLine.Origin() == SdkRootOrigin.CommandLine
+        && System.Text.Equals(commandLine.RootPath(), "/cli")
+        && System.Text.Equals(commandLine.ManifestPath(), "/cli/sdk.json")
+        && environment.Origin() == SdkRootOrigin.Environment
+        && System.Text.Equals(environment.RootPath(), "/env")
+        && stage.Origin() == SdkRootOrigin.Stage
+        && System.Text.Equals(stage.RootPath(), "/stage")
+        && executable.Origin() == SdkRootOrigin.Executable
+        && System.Text.Equals(executable.RootPath(), "/sdk")
+        && System.Text.Equals(executable.ExecutablePath(), "/sdk/stark")
+        && System.Text.Equals(Stage1SdkCompilerCompatibility(), "stark-sdk-v1");
+}
+
+[Fact]
+fn bool SdkRootSelectionUsesOnlyTheConventionalBinParent()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-stage1-sdk-root"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    if (fixture.CreateDirectory("sdk") != System.IO.IOStatus.Ok
+        || fixture.CreateDirectory("sdk/bin") != System.IO.IOStatus.Ok
+        || fixture.CreateDirectory("sdk/tools") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/sdk.json", "{}") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/bin/stark", "compiler") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/tools/stark", "compiler") != System.IO.IOStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii binExecutable = new();
+    stack mut OwnedAscii toolsExecutable = new();
+    if (!TrySdkFixturePath(fixture, "sdk/bin/stark", binExecutable)
+        || !TrySdkFixturePath(fixture, "sdk/tools/stark", toolsExecutable))
+    {
+        return false;
+    }
+
+    stack mut SdkRootResolution conventional = new();
+    stack mut SdkRootResolution unrelatedAncestor = new();
+    if (ResolveSdkRootSelection(
+            conventional,
+            "",
+            "",
+            "",
+            binExecutable.View()) != MemoryStatus.Ok
+        || ResolveSdkRootSelection(
+            unrelatedAncestor,
+            "",
+            "",
+            "",
+            toolsExecutable.View()) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    // <sdk>/bin is the only parent hop. A marker in <sdk> must not make a
+    // compiler in <sdk>/tools search its unrelated ancestor.
+    return conventional.Origin() == SdkRootOrigin.Executable
+        && System.Text.Equals(
+            conventional.RootPath(),
+            System.IO.Path.DirectoryName(
+                System.IO.Path.DirectoryName(conventional.ExecutablePath())))
+        && System.Text.Equals(
+            System.IO.Path.DirectoryName(conventional.ManifestPath()),
+            conventional.RootPath())
+        && System.Text.Equals(
+            System.IO.Path.FileName(conventional.ManifestPath()),
+            "sdk.json")
+        && System.Text.Equals(
+            unrelatedAncestor.RootPath(),
+            System.IO.Path.DirectoryName(unrelatedAncestor.ExecutablePath()))
+        && System.Text.Equals(
+            System.IO.Path.FileName(unrelatedAncestor.RootPath()),
+            "tools");
+}
+
+[Fact]
+fn bool SdkRootSelectionPrefersAdjacentManifestAndAcceptsParentReleaseMarker()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-stage1-sdk-markers"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    if (fixture.CreateDirectory("sdk") != System.IO.IOStatus.Ok
+        || fixture.CreateDirectory("sdk/bin") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/sdk.json", "{}") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/bin/sdk.json", "{}") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/bin/stark", "compiler") != System.IO.IOStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii executable = new();
+    if (!TrySdkFixturePath(fixture, "sdk/bin/stark", executable))
+    {
+        return false;
+    }
+
+    stack mut SdkRootResolution adjacent = new();
+    if (ResolveSdkRootSelection(
+        adjacent,
+        "",
+        "",
+        "",
+        executable.View()) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+    if (!System.Text.Equals(
+        adjacent.RootPath(),
+        System.IO.Path.DirectoryName(adjacent.ExecutablePath())))
+    {
+        return false;
+    }
+
+    if (fixture.DeleteFile("sdk/bin/sdk.json") != System.IO.IOStatus.Ok
+        || fixture.DeleteFile("sdk/sdk.json") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/release.json", "{}") != System.IO.IOStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut SdkRootResolution released = new();
+    if (ResolveSdkRootSelection(
+        released,
+        "",
+        "",
+        "",
+        executable.View()) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return System.Text.Equals(
+            released.RootPath(),
+            System.IO.Path.DirectoryName(
+                System.IO.Path.DirectoryName(released.ExecutablePath())))
+        && System.Text.Equals(
+            System.IO.Path.FileName(released.ManifestPath()),
+            "sdk.json");
+}
+
+[Fact]
+fn bool SdkRootSelectionCanonicalizesExecutableSymlinks()
+{
+    // Symlink creation can require an elevated token on Windows. The same
+    // component-wise resolver is compiled there, while this runtime fixture
+    // exercises the ordinary Unix installation/link shape.
+    if (System.Text.AsciiLength(System.IO.Path.AlternateDirectorySeparator()) > 0)
+    {
+        return true;
+    }
+
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-stage1-sdk-link"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    if (fixture.CreateDirectory("sdk") != System.IO.IOStatus.Ok
+        || fixture.CreateDirectory("sdk/bin") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/sdk.json", "{}") != System.IO.IOStatus.Ok
+        || fixture.WriteText("sdk/bin/stark", "compiler") != System.IO.IOStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii executable = new();
+    stack mut OwnedAscii link = new();
+    stack mut OwnedAscii sdkRoot = new();
+    stack mut OwnedAscii sdkLink = new();
+    stack mut OwnedAscii aliasedExecutable = new();
+    if (!TrySdkFixturePath(fixture, "sdk/bin/stark", executable)
+        || !TrySdkFixturePath(fixture, "stark", link)
+        || !TrySdkFixturePath(fixture, "sdk", sdkRoot)
+        || !TrySdkFixturePath(fixture, "sdk-link", sdkLink)
+        || !TrySdkFixturePath(fixture, "sdk-link/bin/stark", aliasedExecutable)
+        || System.FileSystem.CreateSymlink(
+            executable.View(),
+            link.View()) != System.IO.IOStatus.Ok
+        || System.FileSystem.CreateSymlink(
+            sdkRoot.View(),
+            sdkLink.View()) != System.IO.IOStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut SdkRootResolution resolution = new();
+    stack mut SdkRootResolution componentResolution = new();
+    if (ResolveSdkRootSelection(
+        resolution,
+        "",
+        "",
+        "",
+        link.View()) != MemoryStatus.Ok
+        || ResolveSdkRootSelection(
+            componentResolution,
+            "",
+            "",
+            "",
+            aliasedExecutable.View()) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return !System.Text.Equals(resolution.ExecutablePath(), link.View())
+        && !System.Text.Equals(
+            componentResolution.ExecutablePath(),
+            aliasedExecutable.View())
+        && System.Text.Equals(
+            resolution.ExecutablePath(),
+            componentResolution.ExecutablePath())
+        && System.Text.Equals(
+            resolution.RootPath(),
+            componentResolution.RootPath())
+        && System.Text.Equals(
+            System.IO.Path.FileName(
+                System.IO.Path.DirectoryName(resolution.ExecutablePath())),
+            "bin")
+        && System.Text.Equals(
+            System.IO.Path.FileName(resolution.RootPath()),
+            "sdk");
+}
+
+[Fact]
+fn bool SdkTargetCompatibilityPreservesAbiAndBackendFacts()
+{
+    stack mut SdkTargetDescriptor sdk = new();
+    stack mut SdkTargetDescriptor active = new();
+    if (!InitializeTarget(sdk, "generic", "darwin", 64, "11.0")
+        || !InitializeTarget(active, "apple-m2", "darwin", 64, "11.0")
+        || AddSdkTargetBaselineFeature(sdk, "+neon") != MemoryStatus.Ok
+        || AddSdkTargetBaselineFeature(active, "+neon") != MemoryStatus.Ok
+        || AddSdkTargetBaselineFeature(active, "+aes") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return SdkTargetsAreCompatible(sdk, active)
+        && CompareSdkTargets(sdk, active) == SdkTargetCompatibilityReason.Compatible;
+}
+
+[Fact]
+fn bool SdkTargetCompatibilityRejectsAbiAndFeatureLoss()
+{
+    stack mut SdkTargetDescriptor sdk = new();
+    stack mut SdkTargetDescriptor wrongAbi = new();
+    stack mut SdkTargetDescriptor missingFeature = new();
+    if (!InitializeTarget(sdk, "generic", "darwin", 64, "11.0")
+        || !InitializeTarget(wrongAbi, "generic", "gnu", 64, "11.0")
+        || !InitializeTarget(missingFeature, "generic", "darwin", 64, "11.0")
+        || AddSdkTargetBaselineFeature(sdk, "+neon") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return CompareSdkTargets(sdk, wrongAbi) == SdkTargetCompatibilityReason.Abi
+        && CompareSdkTargets(sdk, missingFeature) == SdkTargetCompatibilityReason.RequiredFeature;
+}
+
+[Fact]
+fn bool SdkTargetCompatibilityNormalizesOnlySafeAliases()
+{
+    stack mut SdkTargetDescriptor sdk = new();
+    stack mut SdkTargetDescriptor active = new();
+    if (!InitializeCompatibilityTarget(
+            sdk,
+            "arm64-apple-macosx11.2.0",
+            "e-m:o-i64:64-i128:128-n32:64-S128",
+            "arm64",
+            "macos",
+            "darwin",
+            "lp64",
+            "11.2")
+        || !InitializeCompatibilityTarget(
+            active,
+            "aarch64-apple-macosx11.10.0",
+            "e-m:o-i64:64-i128:128-n32:64-S128",
+            " AARCH64 ",
+            "Darwin",
+            "macOSX",
+            "lp64",
+            "11.10"))
+    {
+        return false;
+    }
+
+    return SdkArchitecturesMatch("arm64", "aarch64")
+        && SdkArchitecturesMatch("AMD64", "x86_64")
+        && SdkOperatingSystemsMatch("macosx", "darwin")
+        && SdkOperatingSystemsMatch(" WINDOWS ", "windows")
+        && SdkAbisMatch("macos", "darwin")
+        && SdkAbisMatch(" GNU ", "gnu")
+        && !SdkArchitecturesMatch("arm64e", "arm64")
+        && !SdkOperatingSystemsMatch("mac", "macos")
+        && !SdkAbisMatch("gnu", "musl")
+        && CompareSdkTargets(sdk, active) == SdkTargetCompatibilityReason.Compatible;
+}
+
+[Fact]
+fn bool SdkTargetCompatibilityKeepsBackendFactsExactAcrossAliases()
+{
+    stack mut SdkTargetDescriptor sdk = new();
+    stack mut SdkTargetDescriptor wrongLayout = new();
+    stack mut SdkTargetDescriptor wrongCModel = new();
+    if (!InitializeCompatibilityTarget(
+            sdk,
+            "arm64-apple-macosx11.0.0",
+            "e-m:o-i64:64-i128:128-n32:64-S128",
+            "arm64",
+            "macos",
+            "darwin",
+            "lp64",
+            "11.0")
+        || !InitializeCompatibilityTarget(
+            wrongLayout,
+            "aarch64-apple-macosx11.0.0",
+            "e-m:o-i64:64-n32:64-S128",
+            "aarch64",
+            "darwin",
+            "macosx",
+            "lp64",
+            "11.0")
+        || !InitializeCompatibilityTarget(
+            wrongCModel,
+            "aarch64-apple-macosx11.0.0",
+            "e-m:o-i64:64-i128:128-n32:64-S128",
+            "aarch64",
+            "darwin",
+            "macosx",
+            "llp64",
+            "11.0"))
+    {
+        return false;
+    }
+
+    return CompareSdkTargets(sdk, wrongLayout) == SdkTargetCompatibilityReason.DataLayout
+        && CompareSdkTargets(sdk, wrongCModel) == SdkTargetCompatibilityReason.CDataModel;
+}
+
+[Fact]
+fn bool SdkTargetCompatibilityComparesDeploymentMinimumsNumericallyAndDirectionally()
+{
+    stack mut SdkTargetDescriptor sdk = new();
+    stack mut SdkTargetDescriptor newerMinor = new();
+    stack mut SdkTargetDescriptor newerMajor = new();
+    stack mut SdkTargetDescriptor older = new();
+    stack mut SdkTargetDescriptor malformed = new();
+    stack mut SdkTargetDescriptor tripleFallback = new();
+    if (!InitializeTarget(sdk, "generic", "darwin", 64, "11.2")
+        || !InitializeTarget(newerMinor, "generic", "darwin", 64, "11.10")
+        || !InitializeTarget(newerMajor, "generic", "darwin", 64, "12.0")
+        || !InitializeTarget(older, "generic", "darwin", 64, "11.1.99")
+        || !InitializeTarget(malformed, "generic", "darwin", 64, "11.x")
+        || !InitializeTarget(tripleFallback, "generic", "darwin", 64, ""))
+    {
+        return false;
+    }
+
+    return SdkDeploymentMinimumIsCompatible(sdk, newerMinor)
+        && SdkDeploymentMinimumIsCompatible(sdk, newerMajor)
+        && !SdkDeploymentMinimumIsCompatible(sdk, older)
+        && !SdkDeploymentMinimumIsCompatible(sdk, malformed)
+        && !SdkDeploymentMinimumIsCompatible(sdk, tripleFallback)
+        && CompareSdkTargets(sdk, older) == SdkTargetCompatibilityReason.DeploymentMinimum
+        && CompareSdkTargets(sdk, malformed) == SdkTargetCompatibilityReason.DeploymentMinimum;
+}
+
+[Fact]
+fn bool SdkDiagnosticListPreservesStructuredCodeMessageAndPath()
+{
+    stack mut SdkDiagnosticList diagnostics = new();
+    if (diagnostics.Append(
+        SdkDiagnosticCode.ArtifactMissing,
+        "SDK package archive is missing.",
+        "vendor/dist/macos-arm64/libVendorRaylib.a") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return diagnostics.Count() == 1
+        && diagnostics.CodeAt(0) == SdkDiagnosticCode.ArtifactMissing
+        && System.Text.Equals(diagnostics.MessageAt(0), "SDK package archive is missing.")
+        && System.Text.Equals(diagnostics.PathAt(0), "vendor/dist/macos-arm64/libVendorRaylib.a");
+}
+
+[Fact]
+fn bool SdkManifestLoaderOwnsStage0ManifestFacts()
+{
+    unsafe
+    {
+        switch (ParseSdkManifestText(raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "test-sdk",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-i128:128-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+neon", "+aes"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" }
+  ],
+  "packages": [
+    {
+      "id": "Vendor.Raylib",
+      "version": "6.0.0",
+      "profile": "dev",
+      "image": "vendor/macos-arm64/Vendor.Raylib.starkpkg",
+      "library": "vendor/macos-arm64/libVendor.Raylib.a",
+      "apiHash": null,
+      "contentHash": null,
+      "imageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "librarySha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "dependencies": [
+        { "id": "System", "apiHash": null, "contentHash": null }
+      ],
+      "native": {
+        "artifacts": ["vendor/macos-arm64/libraylib.a"],
+        "includeDirectories": ["vendor/include"],
+        "libraryDirectories": ["vendor/macos-arm64"],
+        "runtimeFiles": ["vendor/macos-arm64/libraylib.dylib"],
+        "licenseFiles": ["vendor/LICENSE"],
+        "fileChecksums": [
+          {
+            "path": "vendor/macos-arm64/libraylib.dylib",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ],
+        "libraries": ["raylib"],
+        "linkArguments": ["-framework", "Cocoa"]
+      }
+    }
+  ],
+  "developmentSourceRoots": ["vendor/src"]
+}
+""", "sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var diagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                if (manifest.SchemaVersion() != 1
+                    || manifest.Kind() != SdkDistributionKind.Development
+                    || manifest.PackageFormatVersion() != 2
+                    || manifest.ModuleCount() != 1
+                    || manifest.PackageCount() != 1
+                    || manifest.DevelopmentSourceRootCount() != 1)
+                {
+                    return false;
+                }
+
+                return System.Text.Equals(manifest.SdkVersion(), "test-sdk")
+                    && System.Text.Equals(manifest.CompilerCompatibility(), "stark-sdk-v1")
+                    && System.Text.Equals(manifest.Target().LlvmTriple(), "arm64-apple-macosx11.0.0")
+                    && System.Text.Equals(manifest.Target().DataLayout(), "e-m:o-i64:64-i128:128-n32:64-S128")
+                    && System.Text.Equals(manifest.Target().BaselineCpu(), "apple-m2")
+                    && manifest.Target().BaselineFeatureCount() == 2
+                    && System.Text.Equals(manifest.Target().BaselineFeatureAt(1), "+aes")
+                    && System.Text.Equals(manifest.Target().RelocationModel(), "pic")
+                    && System.Text.Equals(manifest.Target().CodeModel(), "small")
+                    && System.Text.Equals(manifest.Target().CDataModel(), "lp64")
+                    && System.Text.Equals(manifest.Target().MinimumOperatingSystemVersion(), "11.0")
+                    && System.Text.Equals(manifest.ModuleAt(0).ModuleName(), "Vendor.Raylib")
+                    && System.Text.Equals(manifest.ModuleAt(0).PackageId(), "Vendor.Raylib")
+                    && System.Text.Equals(manifest.PackageAt(0).Id(), "Vendor.Raylib")
+                    && System.Text.Equals(manifest.PackageAt(0).ImagePath(), "vendor/macos-arm64/Vendor.Raylib.starkpkg")
+                    && manifest.PackageAt(0).DependencyCount() == 1
+                    && System.Text.Equals(manifest.PackageAt(0).DependencyAt(0).PackageId(), "System")
+                    && manifest.PackageAt(0).Native().ArtifactCount() == 1
+                    && System.Text.Equals(manifest.PackageAt(0).Native().ArtifactAt(0), "vendor/macos-arm64/libraylib.a")
+                    && System.Text.Equals(manifest.PackageAt(0).Native().RuntimeFileAt(0), "vendor/macos-arm64/libraylib.dylib")
+                    && manifest.PackageAt(0).Native().FileChecksumCount() == 1
+                    && System.Text.Equals(manifest.PackageAt(0).Native().FileChecksumAt(0).Sha256(), "2222222222222222222222222222222222222222222222222222222222222222")
+                    && System.Text.Equals(manifest.PackageAt(0).Native().LibraryAt(0), "raylib")
+                    && System.Text.Equals(manifest.PackageAt(0).Native().LinkArgumentAt(1), "Cocoa")
+                    && System.Text.Equals(manifest.DevelopmentSourceRootAt(0), "vendor/src");
+        }
+    }
+}
+
+[Fact]
+fn bool SdkManifestLoaderRejectsMalformedAndUnknownMembers()
+{
+    return SdkManifestParseFailsWith("{", SdkDiagnosticCode.ManifestMalformed)
+        && SdkManifestParseFailsWith("{\"unknown\":1}", SdkDiagnosticCode.ManifestMalformed)
+        && SdkManifestParseFailsWith(
+            "{\"schemaVersion\":1,\"schemaVersion\":1}",
+            SdkDiagnosticCode.ManifestMalformed);
+}
+
+[Fact]
+fn bool SdkManifestLoaderRejectsCompatibilityMismatches()
+{
+    return SdkManifestParseFailsWith(raw"""
+{
+  "schemaVersion": 2,
+  "kind": "development",
+  "sdkVersion": "test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "test", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [], "packages": []
+}
+""", SdkDiagnosticCode.SchemaIncompatible)
+        && SdkManifestParseFailsWith(raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "test",
+  "compilerCompatibility": "stark-sdk-v2",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "test", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [], "packages": []
+}
+""", SdkDiagnosticCode.CompilerIncompatible)
+        && SdkManifestParseFailsWith(raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 1,
+  "target": {
+    "id": "test", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [], "packages": []
+}
+""", SdkDiagnosticCode.PackageFormatIncompatible);
+}
+
+[Fact]
+fn bool SdkManifestFileLoaderConsumesRepositoryStage0Manifest()
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile("../../sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var diagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                return manifest.Kind() == SdkDistributionKind.Development
+                    && manifest.SchemaVersion() == 1
+                    && manifest.PackageFormatVersion() == 2
+                    && manifest.DevelopmentSourceRootCount() == 3
+                    && System.Text.Equals(manifest.DevelopmentSourceRootAt(2), "vendor/src");
+        }
+    }
+}
+
+[Fact]
+fn bool SdkPackageIndexProvidesExactDeterministicModuleLookup()
+{
+    unsafe
+    {
+        stack ascii source = SdkIndexedManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkPackageIndex index = new();
+                stack mut SdkDiagnosticList diagnostics = new();
+                if (BuildSdkPackageIndex(index, manifest, diagnostics) != MemoryStatus.Ok
+                    || diagnostics.Count() != 0
+                    || index.PackageCount() != 2
+                    || index.ModuleCount() != 2)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+                if (!index.TryGetPackageIndexForModule("Vendor.Raylib", packageIndex)
+                    || packageIndex != 1
+                    || !System.Text.Equals(manifest.PackageAt(packageIndex).Id(), "Vendor.Raylib"))
+                {
+                    return false;
+                }
+
+                return index.TryGetPackageIndex("System", packageIndex)
+                    && packageIndex == 0
+                    && !index.TryGetPackageIndex("system", packageIndex)
+                    && !index.TryGetPackageIndexForModule("Vendor", packageIndex)
+                    && !index.TryGetPackageIndexForModule("vendor.raylib", packageIndex);
+        }
+    }
+}
+
+[Fact]
+fn bool SdkPackageIndexReportsOwnersDependenciesAndCyclesInOnePass()
+{
+    unsafe
+    {
+        stack ascii source = SdkInvalidGraphManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkPackageIndex index = new();
+                stack mut SdkDiagnosticList diagnostics = new();
+                if (BuildSdkPackageIndex(index, manifest, diagnostics) != MemoryStatus.Ok)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+                return SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.DuplicateModuleOwner)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.DuplicatePackageId)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.ModulePackageMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.DependencyMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.SelfDependency)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.DependencyCycle)
+                    && index.TryGetPackageIndexForModule("Shared", packageIndex)
+                    && packageIndex == 0
+                    && !index.TryGetPackageIndexForModule("Missing.Owner", packageIndex);
+        }
+    }
+}
+
+[Fact]
+fn bool SdkPayloadValidationPreservesNativePathKinds()
+{
+    unsafe
+    {
+        stack ascii source = SdkMissingNativePayloadManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkDiagnosticList diagnostics = new();
+                return ValidateSdkPackagePayloads("../..", manifest, diagnostics) == MemoryStatus.Ok
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.PackageImageMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeArtifactMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeIncludeDirectoryMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeLibraryDirectoryMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeRuntimeFileMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeLicenseFileMissing)
+                    && SdkDiagnosticsContain(diagnostics, SdkDiagnosticCode.NativeChecksumMismatch);
+        }
+    }
+}
+
+[Fact]
+fn bool SdkRelativePathsEnforcePortableContainmentRules()
+{
+    stack mut OwnedAscii resolved = new();
+    stack mut SdkDiagnosticList diagnostics = new();
+    stack mut bool valid = false;
+    if (ValidateSdkRelativePath(
+        "../..",
+        "selfhost/Compiler/Sdk.stark",
+        resolved,
+        diagnostics,
+        valid) != MemoryStatus.Ok
+        || !valid
+        || diagnostics.Count() != 0
+        || !System.Text.EndsWith(resolved.View(), "selfhost/Compiler/Sdk.stark"))
+    {
+        return false;
+    }
+
+    return SdkPathFailsWith("", SdkDiagnosticCode.PathEmpty)
+        && SdkPathFailsWith(" packages/System.starkpkg", SdkDiagnosticCode.PathWhitespace)
+        && SdkPathFailsWith("packages\\System.starkpkg", SdkDiagnosticCode.PathSeparator)
+        && SdkPathFailsWith("/packages/System.starkpkg", SdkDiagnosticCode.PathAbsolute)
+        && SdkPathFailsWith("C:/packages/System.starkpkg", SdkDiagnosticCode.PathAbsolute)
+        && SdkPathFailsWith("packages//System.starkpkg", SdkDiagnosticCode.PathTraversal)
+        && SdkPathFailsWith("packages/../System.starkpkg", SdkDiagnosticCode.PathTraversal);
+}
+
+[Fact]
+fn bool SdkChecksumBoundaryRequiresCanonicalExactSha256()
+{
+    stack ascii zeros = "0000000000000000000000000000000000000000000000000000000000000000";
+    stack ascii ones = "1111111111111111111111111111111111111111111111111111111111111111";
+    stack mut SdkDiagnosticList diagnostics = new();
+    stack mut bool matches = false;
+    if (!SdkSha256TextIsCanonical(zeros)
+        || SdkSha256TextIsCanonical("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        || ValidateSdkObservedSha256(
+            zeros,
+            zeros,
+            "packages/System.starkpkg",
+            SdkDiagnosticCode.PackageChecksumMismatch,
+            diagnostics,
+            matches) != MemoryStatus.Ok
+        || !matches
+        || diagnostics.Count() != 0)
+    {
+        return false;
+    }
+
+    return ValidateSdkObservedSha256(
+        zeros,
+        ones,
+        "packages/System.starkpkg",
+        SdkDiagnosticCode.PackageChecksumMismatch,
+        diagnostics,
+        matches) == MemoryStatus.Ok
+        && !matches
+        && diagnostics.Count() == 1
+        && diagnostics.CodeAt(0) == SdkDiagnosticCode.PackageChecksumMismatch;
+}
+
+[Fact]
+fn bool SdkPayloadValidationReportsMissingIndexedImages()
+{
+    unsafe
+    {
+        stack ascii source = SdkIndexedManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkDiagnosticList selectedDiagnostics = new();
+                stack mut bool found = false;
+                if (ValidateSdkPackagePayloadAt(
+                    "../..",
+                    manifest,
+                    1,
+                    selectedDiagnostics,
+                    found) != MemoryStatus.Ok
+                    || !found
+                    || selectedDiagnostics.Count() != 1
+                    || selectedDiagnostics.CodeAt(0) != SdkDiagnosticCode.PackageImageMissing)
+                {
+                    return false;
+                }
+
+                if (ValidateSdkPackagePayloadAt(
+                    "../..",
+                    manifest,
+                    99,
+                    selectedDiagnostics,
+                    found) != MemoryStatus.Ok
+                    || found
+                    || selectedDiagnostics.Count() != 1)
+                {
+                    return false;
+                }
+
+                stack mut SdkDiagnosticList diagnostics = new();
+                return ValidateSdkPackagePayloads("../..", manifest, diagnostics) == MemoryStatus.Ok
+                    && diagnostics.Count() == 2
+                    && diagnostics.CodeAt(0) == SdkDiagnosticCode.PackageImageMissing
+                    && diagnostics.CodeAt(1) == SdkDiagnosticCode.PackageImageMissing;
+        }
+    }
+}
+
+fn ascii SdkSelectedLinkPlanManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "selected-plan-test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [
+    { "name": "System", "package": "System" },
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" },
+    { "name": "Vendor.Unused", "package": "Vendor.Unused" }
+  ],
+  "packages": [
+    {
+      "id": "System", "version": "0.1.0", "profile": "dev",
+      "image": "selfhost/Compiler/Sdk.stark", "library": "README.md",
+      "dependencies": [], "native": null
+    },
+    {
+      "id": "Vendor.Unused", "version": "1.0.0", "profile": "dev",
+      "image": "missing/Vendor.Unused.starkpkg", "library": "missing/libVendor.Unused.a",
+      "dependencies": [],
+      "native": {
+        "artifacts": ["missing/corrupt.a"],
+        "fileChecksums": [{
+          "path": "missing/corrupt.a",
+          "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }]
+      }
+    },
+    {
+      "id": "Vendor.Raylib", "version": "6.0.0", "profile": "dev",
+      "image": "selfhost/Compiler/Sdk/LinkPlan.stark",
+      "library": "selfhost/Compiler/Sdk/PackageIndex.stark",
+      "dependencies": [{ "id": "System", "apiHash": null, "contentHash": null }],
+      "native": {
+        "artifacts": ["selfhost/Compiler/Sdk/Diagnostics.stark"],
+        "includeDirectories": ["selfhost/Compiler/Sdk"],
+        "libraryDirectories": ["selfhost/Compiler/Sdk"],
+        "runtimeFiles": ["selfhost/Compiler/Sdk/ManifestModel.stark"],
+        "licenseFiles": ["README.md"],
+        "fileChecksums": [{
+          "path": "selfhost/Compiler/Sdk/ManifestModel.stark",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }],
+        "libraries": ["raylib", "m", "dl"],
+        "linkArguments": ["-framework", "Cocoa", "-ObjC"]
+      }
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn ascii SdkInvalidSelectedLinkPlanManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "invalid-selected-plan-test",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64", "llvmTriple": "arm64-apple-macosx", "architecture": "arm64",
+    "operatingSystem": "macos", "abi": "darwin", "pointerBitWidth": 64,
+    "endianness": "little", "relocationModel": "default"
+  },
+  "modules": [
+    { "name": "Cycle.A", "package": "A" },
+    { "name": "Broken.Module", "package": "Broken" }
+  ],
+  "packages": [
+    {
+      "id": "A", "version": "1", "profile": "dev", "image": "packages/A.starkpkg",
+      "dependencies": [{ "id": "B", "apiHash": null, "contentHash": null }]
+    },
+    {
+      "id": "B", "version": "1", "profile": "dev", "image": "packages/B.starkpkg",
+      "dependencies": [{ "id": "A", "apiHash": null, "contentHash": null }]
+    },
+    {
+      "id": "Broken", "version": "1", "profile": "dev", "image": "packages/Broken.starkpkg",
+      "dependencies": [{ "id": "Missing", "apiHash": null, "contentHash": null }]
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+[Fact]
+fn bool SdkSelectedLinkPlanSkipsUnusedPayloadsAndOrdersDependents()
+{
+    unsafe
+    {
+        stack ascii source = SdkSelectedLinkPlanManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkPackageIndex index = new();
+                stack mut SdkDiagnosticList indexDiagnostics = new();
+                if (BuildSdkPackageIndex(index, manifest, indexDiagnostics) != MemoryStatus.Ok
+                    || indexDiagnostics.Count() != 0)
+                {
+                    return false;
+                }
+
+                stack ascii[2] importedStorage = { "App", "Vendor.Raylib" };
+                stack ascii[] imported = importedStorage;
+                stack mut SdkPackageLinkPlan plan = new();
+                stack mut SdkDiagnosticList planDiagnostics = new();
+                if (BuildSelectedSdkPackageLinkPlan(
+                    plan,
+                    manifest,
+                    index,
+                    imported,
+                    planDiagnostics) != MemoryStatus.Ok
+                    || planDiagnostics.Count() != 0
+                    || plan.PackageCount() != 2
+                    || plan.PackageIndexAt(0) != 2
+                    || plan.PackageIndexAt(1) != 0
+                    || !System.Text.Equals(manifest.PackageAt(plan.PackageIndexAt(0)).Id(), "Vendor.Raylib")
+                    || !System.Text.Equals(manifest.PackageAt(plan.PackageIndexAt(1)).Id(), "System"))
+                {
+                    return false;
+                }
+
+                stack mut SdkDiagnosticList payloadDiagnostics = new();
+                stack mut bool found = false;
+                for willexit (stack mut u64[0 2 ** 63 - 1] selected = 0;
+                    selected < plan.PackageCount();
+                    selected += 1)
+                {
+                    if (ValidateSdkPackagePayloadAt(
+                        "../..",
+                        manifest,
+                        plan.PackageIndexAt(selected),
+                        payloadDiagnostics,
+                        found) != MemoryStatus.Ok
+                        || !found)
+                    {
+                        return false;
+                    }
+                }
+                if (payloadDiagnostics.Count() != 0)
+                {
+                    return false;
+                }
+
+                stack ascii[2] exactMissStorage = { "Vendor", "vendor.raylib" };
+                stack ascii[] exactMisses = exactMissStorage;
+                stack mut SdkDiagnosticList exactMissDiagnostics = new();
+                return BuildSelectedSdkPackageLinkPlan(
+                    plan,
+                    manifest,
+                    index,
+                    exactMisses,
+                    exactMissDiagnostics) == MemoryStatus.Ok
+                    && exactMissDiagnostics.Count() == 0
+                    && plan.PackageCount() == 0;
+        }
+    }
+}
+
+[Fact]
+fn bool SdkSelectedLinkPlanPreservesNativeMetadataOrder()
+{
+    unsafe
+    {
+        stack ascii source = SdkSelectedLinkPlanManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkPackageIndex index = new();
+                stack mut SdkDiagnosticList diagnostics = new();
+                if (BuildSdkPackageIndex(index, manifest, diagnostics) != MemoryStatus.Ok
+                    || diagnostics.Count() != 0)
+                {
+                    return false;
+                }
+
+                stack ascii[1] importedStorage = { "Vendor.Raylib" };
+                stack ascii[] imported = importedStorage;
+                stack mut SdkPackageLinkPlan plan = new();
+                if (BuildSelectedSdkPackageLinkPlan(
+                    plan,
+                    manifest,
+                    index,
+                    imported,
+                    diagnostics) != MemoryStatus.Ok
+                    || diagnostics.Count() != 0
+                    || plan.PackageCount() != 2)
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] vendorIndex = plan.PackageIndexAt(0);
+                return System.Text.Equals(
+                        manifest.PackageAt(vendorIndex).ImagePath(),
+                        "selfhost/Compiler/Sdk/LinkPlan.stark")
+                    && manifest.PackageAt(vendorIndex).HasLibraryPath()
+                    && System.Text.Equals(
+                        manifest.PackageAt(vendorIndex).LibraryPath(),
+                        "selfhost/Compiler/Sdk/PackageIndex.stark")
+                    && manifest.PackageAt(vendorIndex).Native().ArtifactCount() == 1
+                    && System.Text.Equals(
+                        manifest.PackageAt(vendorIndex).Native().ArtifactAt(0),
+                        "selfhost/Compiler/Sdk/Diagnostics.stark")
+                    && manifest.PackageAt(vendorIndex).Native().LibraryCount() == 3
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LibraryAt(0), "raylib")
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LibraryAt(1), "m")
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LibraryAt(2), "dl")
+                    && manifest.PackageAt(vendorIndex).Native().LinkArgumentCount() == 3
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LinkArgumentAt(0), "-framework")
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LinkArgumentAt(1), "Cocoa")
+                    && System.Text.Equals(manifest.PackageAt(vendorIndex).Native().LinkArgumentAt(2), "-ObjC");
+        }
+    }
+}
+
+[Fact]
+fn bool SdkSelectedLinkPlanRejectsMissingDependenciesAndCycles()
+{
+    unsafe
+    {
+        stack ascii source = SdkInvalidSelectedLinkPlanManifestText();
+        stack ascii path = "sdk.json";
+        switch (ParseSdkManifestText(source, path))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut SdkPackageIndex index = new();
+                stack mut SdkDiagnosticList indexDiagnostics = new();
+                if (BuildSdkPackageIndex(index, manifest, indexDiagnostics) != MemoryStatus.Ok
+                    || !SdkDiagnosticsContain(indexDiagnostics, SdkDiagnosticCode.DependencyMissing)
+                    || !SdkDiagnosticsContain(indexDiagnostics, SdkDiagnosticCode.DependencyCycle))
+                {
+                    return false;
+                }
+
+                stack mut SdkPackageLinkPlan plan = new();
+                stack ascii[1] cycleStorage = { "Cycle.A" };
+                stack ascii[] cycleImport = cycleStorage;
+                stack mut SdkDiagnosticList cycleDiagnostics = new();
+                if (BuildSelectedSdkPackageLinkPlan(
+                    plan,
+                    manifest,
+                    index,
+                    cycleImport,
+                    cycleDiagnostics) != MemoryStatus.Ok
+                    || plan.PackageCount() != 0
+                    || !SdkDiagnosticsContain(cycleDiagnostics, SdkDiagnosticCode.DependencyCycle))
+                {
+                    return false;
+                }
+
+                stack ascii[1] missingStorage = { "Broken.Module" };
+                stack ascii[] missingImport = missingStorage;
+                stack mut SdkDiagnosticList missingDiagnostics = new();
+                return BuildSelectedSdkPackageLinkPlan(
+                    plan,
+                    manifest,
+                    index,
+                    missingImport,
+                    missingDiagnostics) == MemoryStatus.Ok
+                    && plan.PackageCount() == 0
+                    && SdkDiagnosticsContain(
+                        missingDiagnostics,
+                        SdkDiagnosticCode.DependencyMissing);
+        }
+    }
+}

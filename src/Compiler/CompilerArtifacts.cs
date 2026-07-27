@@ -61,6 +61,88 @@ public enum StarkFunctionKind
     FiniteLaw
 }
 
+public enum StarkFfiAbi
+{
+    C,
+    CDecl,
+    StdCall,
+    FastCall,
+    ThisCall,
+    VectorCall,
+    SysV,
+    Win64,
+    Aapcs,
+    Aapcs64
+}
+
+internal static class StarkFfiAbiFacts
+{
+    public static string DisplayName(StarkFfiAbi abi)
+    {
+        return abi switch
+        {
+            StarkFfiAbi.C => "c",
+            StarkFfiAbi.CDecl => "cdecl",
+            StarkFfiAbi.StdCall => "stdcall",
+            StarkFfiAbi.FastCall => "fastcall",
+            StarkFfiAbi.ThisCall => "thiscall",
+            StarkFfiAbi.VectorCall => "vectorcall",
+            StarkFfiAbi.SysV => "sysv",
+            StarkFfiAbi.Win64 => "win64",
+            StarkFfiAbi.Aapcs => "aapcs",
+            StarkFfiAbi.Aapcs64 => "aapcs64",
+            _ => "c"
+        };
+    }
+
+    public static bool TryParse(string? text, out StarkFfiAbi abi)
+    {
+        abi = text?.Trim().ToLowerInvariant() switch
+        {
+            "c" => StarkFfiAbi.C,
+            "cdecl" => StarkFfiAbi.CDecl,
+            "stdcall" => StarkFfiAbi.StdCall,
+            "fastcall" => StarkFfiAbi.FastCall,
+            "thiscall" => StarkFfiAbi.ThisCall,
+            "vectorcall" => StarkFfiAbi.VectorCall,
+            "sysv" => StarkFfiAbi.SysV,
+            "win64" => StarkFfiAbi.Win64,
+            "aapcs" => StarkFfiAbi.Aapcs,
+            "aapcs64" => StarkFfiAbi.Aapcs64,
+            _ => StarkFfiAbi.C
+        };
+
+        return text?.Trim().ToLowerInvariant() is "c"
+            or "cdecl"
+            or "stdcall"
+            or "fastcall"
+            or "thiscall"
+            or "vectorcall"
+            or "sysv"
+            or "win64"
+            or "aapcs"
+            or "aapcs64";
+    }
+
+    public static string? LlvmCallingConventionName(StarkFfiAbi? abi)
+    {
+        return abi switch
+        {
+            null or StarkFfiAbi.C => null,
+            StarkFfiAbi.CDecl => null,
+            StarkFfiAbi.StdCall => "x86_stdcallcc",
+            StarkFfiAbi.FastCall => "x86_fastcallcc",
+            StarkFfiAbi.ThisCall => "x86_thiscallcc",
+            StarkFfiAbi.VectorCall => "x86_vectorcallcc",
+            StarkFfiAbi.SysV => "x86_64_sysvcc",
+            StarkFfiAbi.Win64 => "win64cc",
+            StarkFfiAbi.Aapcs => "aapcscc",
+            StarkFfiAbi.Aapcs64 => "aarch64_aapcscc",
+            _ => null
+        };
+    }
+}
+
 internal static class FunctionKindFacts
 {
     public static bool IsLaw(StarkFunctionKind kind)
@@ -71,6 +153,11 @@ internal static class FunctionKindFacts
     public static bool IsFinite(StarkFunctionKind kind)
     {
         return kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
+    }
+
+    public static bool IsCompileTimeCallable(StarkFunctionKind kind)
+    {
+        return IsFinite(kind) || IsLaw(kind);
     }
 
     public static StarkFunctionKind Combine(bool isLaw, bool isFinite)
@@ -143,7 +230,10 @@ internal static class CallableValueFacts
             returnType,
             parameters,
             SourceName: lambda.FunctionName,
-            Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: MapFunctionPointerParameterNamesToLambdaParameterNames(
+                lambda.FunctionPointerType.FunctionPointerPointeeDeadOnReturnParameterNames,
+                lambda.ParameterNames));
     }
 
     public static TypedFunctionSignature BuildClosureLambdaSignature(ClosureLambdaTypingRecord lambda)
@@ -171,7 +261,10 @@ internal static class CallableValueFacts
             returnType,
             parameters.ToArray(),
             SourceName: lambda.FunctionName,
-            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: MapFunctionPointerParameterNamesToLambdaParameterNames(
+                lambda.ClosureType.ClosurePointeeDeadOnReturnParameterNames,
+                lambda.ParameterNames));
     }
 
     public static TypedFunctionSignature BuildClosureFunctionAdapterSignature(ClosureFunctionPromotionTypingRecord adapter)
@@ -197,7 +290,10 @@ internal static class CallableValueFacts
             returnType,
             parameters,
             SourceName: adapter.AdapterFunctionName,
-            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: ShiftPointeeDeadOnReturnParameters(
+                adapter.ClosureType.ClosurePointeeDeadOnReturnParameterNames ?? [],
+                offset: 1));
     }
 
     public static TypedFunctionSignature BuildClosureDropSignature(string functionName)
@@ -332,7 +428,11 @@ internal static class CallableValueFacts
             ShiftDisjointGroups(closureType.ClosureDisjointParameterGroups ?? [], offset: 1),
             ShiftOverlapGroups(closureType.ClosureOverlapParameterGroups ?? [], offset: 1),
             ShiftSameGroups(closureType.ClosureSameParameterGroups ?? [], offset: 1),
-            rawPointerBounds);
+            rawPointerBounds,
+            isTailCallable: closureType.ClosureIsTailCallable,
+            pointeeDeadOnReturnParameterNames: ShiftPointeeDeadOnReturnParameters(
+                closureType.ClosurePointeeDeadOnReturnParameterNames ?? [],
+                offset: 1));
     }
 
     private static IReadOnlyList<ParameterDisjointGroup> ShiftDisjointGroups(
@@ -366,6 +466,16 @@ internal static class CallableValueFacts
     {
         return groups
             .Select(group => new ParameterSameGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ShiftPointeeDeadOnReturnParameters(
+        IReadOnlyList<string> parameters,
+        int offset)
+    {
+        return parameters
+            .Select(name => ShiftSyntheticArgumentName(name, offset))
+            .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
 
@@ -408,28 +518,55 @@ internal static class CallableValueFacts
         return parameterNames[parameterIndex];
     }
 
+    private static IReadOnlyList<string> MapFunctionPointerParameterNamesToLambdaParameterNames(
+        IReadOnlyList<string>? names,
+        IReadOnlyList<string> parameterNames)
+    {
+        return (names ?? [])
+            .Select(name => name.StartsWith("arg", StringComparison.Ordinal)
+                && int.TryParse(name[3..], out var parameterIndex)
+                && parameterIndex >= 0
+                && parameterIndex < parameterNames.Count
+                    ? parameterNames[parameterIndex]
+                    : name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
     {
         var kind = lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn;
-        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+        return BuildLambdaEffectProfile(
+            lambda.FunctionName,
+            kind,
+            lambda.FunctionPointerType.FunctionPointerIsTailCallable);
     }
 
     public static FunctionEffectProfile BuildClosureLambdaEffectProfile(ClosureLambdaTypingRecord lambda)
     {
         var kind = lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn;
-        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+        return BuildLambdaEffectProfile(
+            lambda.FunctionName,
+            kind,
+            lambda.ClosureType.ClosureIsTailCallable);
     }
 
     public static FunctionEffectProfile BuildClosureFunctionAdapterEffectProfile(ClosureFunctionPromotionTypingRecord adapter)
     {
         var kind = adapter.ClosureType.ClosureFunctionKind ?? adapter.Signature.Kind;
-        return BuildLambdaEffectProfile(adapter.AdapterFunctionName, kind) with
+        return BuildLambdaEffectProfile(
+            adapter.AdapterFunctionName,
+            kind,
+            adapter.ClosureType.ClosureIsTailCallable) with
         {
             InlinePreference = InlinePreference.Inline
         };
     }
 
-    private static FunctionEffectProfile BuildLambdaEffectProfile(string functionName, StarkFunctionKind kind)
+    private static FunctionEffectProfile BuildLambdaEffectProfile(
+        string functionName,
+        StarkFunctionKind kind,
+        bool isTailCallable)
     {
         var isLaw = FunctionKindFacts.IsLaw(kind);
         var isFinite = FunctionKindFacts.IsFinite(kind);
@@ -444,7 +581,8 @@ internal static class CallableValueFacts
             NoUnwind: true,
             WillReturn: isFinite,
             MustProgress: isFinite,
-            UseFastCallingConvention: true,
+            UseFastCallingConvention: !isTailCallable,
+            IsTailCallable: isTailCallable,
             IsFfi: false,
             IsVarargs: false,
             IsHot: false,
@@ -470,7 +608,9 @@ public sealed record FunctionModifierSet(
     bool IsFfi,
     bool IsVarargs,
     bool IsStrictFp,
-    bool IsUnsafe = false);
+    bool IsUnsafe = false,
+    StarkFfiAbi? FfiAbi = null,
+    bool IsTailCallable = false);
 
 public enum StarkAsmArchitecture
 {
@@ -506,6 +646,25 @@ public sealed record ParameterModel(
     bool IsConst = false,
     string? RawPointerElementCountExpression = null);
 
+public sealed record ComptimeGenericParameterSymbol(
+    string Name,
+    StarkTypeSymbol Type);
+
+public sealed record ComptimeValueArgumentSymbol(
+    string ParameterName,
+    BigInteger IntegerValue,
+    StarkTypeSymbol Type,
+    bool IsSymbolic = false,
+    string? SymbolicSourceName = null)
+{
+    public string SourceName => SymbolicSourceName ?? ParameterName;
+    public string DisplayName => IsSymbolic
+        ? string.Equals(ParameterName, SourceName, StringComparison.Ordinal)
+            ? ParameterName
+            : $"{ParameterName}={SourceName}"
+        : $"{ParameterName}={IntegerValue}";
+}
+
 public sealed record ParameterMemoryRegion(
     string ParameterName,
     string? StartExpression = null,
@@ -532,6 +691,26 @@ public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames)
 
 public sealed record ParameterSameGroup(IReadOnlyList<string> ParameterNames);
 
+public sealed record ParameterValueContract(string LeftText, string OperatorText, string RightText)
+{
+    public string DisplayText => $"{LeftText} {OperatorText} {RightText}";
+}
+
+public enum ThreadSafetyLawAttributeKind
+{
+    Grant,
+    Deny
+}
+
+public sealed record ThreadSafetyLawPredicateModel(
+    string LawName,
+    string TypeText);
+
+public sealed record ThreadSafetyLawAttributeModel(
+    ThreadSafetyLawAttributeKind Kind,
+    string LawName,
+    ThreadSafetyLawPredicateModel? Condition = null);
+
 public sealed record ImportDeclarationModel(
     string ModuleName,
     bool IsExported)
@@ -548,19 +727,28 @@ public sealed record FunctionDeclarationModel(
     bool HasBody,
     AsmFunctionModel? Asm = null,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     string? PublishedOverloadKey = null,
     bool IsStatic = false,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
+    IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null,
+    string? ExternalLinkName = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<string> PointeeDeadOnReturnParameters => PointeeDeadOnReturnParameterNames ?? [];
+    public IReadOnlyList<ThreadSafetyLawPredicateModel> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
+    public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -571,7 +759,11 @@ public sealed record DestructorDeclarationModel(
 public sealed record TypeAliasDeclarationModel(
     string Name,
     string AliasedType,
-    IReadOnlyList<string> GenericParameters);
+    IReadOnlyList<string> GenericParameters,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null)
+{
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+}
 
 public sealed record TypeAliasSymbol(
     string Name,
@@ -579,10 +771,19 @@ public sealed record TypeAliasSymbol(
     StarkVisibility Visibility,
     StarkTypeSymbol TargetType,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     bool IsExternal = false)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
+}
+
+public sealed record AssociatedTypeSymbol(
+    string Name,
+    StarkTypeSymbol? TargetType = null)
+{
+    public bool IsRequired => TargetType is null;
 }
 
 public sealed record TopLevelDeclarationModel(
@@ -593,7 +794,11 @@ public sealed record TopLevelDeclarationModel(
     DestructorDeclarationModel? Destructor = null,
     TypeAliasDeclarationModel? TypeAlias = null,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ThreadSafetyLawAttributeModel>? ThreadSafetyLawAttributes = null)
+{
+    public IReadOnlyList<ThreadSafetyLawAttributeModel> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
+}
 
 public enum ModuleBackendOptimizationMode
 {
@@ -623,7 +828,8 @@ public sealed record ResolvedModuleReference(
     bool IsExternal = false,
     bool IsRoot = false,
     string? ManifestPath = null,
-    string? LibraryPath = null);
+    string? LibraryPath = null,
+    bool IsSdkPackage = false);
 
 public sealed record ModuleImportEdge(
     string FromModule,
@@ -743,11 +949,54 @@ public sealed record SourceModuleParseCache(
     public bool TryGet(string moduleName, out SourceModuleParse? module) => Modules.TryGetValue(moduleName, out module);
 }
 
+/// <summary>
+/// Shares parsed source modules across the sequential pipeline runs of a single compiler
+/// invocation (the root compile plus its per-dependency compiles). Only diagnostic-free
+/// parses of plain source files are cached so error reporting and package-image loading
+/// behave exactly as uncached compilation.
+/// </summary>
+public sealed class SharedSourceModuleParseCache
+{
+    private readonly object _lock = new();
+    private readonly Dictionary<string, SourceModuleParse> _modules = new(StringComparer.Ordinal);
+
+    public bool TryGet(string moduleName, string? filePath, out SourceModuleParse module)
+    {
+        if (filePath is not null)
+        {
+            lock (_lock)
+            {
+                if (_modules.TryGetValue(moduleName, out var cached)
+                    && string.Equals(cached.Reference.FilePath, filePath, StringComparison.Ordinal))
+                {
+                    module = cached;
+                    return true;
+                }
+            }
+        }
+
+        module = default!;
+        return false;
+    }
+
+    public void Add(SourceModuleParse module)
+    {
+        if (module.Reference.FilePath is not null)
+        {
+            lock (_lock)
+            {
+                _modules[module.Reference.ModuleName] = module;
+            }
+        }
+    }
+}
+
 public sealed record LoadedModuleDocument(
     ResolvedModuleReference Reference,
     ParseResult ParseResult,
     SyntaxModel SyntaxModel,
-    LoadedPackageImageFacts? PackageImageFacts = null)
+    LoadedPackageImageFacts? PackageImageFacts = null,
+    LlvmTargetInfo? TargetInfo = null)
 {
     public bool IsPackageImageImport => !Reference.IsRoot && PackageImageFacts is not null;
 
@@ -776,7 +1025,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null,
     IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
     IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
@@ -825,6 +1075,9 @@ public sealed record ImportedFunctionTemplateSummary(
     public IReadOnlyList<ImportedTemplateConversionSummary> Conversions =>
         ConversionSummaries ?? [];
 
+    public IReadOnlyList<ImportedTemplateTryPropagationSummary> TryPropagations =>
+        TryPropagationSummaries ?? [];
+
     public IReadOnlyList<ImportedTemplateDirectCallSummary> DirectCalls =>
         DirectCallSummaries ?? [];
 
@@ -850,6 +1103,7 @@ public enum ImportedTemplateTypedBodyStatementKind
     Assignment,
     Switch,
     For,
+    ForTraversal,
     While,
     If,
     Break,
@@ -860,10 +1114,12 @@ public enum ImportedTemplateTypedBodyStatementKind
 public enum ImportedTemplateTypedSwitchCaseKind
 {
     Literal,
+    Range,
     MatchAll,
     Default,
     EnumPattern,
-    AggregatePattern
+    AggregatePattern,
+    ListPattern
 }
 
 public enum ImportedTemplateTypedSwitchFieldPatternKind
@@ -871,8 +1127,10 @@ public enum ImportedTemplateTypedSwitchFieldPatternKind
     Discard,
     Capture,
     Literal,
+    Range,
     EnumPattern,
-    AggregatePattern
+    AggregatePattern,
+    ListPattern
 }
 
 public enum ImportedTemplateTypedBodyExpressionKind
@@ -883,10 +1141,12 @@ public enum ImportedTemplateTypedBodyExpressionKind
     ObjectInitializer,
     Assignment,
     Conversion,
+    TryPropagation,
     UnaryOperation,
     BinaryOperation,
     ComparisonChain,
     Conditional,
+    Comptime,
     ObjectCreation,
     EnumConstructor,
     EnumCall,
@@ -898,9 +1158,11 @@ public enum ImportedTemplateTypedBodyExpressionKind
     MemberCall,
     FunctionAddress,
     DynamicStorageOperation,
+    DynTraitFromParts,
     TextInterpolation,
     TextBuild,
-    TypeLayout
+    TypeLayout,
+    StructuralFact
 }
 
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
@@ -912,6 +1174,8 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkTypeSymbol? Type = null,
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
     IReadOnlyList<string>? OperatorNames = null)
 {
@@ -923,6 +1187,12 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
 
     public IReadOnlyList<string> Operators =>
         OperatorNames ?? [];
+
+    public IReadOnlyList<StarkTypeSymbol> TypeArgs =>
+        TypeArguments ?? [];
+
+    public IReadOnlyList<ComptimeValueArgumentSymbol> ComptimeValueArgs =>
+        ComptimeValueArguments ?? [];
 }
 
 public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
@@ -930,6 +1200,7 @@ public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
     string? Name = null,
     int? Ordinal = null,
     ImportedTemplateTypedBodyExpressionSummary? Expression = null,
+    ImportedTemplateTypedBodyExpressionSummary? EndExpression = null,
     IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null)
 {
     public IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> Members =>
@@ -942,6 +1213,7 @@ public sealed record ImportedTemplateTypedSwitchCaseSummary(
     string? Name = null,
     ImportedTemplateTypedBodyExpressionSummary? Expression = null,
     ImportedTemplateTypedBodyExpressionSummary? GuardExpression = null,
+    ImportedTemplateTypedBodyExpressionSummary? EndExpression = null,
     IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? StatementSummaries = null)
 {
@@ -969,9 +1241,16 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? BodyStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
+    ImportedTemplateTypedSwitchFieldPatternSummary? ConditionPattern = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
     IReadOnlyList<string>? LoopContracts = null,
-    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None,
+    ImportedTemplateTypedBodyExpressionSummary? TraversalSourceExpression = null,
+    string? TraversalIndexName = null,
+    string? TraversalIndexStorageClass = null,
+    StarkTypeSymbol? TraversalIndexType = null,
+    string? TraversalElementName = null,
+    StarkTypeSymbol? TraversalElementType = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -1000,7 +1279,8 @@ public sealed record ImportedTemplateTypedBodySummary(
 
 public sealed record ImportedDeferredFunctionInstantiationSummary(
     string CalleeTemplateName,
-    IReadOnlyList<StarkTypeSymbol> TypeArguments);
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null);
 
 public sealed record ImportedDeferredTypeInstantiationSummary(
     StarkTypeSymbol Type);
@@ -1014,7 +1294,9 @@ public sealed record ImportedTemplateLocalDeclarationSummary(
 public sealed record ImportedTemplateObjectCreationSummary(
     StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
-    IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null)
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
+    IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null,
+    string? ExpressionText = null)
 {
     public IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary> InitializerMembers =>
         InitializerMemberSummaries ?? [];
@@ -1067,7 +1349,17 @@ public sealed record ImportedTemplateEnumPatternMemberSummary(
 
 public sealed record ImportedTemplateAggregatePatternSummary(
     int Ordinal,
-    StarkTypeSymbol Type);
+    StarkTypeSymbol Type,
+    IReadOnlyList<ImportedTemplateAggregatePatternMemberSummary>? MemberSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateAggregatePatternMemberSummary> Members =>
+        MemberSummaries ?? [];
+}
+
+public sealed record ImportedTemplateAggregatePatternMemberSummary(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
 
 public sealed record ImportedTemplateDirectCallSummary(
     int Ordinal,
@@ -1092,6 +1384,26 @@ public sealed record ImportedTemplateConversionSummary(
     int Ordinal,
     StarkTypeSymbol TargetType);
 
+/// <summary>
+/// Published `try` propagation facts for one `try` expression inside an exported generic
+/// template body. Downstream packages never re-type-check imported template bodies, so the
+/// roles/funnel resolution computed by the producing package is republished here
+/// (ordinal-keyed in body order) for the consumer's MIR lowering to consume directly.
+/// Types may reference the template's generic parameters; the consumer substitutes them
+/// per specialization.
+/// </summary>
+public sealed record ImportedTemplateTryPropagationSummary(
+    int Ordinal,
+    StarkTypeSymbol OperandType,
+    string OperandOkVariantName,
+    string OperandErrVariantName,
+    StarkTypeSymbol? SuccessPayloadType,
+    StarkTypeSymbol? OperandFailurePayloadType,
+    StarkTypeSymbol ReturnType,
+    string EnclosingErrVariantName,
+    StarkTypeSymbol? EnclosingFailurePayloadType,
+    string? ConversionFunnelVariant);
+
 public sealed record ImportedTemplateBoundOperationSummary(
     int? Ordinal,
     BoundOperation Operation);
@@ -1109,7 +1421,10 @@ public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
     IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates,
     PackageImageLinkageFacts? Linkage = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    StarkPackageTargetManifest? Target = null,
+    StarkPackageBuildProfileManifest? BuildProfile = null,
+    StarkPackageIdentityManifest? Identity = null)
 {
     public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
 
@@ -1157,7 +1472,15 @@ public sealed record FunctionEffectProfile(
     bool IsCold,
     InlinePreference InlinePreference,
     bool IsStrictFp,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    StarkFfiAbi? FfiAbi = null,
+    // Whether the function accesses memory beyond its own arguments (e.g. globals,
+    // or the object behind a `dyn` trait object's data pointer). Optimizers that
+    // compute a precise per-call local read/write set must treat these as a barrier.
+    bool ReadsOtherMemory = false,
+    bool WritesOtherMemory = false,
+    bool NoRecurse = false,
+    bool IsTailCallable = false);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -1240,6 +1563,16 @@ public enum StarkClosureCallCapability
     Once
 }
 
+public enum StarkDynTraitStorageKind
+{
+    // Non-owning fat view (data borrow + shared vtable). No allocation. The
+    // borrow/mut-borrow distinction comes from the outer type qualifier.
+    View,
+    // Owned, heap-boxed trait object. The only allocating form; dropped via the
+    // vtable Drop slot at scope exit.
+    Heap
+}
+
 public enum StarkTypeKind
 {
     Error,
@@ -1247,16 +1580,22 @@ public enum StarkTypeKind
     Bool,
     Ascii,
     Unicode,
+    CVoid,
+    CVaList,
     Integer,
     Float,
     RawPointer,
+    LlvmVector,
+    LlvmStruct,
     FixedArray,
     Slice,
     Dynamic,
     FunctionPointer,
     Closure,
     Named,
-    Null
+    Null,
+    DynTrait,
+    AssociatedType
 }
 
 public sealed record StarkTypeSymbol(
@@ -1266,22 +1605,29 @@ public sealed record StarkTypeSymbol(
     string? NamedType = null,
     StarkTypeSymbol? ElementType = null,
     int? FixedLength = null,
+    string? FixedLengthParameterName = null,
     StarkFunctionKind? FunctionPointerKind = null,
+    bool FunctionPointerIsTailCallable = false,
+    StarkFfiAbi? FunctionPointerAbi = null,
+    bool FunctionPointerIsUnsafe = false,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
     IReadOnlyList<string?>? FunctionPointerParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
+    IReadOnlyList<string>? FunctionPointerPointeeDeadOnReturnParameterNames = null,
     StarkClosureStorageKind ClosureStorageKind = StarkClosureStorageKind.Unspecified,
     StarkClosureCallCapability ClosureCallCapability = StarkClosureCallCapability.None,
     StarkFunctionKind? ClosureFunctionKind = null,
+    bool ClosureIsTailCallable = false,
     StarkTypeSymbol? ClosureReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? ClosureParameterTypes = null,
     IReadOnlyList<string?>? ClosureParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<ParameterDisjointGroup>? ClosureDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? ClosureOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? ClosureSameParameterGroups = null,
+    IReadOnlyList<string>? ClosurePointeeDeadOnReturnParameterNames = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
     bool IsUnsigned = false,
@@ -1290,12 +1636,19 @@ public sealed record StarkTypeSymbol(
     StarkAccessKind AccessKind = StarkAccessKind.None,
     StarkInitializationKind InitializationKind = StarkInitializationKind.None,
     bool IsMutableView = false,
-    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null);
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
+    string? DynTraitName = null,
+    StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View,
+    StarkTypeSymbol? AssociatedTypeOwner = null,
+    string? AssociatedTypeName = null,
+    string? CSourceAliasName = null);
 
 public static class StarkTypeSymbols
 {
     public const string OwnedAsciiName = "Ascii";
     public const string OwnedUnicodeName = "Unicode";
+    public const string DynTraitVtableMemberName = "Vtable";
 
     public static readonly StarkTypeSymbol Error = new(StarkTypeKind.Error, "<error>");
     public static readonly StarkTypeSymbol Void = new(StarkTypeKind.Void, "void");
@@ -1303,6 +1656,14 @@ public static class StarkTypeSymbols
     public static readonly StarkTypeSymbol CompileTimeInteger = new(StarkTypeKind.Integer, "integer");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
+    public static readonly StarkTypeSymbol CVoid = new(
+        StarkTypeKind.CVoid,
+        "System.C.c_void",
+        CSourceAliasName: "System.C.c_void");
+    public static readonly StarkTypeSymbol CVaList = new(
+        StarkTypeKind.CVaList,
+        "System.C.VaList",
+        CSourceAliasName: "System.C.VaList");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
     public static readonly StarkTypeSymbol OwnedUnicode = new(StarkTypeKind.Named, OwnedUnicodeName, NamedType: OwnedUnicodeName);
     public static readonly StarkTypeSymbol Null = new(StarkTypeKind.Null, "null");
@@ -1328,6 +1689,16 @@ public static class StarkTypeSymbols
             RangeMin: rangeMin,
             RangeMax: rangeMax,
             IsUnsigned: isUnsigned);
+    }
+
+    public static StarkTypeSymbol WithCSourceAlias(StarkTypeSymbol type, string? aliasName)
+    {
+        if (type.Kind == StarkTypeKind.Error || string.IsNullOrWhiteSpace(aliasName))
+        {
+            return type;
+        }
+
+        return type with { CSourceAliasName = aliasName };
     }
 
     public static bool IsCompileTimeInteger(StarkTypeSymbol type) =>
@@ -1401,12 +1772,30 @@ public static class StarkTypeSymbols
             ElementType: elementType,
             IsMutablePointer: isMutable);
 
-    public static StarkTypeSymbol FixedArray(StarkTypeSymbol elementType, int? fixedLength) =>
+    public static StarkTypeSymbol LlvmVector(StarkTypeSymbol elementType, int elementCount) =>
+        new(
+            StarkTypeKind.LlvmVector,
+            $"llvmvector<{elementCount} x {elementType.DisplayName}>",
+            ElementType: elementType,
+            FixedLength: elementCount);
+
+    public static StarkTypeSymbol LlvmStruct(IReadOnlyList<StarkTypeSymbol> fieldTypes) =>
+        new(
+            StarkTypeKind.LlvmStruct,
+            $"llvmstruct<{string.Join(", ", fieldTypes.Select(static field => field.DisplayName))}>",
+            TypeArguments: fieldTypes.ToArray());
+
+    public static StarkTypeSymbol FixedArray(StarkTypeSymbol elementType, int? fixedLength, string? fixedLengthParameterName = null) =>
         new(
             StarkTypeKind.FixedArray,
-            fixedLength is null ? $"{elementType.DisplayName}[?]" : $"{elementType.DisplayName}[{fixedLength}]",
+            fixedLength is null
+                ? !string.IsNullOrWhiteSpace(fixedLengthParameterName)
+                    ? $"{elementType.DisplayName}[{fixedLengthParameterName}]"
+                    : $"{elementType.DisplayName}[?]"
+                : $"{elementType.DisplayName}[{fixedLength}]",
             ElementType: elementType,
-            FixedLength: fixedLength);
+            FixedLength: fixedLength,
+            FixedLengthParameterName: fixedLengthParameterName);
 
     public static StarkTypeSymbol Slice(StarkTypeSymbol elementType) =>
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
@@ -1421,9 +1810,18 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
-        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
+        StarkFfiAbi? ffiAbi = null,
+        bool isUnsafe = false,
+        bool isTailCallable = false,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames = null)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
+        var abiPrefix = ffiAbi is { } abi
+            ? $"ffi({StarkFfiAbiFacts.DisplayName(abi)}) "
+            : string.Empty;
+        var unsafePrefix = isUnsafe ? "unsafe " : string.Empty;
+        var tailPrefix = isTailCallable ? "tail " : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1438,6 +1836,9 @@ public static class StarkTypeSymbols
             .ToArray();
         var effectiveOverlapGroups = overlapGroups ?? [];
         var effectiveSameGroups = sameGroups ?? [];
+        var effectivePointeeDeadOnReturnParameters = NormalizePointeeDeadOnReturnParameters(
+            pointeeDeadOnReturnParameterNames,
+            parameterTypes.Count);
         var effectiveDisjointGroups = disjointGroups
             ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
                 parameters,
@@ -1445,17 +1846,21 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"fnptr<{unsafePrefix}{abiPrefix}{tailPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups, effectivePointeeDeadOnReturnParameters)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
+            FunctionPointerIsTailCallable: isTailCallable,
+            FunctionPointerAbi: ffiAbi,
+            FunctionPointerIsUnsafe: isUnsafe,
             FunctionPointerReturnType: returnType,
             FunctionPointerParameterTypes: parameterTypes.ToArray(),
             FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
             FunctionPointerDisjointParameterGroups: effectiveDisjointGroups,
             FunctionPointerOverlapParameterGroups: effectiveOverlapGroups,
-            FunctionPointerSameParameterGroups: effectiveSameGroups);
+            FunctionPointerSameParameterGroups: effectiveSameGroups,
+            FunctionPointerPointeeDeadOnReturnParameterNames: effectivePointeeDeadOnReturnParameters);
     }
 
     public static StarkTypeSymbol Closure(
@@ -1467,7 +1872,9 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
-        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
+        bool isTailCallable = false,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames = null)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
         var storagePrefix = storageKind switch
@@ -1482,6 +1889,7 @@ public static class StarkTypeSymbols
             StarkClosureCallCapability.Once => "once ",
             _ => string.Empty
         };
+        var tailPrefix = isTailCallable ? "tail " : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1496,6 +1904,9 @@ public static class StarkTypeSymbols
             .ToArray();
         var effectiveOverlapGroups = overlapGroups ?? [];
         var effectiveSameGroups = sameGroups ?? [];
+        var effectivePointeeDeadOnReturnParameters = NormalizePointeeDeadOnReturnParameters(
+            pointeeDeadOnReturnParameterNames,
+            parameterTypes.Count);
         var effectiveDisjointGroups = disjointGroups
             ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
                 parameters,
@@ -1503,19 +1914,80 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{tailPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups, effectivePointeeDeadOnReturnParameters)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.Closure,
             displayName,
             ClosureStorageKind: storageKind,
             ClosureCallCapability: callCapability,
             ClosureFunctionKind: functionKind,
+            ClosureIsTailCallable: isTailCallable,
             ClosureReturnType: returnType,
             ClosureParameterTypes: parameterTypes.ToArray(),
             ClosureParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
             ClosureDisjointParameterGroups: effectiveDisjointGroups,
             ClosureOverlapParameterGroups: effectiveOverlapGroups,
-            ClosureSameParameterGroups: effectiveSameGroups);
+            ClosureSameParameterGroups: effectiveSameGroups,
+            ClosurePointeeDeadOnReturnParameterNames: effectivePointeeDeadOnReturnParameters);
+    }
+
+    // A `dyn Trait` trait object: a two-word fat pointer { data_ptr, vtable_ptr }.
+    // `heap dyn Trait` owns its data (boxed, dropped via the vtable); a plain
+    // `dyn Trait` is a borrowed view whose ownership comes from the outer
+    // borrow/mut-borrow qualifier. The vtable is a real, nameable representation.
+    public static StarkTypeSymbol DynTrait(
+        string traitName,
+        StarkDynTraitStorageKind storageKind = StarkDynTraitStorageKind.View,
+        IReadOnlyList<StarkTypeSymbol>? typeArguments = null)
+    {
+        var storagePrefix = storageKind == StarkDynTraitStorageKind.Heap ? "heap " : string.Empty;
+        var typeArgumentSuffix = typeArguments is { Count: > 0 }
+            ? $"<{string.Join(", ", typeArguments.Select(argument => argument.DisplayName))}>"
+            : string.Empty;
+        return new StarkTypeSymbol(
+            StarkTypeKind.DynTrait,
+            $"{storagePrefix}dyn {traitName}{typeArgumentSuffix}",
+            DynTraitName: traitName,
+            DynTraitStorageKind: storageKind,
+            TypeArguments: typeArguments);
+    }
+
+    public static StarkTypeSymbol DynTraitVtable(
+        string traitName,
+        IReadOnlyList<StarkTypeSymbol>? typeArguments = null,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
+    {
+        var templateName = $"{traitName}.{DynTraitVtableMemberName}";
+        return typeArguments is { Count: > 0 } || valueArguments is { Count: > 0 }
+            ? GenericInstantiation(templateName, typeArguments, valueArguments)
+            : Named(templateName);
+    }
+
+    public static StarkTypeSymbol DynTraitVtableForTraitObject(StarkTypeSymbol dynTraitType)
+    {
+        return dynTraitType.DynTraitName is { } traitName
+            ? DynTraitVtable(traitName, dynTraitType.TypeArguments, dynTraitType.ComptimeValueArguments)
+            : Named($"<error>.{DynTraitVtableMemberName}");
+    }
+
+    public static StarkTypeSymbol DynTraitVtablePointerForTraitObject(StarkTypeSymbol dynTraitType) =>
+        RawPointer(DynTraitVtableForTraitObject(dynTraitType), isMutable: false);
+
+    public static bool IsDynTraitVtableType(StarkTypeSymbol type)
+    {
+        var coreType = WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } namedType)
+        {
+            return false;
+        }
+
+        var baseName = GetGenericBaseName(namedType);
+        return baseName.EndsWith($".{DynTraitVtableMemberName}", StringComparison.Ordinal);
     }
 
     private static string FormatCallableFunctionKind(StarkFunctionKind functionKind)
@@ -1599,24 +2071,83 @@ public static class StarkTypeSymbols
 
     private static string FormatFunctionPointerMemoryContracts(
         IReadOnlyList<ParameterOverlapGroup> overlapGroups,
-        IReadOnlyList<ParameterSameGroup> sameGroups)
+        IReadOnlyList<ParameterSameGroup> sameGroups,
+        IReadOnlyList<string> pointeeDeadOnReturnParameters)
     {
         var clauses = overlapGroups
             .Select(static group => $"overlap({string.Join(", ", group.ParameterNames)})")
             .Concat(sameGroups.Select(static group => $"same({string.Join(", ", group.ParameterNames)})"))
+            .Concat(pointeeDeadOnReturnParameters.Select(static name => $"dead_on_return({name})"))
             .ToArray();
         return clauses.Length == 0
             ? string.Empty
             : $" where {string.Join(", ", clauses)}";
     }
 
+    private static IReadOnlyList<string> NormalizePointeeDeadOnReturnParameters(
+        IReadOnlyList<string>? parameterNames,
+        int parameterCount)
+    {
+        if (parameterNames is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        return parameterNames
+            .Where(name => TryParseSyntheticArgumentIndex(name, out var index)
+                && index >= 0
+                && index < parameterCount)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool TryParseSyntheticArgumentIndex(string name, out int index)
+    {
+        index = -1;
+        return name.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(name[3..], out index);
+    }
+
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
 
-    public static StarkTypeSymbol GenericInstantiation(string templateName, IReadOnlyList<StarkTypeSymbol> typeArgs)
+    public static StarkTypeSymbol AssociatedType(StarkTypeSymbol ownerType, string associatedTypeName)
     {
-        var displayName = $"{templateName}<{string.Join(", ", typeArgs.Select(static t => t.DisplayName))}>";
-        var key = $"{templateName}<{string.Join(",", typeArgs.Select(static t => t.NamedType ?? t.DisplayName))}>";
-        return new StarkTypeSymbol(StarkTypeKind.Named, displayName, NamedType: key, TypeArguments: typeArgs);
+        var ownerCore = WithQualifiers(
+            ownerType,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        return new StarkTypeSymbol(
+            StarkTypeKind.AssociatedType,
+            $"{ownerCore.DisplayName}.{associatedTypeName}",
+            AssociatedTypeOwner: ownerCore,
+            AssociatedTypeName: associatedTypeName);
+    }
+
+    public static StarkTypeSymbol GenericInstantiation(
+        string templateName,
+        IReadOnlyList<StarkTypeSymbol>? typeArgs,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArgs = null)
+    {
+        typeArgs ??= [];
+        valueArgs ??= [];
+        var displayParts = typeArgs
+            .Select(static t => t.DisplayName)
+            .Concat(valueArgs.Select(static value => value.IsSymbolic ? value.SourceName : value.IntegerValue.ToString()))
+            .ToArray();
+        var keyParts = typeArgs
+            .Select(static t => t.NamedType ?? t.DisplayName)
+            .Concat(valueArgs.Select(static value => value.IsSymbolic ? value.DisplayName : $"{value.ParameterName}={value.IntegerValue}"))
+            .ToArray();
+        var displayName = $"{templateName}<{string.Join(", ", displayParts)}>";
+        var key = $"{templateName}<{string.Join(",", keyParts)}>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.Named,
+            displayName,
+            NamedType: key,
+            TypeArguments: typeArgs.Count == 0 ? null : typeArgs.ToArray(),
+            ComptimeValueArguments: valueArgs.Count == 0 ? null : valueArgs.ToArray());
     }
 
     public static string GetGenericBaseName(string key)
@@ -1649,7 +2180,8 @@ public static class StarkTypeSymbols
     }
 
     public static bool IsGenericInstantiation(StarkTypeSymbol type)
-        => type.Kind == StarkTypeKind.Named && type.TypeArguments is { Count: > 0 };
+        => type.Kind == StarkTypeKind.Named
+            && (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 });
 
     public static bool TryGetBuiltinNamedType(string name, out NamedTypeSymbol namedType)
     {
@@ -1760,10 +2292,21 @@ public static class StarkTypeSymbols
 
     public static bool IsDirectBorrowViewType(StarkTypeSymbol type)
     {
-        return type.Kind is StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+        // These types already carry their complete borrowed view at runtime.
+        // In particular, `borrow dyn Trait` is the two-word { data, vtable }
+        // value itself, not a pointer to a separately stored fat pointer.
+        return type.Kind is StarkTypeKind.Slice
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode
+            or StarkTypeKind.DynTrait;
     }
 
     public static bool IsPointerBackedBorrowReturn(StarkTypeSymbol type)
+    {
+        return IsPointerBackedBorrowType(type);
+    }
+
+    public static bool IsPointerBackedBorrowType(StarkTypeSymbol type)
     {
         return type.BorrowKind != StarkBorrowKind.None && !IsDirectBorrowViewType(type);
     }
@@ -1806,6 +2349,8 @@ public static class StarkTypeSymbols
             StarkTypeKind.Bool or
             StarkTypeKind.Ascii or
             StarkTypeKind.Unicode or
+            StarkTypeKind.CVoid or
+            StarkTypeKind.CVaList or
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
             StarkTypeKind.FunctionPointer or
@@ -1848,11 +2393,15 @@ public static class StarkTypeSymbols
             StarkTypeKind.Bool => Bool,
             StarkTypeKind.Ascii => Ascii,
             StarkTypeKind.Unicode => Unicode,
+            StarkTypeKind.CVoid => WithCSourceAlias(CVoid, type.CSourceAliasName),
+            StarkTypeKind.CVaList => WithCSourceAlias(CVaList, type.CSourceAliasName),
             StarkTypeKind.Null => Null,
-            StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
+            StarkTypeKind.Integer => WithCSourceAlias(
+                Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
+                type.CSourceAliasName),
             StarkTypeKind.Float => Float(type.BitWidth ?? 32),
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
-            StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
+            StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength, type.FixedLengthParameterName),
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
             StarkTypeKind.Dynamic when type.ElementType is not null => Dynamic(type.ElementType),
             StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
@@ -1865,7 +2414,11 @@ public static class StarkTypeSymbols
                     type.FunctionPointerDisjointParameterGroups,
                     type.FunctionPointerOverlapParameterGroups,
                     type.FunctionPointerSameParameterGroups,
-                    type.FunctionPointerParameterRawPointerElementCountExpressions),
+                    type.FunctionPointerParameterRawPointerElementCountExpressions,
+                    type.FunctionPointerAbi,
+                    type.FunctionPointerIsUnsafe,
+                    type.FunctionPointerIsTailCallable,
+                    type.FunctionPointerPointeeDeadOnReturnParameterNames),
             StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
                                        && type.ClosureReturnType is { } closureReturnType
                                        && type.ClosureParameterTypes is { } closureParameterTypes
@@ -1878,12 +2431,18 @@ public static class StarkTypeSymbols
                     type.ClosureDisjointParameterGroups,
                     type.ClosureOverlapParameterGroups,
                     type.ClosureSameParameterGroups,
-                    type.ClosureParameterRawPointerElementCountExpressions),
+                    type.ClosureParameterRawPointerElementCountExpressions,
+                    type.ClosureIsTailCallable,
+                    type.ClosurePointeeDeadOnReturnParameterNames),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
-            StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
-                => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments),
+            StarkTypeKind.Named when (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 })
+                                     && type.NamedType is not null
+                => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments, type.ComptimeValueArguments),
             StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
+            StarkTypeKind.AssociatedType when type.AssociatedTypeOwner is not null
+                                               && type.AssociatedTypeName is not null
+                => AssociatedType(type.AssociatedTypeOwner, type.AssociatedTypeName),
             _ => type
         };
     }
@@ -1911,19 +2470,137 @@ public sealed record FieldSymbol(
     string Name,
     StarkTypeSymbol Type,
     StarkVisibility Visibility = StarkVisibility.Public,
-    string? DeclaringModuleName = null);
+    string? DeclaringModuleName = null,
+    int? ExplicitOffsetBytes = null,
+    IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null)
+{
+    public IReadOnlyList<ThreadSafetyLawAttributeSymbol> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
+}
+
+public sealed record ThreadSafetyLawPredicateSymbol(
+    string LawName,
+    StarkTypeSymbol Type);
+
+public sealed record ThreadSafetyLawAttributeSymbol(
+    ThreadSafetyLawAttributeKind Kind,
+    string LawName,
+    ThreadSafetyLawPredicateSymbol? Condition = null);
+
+public enum ThreadSafetyLawFailureKind
+{
+    DeniedByTypeAttribute,
+    DeniedByFieldAttribute,
+    ConflictingAttributes,
+    RawPointer,
+    StoredBorrow,
+    StructuralFieldFailure,
+    UnknownType
+}
+
+public sealed record ThreadSafetyLawRequirement(
+    string LawName,
+    StarkTypeSymbol Type);
+
+public sealed record ThreadSafetyLawFailure(
+    ThreadSafetyLawFailureKind Kind,
+    string Message,
+    StarkTypeSymbol? Type = null,
+    IReadOnlyList<string>? FieldPath = null)
+{
+    public IReadOnlyList<string> Path => FieldPath ?? [];
+}
+
+public sealed record ThreadSafetyLawFact(
+    string LawName,
+    StarkTypeSymbol Type,
+    bool Holds,
+    IReadOnlyList<ThreadSafetyLawRequirement>? Requirements = null,
+    IReadOnlyList<ThreadSafetyLawFailure>? Failures = null)
+{
+    public IReadOnlyList<ThreadSafetyLawRequirement> RequiredPredicates => Requirements ?? [];
+    public IReadOnlyList<ThreadSafetyLawFailure> FailureReasons => Failures ?? [];
+    public bool IsConditional => Holds && RequiredPredicates.Count > 0;
+}
+
+public sealed record ThreadSafetyLawTypeFacts(
+    StarkTypeSymbol Type,
+    ThreadSafetyLawFact Transferable,
+    ThreadSafetyLawFact Shareable)
+{
+    public bool TryGet(string lawName, out ThreadSafetyLawFact fact)
+    {
+        if (string.Equals(lawName, ThreadSafetyLawNames.Transferable, StringComparison.Ordinal))
+        {
+            fact = Transferable;
+            return true;
+        }
+
+        if (string.Equals(lawName, ThreadSafetyLawNames.Shareable, StringComparison.Ordinal))
+        {
+            fact = Shareable;
+            return true;
+        }
+
+        fact = null!;
+        return false;
+    }
+}
+
+public static class ThreadSafetyLawNames
+{
+    public const string Transferable = "Transferable";
+    public const string Shareable = "Shareable";
+    public const string Copyable = "Copyable";
+}
+
+public enum StructLayoutKind
+{
+    Auto,
+    C,
+    Explicit
+}
+
+public sealed record StructLayoutMetadata(
+    StructLayoutKind Kind,
+    int? PackBytes = null,
+    int? AlignBytes = null);
 
 public sealed record EnumVariantFieldSymbol(
     int Position,
     string? Name,
     StarkTypeSymbol Type);
 
+/// <summary>
+/// The propagation role a variant plays for <c>try</c>, declared with the innate
+/// <c>[Ok]</c> / <c>[Err]</c> variant attributes (doc 11 v2). <see cref="None"/>
+/// means the variant has no role. An enum is propagatable only when it has exactly
+/// two variants, one <see cref="Ok"/> and one <see cref="Err"/>; the roles — never
+/// type names and never stdlib identity — are what `try` consults.
+/// </summary>
+public enum EnumVariantRole
+{
+    None,
+    Ok,
+    Err,
+}
+
 public sealed record EnumVariantSymbol(
     string Name,
     bool UsesNamedFields,
-    IReadOnlyList<EnumVariantFieldSymbol> Fields)
+    IReadOnlyList<EnumVariantFieldSymbol> Fields,
+    StarkTypeSymbol? AbsorbsErrorType = null,
+    EnumVariantRole Role = EnumVariantRole.None)
 {
     public bool IsUnit => Fields.Count == 0;
+
+    /// <summary>
+    /// True when the variant was declared with the `from` payload form
+    /// (e.g. <c>Io from IoError</c>), marking it as the canonical funnel that a
+    /// <c>try</c> expression uses to wrap <see cref="AbsorbsErrorType"/> into this
+    /// enum. Such a variant carries exactly one positional field whose type equals
+    /// <see cref="AbsorbsErrorType"/>; it is otherwise an ordinary single-payload variant.
+    /// </summary>
+    public bool IsErrorFunnel => AbsorbsErrorType is not null;
 }
 
 public sealed record NamedTypeSymbol(
@@ -1932,7 +2609,17 @@ public sealed record NamedTypeSymbol(
     IReadOnlyDictionary<string, FieldSymbol> Fields,
     IReadOnlyList<FieldSymbol> OrderedFields,
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
-    IReadOnlyList<string>? GenericParameterNames = null)
+    IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
+    IReadOnlyList<string>? ImplementedTraitNames = null,
+    IReadOnlyList<StarkTypeSymbol>? ImplementedTraitTypeSymbols = null,
+    IReadOnlyDictionary<string, AssociatedTypeSymbol>? AssociatedTypeMembers = null,
+    bool IsDynTrait = false,
+    StructLayoutMetadata? Layout = null,
+    IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null,
+    string? DeclaringModuleName = null,
+    StarkVisibility Visibility = StarkVisibility.Module,
+    bool HasDestructor = false)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -1956,9 +2643,20 @@ public sealed record NamedTypeSymbol(
     }
 
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
+
+    public IReadOnlyList<string> ImplementedTraits => ImplementedTraitNames ?? [];
+    public IReadOnlyList<StarkTypeSymbol> ImplementedTraitTypes => ImplementedTraitTypeSymbols ?? [];
+
+    public IReadOnlyDictionary<string, AssociatedTypeSymbol> AssociatedTypes =>
+        AssociatedTypeMembers ?? EmptyAssociatedTypes;
+
+    private static IReadOnlyDictionary<string, AssociatedTypeSymbol> EmptyAssociatedTypes { get; } =
+        new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
 
     public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
+    public IReadOnlyList<ThreadSafetyLawAttributeSymbol> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
 
     public bool TryGetVariant(string name, out EnumVariantSymbol variant, out int index)
     {
@@ -2029,30 +2727,56 @@ public sealed record TypedConstructorShape(
             : null;
 }
 
+// A `where T: Trait` bound on a generic function: the type parameter and the
+// traits it must implement. Used to enforce constraints at instantiation sites
+// and to resolve trait-method calls on the parameter inside the body.
+public sealed record TypeParameterConstraint(
+    string ParameterName,
+    IReadOnlyList<StarkTypeSymbol> BoundTraits);
+
 public sealed record TypedFunctionSignature(
     string Name,
     StarkTypeSymbol ReturnType,
     IReadOnlyList<TypedParameterSymbol> Parameters,
     string? SourceName = null,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     string? TemplateName = null,
     IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
     bool IsStatic = false,
     StarkFunctionKind Kind = StarkFunctionKind.Fn,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    StarkFfiAbi? FfiAbi = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
+    IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
+    bool HasBody = true,
+    IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null,
+    StarkVisibility Visibility = StarkVisibility.Module,
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null,
+    bool IsTailCallable = false,
+    SourceLocation? DeclarationLocation = null,
+    string? ExternalLinkName = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
-    public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public IReadOnlyList<ComptimeValueArgumentSymbol> ComptimeValues => ComptimeValueArguments ?? [];
+    public IReadOnlyList<TypeParameterConstraint> Constraints => TypeParameterConstraints ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
+    public bool IsGenericInstantiation => TemplateName is not null
+        && (TypeArguments is { Count: > 0 } || ComptimeValueArguments is { Count: > 0 });
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<string> PointeeDeadOnReturnParameters => PointeeDeadOnReturnParameterNames ?? [];
+    public IReadOnlyList<ThreadSafetyLawPredicateSymbol> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
+    public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
 
 public enum GlobalBindingKind
@@ -2069,7 +2793,9 @@ public enum TypedConstantInitializerKind
     Bool,
     Text,
     Null,
-    FixedArray
+    FixedArray,
+    NamedAggregate,
+    EnumAggregate
 }
 
 public sealed record TypedConstantInitializer(
@@ -2079,6 +2805,7 @@ public sealed record TypedConstantInitializer(
     string? FloatLiteralText = null,
     bool? BoolValue = null,
     string? TextLiteralText = null,
+    string? VariantName = null,
     IReadOnlyList<TypedConstantInitializer>? Elements = null)
 {
     public IReadOnlyList<TypedConstantInitializer> ElementValues => Elements ?? [];
@@ -2226,6 +2953,7 @@ public enum BoundOperationKind
     EnumCall,
     EnumValue,
     DynamicStorageOperation,
+    DynTraitFromParts,
     TextInterpolation,
     TextBuild,
     LayoutQuery,
@@ -2247,6 +2975,23 @@ public enum BoundLayoutQueryKind
 {
     SizeOf,
     AlignOf
+}
+
+internal static class TypeLayoutQueryFacts
+{
+    public static StarkTypeSymbol GetResultType(BoundLayoutQueryKind kind)
+    {
+        return kind == BoundLayoutQueryKind.AlignOf
+            ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+            : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+    }
+
+    public static BigInteger GetResultValue(BoundLayoutQueryKind kind, ConcreteTypeLayout layout)
+    {
+        return kind == BoundLayoutQueryKind.AlignOf
+            ? layout.AlignmentBytes
+            : layout.SizeBytes;
+    }
 }
 
 public abstract record BoundOperation(
@@ -2340,10 +3085,20 @@ public sealed record BoundDynamicStorageOperation(
     string? EnclosingFunctionName = null)
     : BoundOperation(BoundOperationKind.DynamicStorageOperation, ResultType, Location, EnclosingFunctionName);
 
+public sealed record BoundDynTraitFromPartsOperation(
+    string OperationName,
+    StarkTypeSymbol TargetType,
+    StarkTypeSymbol ContextType,
+    StarkTypeSymbol VtableType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DynTraitFromParts, TargetType, Location, EnclosingFunctionName);
+
 public sealed record BoundObjectCreationOperation(
     string ExpressionText,
     StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
+    ObjectCreationStorageSelector StorageSelector,
     IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers,
     SourceLocation Location,
     string? EnclosingFunctionName = null)
@@ -2503,6 +3258,28 @@ public sealed record ConversionTypingRecord(
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
+/// <summary>
+/// One <c>try</c> expression under the role model (doc 11 v2). The type checker
+/// resolves the operand's and the enclosing return type's <c>[Ok]</c>/<c>[Err]</c>
+/// role variants, the success/failure payload types (with generic substitution), and
+/// the <c>from</c> funnel variant used when the failure payload types differ. MIR
+/// lowering reads this back by <see cref="Location"/> to emit the discriminant test,
+/// the success unwrap, and the failure early return — using the recorded variant
+/// names, never hard-coded ones.
+/// </summary>
+public sealed record TryPropagationTypingRecord(
+    SourceLocation Location,
+    StarkTypeSymbol OperandType,
+    string OperandOkVariantName,
+    string OperandErrVariantName,
+    StarkTypeSymbol? SuccessPayloadType,
+    StarkTypeSymbol? OperandFailurePayloadType,
+    StarkTypeSymbol ReturnType,
+    string EnclosingErrVariantName,
+    StarkTypeSymbol? EnclosingFailurePayloadType,
+    string? ConversionFunnelVariant,
+    string? EnclosingFunctionName = null);
+
 public sealed record FieldAccessTypingRecord(
     string FieldName,
     int FieldIndex,
@@ -2536,10 +3313,17 @@ public sealed record ObjectCreationTypingRecord(
     TypedConstructorShape? Constructor,
     SourceLocation Location,
     string? EnclosingFunctionName = null,
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
     IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers = null)
 {
     public IReadOnlyList<ObjectInitializerMemberTypingRecord> Members =>
         InitializerMembers ?? [];
+}
+
+public enum ObjectCreationStorageSelector
+{
+    Default,
+    Arena
 }
 
 public sealed record EnumConstructorTypingRecord(
@@ -2584,11 +3368,22 @@ public sealed record EnumPatternMemberTypingRecord(
 public sealed record AggregatePatternTypingRecord(
     StarkTypeSymbol Type,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<AggregatePatternMemberTypingRecord>? MemberRecords = null)
+{
+    public IReadOnlyList<AggregatePatternMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record AggregatePatternMemberTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
 
 public sealed record FunctionInstantiationTriggerRecord(
     string FunctionName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     TypedFunctionSignature Signature,
     SourceLocation Location);
 
@@ -2605,6 +3400,7 @@ public sealed record DeferredTypeInstantiationTriggerRecord(
 public sealed record TypeInstantiationTriggerRecord(
     string TypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     SourceLocation Location);
 
 public sealed record LoweringContractValidationModel(
@@ -2617,6 +3413,7 @@ public sealed record LoweringContractValidationModel(
     int CheckedLambdaCount,
     int CheckedTypeLayoutExpressionCount,
     int CheckedDynamicStorageOperationCount,
+    int CheckedDynTraitFromPartsCount,
     int CheckedSwitchCount);
 
 public sealed record TypeCheckModel(
@@ -2655,8 +3452,26 @@ public sealed record TypeCheckModel(
     IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
     IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
     IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
-    IReadOnlyList<BoundOperation>? BoundOperationRecords = null)
+    IReadOnlyList<BoundOperation>? BoundOperationRecords = null,
+    IReadOnlyList<TryPropagationTypingRecord>? TryPropagationRecords = null,
+    IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts>? ThreadSafetyLawFactRecords = null,
+    IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>>? ConstructorShapeRecords = null)
 {
+    public IReadOnlyList<TryPropagationTypingRecord> TryPropagations =>
+        TryPropagationRecords ?? [];
+
+    public IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>> ConstructorShapes =>
+        ConstructorShapeRecords ?? EmptyConstructorShapes;
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>> EmptyConstructorShapes { get; } =
+        new Dictionary<string, IReadOnlyList<TypedConstructorShape>>(StringComparer.Ordinal);
+
+    public IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ThreadSafetyLawFacts =>
+        ThreadSafetyLawFactRecords ?? EmptyThreadSafetyLawFacts;
+
+    private static IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> EmptyThreadSafetyLawFacts { get; } =
+        new Dictionary<string, ThreadSafetyLawTypeFacts>(StringComparer.Ordinal);
+
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
         ?? Functions.Values
@@ -2756,6 +3571,8 @@ internal static class TemplateLocalDeclarationFacts
     public const string ConstantKind = "const";
     public const string VariableKind = "var";
     public const string ForVariableKind = "forvar";
+    public const string TraversalIndexKind = "forindex";
+    public const string TraversalElementKind = "forelement";
 
     public static string BuildLookupKey(string kind, int line, int column)
     {
@@ -2797,6 +3614,7 @@ internal static class TemplateFieldAccessFacts
 public sealed record FunctionInstantiationOwnership(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     TypedFunctionSignature Signature,
     string DeclaringModuleName,
     string OwnerModuleName,
@@ -2811,6 +3629,7 @@ public sealed record TypeInstantiationOwnership(
     string TemplateName,
     string InstantiatedTypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -2828,6 +3647,7 @@ public sealed record InstantiationOwnershipModel(
 public sealed record MonomorphizedFunctionPlan(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -2842,6 +3662,7 @@ public sealed record MonomorphizedTypePlan(
     string TemplateName,
     string InstantiatedTypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -2871,6 +3692,7 @@ public enum FunctionSpecializationCodeGenerationMode
 public sealed record FunctionSpecializationPlan(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     string SymbolName,
@@ -2892,6 +3714,7 @@ public enum FunctionSpecializationCodegenStrategyKind
 public sealed record FunctionSpecializationCodegenStrategy(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -2916,7 +3739,14 @@ public enum MonomorphizationCodeSizeHeuristic
 public enum MonomorphizationLinkageKind
 {
     InternalSingleOwner,
-    LinkOnceOdrComdat
+    LinkOnceOdrComdat,
+
+    // A globally-visible, deduplicated definition that the optimizer must NOT
+    // discard even when it has no in-module references (unlike linkonce_odr,
+    // which GlobalDCE/ThinLTO may drop). Used to emit a fallback body for an
+    // imported function whose owning package pruned the symbol, so cross-module
+    // callers still resolve while a real strong definition elsewhere still wins.
+    WeakOdrPreserved
 }
 
 public sealed record EnumLayoutModel(
@@ -2936,7 +3766,25 @@ public sealed record AbiParameterSymbol(
     StarkTypeSymbol SourceType,
     StarkTypeSymbol LlvmType,
     AbiParameterKind Kind,
-    string? RawPointerElementCountExpression = null);
+    string? RawPointerElementCountExpression = null,
+    IReadOnlyList<StarkTypeSymbol>? LlvmParameterTypes = null)
+{
+    public IReadOnlyList<StarkTypeSymbol> EffectiveLlvmParameterTypes =>
+        LlvmParameterTypes is { Count: > 0 }
+            ? LlvmParameterTypes
+            : [LlvmType];
+
+    public bool HasDistinctLlvmParameterCarriers =>
+        Kind == AbiParameterKind.Direct && LlvmParameterTypes is { Count: > 0 };
+
+    public bool IsExpandedDirectParameter =>
+        HasDistinctLlvmParameterCarriers && LlvmParameterTypes!.Count > 1;
+
+    public string GetLlvmValueName(int carrierIndex) =>
+        IsExpandedDirectParameter
+            ? $"{LlvmName}_{carrierIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            : LlvmName;
+}
 
 public sealed record AbiFunctionSignature(
     string Name,
@@ -2947,7 +3795,9 @@ public sealed record AbiFunctionSignature(
     bool IsFfi,
     string? SourceName = null,
     bool UsesFastCallingConvention = false,
-    bool IsVarargs = false)
+    bool IsVarargs = false,
+    StarkFfiAbi? FfiAbi = null,
+    bool UsesTailCallingConvention = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
 
@@ -2957,6 +3807,17 @@ public sealed record AbiFunctionSignature(
 
     public IReadOnlyList<AbiParameterSymbol> UserParameters => Parameters
         .Where(static parameter => parameter.Kind != AbiParameterKind.SRet)
+        .ToArray();
+
+    public IReadOnlyList<AbiParameterSymbol> LlvmParameters => Parameters
+        .SelectMany(static parameter => parameter.HasDistinctLlvmParameterCarriers
+            ? parameter.EffectiveLlvmParameterTypes.Select((carrierType, carrierIndex) => parameter with
+            {
+                LlvmName = parameter.GetLlvmValueName(carrierIndex),
+                LlvmType = carrierType,
+                LlvmParameterTypes = null
+            })
+            : [parameter])
         .ToArray();
 }
 
@@ -2971,6 +3832,10 @@ public enum ParameterCaptureKind
     Escape
 }
 
+public sealed record ParameterInitializationRangeSummary(
+    long StartByte,
+    long EndByte);
+
 public sealed record ParameterMemoryEffectSummary(
     string Name,
     string Type,
@@ -2983,12 +3848,106 @@ public sealed record ParameterMemoryEffectSummary(
     int? AlignmentBytes,
     bool Reads,
     bool Writes,
-    ParameterCaptureKind CaptureKind);
+    ParameterCaptureKind CaptureKind,
+    IReadOnlyList<ParameterInitializationRangeSummary>? InitializationRanges = null,
+    bool PointeeDeadOnReturn = false);
 
-public sealed record ConcreteTypeLayout(int SizeBytes, int AlignmentBytes);
+public sealed record ConcreteFieldLayout(
+    string Name,
+    int OffsetBytes,
+    int SizeBytes,
+    int NaturalAlignmentBytes,
+    int EffectiveAlignmentBytes,
+    bool IsMisaligned);
+
+public sealed record ConcreteTypeLayout(
+    int SizeBytes,
+    int AlignmentBytes,
+    IReadOnlyList<ConcreteFieldLayout>? FieldLayouts = null)
+{
+    public IReadOnlyList<ConcreteFieldLayout> Fields => FieldLayouts ?? [];
+
+    public bool TryGetField(string name, out ConcreteFieldLayout fieldLayout)
+    {
+        foreach (var field in Fields)
+        {
+            if (string.Equals(field.Name, name, StringComparison.Ordinal))
+            {
+                fieldLayout = field;
+                return true;
+            }
+        }
+
+        fieldLayout = null!;
+        return false;
+    }
+}
 
 internal static class ConcreteTypeLayoutHelper
 {
+    public static NamedTypeSymbol? TryGetConcreteNamedTypeSymbol(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        var concreteType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+        if (concreteType.Kind != StarkTypeKind.Named
+            || concreteType.NamedType is not { } concreteName)
+        {
+            return null;
+        }
+
+        if (namedTypes.TryGetValue(concreteName, out var exactType)
+            && !ShouldUseGenericTemplateFallback(concreteType, exactType, namedTypes))
+        {
+            return exactType;
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType))
+        {
+            return null;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        if (!namedTypes.TryGetValue(baseName, out var template)
+            || !TryBuildGenericLayoutSubstitutions(
+                template,
+                concreteType.TypeArguments ?? [],
+                concreteType.ComptimeValueArguments ?? [],
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return null;
+        }
+
+        return SubstituteNamedTypeForLayout(concreteName, template, typeSubstitution, valueSubstitution);
+    }
+
+    private static bool ShouldUseGenericTemplateFallback(
+        StarkTypeSymbol concreteType,
+        NamedTypeSymbol exactType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType)
+            || concreteType.NamedType is not { } concreteName
+            || exactType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+            || exactType.OrderedFields.Count != 0)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        return namedTypes.TryGetValue(baseName, out var template)
+            && !ReferenceEquals(template, exactType)
+            && template.Kind == exactType.Kind
+            && template.OrderedFields.Count > 0;
+    }
+
     public static ConcreteTypeLayout? TryGetConcreteTypeLayout(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
@@ -3023,6 +3982,11 @@ internal static class ConcreteTypeLayoutHelper
         IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return TryGetPointerLayout();
+        }
+
         var concreteType = type with
         {
             BorrowKind = StarkBorrowKind.None,
@@ -3030,13 +3994,6 @@ internal static class ConcreteTypeLayoutHelper
             InitializationKind = StarkInitializationKind.None,
             IsMutableView = false
         };
-
-        if (concreteType.Kind == StarkTypeKind.Named
-            && concreteType.NamedType is not null
-            && concreteType.TypeArguments is { Count: > 0 })
-        {
-            concreteType = concreteType with { TypeArguments = null };
-        }
 
         return concreteType.Kind switch
         {
@@ -3055,22 +4012,176 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetDynamicStorageLayout(),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
                 TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && concreteType.TypeArguments is not { Count: > 0 }
-                                     && publishedConcreteLayouts is not null
-                                     && publishedConcreteLayouts.TryGetValue(concreteType.NamedType, out var publishedLayout) =>
-                publishedLayout,
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && namedTypes.TryGetValue(concreteType.NamedType, out var namedType)
-                                     && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record =>
-                TryGetNamedTypeLayout(namedType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && namedTypes.TryGetValue(concreteType.NamedType, out var enumType)
-                                     && enumType.Kind == DeclarationKind.Enum
-                                     && enumLayouts is not null
-                                     && enumLayouts.TryGetValue(concreteType.NamedType, out var enumLayout) =>
-                TryGetEnumTypeLayout(enumLayout, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+            StarkTypeKind.Named when concreteType.NamedType is not null =>
+                TryGetConcreteNamedTypeLayout(concreteType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             _ => null
+        };
+    }
+
+    private static ConcreteTypeLayout? TryGetConcreteNamedTypeLayout(
+        StarkTypeSymbol concreteType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var concreteName = concreteType.NamedType!;
+        if (publishedConcreteLayouts is not null
+            && publishedConcreteLayouts.TryGetValue(concreteName, out var publishedLayout))
+        {
+            return publishedLayout;
+        }
+
+        if (namedTypes.TryGetValue(concreteName, out var exactType))
+        {
+            return exactType.Kind switch
+            {
+                DeclarationKind.Struct or DeclarationKind.Record =>
+                    TryGetNamedTypeLayout(exactType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+                DeclarationKind.Enum when enumLayouts is not null
+                                          && enumLayouts.TryGetValue(concreteName, out var exactEnumLayout) =>
+                    TryGetEnumTypeLayout(exactEnumLayout, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+                _ => null
+            };
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType))
+        {
+            return null;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        if (!namedTypes.TryGetValue(baseName, out var template))
+        {
+            return null;
+        }
+
+        if (!TryBuildGenericLayoutSubstitutions(
+                template,
+                concreteType.TypeArguments ?? [],
+                concreteType.ComptimeValueArguments ?? [],
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return null;
+        }
+
+        return template.Kind switch
+        {
+            DeclarationKind.Struct or DeclarationKind.Record =>
+                TryGetNamedTypeLayout(
+                    SubstituteNamedTypeForLayout(concreteName, template, typeSubstitution, valueSubstitution),
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes),
+            DeclarationKind.Enum when enumLayouts is not null
+                                      && enumLayouts.TryGetValue(baseName, out var templateEnumLayout) =>
+                TryGetEnumTypeLayout(
+                    SubstituteEnumLayoutForLayout(concreteName, templateEnumLayout, typeSubstitution, valueSubstitution),
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes),
+            _ => null
+        };
+    }
+
+    private static bool TryBuildGenericLayoutSubstitutions(
+        NamedTypeSymbol template,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol> valueArguments,
+        out IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        out IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        typeSubstitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        valueSubstitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+
+        if (template.GenericParams.Count != typeArguments.Count
+            || template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            return false;
+        }
+
+        var types = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < template.GenericParams.Count; index++)
+        {
+            types[template.GenericParams[index]] = typeArguments[index];
+        }
+
+        var values = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var argument = valueArguments[index];
+            if (argument.IsSymbolic)
+            {
+                return false;
+            }
+
+            values[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
+        }
+
+        typeSubstitution = types;
+        valueSubstitution = values;
+        return true;
+    }
+
+    private static NamedTypeSymbol SubstituteNamedTypeForLayout(
+        string concreteName,
+        NamedTypeSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        var orderedFields = template.OrderedFields
+            .Select(field => SubstituteFieldForLayout(field, typeSubstitution, valueSubstitution))
+            .ToArray();
+        var fields = orderedFields.ToDictionary(static field => field.Name, StringComparer.Ordinal);
+        return template with
+        {
+            Name = concreteName,
+            Fields = fields,
+            OrderedFields = orderedFields,
+            GenericParameterNames = null,
+            ComptimeGenericParameterNames = null
+        };
+    }
+
+    private static EnumLayoutSymbol SubstituteEnumLayoutForLayout(
+        string concreteName,
+        EnumLayoutSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        return template with
+        {
+            EnumName = concreteName,
+            TagField = SubstituteFieldForLayout(template.TagField, typeSubstitution, valueSubstitution),
+            OrderedFields = template.OrderedFields
+                .Select(field => SubstituteFieldForLayout(field, typeSubstitution, valueSubstitution))
+                .ToArray(),
+            Variants = template.Variants.ToDictionary(
+                static item => item.Key,
+                item => item.Value with
+                {
+                    Fields = item.Value.Fields
+                        .Select(field => field with
+                        {
+                            Type = FunctionOverloadFacts.SubstituteType(field.Type, typeSubstitution, comptimeValueSubstitution: valueSubstitution)
+                        })
+                        .ToArray()
+                },
+                StringComparer.Ordinal)
+        };
+    }
+
+    private static FieldSymbol SubstituteFieldForLayout(
+        FieldSymbol field,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        return field with
+        {
+            Type = FunctionOverloadFacts.SubstituteType(field.Type, typeSubstitution, comptimeValueSubstitution: valueSubstitution)
         };
     }
 
@@ -3118,29 +4229,9 @@ internal static class ConcreteTypeLayoutHelper
 
         try
         {
-            var sizeBytes = 0;
-            var alignmentBytes = 1;
-
-            foreach (var field in type.OrderedFields)
-            {
-                var fieldLayout = TryGetConcreteTypeLayout(
-                    field.Type,
-                    namedTypes,
-                    enumLayouts,
-                    publishedConcreteLayouts,
-                    activeNamedTypes);
-                if (fieldLayout is null)
-                {
-                    return null;
-                }
-
-                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
-                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
-                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
-            }
-
-            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
-            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+            return type.Layout?.Kind == StructLayoutKind.Explicit
+                ? TryGetExplicitNamedTypeLayout(type, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes)
+                : TryGetSequentialNamedTypeLayout(type, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes);
         }
         catch (OverflowException)
         {
@@ -3150,6 +4241,109 @@ internal static class ConcreteTypeLayoutHelper
         {
             activeNamedTypes.Remove(type.Name);
         }
+    }
+
+    private static ConcreteTypeLayout? TryGetSequentialNamedTypeLayout(
+        NamedTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var sizeBytes = 0;
+        var alignmentBytes = 1;
+        var packBytes = type.Layout?.Kind == StructLayoutKind.C ? type.Layout.PackBytes : null;
+        var fieldLayouts = new List<ConcreteFieldLayout>(type.OrderedFields.Count);
+
+        foreach (var field in type.OrderedFields)
+        {
+            var fieldLayout = TryGetConcreteTypeLayout(
+                field.Type,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                activeNamedTypes);
+            if (fieldLayout is null)
+            {
+                return null;
+            }
+
+            var naturalAlignmentBytes = fieldLayout.AlignmentBytes;
+            var effectiveAlignmentBytes = packBytes is { } pack
+                ? Math.Min(naturalAlignmentBytes, pack)
+                : naturalAlignmentBytes;
+            var fieldOffsetBytes = AlignTo(sizeBytes, effectiveAlignmentBytes);
+            fieldLayouts.Add(new ConcreteFieldLayout(
+                field.Name,
+                fieldOffsetBytes,
+                fieldLayout.SizeBytes,
+                naturalAlignmentBytes,
+                effectiveAlignmentBytes,
+                fieldOffsetBytes % naturalAlignmentBytes != 0));
+
+            sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
+            alignmentBytes = Math.Max(alignmentBytes, effectiveAlignmentBytes);
+        }
+
+        if (type.Layout?.AlignBytes is { } explicitAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
+    }
+
+    private static ConcreteTypeLayout? TryGetExplicitNamedTypeLayout(
+        NamedTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var sizeBytes = 0;
+        var alignmentBytes = 1;
+        var fieldLayouts = new List<ConcreteFieldLayout>(type.OrderedFields.Count);
+
+        foreach (var field in type.OrderedFields)
+        {
+            if (field.ExplicitOffsetBytes is not { } fieldOffsetBytes)
+            {
+                return null;
+            }
+
+            var fieldLayout = TryGetConcreteTypeLayout(
+                field.Type,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                activeNamedTypes);
+            if (fieldLayout is null)
+            {
+                return null;
+            }
+
+            fieldLayouts.Add(new ConcreteFieldLayout(
+                field.Name,
+                fieldOffsetBytes,
+                fieldLayout.SizeBytes,
+                fieldLayout.AlignmentBytes,
+                fieldOffsetBytes % fieldLayout.AlignmentBytes == 0
+                    ? fieldLayout.AlignmentBytes
+                    : GreatestPowerOfTwoDivisor(fieldOffsetBytes),
+                fieldOffsetBytes % fieldLayout.AlignmentBytes != 0));
+
+            sizeBytes = Math.Max(sizeBytes, checked(fieldOffsetBytes + fieldLayout.SizeBytes));
+            alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+        }
+
+        if (type.Layout?.AlignBytes is { } explicitAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
     }
 
     private static ConcreteTypeLayout? TryGetEnumTypeLayout(
@@ -3168,6 +4362,7 @@ internal static class ConcreteTypeLayoutHelper
         {
             var sizeBytes = 0;
             var alignmentBytes = 1;
+            var fieldLayouts = new List<ConcreteFieldLayout>(layout.OrderedFields.Count);
 
             foreach (var field in layout.OrderedFields)
             {
@@ -3182,13 +4377,20 @@ internal static class ConcreteTypeLayoutHelper
                     return null;
                 }
 
-                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
-                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
+                var fieldOffsetBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                fieldLayouts.Add(new ConcreteFieldLayout(
+                    field.Name,
+                    fieldOffsetBytes,
+                    fieldLayout.SizeBytes,
+                    fieldLayout.AlignmentBytes,
+                    fieldLayout.AlignmentBytes,
+                    IsMisaligned: false));
+                sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
                 alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
             }
 
             sizeBytes = AlignTo(sizeBytes, alignmentBytes);
-            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
         }
         catch (OverflowException)
         {
@@ -3276,6 +4478,16 @@ internal static class ConcreteTypeLayoutHelper
 
         return checked(value + (alignment - remainder));
     }
+
+    private static int GreatestPowerOfTwoDivisor(int value)
+    {
+        if (value == 0)
+        {
+            return 1;
+        }
+
+        return value & -value;
+    }
 }
 
 public sealed record FunctionMemoryEffectSummary(
@@ -3283,11 +4495,13 @@ public sealed record FunctionMemoryEffectSummary(
     bool WritesArgumentMemory,
     bool CapturesArgumentMemory,
     bool ReadsOtherMemory = false,
-    bool WritesOtherMemory = false)
+    bool WritesOtherMemory = false,
+    bool InitializesArgumentMemory = false,
+    bool HasPointeeDeadOnReturnArgument = false)
 {
     public bool ReadsMemory => ReadsArgumentMemory || ReadsOtherMemory;
 
-    public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory;
+    public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory || InitializesArgumentMemory;
 }
 
 public sealed record CallArgumentMemoryEffectSummary(
@@ -3357,7 +4571,9 @@ public sealed record FunctionValidationSummary(
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? Calls = null,
-    FunctionOptimizationSummary? OptimizationSummary = null)
+    FunctionOptimizationSummary? OptimizationSummary = null,
+    bool HasBody = false,
+    bool HasOpaqueCall = false)
 {
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }
@@ -3371,7 +4587,8 @@ public sealed record ImportedFunctionSemanticSummary(
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? CallSummaries = null,
     FunctionOptimizationSummary? OptimizationSummary = null,
-    FunctionOwnershipSummary? OwnershipSummary = null)
+    FunctionOwnershipSummary? OwnershipSummary = null,
+    bool HasOpaqueCall = true)
 {
     public IReadOnlyList<CallMemoryEffectSummary> Calls => CallSummaries ?? [];
 
@@ -3477,7 +4694,8 @@ public sealed record HighLevelIrFunction(
     FunctionBodyLoweringKind BodyLoweringKind,
     FunctionEffectProfile Effects,
     string? BodyTemplateName = null,
-    IReadOnlyDictionary<string, StarkTypeSymbol>? GenericTypeSubstitution = null);
+    IReadOnlyDictionary<string, StarkTypeSymbol>? GenericTypeSubstitution = null,
+    IReadOnlyDictionary<string, BigInteger>? GenericValueSubstitution = null);
 
 public sealed record HighLevelIrModule(
     string ModuleName,
@@ -3492,6 +4710,8 @@ public enum MidLevelIrStatementKind
 {
     StorageLive,
     StorageDead,
+    ArenaFrameEnter,
+    ArenaFrameLeave,
     Assign,
     StoreIndirect,
     Evaluate
@@ -3541,7 +4761,11 @@ public enum IndexedElementOperationFamily
 {
     FixedArrayElement,
     ViewComponent,
-    ClosureComponent
+    ClosureComponent,
+    // Components of a `dyn Trait` fat pointer: slot 0 is the erased data pointer
+    // (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
+    DynTraitComponent
 }
 
 public enum MidLevelIrTerminatorKind
@@ -3550,6 +4774,7 @@ public enum MidLevelIrTerminatorKind
     Branch,
     Switch,
     Return,
+    TailCall,
     Unreachable
 }
 
@@ -3722,6 +4947,17 @@ public sealed record MidLevelIrConvertRValue(
     string Text)
     : MidLevelIrRValue(TargetType, Text);
 
+// Loads a method slot from a `dyn Trait` vtable: the function pointer at slot
+// `SlotIndex` reached via `getelementptr ptr, ptr <vtable>, i32 SlotIndex`. The
+// result type is the slot's `fnptr<kind ...>` so an indirect call through it
+// preserves the trait method's effect contract (law/finite call-site attributes).
+public sealed record MidLevelIrDynVTableSlotRValue(
+    MidLevelIrOperand VtablePointer,
+    int SlotIndex,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
 public sealed record MidLevelIrExtractFieldRValue(
     MidLevelIrOperand Target,
     string FieldName,
@@ -3828,6 +5064,7 @@ internal static class MidLevelIrArtifactValidation
             IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.DynTraitComponent => MidLevelIrArtifactValidation.GetDynTraitIndexElementType(targetType, elementIndex, text, artifactName),
             _ => throw new ArgumentException(
                 $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
                 nameof(operationFamily))
@@ -3929,6 +5166,33 @@ internal static class MidLevelIrArtifactValidation
         return expectedType == actualType
             || expectedType.Kind == actualType.Kind
             && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+
+    // The component types of a `dyn Trait` fat pointer: slot 0 is the erased data
+    // pointer (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
+    // Shared by MIR and SSA index validation so both agree on the fat-pointer layout.
+    internal static StarkTypeSymbol GetDynTraitIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.DynTrait)
+        {
+            throw new ArgumentException(
+                $"{artifactName} dyn-trait index operation '{text}' requires a dyn-trait target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        return elementIndex switch
+        {
+            0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            1 => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(targetType),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} dyn-trait index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).")
+        };
     }
 
     public static StarkTypeSymbol ValidateObjectConstruction(
@@ -4117,6 +5381,7 @@ public sealed record MidLevelIrMakeSliceFromPointerRValue(
 public sealed record MidLevelIrDynamicStorageAllocationRValue(
     MidLevelIrOperand Capacity,
     StarkTypeSymbol Type,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(Type, Text);
 
@@ -4134,6 +5399,7 @@ public sealed record MidLevelIrDynamicStorageReserveRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
 
@@ -4141,6 +5407,7 @@ public sealed record MidLevelIrDynamicStorageTryReserveRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
 
@@ -4148,6 +5415,7 @@ public sealed record MidLevelIrDynamicStorageTryReserveCapacityRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand TargetCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
 
@@ -4226,9 +5494,22 @@ public sealed record MidLevelIrLoadIndirectRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public enum AliasProofCarrierKind
+{
+    RuntimeDisjointCondition,
+    UnsafeAssumeDisjoint
+}
+
+public sealed record AliasProofCarrier(
+    AliasProofCarrierKind Kind,
+    string ProofId,
+    IReadOnlyList<string> RootKeys,
+    SourceLocation? Location = null);
+
 public sealed record ScopedNoAliasGroup(
     string ScopeId,
-    IReadOnlyList<string> RootKeys);
+    IReadOnlyList<string> RootKeys,
+    AliasProofCarrier ProofCarrier);
 
 public sealed record MidLevelIrStatement(
     MidLevelIrStatementKind Kind,
@@ -4256,6 +5537,7 @@ public sealed record MidLevelIrTerminator(
     string? ValueText = null,
     MidLevelIrOperand? Condition = null,
     MidLevelIrOperand? Value = null,
+    MidLevelIrCallStatementOperation? TailCall = null,
     IReadOnlyList<MidLevelIrSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
@@ -4536,6 +5818,7 @@ internal static class SsaArtifactValidation
             IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.DynTraitComponent => MidLevelIrArtifactValidation.GetDynTraitIndexElementType(targetType, elementIndex, text, artifactName),
             _ => throw new ArgumentException(
                 $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
                 nameof(operationFamily))
@@ -4680,6 +5963,16 @@ public sealed record SsaInsertIndexRValue(
     string Text)
     : SsaRValue(SsaArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
 
+// Loads a method slot from a `dyn Trait` vtable (see MidLevelIrDynVTableSlotRValue).
+// The result is the slot's `fnptr<kind ...>`; the devirtualizer can recover a
+// direct call when the vtable traces back to a known concrete table.
+public sealed record SsaDynVTableSlotRValue(
+    SsaValue VtablePointer,
+    int SlotIndex,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
 public sealed record SsaMakeSliceFromLocalRValue(
     string LocalName,
     StarkTypeSymbol SourceType,
@@ -4697,6 +5990,7 @@ public sealed record SsaMakeSliceFromPointerRValue(
 public sealed record SsaDynamicStorageAllocationRValue(
     SsaValue Capacity,
     StarkTypeSymbol Type,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(Type, Text);
 
@@ -4714,6 +6008,7 @@ public sealed record SsaDynamicStorageReserveRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Void, Text);
 
@@ -4721,6 +6016,7 @@ public sealed record SsaDynamicStorageTryReserveRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Bool, Text);
 
@@ -4728,6 +6024,7 @@ public sealed record SsaDynamicStorageTryReserveCapacityRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue TargetCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Bool, Text);
 
@@ -4900,6 +6197,12 @@ public sealed record SsaDeallocateLocalInstruction(
     SourceLocation? Location = null)
     : SsaInstruction;
 
+public sealed record SsaArenaFrameEnterInstruction(SourceLocation? Location = null)
+    : SsaInstruction;
+
+public sealed record SsaArenaFrameLeaveInstruction(SourceLocation? Location = null)
+    : SsaInstruction;
+
 public sealed record SsaStoreLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
@@ -4948,6 +6251,7 @@ public enum SsaTerminatorKind
     Branch,
     Switch,
     Return,
+    TailCall,
     Unreachable
 }
 
@@ -4956,6 +6260,8 @@ public sealed record SsaTerminator(
     IReadOnlyList<int> Targets,
     SsaValue? Condition = null,
     SsaValue? Value = null,
+    ISsaDirectCallOperation? TailDirectCall = null,
+    ISsaIndirectCallOperation? TailIndirectCall = null,
     IReadOnlyList<SsaSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
@@ -5034,13 +6340,21 @@ public enum SsaDynamicStorageBackingAllocationKind
 {
     Unknown,
     None,
-    RuntimeAllocation
+    RuntimeAllocation,
+    ArenaAllocation
 }
 
 public enum SsaDynamicStorageAllocatorProvenanceKind
 {
     Unknown,
-    RuntimeDefault
+    RuntimeDefault,
+    ArenaFrame
+}
+
+public enum DynamicStorageAllocationKind
+{
+    Runtime,
+    Arena
 }
 
 public sealed record SsaDynamicStorageRegionFact(

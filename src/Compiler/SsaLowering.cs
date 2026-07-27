@@ -4,6 +4,7 @@ internal sealed class SsaLowerer
 {
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
+    private readonly CopyabilityFacts? _copyability;
 
     public SsaLowerer()
         : this(typeModel: null)
@@ -18,9 +19,21 @@ internal sealed class SsaLowerer
         _globals = typeModel is null
             ? new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal)
             : new Dictionary<string, TypedGlobalSymbol>(typeModel.Globals, StringComparer.Ordinal);
+        _copyability = typeModel is null ? null : new CopyabilityFacts(typeModel.NamedTypes);
     }
 
     public SsaIrModule Lower(MidLevelIrModule mir)
+    {
+        SeedFunctionSignatures(mir);
+
+        var functions = mir.Functions
+            .Select(LowerFunction)
+            .ToArray();
+
+        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
+    }
+
+    public void SeedFunctionSignatures(MidLevelIrModule mir)
     {
         foreach (var function in mir.Functions)
         {
@@ -32,15 +45,9 @@ internal sealed class SsaLowerer
                     function.Parameters,
                     SourceName: function.Name));
         }
-
-        var functions = mir.Functions
-            .Select(LowerFunction)
-            .ToArray();
-
-        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
     }
 
-    private SsaFunction LowerFunction(MidLevelIrFunction function)
+    public SsaFunction LowerFunction(MidLevelIrFunction function)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -59,7 +66,7 @@ internal sealed class SsaLowerer
                 function.Ownership);
         }
 
-        var builder = new FunctionSsaBuilder(function, _signatures, _globals);
+        var builder = new FunctionSsaBuilder(function, _signatures, _globals, _copyability);
         return builder.Lower();
     }
 
@@ -68,6 +75,7 @@ internal sealed class SsaLowerer
         private readonly MidLevelIrFunction _function;
         private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
         private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
+        private readonly CopyabilityFacts? _copyability;
         private readonly Dictionary<int, MidLevelIrBasicBlock> _sourceBlocks;
         private readonly IReadOnlyList<int> _reachableOrder;
         private readonly Dictionary<int, List<int>> _predecessors;
@@ -93,11 +101,13 @@ internal sealed class SsaLowerer
         public FunctionSsaBuilder(
             MidLevelIrFunction function,
             IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
-            IReadOnlyDictionary<string, TypedGlobalSymbol> globals)
+            IReadOnlyDictionary<string, TypedGlobalSymbol> globals,
+            CopyabilityFacts? copyability)
         {
             _function = function;
             _signatures = signatures;
             _globals = globals;
+            _copyability = copyability;
             _sourceBlocks = function.Blocks.ToDictionary(static block => block.Id);
             _successors = BuildSuccessors(function.Blocks);
             _reachableOrder = ComputeReachableOrder(function.EntryBlockId, function.Blocks, _successors);
@@ -254,6 +264,12 @@ internal sealed class SsaLowerer
                     }
 
                     return;
+                case MidLevelIrStatementKind.ArenaFrameEnter:
+                    block.Instructions.Add(new SsaArenaFrameEnterInstruction(statement.Location ?? _function.Location));
+                    return;
+                case MidLevelIrStatementKind.ArenaFrameLeave:
+                    block.Instructions.Add(new SsaArenaFrameLeaveInstruction(statement.Location ?? _function.Location));
+                    return;
                 case MidLevelIrStatementKind.Assign:
                     if (statement.TargetName is null || statement.TargetType is null || statement.Value is null)
                     {
@@ -384,6 +400,7 @@ internal sealed class SsaLowerer
                     terminator.Targets,
                     Value: terminator.Value is null ? null : LowerOperand(blockId, block, terminator.Value),
                     Location: terminator.Location ?? _function.Location),
+                MidLevelIrTerminatorKind.TailCall => LowerTailCallTerminator(blockId, block, terminator),
                 MidLevelIrTerminatorKind.Unreachable => new SsaTerminator(SsaTerminatorKind.Unreachable, terminator.Targets, Location: terminator.Location ?? _function.Location),
                 MidLevelIrTerminatorKind.Switch => new SsaTerminator(
                     SsaTerminatorKind.Switch,
@@ -403,6 +420,49 @@ internal sealed class SsaLowerer
                     LoopContracts: terminator.LoopContracts,
                     LoopAccessGroups: terminator.LoopAccessGroups),
                 _ => throw new InvalidOperationException($"Unsupported MIR terminator kind '{terminator.Kind}'.")
+            };
+        }
+
+        private SsaTerminator LowerTailCallTerminator(
+            int blockId,
+            SsaBlockBuilder block,
+            MidLevelIrTerminator terminator)
+        {
+            return terminator.TailCall switch
+            {
+                MidLevelIrDirectCallStatementOperation directCall => new SsaTerminator(
+                    SsaTerminatorKind.TailCall,
+                    terminator.Targets,
+                    TailDirectCall: new SsaCallInstruction(
+                        directCall.FunctionName,
+                        directCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        directCall.ReturnType,
+                        directCall.Text,
+                        directCall.IndirectArgumentLocalNames,
+                        directCall.SourceReturnType,
+                        directCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray(),
+                        Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location),
+                MidLevelIrIndirectCallStatementOperation indirectCall => new SsaTerminator(
+                    SsaTerminatorKind.TailCall,
+                    terminator.Targets,
+                    TailIndirectCall: new SsaIndirectCallInstruction(
+                        LowerOperand(blockId, block, indirectCall.Target),
+                        indirectCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        indirectCall.ReturnType,
+                        indirectCall.Text,
+                        indirectCall.SourceReturnType,
+                        indirectCall.IndirectArgumentLocalNames,
+                        indirectCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray(),
+                        indirectCall.MayFree,
+                        Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location),
+                null => throw new InvalidOperationException("MIR tail-call terminator is missing its call operation."),
+                _ => throw new InvalidOperationException($"Unsupported MIR tail-call operation '{terminator.TailCall.GetType().Name}'.")
             };
         }
 
@@ -451,6 +511,11 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, insertIndex.Value),
                     insertIndex.Type,
                     insertIndex.Text)),
+                MidLevelIrDynVTableSlotRValue vtableSlot => EmitValue(block, new SsaDynVTableSlotRValue(
+                    LowerOperand(blockId, block, vtableSlot.VtablePointer),
+                    vtableSlot.SlotIndex,
+                    vtableSlot.Type,
+                    vtableSlot.Text)),
                 MidLevelIrMakeSliceFromLocalRValue makeSlice => EmitValue(block, new SsaMakeSliceFromLocalRValue(
                     makeSlice.LocalName,
                     makeSlice.SourceType,
@@ -464,6 +529,7 @@ internal sealed class SsaLowerer
                 MidLevelIrDynamicStorageAllocationRValue allocation => EmitValue(block, new SsaDynamicStorageAllocationRValue(
                     LowerOperand(blockId, block, allocation.Capacity),
                     allocation.Type,
+                    allocation.AllocationKind,
                     allocation.Text)),
                 MidLevelIrDynamicStorageFreeRValue free => EmitValue(block, new SsaDynamicStorageFreeRValue(
                     LowerOperand(blockId, block, free.Storage),
@@ -475,16 +541,19 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageTryReserveRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveRValue(
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageTryReserveCapacityRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveCapacityRValue(
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.TargetCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageMoveLastRValue moveLast => EmitValue(block, new SsaDynamicStorageMoveLastRValue(
                     LowerOperand(blockId, block, moveLast.StorageAddress),
@@ -805,7 +874,7 @@ internal sealed class SsaLowerer
             return type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
         }
 
-        private static bool IsMoveOnly(StarkTypeSymbol type)
+        private bool IsMoveOnly(StarkTypeSymbol type)
         {
             if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
             {
@@ -815,6 +884,11 @@ internal sealed class SsaLowerer
             if (type.BorrowKind != StarkBorrowKind.None)
             {
                 return type.IsMutableView;
+            }
+
+            if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && _copyability?.IsCopyable(type) == true)
+            {
+                return false;
             }
 
             return type.Kind switch
@@ -830,12 +904,12 @@ internal sealed class SsaLowerer
             };
         }
 
-        private static bool ConsumesAssignmentSource(StarkTypeSymbol targetType)
+        private bool ConsumesAssignmentSource(StarkTypeSymbol targetType)
         {
             return IsMoveOnly(targetType);
         }
 
-        private static bool ConsumesCallArgument(StarkTypeSymbol parameterType)
+        private bool ConsumesCallArgument(StarkTypeSymbol parameterType)
         {
             return parameterType.BorrowKind == StarkBorrowKind.None
                 && parameterType.Kind != StarkTypeKind.RawPointer
@@ -1630,6 +1704,8 @@ internal sealed class SsaLowerer
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
                 SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal,
+                SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter,
+                SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave,
                 SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                     storeLocal.LocalName,
                     storeLocal.LocalType,
@@ -1739,6 +1815,7 @@ internal sealed class SsaLowerer
                 SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                     RewriteValue(allocation.Capacity, replacements),
                     allocation.Type,
+                    allocation.AllocationKind,
                     allocation.Text),
                 SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                     RewriteValue(free.Storage, replacements),
@@ -1750,16 +1827,19 @@ internal sealed class SsaLowerer
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.TargetCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                     RewriteValue(moveLast.StorageAddress, replacements),
@@ -1826,6 +1906,8 @@ internal sealed class SsaLowerer
                 terminator.Targets.Select(resolveTarget).ToArray(),
                 Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
                 Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
+                TailDirectCall: RewriteTailDirectCall(terminator.TailDirectCall, replacements),
+                TailIndirectCall: RewriteTailIndirectCall(terminator.TailIndirectCall, replacements),
                 SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
                     switchCase.Label,
                     resolveTarget(switchCase.TargetBlockId),
@@ -1838,6 +1920,69 @@ internal sealed class SsaLowerer
                 LoopBehavior: terminator.LoopBehavior,
                 LoopContracts: terminator.LoopContracts,
                 LoopAccessGroups: terminator.LoopAccessGroups);
+        }
+
+        private static ISsaDirectCallOperation? RewriteTailDirectCall(
+            ISsaDirectCallOperation? call,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            if (call is null)
+            {
+                return null;
+            }
+
+            var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+            var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray();
+
+            return call switch
+            {
+                SsaCallInstruction instruction => instruction with
+                {
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                SsaCallRValue rValue => rValue with
+                {
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                _ => call
+            };
+        }
+
+        private static ISsaIndirectCallOperation? RewriteTailIndirectCall(
+            ISsaIndirectCallOperation? call,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            if (call is null)
+            {
+                return null;
+            }
+
+            var target = RewriteValue(call.Target, replacements);
+            var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+            var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray();
+
+            return call switch
+            {
+                SsaIndirectCallInstruction instruction => instruction with
+                {
+                    Target = target,
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                SsaIndirectCallRValue rValue => rValue with
+                {
+                    Target = target,
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                _ => call
+            };
         }
     }
 }

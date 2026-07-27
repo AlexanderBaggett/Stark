@@ -449,7 +449,8 @@ internal sealed class SsaDirectCallInliner
             || candidate.Function.Parameters.Count != call.Arguments.Count
             || (!candidate.CanInlineByDefault
                 && (!candidate.CanInlineWithConstantArguments || !HasConstantSpecializationArgument(call)))
-            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters))
+            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters)
+            || HasShapeErasedPointerArgument(candidate, call))
         {
             return false;
         }
@@ -557,7 +558,8 @@ internal sealed class SsaDirectCallInliner
             || candidate.Function.Parameters.Count != call.Arguments.Count
             || (!candidate.CanInlineByDefault
                 && (!candidate.CanInlineWithConstantArguments || !HasConstantSpecializationArgument(call)))
-            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters))
+            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters)
+            || HasShapeErasedPointerArgument(candidate, call))
         {
             return false;
         }
@@ -757,6 +759,19 @@ internal sealed class SsaDirectCallInliner
                 {
                     parameterAddressReplacements[parameter.Name] = argumentReferenceAddress;
                 }
+                else if (TryCreatePointerBackedBorrowAddressReplacement(
+                             candidate,
+                             argument,
+                             parameter.Type,
+                             $"arg_{parameter.Name}_value_inl{inlineSiteIndex}",
+                             $"arg_{parameter.Name}_addr_inl{inlineSiteIndex}",
+                             usedValueNames,
+                             prologueInstructions,
+                             callLocation,
+                             out var borrowedArgumentAddress))
+                {
+                    parameterAddressReplacements[parameter.Name] = borrowedArgumentAddress;
+                }
                 else if (parameter.Type.Kind == StarkTypeKind.Closure
                          && CanReplaceParameterAddressLoadsWithValue(candidate, parameter.Name))
                 {
@@ -819,10 +834,25 @@ internal sealed class SsaDirectCallInliner
 
     private static bool IsParameterAddressTaken(InlineCandidate candidate, string parameterName)
     {
-        return candidate.Instructions
-            .OfType<SsaValueInstruction>()
+        return EnumerateCandidateValueInstructions(candidate)
             .Any(instruction => instruction.Value is SsaAddressOfParameterRValue addressOfParameter
                 && string.Equals(addressOfParameter.ParameterName, parameterName, StringComparison.Ordinal));
+    }
+
+    // An inline candidate carries its body in `Blocks`; the flat `Instructions`
+    // list is only populated for single-block candidates. Scan the full block set
+    // so address-of-parameter detection -- which gates spilling a by-value
+    // argument into an addressable slot and remapping the callee's
+    // `&parameter` to it -- is not blind to multi-block bodies. Without this, a
+    // generic predicate with a loop that borrows a by-value `where Copyable(T)`
+    // parameter (e.g. `System.Testing.ContainsElement`) inlines its `&expected`
+    // node into the caller unremapped, which validate-ssa rejects with STK5002
+    // "address-of references unknown parameter".
+    private static IEnumerable<SsaValueInstruction> EnumerateCandidateValueInstructions(InlineCandidate candidate)
+    {
+        return candidate.Function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>();
     }
 
     private static bool TryCreateArgumentReferenceAddressReplacement(
@@ -847,6 +877,12 @@ internal sealed class SsaDirectCallInliner
         var callerParameter = caller.Parameters.FirstOrDefault(parameter =>
             string.Equals(parameter.Name, parameterName, StringComparison.Ordinal));
         if (callerParameter is null)
+        {
+            return false;
+        }
+
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(parameterType)
+            && StarkTypeSymbols.IsPointerBackedBorrowType(callerParameter.Type))
         {
             return false;
         }
@@ -919,10 +955,58 @@ internal sealed class SsaDirectCallInliner
         return false;
     }
 
+    private static bool TryCreatePointerBackedBorrowAddressReplacement(
+        InlineCandidate candidate,
+        SsaValue argument,
+        StarkTypeSymbol parameterType,
+        string valueBaseName,
+        string addressBaseName,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions,
+        SourceLocation? callLocation,
+        out SsaValue address)
+    {
+        address = default!;
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(parameterType)
+            || !StarkTypeSymbols.IsPointerBackedBorrowType(argument.Type)
+            || NormalizePointerBackedBorrowPointee(parameterType) != NormalizePointerBackedBorrowPointee(argument.Type))
+        {
+            return false;
+        }
+
+        var pointerType = CreateIndirectArgumentAddressType(parameterType);
+        var protectedArgument = ProtectInlineReplacementValue(
+            candidate,
+            argument,
+            valueBaseName,
+            usedValueNames,
+            prologueInstructions,
+            callLocation);
+        var addressName = CreateFreshName(addressBaseName, usedValueNames);
+        prologueInstructions.Add(new SsaValueInstruction(
+            addressName,
+            new SsaConvertRValue(
+                protectedArgument,
+                pointerType,
+                $"{protectedArgument.Text}:{pointerType.DisplayName}"),
+            callLocation));
+        address = new SsaValueReference(addressName, pointerType);
+        return true;
+    }
+
+    private static StarkTypeSymbol NormalizePointerBackedBorrowPointee(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            StarkTypeSymbols.BorrowReturnValueType(type),
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+    }
+
     private static bool CanReplaceParameterAddressLoadsWithValue(InlineCandidate candidate, string parameterName)
     {
-        var addressResultNames = candidate.Instructions
-            .OfType<SsaValueInstruction>()
+        var addressResultNames = EnumerateCandidateValueInstructions(candidate)
             .Where(instruction => instruction.Value is SsaAddressOfParameterRValue addressOfParameter
                 && string.Equals(addressOfParameter.ParameterName, parameterName, StringComparison.Ordinal))
             .Select(static instruction => instruction.ResultName)
@@ -1421,6 +1505,9 @@ internal sealed class SsaDirectCallInliner
                 CollectUsedValueNames(insertIndex.Target, names);
                 CollectUsedValueNames(insertIndex.Value, names);
                 break;
+            case SsaDynVTableSlotRValue vtableSlot:
+                CollectUsedValueNames(vtableSlot.VtablePointer, names);
+                break;
             case SsaMakeSliceFromPointerRValue makeSlice:
                 CollectUsedValueNames(makeSlice.Pointer, names);
                 CollectUsedValueNames(makeSlice.Length, names);
@@ -1506,6 +1593,28 @@ internal sealed class SsaDirectCallInliner
         if (terminator.Value is not null)
         {
             CollectUsedValueNames(terminator.Value, names);
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            CollectDirectCallUsedValueNames(terminator.TailDirectCall, names);
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            CollectUsedValueNames(terminator.TailIndirectCall.Target, names);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                CollectUsedValueNames(argument, names);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    CollectUsedValueNames(address, names);
+                }
+            }
         }
 
         foreach (var switchCase in terminator.SwitchCases ?? [])
@@ -1695,6 +1804,10 @@ internal sealed class SsaDirectCallInliner
             {
                 Target = RewriteValue(insertIndex.Target, replacements),
                 Value = RewriteValue(insertIndex.Value, replacements)
+            },
+            SsaDynVTableSlotRValue vtableSlot => vtableSlot with
+            {
+                VtablePointer = RewriteValue(vtableSlot.VtablePointer, replacements)
             },
             SsaMakeSliceFromPointerRValue makeSlice => makeSlice with
             {
@@ -2187,6 +2300,35 @@ internal sealed class SsaDirectCallInliner
         return type.BorrowKind != StarkBorrowKind.None
             || type.InitializationKind != StarkInitializationKind.None
             || type.Kind == StarkTypeKind.RawPointer;
+    }
+
+    private static bool HasShapeErasedPointerArgument(InlineCandidate candidate, ISsaDirectCallOperation call)
+    {
+        // Devirtualized dyn-trait calls pass the receiver as a type-erased
+        // rawptr<i8> while the concrete target declares a typed pointer-backed
+        // receiver (e.g. `borrow Dog`). Substituting the erased pointer into the
+        // callee body would produce field/element addresses whose base pointee
+        // shape no longer matches the declared aggregate, so such call sites are
+        // kept as direct calls instead of being inlined.
+        for (var index = 0; index < candidate.Function.Parameters.Count; index++)
+        {
+            var parameterType = candidate.Function.Parameters[index].Type;
+            if (parameterType.Kind != StarkTypeKind.Named
+                || !IsPointerBackedParameterType(parameterType))
+            {
+                continue;
+            }
+
+            var argumentType = call.Arguments[index].Type;
+            if (argumentType.Kind == StarkTypeKind.RawPointer
+                && argumentType.ElementType is { } argumentPointee
+                && argumentPointee.Kind != StarkTypeKind.Named)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsInlineClosureParameter(StarkTypeSymbol type)

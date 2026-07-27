@@ -40,6 +40,106 @@ public sealed class GenericUseSiteInstantiationRegressionTests
     }
 
     [Fact]
+    public void ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSites()
+    {
+        // Regression: instantiations referenced only inside imported source module
+        // bodies (never named by the root) must still be materialized and planned;
+        // type checking skips imported non-generic bodies, so these come from the
+        // imported-source instantiation walk (TypeChecking.MaterializeImportedSourceInstantiations).
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-imported-only-instantiation-");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDirectory.FullName, "Demo"));
+            File.WriteAllText(
+                Path.Combine(tempDirectory.FullName, "Demo", "Lib.stark"),
+                """
+                module Demo.Lib
+
+                public enum InnerError
+                {
+                    Bad,
+                }
+
+                public enum GenericResult<T>
+                {
+                    [Ok] Ok(T),
+                    [Err] Err(InnerError),
+                }
+
+                public record Pair<T>(T First, T Second)
+                {
+                }
+
+                fn GenericResult<i32[min max]> ProduceGeneric(i32[min max] value)
+                {
+                    if (value < 0)
+                    {
+                        return GenericResult<i32[min max]>.Err(InnerError.Bad);
+                    }
+
+                    return GenericResult<i32[min max]>.Ok(value);
+                }
+
+                fn i64[min max] SumPair(i32[min max] value)
+                {
+                    stack Pair<i64[min max]> pair = new Pair<i64[min max]>((i64[min max])value, 2);
+                    return pair.First + pair.Second;
+                }
+
+                public fn i32[min max] Consume(i32[min max] value)
+                {
+                    switch (ProduceGeneric(value))
+                    {
+                        case GenericResult<i32[min max]>.Err(var error):
+                            return -1;
+                        case GenericResult<i32[min max]>.Ok(var ok):
+                            return ok + (i32[min max])SumPair(0);
+                    }
+                }
+                """);
+            var appSource =
+                """
+                import Demo.Lib
+                module Demo.App
+
+                export fn i32[min max] main()
+                {
+                    return Demo.Lib.Consume(3) - 5;
+                }
+                """;
+            var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+            File.WriteAllText(appPath, appSource);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(appSource, appPath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            Assert.Contains(plan!.Types, static type => type.InstantiatedTypeName == "Demo.Lib.GenericResult<i32>");
+            Assert.Contains(plan.Types, static type => type.InstantiatedTypeName == "Demo.Lib.Pair<i64>");
+
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("@Demo_Lib_Consume(", llvmModule!.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodies()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-method-nested-generic-pipeline-");

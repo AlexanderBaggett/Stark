@@ -1,0 +1,305 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.ConstructorFieldState
+import Compiler.Binding.ConstructorFieldFacts
+import Compiler.Binding.Copyability
+import System.Memory
+module Compiler.Binding.ConstructorExpressionReads
+
+internal struct ConstructorExpressionWorkStack
+{
+    internal dynamic u32[0 max] Nodes;
+    internal dynamic u32[0 max] Phases;
+
+    ConstructorExpressionWorkStack()
+    {
+        self.Nodes = new();
+        self.Phases = new();
+    }
+
+    internal fn System.Memory.MemoryStatus Push(mut borrow ConstructorExpressionWorkStack self, u32[0 max] node, u32[0 max] phase)
+    {
+        if (node == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.Nodes.TryReserve(1)
+            || !self.Phases.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Nodes[self.Nodes.Length] = node;
+        init self.Phases[self.Phases.Length] = phase;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn bool TryPop(mut borrow ConstructorExpressionWorkStack self, out u32[0 max] node, out u32[0 max] phase)
+    {
+        node = 0;
+        phase = 0;
+        if (self.Nodes.Length == 0 || self.Phases.Length == 0)
+        {
+            return false;
+        }
+
+        node = self.Nodes.MoveLast();
+        phase = self.Phases.MoveLast();
+        return true;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInExpression(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    u32[0 max] node,
+    mut borrow ConstructorAssignedFieldTable assigned,
+    mut borrow BindDiagnosticList diags,
+    u32[0 max] depth)
+{
+    stack mut ConstructorExpressionWorkStack work = new();
+    switch (work.Push(node, 0))
+    {
+        case System.Memory.MemoryStatus.Err(var pushRootError):
+            return System.Memory.MemoryStatus.Err(pushRootError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut u32[0 max] current = 0;
+    stack mut u32[0 max] phase = 0;
+    while willexit (work.TryPop(current, phase))
+    {
+        if (phase == 1)
+        {
+            stack mut u32[0 max] assignedField = 0;
+            if (ConstructorSelfFieldMemberRequiresAssignment(
+                decls,
+                table,
+                source,
+                stream,
+                facts,
+                fields,
+                body,
+                current,
+                assignedField))
+            {
+                switch (assigned.MarkAssigned(source, stream, assignedField))
+                {
+                    case System.Memory.MemoryStatus.Err(var assignedError):
+                        return System.Memory.MemoryStatus.Err(assignedError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            continue;
+        }
+
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            stack TokenKind operatorKind = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current));
+            if (operatorKind == TokenKind.Assign)
+            {
+                stack mut u32[0 max] directAssignedField = 0;
+                if (ConstructorSelfFieldMemberRequiresAssignment(
+                    decls,
+                    table,
+                    source,
+                    stream,
+                    facts,
+                    fields,
+                    body,
+                    body.ExprLeftAt(current),
+                    directAssignedField))
+                {
+                    switch (work.Push(body.ExprLeftAt(current), 1))
+                    {
+                        case System.Memory.MemoryStatus.Err(var markPushError):
+                            return System.Memory.MemoryStatus.Err(markPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    switch (work.Push(body.ExprLeftAt(current), 0))
+                    {
+                        case System.Memory.MemoryStatus.Err(var leftPushError):
+                            return System.Memory.MemoryStatus.Err(leftPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                switch (work.Push(body.ExprRightAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var rightPushError):
+                        return System.Memory.MemoryStatus.Err(rightPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                switch (work.Push(body.ExprRightAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var compoundRightPushError):
+                        return System.Memory.MemoryStatus.Err(compoundRightPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (work.Push(body.ExprLeftAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var compoundLeftPushError):
+                        return System.Memory.MemoryStatus.Err(compoundLeftPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Member)
+        {
+            stack mut u32[0 max] fieldToken = 0;
+            if (ConstructorSelfFieldMemberRequiresAssignment(
+                decls,
+                table,
+                source,
+                stream,
+                facts,
+                fields,
+                body,
+                current,
+                fieldToken))
+            {
+                if (!assigned.Contains(source, stream, fieldToken))
+                {
+                    switch (diags.Append(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment, fieldToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var diagError):
+                            return System.Memory.MemoryStatus.Err(diagError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var memberReceiverPushError):
+                    return System.Memory.MemoryStatus.Err(memberReceiverPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary
+            || kind == Compiler.Parsing.ExprKind.Index)
+        {
+            switch (work.Push(body.ExprAuxAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var auxPushError):
+                    return System.Memory.MemoryStatus.Err(auxPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var rightPushError):
+                    return System.Memory.MemoryStatus.Err(rightPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var leftPushError):
+                    return System.Memory.MemoryStatus.Err(leftPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var unaryPushError):
+                    return System.Memory.MemoryStatus.Err(unaryPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call || kind == Compiler.Parsing.ExprKind.New)
+        {
+            stack mut u32[0 max] remainingArgs = body.ExprCallArgCountAt(current);
+            while willexit (remainingArgs > 0)
+            {
+                remainingArgs = (u32[0 max])(remainingArgs - 1);
+                switch (work.Push(body.ExprCallArgAt(current, remainingArgs), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var argPushError):
+                        return System.Memory.MemoryStatus.Err(argPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var calleePushError):
+                    return System.Memory.MemoryStatus.Err(calleePushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var conversionPushError):
+                    return System.Memory.MemoryStatus.Err(conversionPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conditional)
+        {
+            switch (work.Push(body.ExprAuxAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var elsePushError):
+                    return System.Memory.MemoryStatus.Err(elsePushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var thenPushError):
+                    return System.Memory.MemoryStatus.Err(thenPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var conditionPushError):
+                    return System.Memory.MemoryStatus.Err(conditionPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

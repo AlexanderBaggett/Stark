@@ -50,10 +50,35 @@ fnptr<fn i32[min max](i32[min max])>
 fnptr<finite i32[min max](i32[min max])>
 fnptr<law bool(borrow Item)>
 fnptr<finite law i32[min max](i32[min max])>
+fnptr<tail fn i32[min max](i32[min max])>
+fnptr<tail finite law i32[min max](i32[min max])>
 ```
 
 A stronger function can flow into a weaker callable slot, but a weaker
 function cannot satisfy a stronger callable type.
+
+## Guaranteed Tail Calls
+
+Use `tail` on a callable type and `become` in a `tail` function when the
+stack-constant jump is part of the contract rather than an optimizer hope.
+
+```stark
+tail fn i32[min max] Done(i32[min max] value)
+{
+    return value;
+}
+
+tail fn i32[min max] Bounce(
+    fnptr<tail fn i32[min max](i32[min max])> next,
+    i32[min max] value)
+{
+    become next(value);
+}
+```
+
+`become` must be a single call in true tail position. The caller must be `tail`,
+the target must be tail-callable, ordinary `law` and `finite` rules still apply,
+and accepted edges are guaranteed not to grow the stack.
 
 ## Function Pointer Memory Contracts
 
@@ -254,7 +279,47 @@ fn i32[min max] RunThread()
 }
 ```
 
-Do not hide shared mutable state inside an unmarked callback.
+Use `ThreadPayloadEntry<T>` and `Thread.Start<T>` when a thread needs owned
+input data. The payload type must satisfy `Transferable`, so thread ownership
+crossings remain checked at compile time.
+
+```stark
+import System.Threading
+module Demo.PayloadThreads
+
+struct WorkerPayload
+{
+    i32[min max] Value;
+}
+
+fn i32[min max] Worker(WorkerPayload payload)
+{
+    return payload.Value;
+}
+
+fn i32[min max] RunPayloadThread()
+{
+    stack WorkerPayload payload = new WorkerPayload() { Value = 7 };
+    stack mut Thread worker =
+        Thread.Start<WorkerPayload>(Worker, payload);
+
+    stack ThreadJoinResult joined = worker.Join();
+
+    switch (joined)
+    {
+        case ThreadJoinResult.Ok(var value):
+            return value;
+        case ThreadJoinResult.Err(var error):
+            return 1;
+    }
+}
+```
+
+Do not hide shared mutable state inside an unmarked callback. Hidden captured
+thread closures are not the pre-self-host thread-start surface. A function
+reachable from `ThreadEntry` or `ThreadPayloadEntry<T>` may touch `static mut`
+state only when the static is backed by `System.Threading.Atomic*` or
+`System.Threading.Synchronized<T>`.
 
 ## Selection Guide
 

@@ -47,10 +47,13 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.Contains("@malloc(", llvm, StringComparison.Ordinal);
         Assert.Contains("@free(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare void @exit(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @__error()", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wait_on_address(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wake_by_address_any(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wake_by_address_all(", llvm, StringComparison.Ordinal);
         Assert.Contains("call void @exit(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @__error()", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define internal dso_local void @__stark_oom_trap(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("coldcc void @__stark_oom_trap(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain(" comdat", llvm, StringComparison.Ordinal);
@@ -87,13 +90,27 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
             llvm,
             "define fastcc noundef i1 @IsFile(",
             "Expected IsFile definition in emitted LLVM.");
+        var metadataBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @ReadPathMetadata(",
+            "Expected ReadPathMetadata definition in emitted LLVM.");
 
         Assert.Contains("call i32 @stat(", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatModeOffset", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("getelementptr i8, ptr", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("load i16", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @UnsignedShort(", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatDirectoryType", isDirectoryBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatRegularType", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("and i32", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("61440", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("16384", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("and i32", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("61440", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("32768", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stat(", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("61440", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("4095", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("load i64", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("store i64", metadataBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@opendir(", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@access(", llvm, StringComparison.Ordinal);
     }
@@ -173,6 +190,56 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.Contains("@System_Runtime_Platform_MacOS_ProcessId", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_Linux_ProcessId", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_Windows_ProcessId", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SourceStdLibBuildRoutesProcessSpawnThroughMacOSModuleForMacOSTargets()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var targetInfo = new LlvmTargetInfo(MacOSTargetTriple, null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Process
+                module Demo
+
+                export unsafe fn i32[min max] main()
+                {
+                    switch (System.Process.RunCapture("/bin/echo"))
+                    {
+                        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                            return 1;
+                        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                            return output.ExitCode;
+                    }
+                }
+                """,
+                "MacOSProcessSpawnDispatchProbe.stark"),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
+        Assert.NotNull(moduleGraph);
+        // System.Process routes spawning through the System.Runtime.Platform
+        // dispatch module, so a macOS-target process build must not pull the
+        // Linux or Windows backends back into the module graph.
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
+
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("@System_Runtime_Platform_MacOS_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Linux_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Windows_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fork(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@execvp(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]

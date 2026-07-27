@@ -1,0 +1,8 @@
+[project]
+name = "compiler-mir-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "CompilerMirTests.stark"
+output = "compiler-mir-tests"

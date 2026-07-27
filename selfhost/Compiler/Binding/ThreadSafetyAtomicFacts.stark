@@ -1,0 +1,149 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.TokenHelpers
+module Compiler.Binding.ThreadSafetyAtomicFacts
+
+internal finite law bool ThreadSafetyNameIsAtomicType(ascii source, borrow TokenStream stream, u32[0 max] headToken)
+{
+    if (TokenTextEquals(source, stream, headToken, "AtomicBool"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI8"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI16"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI24"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI32"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI48"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI64"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI96"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI128"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI192"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI256"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI384"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI512"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI768"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicI1024"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU8"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU16"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU24"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU32"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU48"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU64"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU96"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU128"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU192"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU256"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU384"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU512"))
+    {
+        return true;
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "AtomicU768"))
+    {
+        return true;
+    }
+
+    return TokenTextEquals(source, stream, headToken, "AtomicU1024");
+}

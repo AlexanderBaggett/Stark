@@ -6,7 +6,3 @@ kind = "executable"
 [executable]
 root = "BreakoutRaylib.stark"
 output = "breakout-raylib"
-
-[dependencies]
-raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }

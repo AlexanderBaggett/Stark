@@ -1,0 +1,167 @@
+import System.Console
+import Vendor.SQLite
+module SQLiteBinaryData
+
+fn bool OwnedBytesEqual(SQLiteBytesResult result, borrow u8[0 max][] expected)
+{
+    switch (result)
+    {
+        case SQLiteBytesResult.Err(var error):
+            return false;
+        case SQLiteBytesResult.Ok(var value):
+            stack mut SQLiteOwnedBytes bytes = value;
+            if (bytes.Length() != expected.Length)
+            {
+                return false;
+            }
+
+            stack mut u8[0 max][8] copied = { 0, 0, 0, 0, 0, 0, 0, 0 };
+            stack mut u8[0 max][] copiedBytes = copied;
+            if (copiedBytes.Length < expected.Length)
+            {
+                return false;
+            }
+
+            if (bytes.CopyTo(copiedBytes) != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            stack mut u64[0 max] index = 0;
+            while willexit (index < expected.Length)
+            {
+                if (copiedBytes[index] != expected[index])
+                {
+                    return false;
+                }
+
+                index += 1;
+            }
+
+            return true;
+    }
+}
+
+fn bool OwnedBytesLengthEquals(SQLiteBytesResult result, u64[0 max] expectedLength)
+{
+    switch (result)
+    {
+        case SQLiteBytesResult.Err(var error):
+            return false;
+        case SQLiteBytesResult.Ok(var value):
+            stack mut SQLiteOwnedBytes bytes = value;
+            return bytes.Length() == expectedLength;
+    }
+}
+
+fn SQLiteStatusResult InsertAsset(mut borrow Statement insert)
+{
+    if (BindInt(insert, 1, 1) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    if (BindText(insert, 2, "hello") != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    stack u8[0 max][4] payload = { 0, 13, 200, 255 };
+    stack u8[0 max][] payloadBytes = payload;
+    if (BindBytes(insert, 3, payloadBytes) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    switch (Step(insert))
+    {
+        case SQLiteStepResult.Done:
+            return SQLiteStatusResult.Ok;
+        case SQLiteStepResult.Row:
+            return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Misuse));
+        case SQLiteStepResult.Err(var error):
+            return SQLiteStatusResult.Err(error);
+    }
+}
+
+export fn i32[min max] main()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return 1;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (Execute(database, "CREATE TABLE assets(id INTEGER PRIMARY KEY, label TEXT NOT NULL, payload BLOB NOT NULL);") != SQLiteStatusResult.Ok)
+            {
+                return 2;
+            }
+
+            switch (Prepare(database, "INSERT INTO assets(id, label, payload) VALUES(?1, ?2, ?3);"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 3;
+                case SQLiteStatementResult.Ok(var insertValue):
+                    stack mut Statement insert = insertValue;
+                    if (InsertAsset(insert) != SQLiteStatusResult.Ok)
+                    {
+                        return 4;
+                    }
+
+                    if (Finalize(insert) != SQLiteStatusResult.Ok)
+                    {
+                        return 5;
+                    }
+            }
+
+            switch (Prepare(database, "SELECT label, payload FROM assets WHERE id = 1;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 6;
+                case SQLiteStatementResult.Ok(var queryValue):
+                    stack mut Statement query = queryValue;
+                    switch (Step(query))
+                    {
+                        case SQLiteStepResult.Row:
+                            stack u8[0 max][5] expectedText = { 104, 101, 108, 108, 111 };
+                            stack u8[0 max][] expectedTextBytes = expectedText;
+                            stack u8[0 max][4] expectedPayload = { 0, 13, 200, 255 };
+                            stack u8[0 max][] expectedPayloadBytes = expectedPayload;
+
+                            if (!OwnedBytesEqual(ColumnTextBytes(query, 0), expectedTextBytes))
+                            {
+                                return 7;
+                            }
+
+                            if (!OwnedBytesLengthEquals(ColumnText16Bytes(query, 0), 10))
+                            {
+                                return 8;
+                            }
+
+                            if (!OwnedBytesEqual(ColumnBlobBytes(query, 1), expectedPayloadBytes))
+                            {
+                                return 9;
+                            }
+
+                            if (Finalize(query) != SQLiteStatusResult.Ok)
+                            {
+                                return 10;
+                            }
+                        case SQLiteStepResult.Done:
+                            return 11;
+                        case SQLiteStepResult.Err(var error):
+                            return 12;
+                    }
+            }
+
+            WriteLine("SQLite binary data example:");
+            WriteLine("stored 4 blob bytes and 5 UTF-8 text bytes");
+
+            if (Close(database) != SQLiteStatusResult.Ok)
+            {
+                return 13;
+            }
+
+            return 0;
+    }
+}

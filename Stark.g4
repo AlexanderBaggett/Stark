@@ -1,5 +1,13 @@
 grammar Stark;
 
+@parser::members
+{
+    private bool IsContextualKeyword(string text)
+    {
+        return string.Equals(CurrentToken.Text, text, StringComparison.Ordinal);
+    }
+}
+
 compilationUnit
     : importDeclaration* moduleDeclaration topLevelDeclaration* EOF
     ;
@@ -17,13 +25,19 @@ attributeList
     ;
 
 attribute
-    : qualifiedName (LPAREN (attributeArgument (COMMA attributeArgument)* COMMA?)? RPAREN)?
+    : qualifiedName (LPAREN (attributeArgument (COMMA attributeArgument)* COMMA?)? RPAREN)? attributeCondition?
+    ;
+
+attributeCondition
+    : WHERE lawPredicateContract
     ;
 
 attributeArgument
     : qualifiedName
     | StringLiteral
-    | IntegerLiteral
+    | signedIntegerLiteral
+    | TRUE
+    | FALSE
     ;
 
 topLevelDeclaration
@@ -61,13 +75,36 @@ functionModifier
     : INLINE
     | NOINLINE
     | INLINEHINT
+    | tailKeyword
     | HOT
     | COLD
-    | FFI
+    | ffiModifier
     | VARARGS
     | UNSAFE
     | STRICTFP
     | STATIC
+    ;
+
+ffiModifier
+    : FFI ffiAbiSpecifier?
+    ;
+
+ffiAbiSpecifier
+    : LPAREN ffiAbi RPAREN
+    ;
+
+ffiAbi
+    : Identifier
+    | Identifier LPAREN ffiPlatformAbiEntry (COMMA ffiPlatformAbiEntry)* COMMA? RPAREN
+    ;
+
+ffiPlatformAbiEntry
+    : ffiPlatformKey COLON Identifier
+    ;
+
+ffiPlatformKey
+    : DEFAULT
+    | qualifiedName
     ;
 
 returnType
@@ -96,6 +133,20 @@ parameterMemoryContract
     : disjointContract
     | overlapContract
     | sameContract
+    | deadOnReturnContract
+    | lawPredicateContract
+    | valueContract
+    ;
+
+valueContract
+    : shiftExpression valueContractOperator shiftExpression
+    ;
+
+valueContractOperator
+    : LT
+    | GT
+    | LTE
+    | GTE
     ;
 
 disjointContract
@@ -106,8 +157,27 @@ overlapContract
     : OVERLAP LPAREN expressionList RPAREN
     ;
 
+// `where overlap_all(name)` — shorthand declaring `name` may overlap every
+// other memory-backed parameter. It currently parses through
+// `lawPredicateContract` (Identifier LPAREN type_ RPAREN) and is expanded by
+// the syntax model into pairwise whole-parameter overlap groups. When the
+// parser is next regenerated (scripts/regenerate-parser.sh; needs the antlr4
+// toolchain), promote it to a dedicated rule:
+//   overlapAllContract
+//       : {IsContextualKeyword("overlap_all")}? Identifier LPAREN expressionList RPAREN
+//       ;
+// listed in `parameterMemoryContract` before `lawPredicateContract`.
+
 sameContract
     : SAME LPAREN expressionList RPAREN
+    ;
+
+deadOnReturnContract
+    : {IsContextualKeyword("dead_on_return")}? Identifier LPAREN expressionList RPAREN
+    ;
+
+lawPredicateContract
+    : Identifier LPAREN type_ RPAREN
     ;
 
 typeParameterList
@@ -116,6 +186,7 @@ typeParameterList
 
 typeParameter
     : Identifier
+    | COMPTIME type_ Identifier
     ;
 
 typeParameterConstraints
@@ -159,11 +230,11 @@ asmFunctionBody
     ;
 
 structDeclaration
-    : STRUCT Identifier typeParameterList? structBody
+    : STRUCT Identifier typeParameterList? baseTraitList? structBody
     ;
 
 recordDeclaration
-    : RECORD Identifier typeParameterList? primaryConstructorParameters? recordBody
+    : RECORD Identifier typeParameterList? primaryConstructorParameters? baseTraitList? recordBody
     ;
 
 enumDeclaration
@@ -171,7 +242,7 @@ enumDeclaration
     ;
 
 traitDeclaration
-    : TRAIT Identifier typeParameterList? traitBody
+    : DYN? TRAIT Identifier typeParameterList? traitBody
     ;
 
 doctrineDeclaration
@@ -184,6 +255,10 @@ typeAliasDeclaration
 
 primaryConstructorParameters
     : parameterList
+    ;
+
+baseTraitList
+    : COLON type_ (COMMA type_)*
     ;
 
 structBody
@@ -212,6 +287,7 @@ structMember
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+    | associatedTypeDeclaration
       )
     ;
 
@@ -221,16 +297,18 @@ recordMember
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+    | associatedTypeDeclaration
       )
     ;
 
 enumVariantDeclaration
-    : Identifier enumVariantPayload?
+    : attributeList* Identifier enumVariantPayload?
     ;
 
 enumVariantPayload
     : LPAREN (type_ (COMMA type_)*)? COMMA? RPAREN
     | LBRACE (enumVariantFieldDeclaration (COMMA enumVariantFieldDeclaration)* COMMA?)? RBRACE
+    | FROM type_
     ;
 
 enumVariantFieldDeclaration
@@ -238,11 +316,21 @@ enumVariantFieldDeclaration
     ;
 
 traitMember
-    : attributeList* traitMethodDeclaration
+    : attributeList* (
+          traitMethodDeclaration
+    | associatedTypeDeclaration
+      )
     ;
 
 doctrineMember
-    : attributeList* doctrineMethodDeclaration
+    : attributeList* (
+          doctrineMethodDeclaration
+    | associatedTypeDeclaration
+      )
+    ;
+
+associatedTypeDeclaration
+    : ALIAS Identifier (ASSIGN type_)? SEMI
     ;
 
 fieldDeclaration
@@ -338,12 +426,21 @@ nonArrayType
     | rawPointerType
     | functionPointerType
     | closureType
+    | dynTraitType
     | integerType
     | simpleType
     ;
 
 dynamicType
     : DYNAMIC type_
+    ;
+
+dynTraitType
+    : dynStoragePrefix? DYN simpleType
+    ;
+
+dynStoragePrefix
+    : HEAP
     ;
 
 rawPointerType
@@ -356,7 +453,11 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : UNSAFE? functionPointerAbiModifier? tailKeyword? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+functionPointerAbiModifier
+    : FFI ffiAbiSpecifier?
     ;
 
 closureType
@@ -369,7 +470,11 @@ closureStoragePrefix
     ;
 
 closureSignature
-    : closureCallCapability? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : closureCallCapability? tailKeyword? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+tailKeyword
+    : {IsContextualKeyword("tail")}? Identifier
     ;
 
 closureCallCapability
@@ -421,7 +526,13 @@ rangeEndpointToken
     ;
 
 typeArgumentList
-    : LT type_ (COMMA type_)* GT
+    : LT genericArgument (COMMA genericArgument)* GT
+    ;
+
+genericArgument
+    : type_
+    | signedIntegerLiteral
+    | COMPTIME expression
     ;
 
 block
@@ -430,6 +541,7 @@ block
 
 statement
     : block
+    | labeledStatement
     | unsafeStatement
     | assumeStatement
     | localConstantDeclaration
@@ -439,10 +551,15 @@ statement
     | whileStatement
     | forStatement
     | returnStatement
+    | becomeStatement
     | breakStatement
     | continueStatement
     | expressionStatement
     | emptyStatement
+    ;
+
+labeledStatement
+    : Identifier COLON (whileStatement | forStatement | switchStatement)
     ;
 
 unsafeStatement
@@ -464,7 +581,7 @@ localVariableDeclaration
     ;
 
 ifStatement
-    : IF weightSpecifier? (LPAREN expression RPAREN | disjointRuntimeCondition) statement (ELSE statement)?
+    : IF weightSpecifier? (LPAREN expression (IS pattern)? RPAREN | disjointRuntimeCondition) statement (ELSE statement)?
     ;
 
 disjointRuntimeCondition
@@ -480,7 +597,7 @@ switchSection
     ;
 
 switchLabel
-    : CASE pattern whenClause? COLON
+    : CASE pattern (OR pattern)* whenClause? COLON
     | DEFAULT COLON
     ;
 
@@ -489,11 +606,24 @@ whenClause
     ;
 
 whileStatement
-    : WHILE loopBehavior loopContract* LPAREN expression RPAREN statement
+    : WHILE loopBehavior loopContract* LPAREN expression (IS pattern)? RPAREN statement
     ;
 
 forStatement
-    : FOR loopBehavior loopContract* LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
+    : FOR loopBehavior loopContract* LPAREN forTraversal RPAREN statement
+    | FOR loopBehavior loopContract* LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
+    ;
+
+forTraversal
+    : traversalIndexBinding? traversalElementBinding IN expression
+    ;
+
+traversalIndexBinding
+    : storageClass type_ Identifier COMMA
+    ;
+
+traversalElementBinding
+    : type_ Identifier
     ;
 
 forInitializer
@@ -531,12 +661,16 @@ returnStatement
     : RETURN expression? SEMI
     ;
 
+becomeStatement
+    : BECOME expression SEMI
+    ;
+
 breakStatement
-    : BREAK SEMI
+    : BREAK Identifier? SEMI
     ;
 
 continueStatement
-    : CONTINUE SEMI
+    : CONTINUE Identifier? SEMI
     ;
 
 expressionStatement
@@ -549,11 +683,21 @@ emptyStatement
 
 pattern
     : DISCARD
+    | listPattern
+    | rangePattern
     | literal
     | VAR Identifier
     | enumNamedFieldPattern
     | genericEnumAggregatePattern
     | aggregatePattern
+    ;
+
+rangePattern
+    : signedIntegerLiteral RANGE signedIntegerLiteral
+    ;
+
+listPattern
+    : LBRACK (pattern (COMMA pattern)*)? COMMA? RBRACK
     ;
 
 aggregatePattern
@@ -567,13 +711,14 @@ genericEnumAggregatePattern
 aggregatePatternSuffix
     : Identifier
     | LPAREN (pattern (COMMA pattern)*)? COMMA? RPAREN
+    | namedPatternPayload
     ;
 
 enumNamedFieldPattern
-    : enumCaseTarget enumNamedFieldPatternPayload
+    : enumCaseTarget namedPatternPayload
     ;
 
-enumNamedFieldPatternPayload
+namedPatternPayload
     : LBRACE (namedPatternMember (COMMA namedPatternMember)*)? COMMA? RBRACE
     ;
 
@@ -660,6 +805,8 @@ multiplicativeExpression
 unaryExpression
     : powerExpression
     | INIT unaryExpression
+    | TRY unaryExpression
+    | COMPTIME unaryExpression
     | LPAREN conversionType RPAREN unaryExpression
     | unaryOperator unaryExpression
     ;
@@ -680,8 +827,10 @@ conversionType
 
 conversionNonArrayType
     : rawPointerType
+    | functionPointerType
     | integerType
     | builtinType
+    | simpleType
     ;
 
 powerExpression
@@ -701,11 +850,13 @@ postfixPart
 primaryExpression
     : lambdaExpression
     | literal
+    | COMPTIME block
     | SIZEOF LPAREN type_ RPAREN
     | ALIGNOF LPAREN type_ RPAREN
-    | Identifier
     | enumConstructorExpression
     | genericEnumCaseReference
+    | genericQualifiedName
+    | Identifier
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
@@ -745,7 +896,12 @@ enumConstructorExpression
 
 objectCreationExpression
     : NEW type_ argumentList? objectInitializer?
+    | NEW arenaObjectCreationArgumentList objectInitializer?
     | NEW argumentList objectInitializer?
+    ;
+
+arenaObjectCreationArgumentList
+    : LPAREN ARENA (COMMA argument)* COMMA? RPAREN
     ;
 
 enumConstructorInitializer
@@ -842,6 +998,7 @@ TRAIT       : 'trait';
 DOCTRINE    : 'doctrine';
 ALIAS       : 'alias';
 DROP        : 'drop';
+FROM        : 'from';
 
 STACK       : 'stack';
 HEAP        : 'heap';
@@ -858,6 +1015,7 @@ FROZEN      : 'frozen';
 SHARED      : 'shared';
 OUT         : 'out';
 INIT        : 'init';
+DYN         : 'dyn';
 DYNAMIC     : 'dynamic';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
@@ -871,6 +1029,7 @@ SAME        : 'same';
 ASSUME      : 'assume';
 
 IF          : 'if';
+IS          : 'is';
 ELSE        : 'else';
 SWITCH      : 'switch';
 CASE        : 'case';
@@ -879,8 +1038,11 @@ WHEN        : 'when';
 WHILE       : 'while';
 FOR         : 'for';
 RETURN      : 'return';
+BECOME      : 'become';
 BREAK       : 'break';
 CONTINUE    : 'continue';
+TRY         : 'try';
+COMPTIME    : 'comptime';
 NEW         : 'new';
 CONST       : 'const';
 WHERE       : 'where';
@@ -997,6 +1159,7 @@ ARROW       : '=>';
 COLON       : ':';
 SEMI        : ';';
 COMMA       : ',';
+RANGE       : '..';
 DOT         : '.';
 DOLLAR      : '$';
 LPAREN      : '(';
@@ -1025,7 +1188,9 @@ CharacterLiteral
     ;
 
 StringLiteral
-    : '"' (LiteralEscapeSequence | ~["\\\r\n])* '"'
+    : 'raw"""' .*? '"""'
+    | 'raw"' ~["\r\n]* '"'
+    | '"' (LiteralEscapeSequence | ~["\\\r\n])* '"'
     ;
 
 fragment ExponentPart
@@ -1041,7 +1206,7 @@ fragment LiteralEscapeSequence
     ;
 
 fragment IdentifierStart
-    : [a-zA-Z]
+    : [a-zA-Z_]
     ;
 
 fragment IdentifierPart

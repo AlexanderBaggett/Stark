@@ -1,0 +1,1659 @@
+import System.Memory
+import System.Text
+module System.Json
+
+// Minimal JSON reader/writer for structured tooling payloads such as the host
+// compiler test protocol and future `stark inspect-pkg` output. The reader
+// parses one document into a flat parent-linked node table plus one decoded
+// text buffer; the writer assembles compact documents with correct escaping.
+
+public enum JsonKind
+{
+    Null,
+    False,
+    True,
+    Number,
+    Text,
+    Array,
+    Object,
+}
+
+public enum JsonError
+{
+    Truncated,
+    InvalidValue,
+    InvalidString,
+    InvalidEscape,
+    InvalidNumber,
+    TooDeep,
+    TrailingContent,
+    TooLarge,
+    NotFound,
+    WrongKind,
+    Memory from System.Memory.MemoryError,
+    Text from System.Text.TextError,
+}
+
+public enum JsonStatus
+{
+    [Ok] Ok,
+    [Err] Err(JsonError),
+}
+
+public enum JsonResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(JsonError),
+}
+
+const JsonMaximumDepth = 64;
+const JsonNoParent = 0;
+
+internal struct JsonNode
+{
+    JsonKind Kind;
+    // Parent node index plus one; zero marks the root.
+    u64[0 2 ** 63 - 1] ParentPlusOne;
+    bool HasKey;
+    u64[0 2 ** 63 - 1] KeyStart;
+    u64[0 2 ** 63 - 1] KeyLength;
+    // Decoded string bytes or the raw number token.
+    u64[0 2 ** 63 - 1] TextStart;
+    u64[0 2 ** 63 - 1] TextLength;
+    u64[0 2 ** 63 - 1] ChildCount;
+
+    JsonNode()
+    {
+        self.Kind = JsonKind.Null;
+        self.ParentPlusOne = 0;
+        self.HasKey = false;
+        self.KeyStart = 0;
+        self.KeyLength = 0;
+        self.TextStart = 0;
+        self.TextLength = 0;
+        self.ChildCount = 0;
+    }
+}
+
+internal struct JsonCursor
+{
+    u64[0 2 ** 63 - 1] Position;
+
+    JsonCursor()
+    {
+        self.Position = 0;
+    }
+}
+
+public struct JsonDocument
+{
+    internal dynamic JsonNode Nodes;
+    internal dynamic i8[min max] DecodedText;
+
+    JsonDocument()
+    {
+        self.Nodes = new();
+        self.DecodedText = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow JsonDocument self)
+    {
+        return self.Nodes.Length;
+    }
+
+    public finite law JsonKind KindAt(borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return JsonKind.Null;
+        }
+
+        switch (self.Nodes[node].Kind)
+        {
+            case JsonKind.Null:
+                return JsonKind.Null;
+            case JsonKind.False:
+                return JsonKind.False;
+            case JsonKind.True:
+                return JsonKind.True;
+            case JsonKind.Number:
+                return JsonKind.Number;
+            case JsonKind.Text:
+                return JsonKind.Text;
+            case JsonKind.Array:
+                return JsonKind.Array;
+            case JsonKind.Object:
+                return JsonKind.Object;
+        }
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ChildCountAt(borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return 0;
+        }
+
+        return self.Nodes[node].ChildCount;
+    }
+
+    public finite law bool BoolAt(borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        return self.KindAt(node) == JsonKind.True;
+    }
+
+    public finite ascii TextAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        unsafe
+        {
+            return self.ViewRange(textStart, textLength);
+        }
+    }
+
+    public finite ascii KeyAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        if (!self.Nodes[node].HasKey)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        stack u64[0 2 ** 63 - 1] keyLength = self.Nodes[node].KeyLength;
+        unsafe
+        {
+            return self.ViewRange(keyStart, keyLength);
+        }
+    }
+
+    public finite JsonResult<i64[min max]> I64At(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (self.KindAt(node) != JsonKind.Number)
+        {
+            return JsonResult<i64[min max]>.Err(JsonError.WrongKind);
+        }
+
+        stack System.Text.TextResult<i64[min max]> parsed = System.Text.ParseI64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<i64[min max]>.Err(var error):
+                return JsonResult<i64[min max]>.Err(JsonError.Text(error));
+            case System.Text.TextResult<i64[min max]>.Ok(var value):
+                return JsonResult<i64[min max]>.Ok(value);
+        }
+    }
+
+    // Reads a Number node as f64. JSON numbers carry an optional leading '-', a
+    // fraction, and an exponent, all of which the shared correctly-rounded ascii
+    // parser handles directly off the raw token text. ParseF64Ascii signals
+    // Overflow for tokens outside its exact window (significand above 2 ** 53 or
+    // |exp10| > 22) and InvalidFormat for malformed tokens; both surface here as
+    // InvalidNumber. (The JSON tokenizer never emits underscores or inf/nan, so
+    // the parser accepting those forms is harmless here.)
+    public finite JsonResult<f64> F64At(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (self.KindAt(node) != JsonKind.Number)
+        {
+            return JsonResult<f64>.Err(JsonError.WrongKind);
+        }
+
+        stack System.Text.TextResult<f64> parsed = System.Text.ParseF64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<f64>.Err(var error):
+                return JsonResult<f64>.Err(JsonError.InvalidNumber);
+            case System.Text.TextResult<f64>.Ok(var value):
+                return JsonResult<f64>.Ok(value);
+        }
+    }
+
+    // Finds the value node of an object member by exact key bytes.
+    public finite bool TryFindMember(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] objectNode,
+        ascii name,
+        out u64[0 2 ** 63 - 1] member)
+    {
+        member = 0;
+        if (self.KindAt(objectNode) != JsonKind.Object)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(objectNode + 1);
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < self.Nodes.Length; index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne != parentPlusOne)
+            {
+                continue;
+            }
+
+            if (!self.Nodes[index].HasKey)
+            {
+                continue;
+            }
+
+            if (self.KeyEquals(index, name))
+            {
+                member = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Finds the child of an array (or object) container by zero-based order.
+    public fn bool TryChildAt(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        u64[0 2 ** 63 - 1] childIndex,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        stack mut u64[0 2 ** 63 - 1] seen = 0;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < self.Nodes.Length; index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne != parentPlusOne)
+            {
+                continue;
+            }
+
+            if (seen == childIndex)
+            {
+                child = index;
+                return true;
+            }
+
+            seen += 1;
+        }
+
+        return false;
+    }
+
+    // Starts an allocation-free forward walk over the direct children of an
+    // array or object. Pair with TryNextSibling instead of repeated
+    // TryChildAt calls when every child is consumed: the pair visits the JSON
+    // subtree once rather than restarting a node scan for every ordinal.
+    public fn bool TryFirstChild(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        for willexit (
+            stack mut u64[0 2 ** 63 - 1] index = parentPlusOne;
+            index < self.Nodes.Length;
+            index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne == parentPlusOne)
+            {
+                child = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public fn bool TryNextSibling(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        u64[0 2 ** 63 - 1] previousChild,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length
+            || previousChild >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        if (self.Nodes[0, self.Nodes.Length][previousChild].ParentPlusOne != parentPlusOne)
+        {
+            return false;
+        }
+
+        for willexit (
+            stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(previousChild + 1);
+            index < self.Nodes.Length;
+            index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne == parentPlusOne)
+            {
+                child = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Convenience: member lookup that requires a specific kind.
+    public finite bool TryFindMemberOfKind(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] objectNode,
+        ascii name,
+        JsonKind kind,
+        out u64[0 2 ** 63 - 1] member)
+    {
+        stack mut u64[0 2 ** 63 - 1] found = 0;
+        if (!self.TryFindMember(objectNode, name, found))
+        {
+            member = 0;
+            return false;
+        }
+
+        if (self.KindAt(found) != kind)
+        {
+            member = 0;
+            return false;
+        }
+
+        member = found;
+        return true;
+    }
+
+    internal unsafe finite ascii ViewRange(
+        mut borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] start,
+        u64[0 2 ** 63 - 1] length)
+    {
+        if (length == 0 || start + length > self.DecodedText.Length)
+        {
+            return "";
+        }
+
+        stack mut Ascii view = new Ascii();
+        view.Data = &self.DecodedText[start];
+        view.Length = (i64[min max])length;
+        view.Capacity = (i64[min max])length;
+        return System.Text.AsciiView(view);
+    }
+
+    internal finite bool KeyEquals(borrow JsonDocument self, u64[0 2 ** 63 - 1] node, ascii name)
+        where node < self.Nodes.Length
+    {
+        stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
+        if (signedNameLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])signedNameLength;
+        if (self.Nodes[node].KeyLength != nameLength)
+        {
+            return false;
+        }
+
+        if (nameLength == 0)
+        {
+            return true;
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        // Stored key ranges always lie inside DecodedText; the guard spells
+        // that bound for the dense-prefix proof and never fires in practice.
+        if (keyStart + nameLength > self.DecodedText.Length)
+        {
+            return false;
+        }
+
+        // Only the raw name bytes still need an audited pointer walk.
+        unsafe
+        {
+            stack rawptr<i8[min max]> nameData = System.Text.AsciiData(name);
+            if (nameData == null)
+            {
+                return false;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nameLength; index += 1)
+            {
+                if (self.DecodedText[keyStart + index] != *(&nameData[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+}
+
+// Parses one JSON document from UTF-8 bytes.
+public unsafe fn JsonResult<JsonDocument> Parse(borrow i8[min max][] source)
+{
+    stack mut JsonDocument document = new();
+    stack mut JsonCursor cursor = new();
+    SkipWhitespace(source, cursor);
+    stack JsonStatus parsed = ParseValue(document, source, cursor, JsonNoParent, false, 0, 0, 0);
+    switch (parsed)
+    {
+        case JsonStatus.Err(var error):
+            return JsonResult<JsonDocument>.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    SkipWhitespace(source, cursor);
+    if (cursor.Position != source.Length)
+    {
+        return JsonResult<JsonDocument>.Err(JsonError.TrailingContent);
+    }
+
+    return JsonResult<JsonDocument>.Ok(document);
+}
+
+// Parses one JSON document from an ascii view.
+public unsafe fn JsonResult<JsonDocument> ParseText(ascii source)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(source);
+    if (signedLength < 0)
+    {
+        return JsonResult<JsonDocument>.Err(JsonError.InvalidValue);
+    }
+
+    if (signedLength == 0)
+    {
+        return JsonResult<JsonDocument>.Err(JsonError.Truncated);
+    }
+
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
+    if (data == null)
+    {
+        return JsonResult<JsonDocument>.Err(JsonError.InvalidValue);
+    }
+
+    stack i8[min max][] bytes = slice(data, (u64[0 2 ** 63 - 1])signedLength);
+    return Parse(bytes);
+}
+
+internal fn void SkipWhitespace(borrow i8[min max][] source, mut borrow JsonCursor cursor)
+{
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (value != 32 && value != 9 && value != 10 && value != 13)
+        {
+            return;
+        }
+
+        cursor.Position += 1;
+    }
+
+    return;
+}
+
+internal unsafe fn JsonStatus ParseValue(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] depth)
+{
+    if (depth > JsonMaximumDepth)
+    {
+        return JsonStatus.Err(JsonError.TooDeep);
+    }
+
+    if (cursor.Position >= source.Length)
+    {
+        return JsonStatus.Err(JsonError.Truncated);
+    }
+
+    stack i8[min max] lead = source[cursor.Position];
+    if (lead == 123)
+    {
+        return ParseObject(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, depth);
+    }
+
+    if (lead == 91)
+    {
+        return ParseArray(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, depth);
+    }
+
+    if (lead == 34)
+    {
+        stack mut u64[0 2 ** 63 - 1] textStart = 0;
+        stack mut u64[0 2 ** 63 - 1] textLength = 0;
+        stack JsonStatus text = ParseStringInto(document, source, cursor, textStart, textLength);
+        switch (text)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendNode(document, JsonKind.Text, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength);
+    }
+
+    if (lead == 116)
+    {
+        stack JsonStatus literalTrue = ExpectLiteral(source, cursor, "true");
+        switch (literalTrue)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendNode(document, JsonKind.True, parentPlusOne, hasKey, keyStart, keyLength, 0, 0);
+    }
+
+    if (lead == 102)
+    {
+        stack JsonStatus literalFalse = ExpectLiteral(source, cursor, "false");
+        switch (literalFalse)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendNode(document, JsonKind.False, parentPlusOne, hasKey, keyStart, keyLength, 0, 0);
+    }
+
+    if (lead == 110)
+    {
+        stack JsonStatus literalNull = ExpectLiteral(source, cursor, "null");
+        switch (literalNull)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendNode(document, JsonKind.Null, parentPlusOne, hasKey, keyStart, keyLength, 0, 0);
+    }
+
+    if (lead == 45 || (lead >= 48 && lead <= 57))
+    {
+        return ParseNumber(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
+    }
+
+    return JsonStatus.Err(JsonError.InvalidValue);
+}
+
+internal unsafe fn JsonStatus ParseObject(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] depth)
+{
+    cursor.Position += 1;
+    stack JsonStatus added = AppendNode(document, JsonKind.Object, parentPlusOne, hasKey, keyStart, keyLength, 0, 0);
+    switch (added)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] objectNode = (u64[0 2 ** 63 - 1])(document.Nodes.Length - 1);
+    SkipWhitespace(source, cursor);
+    if (cursor.Position >= source.Length)
+    {
+        return JsonStatus.Err(JsonError.Truncated);
+    }
+
+    if (source[cursor.Position] == 125)
+    {
+        cursor.Position += 1;
+        return JsonStatus.Ok;
+    }
+
+    while willexit (true)
+    {
+        SkipWhitespace(source, cursor);
+        if (cursor.Position >= source.Length || source[cursor.Position] != 34)
+        {
+            return JsonStatus.Err(JsonError.InvalidString);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] memberKeyStart = 0;
+        stack mut u64[0 2 ** 63 - 1] memberKeyLength = 0;
+        stack JsonStatus key = ParseStringInto(document, source, cursor, memberKeyStart, memberKeyLength);
+        switch (key)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        SkipWhitespace(source, cursor);
+        if (cursor.Position >= source.Length || source[cursor.Position] != 58)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        cursor.Position += 1;
+        SkipWhitespace(source, cursor);
+        stack JsonStatus memberValue = ParseValue(
+            document,
+            source,
+            cursor,
+            (u64[0 2 ** 63 - 1])(objectNode + 1),
+            true,
+            memberKeyStart,
+            memberKeyLength,
+            (u64[0 2 ** 63 - 1])(depth + 1));
+        switch (memberValue)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        document.Nodes[objectNode].ChildCount += 1;
+        SkipWhitespace(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return JsonStatus.Err(JsonError.Truncated);
+        }
+
+        if (source[cursor.Position] == 44)
+        {
+            cursor.Position += 1;
+            continue;
+        }
+
+        if (source[cursor.Position] == 125)
+        {
+            cursor.Position += 1;
+            return JsonStatus.Ok;
+        }
+
+        return JsonStatus.Err(JsonError.InvalidValue);
+    }
+}
+
+internal unsafe fn JsonStatus ParseArray(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] depth)
+{
+    cursor.Position += 1;
+    stack JsonStatus added = AppendNode(document, JsonKind.Array, parentPlusOne, hasKey, keyStart, keyLength, 0, 0);
+    switch (added)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] arrayNode = (u64[0 2 ** 63 - 1])(document.Nodes.Length - 1);
+    SkipWhitespace(source, cursor);
+    if (cursor.Position >= source.Length)
+    {
+        return JsonStatus.Err(JsonError.Truncated);
+    }
+
+    if (source[cursor.Position] == 93)
+    {
+        cursor.Position += 1;
+        return JsonStatus.Ok;
+    }
+
+    while willexit (true)
+    {
+        SkipWhitespace(source, cursor);
+        stack JsonStatus elementValue = ParseValue(document, source, cursor, (u64[0 2 ** 63 - 1])(arrayNode + 1), false, 0, 0, (u64[0 2 ** 63 - 1])(depth + 1));
+        switch (elementValue)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        document.Nodes[arrayNode].ChildCount += 1;
+        SkipWhitespace(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return JsonStatus.Err(JsonError.Truncated);
+        }
+
+        if (source[cursor.Position] == 44)
+        {
+            cursor.Position += 1;
+            continue;
+        }
+
+        if (source[cursor.Position] == 93)
+        {
+            cursor.Position += 1;
+            return JsonStatus.Ok;
+        }
+
+        return JsonStatus.Err(JsonError.InvalidValue);
+    }
+}
+
+internal unsafe fn JsonStatus ParseNumber(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u64[0 2 ** 63 - 1] start = cursor.Position;
+    if (cursor.Position < source.Length && source[cursor.Position] == 45)
+    {
+        cursor.Position += 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] digits = 0;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (value < 48 || value > 57)
+        {
+            break;
+        }
+
+        digits += 1;
+        cursor.Position += 1;
+    }
+
+    if (digits == 0)
+    {
+        return JsonStatus.Err(JsonError.InvalidNumber);
+    }
+
+    // Accept fraction/exponent tails so well-formed documents parse; I64At reads
+    // the integer projection and F64At reads the full number through the shared
+    // correctly-rounded ascii parser.
+    if (cursor.Position < source.Length && source[cursor.Position] == 46)
+    {
+        cursor.Position += 1;
+        stack mut u64[0 2 ** 63 - 1] fractionDigits = 0;
+        while willexit (cursor.Position < source.Length)
+        {
+            stack i8[min max] value = source[cursor.Position];
+            if (value < 48 || value > 57)
+            {
+                break;
+            }
+
+            fractionDigits += 1;
+            cursor.Position += 1;
+        }
+
+        if (fractionDigits == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidNumber);
+        }
+    }
+
+    if (cursor.Position < source.Length
+        && (source[cursor.Position] == 101 || source[cursor.Position] == 69))
+    {
+        cursor.Position += 1;
+        if (cursor.Position < source.Length
+            && (source[cursor.Position] == 43 || source[cursor.Position] == 45))
+        {
+            cursor.Position += 1;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] exponentDigits = 0;
+        while willexit (cursor.Position < source.Length)
+        {
+            stack i8[min max] value = source[cursor.Position];
+            if (value < 48 || value > 57)
+            {
+                break;
+            }
+
+            exponentDigits += 1;
+            cursor.Position += 1;
+        }
+
+        if (exponentDigits == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidNumber);
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+    stack u64[0 2 ** 63 - 1] tokenLength = cursor.Position - start;
+    stack JsonStatus copied = AppendDecodedBytes(document, source, start, tokenLength);
+    switch (copied)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return AppendNode(document, JsonKind.Number, parentPlusOne, hasKey, keyStart, keyLength, textStart, tokenLength);
+}
+
+// Decodes one quoted JSON string into the document text buffer and returns the
+// decoded range through the out parameters.
+internal unsafe fn JsonStatus ParseStringInto(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    out u64[0 2 ** 63 - 1] decodedStart,
+    out u64[0 2 ** 63 - 1] decodedLength)
+{
+    decodedStart = document.DecodedText.Length;
+    decodedLength = 0;
+    cursor.Position += 1;
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return JsonStatus.Err(JsonError.Truncated);
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 34)
+        {
+            cursor.Position += 1;
+            decodedLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - decodedStart);
+            return JsonStatus.Ok;
+        }
+
+        if (value == 92)
+        {
+            cursor.Position += 1;
+            stack JsonStatus escaped = DecodeEscape(document, source, cursor);
+            switch (escaped)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (value >= 0 && value < 32)
+        {
+            return JsonStatus.Err(JsonError.InvalidString);
+        }
+
+        stack JsonStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        cursor.Position += 1;
+    }
+}
+
+internal unsafe fn JsonStatus DecodeEscape(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor)
+{
+    if (cursor.Position >= source.Length)
+    {
+        return JsonStatus.Err(JsonError.Truncated);
+    }
+
+    stack i8[min max] value = source[cursor.Position];
+    cursor.Position += 1;
+
+    if (value == 34 || value == 92 || value == 47)
+    {
+        return AppendDecodedByte(document, value);
+    }
+
+    if (value == 98)
+    {
+        return AppendDecodedByte(document, 8);
+    }
+
+    if (value == 102)
+    {
+        return AppendDecodedByte(document, 12);
+    }
+
+    if (value == 110)
+    {
+        return AppendDecodedByte(document, 10);
+    }
+
+    if (value == 114)
+    {
+        return AppendDecodedByte(document, 13);
+    }
+
+    if (value == 116)
+    {
+        return AppendDecodedByte(document, 9);
+    }
+
+    if (value != 117)
+    {
+        return JsonStatus.Err(JsonError.InvalidEscape);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] unit = 0;
+    stack JsonStatus first = ReadHexUnit(source, cursor, unit);
+    switch (first)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] codePoint = unit;
+    if (unit >= 55296 && unit <= 56319)
+    {
+        // High surrogate: require a following \uXXXX low surrogate.
+        if (cursor.Position + 1 >= source.Length
+            || source[cursor.Position] != 92
+            || source[cursor.Position + 1] != 117)
+        {
+            return JsonStatus.Err(JsonError.InvalidEscape);
+        }
+
+        cursor.Position += 2;
+        stack mut u64[0 2 ** 63 - 1] low = 0;
+        stack JsonStatus second = ReadHexUnit(source, cursor, low);
+        switch (second)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        if (low < 56320 || low > 57343)
+        {
+            return JsonStatus.Err(JsonError.InvalidEscape);
+        }
+
+        codePoint = (u64[0 2 ** 63 - 1])(2 ** 16 + ((unit - 55296) * 1024) + (low - 56320));
+    }
+    else if (unit >= 56320 && unit <= 57343)
+    {
+        return JsonStatus.Err(JsonError.InvalidEscape);
+    }
+
+    return AppendUtf8CodePoint(document, codePoint);
+}
+
+internal fn JsonStatus ReadHexUnit(
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    out u64[0 2 ** 63 - 1] unit)
+{
+    unit = 0;
+    if (cursor.Position + 4 > source.Length)
+    {
+        return JsonStatus.Err(JsonError.Truncated);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] decoded = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < 4; index += 1)
+    {
+        stack i8[min max] value = source[cursor.Position + index];
+        stack mut u64[0 2 ** 63 - 1] digit = 0;
+        if (value >= 48 && value <= 57)
+        {
+            digit = (u64[0 2 ** 63 - 1])(value - 48);
+        }
+        else if (value >= 97 && value <= 102)
+        {
+            digit = (u64[0 2 ** 63 - 1])(value - 87);
+        }
+        else if (value >= 65 && value <= 70)
+        {
+            digit = (u64[0 2 ** 63 - 1])(value - 55);
+        }
+        else
+        {
+            return JsonStatus.Err(JsonError.InvalidEscape);
+        }
+
+        decoded = (u64[0 2 ** 63 - 1])((decoded * 16) + digit);
+    }
+
+    cursor.Position += 4;
+    unit = decoded;
+    return JsonStatus.Ok;
+}
+
+internal unsafe fn JsonStatus AppendUtf8CodePoint(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] codePoint)
+{
+    if (codePoint < 128)
+    {
+        return AppendDecodedByte(document, (i8[min max])codePoint);
+    }
+
+    if (codePoint < 2048)
+    {
+        stack JsonStatus first = AppendDecodedByte(document, (i8[min max])(192 +% (codePoint / 64)));
+        switch (first)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+    }
+
+    if (codePoint < 2 ** 16)
+    {
+        stack JsonStatus first = AppendDecodedByte(document, (i8[min max])(224 +% (codePoint / 4096)));
+        switch (first)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus second = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+        switch (second)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+    }
+
+    if (codePoint > 1114111)
+    {
+        return JsonStatus.Err(JsonError.InvalidEscape);
+    }
+
+    stack JsonStatus first = AppendDecodedByte(document, (i8[min max])(240 +% (codePoint / 262144)));
+    switch (first)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus second = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 4096) % 64)));
+    switch (second)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus third = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+    switch (third)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+}
+
+internal fn JsonStatus ExpectLiteral(
+    borrow i8[min max][] source,
+    mut borrow JsonCursor cursor,
+    ascii literal)
+{
+    unsafe
+    {
+        stack i64[min max] signedLength = System.Text.AsciiLength(literal);
+        if (signedLength <= 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+        if (cursor.Position + length > source.Length)
+        {
+            return JsonStatus.Err(JsonError.Truncated);
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(literal);
+        if (data == null)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+        {
+            if (source[cursor.Position + index] != *(&data[index]))
+            {
+                return JsonStatus.Err(JsonError.InvalidValue);
+            }
+        }
+
+        cursor.Position += length;
+        return JsonStatus.Ok;
+    }
+}
+
+internal unsafe fn JsonStatus AppendDecodedByte(mut borrow JsonDocument document, i8[min max] value)
+{
+    stack mut i8[min max][1] storage;
+    storage[0] = value;
+    stack i8[min max][] bytes = slice(&storage[0], 1);
+    switch (System.Memory.AppendBytes(document.DecodedText, bytes, 1))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return JsonStatus.Err(JsonError.Memory(error));
+        case System.Memory.MemoryStatus.Ok:
+            return JsonStatus.Ok;
+    }
+}
+
+internal unsafe fn JsonStatus AppendDecodedBytes(
+    mut borrow JsonDocument document,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (length == 0)
+    {
+        return JsonStatus.Ok;
+    }
+
+    if (start + length > source.Length)
+    {
+        return JsonStatus.Err(JsonError.InvalidValue);
+    }
+
+    stack i8[min max][] bytes = slice(&source[start], length);
+    switch (System.Memory.AppendBytes(document.DecodedText, bytes, length))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return JsonStatus.Err(JsonError.Memory(error));
+        case System.Memory.MemoryStatus.Ok:
+            return JsonStatus.Ok;
+    }
+}
+
+internal fn JsonStatus AppendNode(
+    mut borrow JsonDocument document,
+    JsonKind kind,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] textStart,
+    u64[0 2 ** 63 - 1] textLength)
+{
+    if (!document.Nodes.TryReserve(1))
+    {
+        return JsonStatus.Err(JsonError.Memory(System.Memory.MemoryError.OutOfMemory));
+    }
+
+    stack mut JsonNode node = new();
+    node.Kind = kind;
+    node.ParentPlusOne = parentPlusOne;
+    node.HasKey = hasKey;
+    node.KeyStart = keyStart;
+    node.KeyLength = keyLength;
+    node.TextStart = textStart;
+    node.TextLength = textLength;
+    node.ChildCount = 0;
+    init document.Nodes[document.Nodes.Length] = node;
+    return JsonStatus.Ok;
+}
+
+// Compact JSON writer with correct text escaping for protocol requests and
+// inspection output.
+public struct JsonWriter
+{
+    internal dynamic i8[min max] Buffer;
+    internal bool[64] HasItem;
+    internal u8[0 64] Depth;
+
+    JsonWriter()
+    {
+        self.Buffer = new();
+        self.Depth = 0;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < 64; index += 1)
+        {
+            self.HasItem[index] = false;
+        }
+    }
+
+    public finite law u64[0 2 ** 63 - 1] Length(borrow JsonWriter self)
+    {
+        return self.Buffer.Length;
+    }
+
+    public finite law retborrow i8[min max][] Bytes(borrow JsonWriter self)
+    {
+        return self.Buffer[0, self.Buffer.Length];
+    }
+
+    public unsafe fn ascii View(mut borrow JsonWriter self)
+    {
+        if (self.Buffer.Length == 0)
+        {
+            return "";
+        }
+
+        stack mut Ascii view = new Ascii();
+        view.Data = &self.Buffer[0];
+        view.Length = (i64[min max])self.Buffer.Length;
+        view.Capacity = (i64[min max])self.Buffer.Length;
+        return System.Text.AsciiView(view);
+    }
+
+    public unsafe fn JsonStatus BeginObject(mut borrow JsonWriter self)
+    {
+        return self.BeginContainer(123);
+    }
+
+    public unsafe fn JsonStatus EndObject(mut borrow JsonWriter self)
+    {
+        return self.EndContainer(125);
+    }
+
+    public unsafe fn JsonStatus BeginArray(mut borrow JsonWriter self)
+    {
+        return self.BeginContainer(91);
+    }
+
+    public unsafe fn JsonStatus EndArray(mut borrow JsonWriter self)
+    {
+        return self.EndContainer(93);
+    }
+
+    public unsafe fn JsonStatus Key(mut borrow JsonWriter self, ascii name)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus written = self.AppendEscapedText(name);
+        switch (written)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        // A key re-arms the separator state so the following value attaches
+        // without a comma.
+        if (self.Depth > 0)
+        {
+            stack u8[0 63] keySlot = (u8[0 63])(self.Depth - 1);
+            self.HasItem[keySlot] = false;
+        }
+
+        return self.AppendByte(58);
+    }
+
+    public unsafe fn JsonStatus TextValue(mut borrow JsonWriter self, ascii value)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return self.AppendEscapedText(value);
+    }
+
+    public unsafe fn JsonStatus BoolValue(mut borrow JsonWriter self, bool value)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        if (value)
+        {
+            return self.AppendRawText("true");
+        }
+
+        return self.AppendRawText("false");
+    }
+
+    public unsafe fn JsonStatus NullValue(mut borrow JsonWriter self)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return self.AppendRawText("null");
+    }
+
+    public unsafe fn JsonStatus I64Value(mut borrow JsonWriter self, i64[min max] value)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        if (value == 0)
+        {
+            return self.AppendByte(48);
+        }
+
+        stack mut i8[min max][20] digits =
+        {
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        };
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        stack mut bool negative = false;
+        stack mut i64[min max] remaining = value;
+        if (remaining < 0)
+        {
+            negative = true;
+        }
+
+        while willexit (remaining != 0 && count < 20)
+        {
+            stack mut i64[min max] digit = remaining % 10;
+            if (digit < 0)
+            {
+                digit = -digit;
+            }
+
+            digits[count] = (i8[min max])(48 + digit);
+            count += 1;
+            remaining = remaining / 10;
+        }
+
+        if (negative)
+        {
+            stack JsonStatus sign = self.AppendByte(45);
+            switch (sign)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+        }
+
+        while willexit (count > 0)
+        {
+            count -= 1;
+            stack JsonStatus digitWritten = self.AppendByte(digits[count]);
+            switch (digitWritten)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+        }
+
+        return JsonStatus.Ok;
+    }
+
+    internal unsafe fn JsonStatus BeginContainer(mut borrow JsonWriter self, i8[min max] opener)
+    {
+        stack JsonStatus separated = self.AppendSeparator();
+        switch (separated)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        if (self.Depth >= 64)
+        {
+            return JsonStatus.Err(JsonError.TooDeep);
+        }
+
+        self.HasItem[self.Depth] = false;
+        self.Depth += 1;
+        return self.AppendByte(opener);
+    }
+
+    internal unsafe fn JsonStatus EndContainer(mut borrow JsonWriter self, i8[min max] closer)
+    {
+        if (self.Depth == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        self.Depth -= 1;
+        if (self.Depth > 0)
+        {
+            stack u8[0 63] closeSlot = (u8[0 63])(self.Depth - 1);
+            self.HasItem[closeSlot] = true;
+        }
+
+        return self.AppendByte(closer);
+    }
+
+    internal unsafe fn JsonStatus AppendSeparator(mut borrow JsonWriter self)
+    {
+        if (self.Depth == 0)
+        {
+            return JsonStatus.Ok;
+        }
+
+        stack u8[0 63] separatorSlot = (u8[0 63])(self.Depth - 1);
+        if (self.HasItem[separatorSlot])
+        {
+            return self.AppendByte(44);
+        }
+
+        self.HasItem[separatorSlot] = true;
+        return JsonStatus.Ok;
+    }
+
+    internal unsafe fn JsonStatus AppendEscapedText(mut borrow JsonWriter self, ascii value)
+    {
+        stack JsonStatus openQuote = self.AppendByte(34);
+        switch (openQuote)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack i64[min max] signedLength = System.Text.AsciiLength(value);
+        if (signedLength > 0)
+        {
+            stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+            if (data == null)
+            {
+                return JsonStatus.Err(JsonError.InvalidValue);
+            }
+
+            stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+            {
+                stack i8[min max] unit = *(&data[index]);
+                stack JsonStatus written = self.AppendEscapedByte(unit);
+                switch (written)
+                {
+                    case JsonStatus.Err(var error):
+                        return JsonStatus.Err(error);
+                    case JsonStatus.Ok:
+                }
+            }
+        }
+
+        return self.AppendByte(34);
+    }
+
+    internal unsafe fn JsonStatus AppendEscapedByte(mut borrow JsonWriter self, i8[min max] unit)
+    {
+        if (unit == 34 || unit == 92)
+        {
+            stack JsonStatus escape = self.AppendByte(92);
+            switch (escape)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            return self.AppendByte(unit);
+        }
+
+        if (unit == 10)
+        {
+            return self.AppendEscapePair(110);
+        }
+
+        if (unit == 13)
+        {
+            return self.AppendEscapePair(114);
+        }
+
+        if (unit == 9)
+        {
+            return self.AppendEscapePair(116);
+        }
+
+        if (unit == 8)
+        {
+            return self.AppendEscapePair(98);
+        }
+
+        if (unit == 12)
+        {
+            return self.AppendEscapePair(102);
+        }
+
+        if (unit >= 0 && unit < 32)
+        {
+            stack JsonStatus prefix = self.AppendRawText("\\u00");
+            switch (prefix)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            stack i8[min max] high = HexDigit((u64[0 2 ** 63 - 1])(unit / 16));
+            stack JsonStatus highWritten = self.AppendByte(high);
+            switch (highWritten)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            return self.AppendByte(HexDigit((u64[0 2 ** 63 - 1])(unit % 16)));
+        }
+
+        return self.AppendByte(unit);
+    }
+
+    internal unsafe fn JsonStatus AppendEscapePair(mut borrow JsonWriter self, i8[min max] letter)
+    {
+        stack JsonStatus escape = self.AppendByte(92);
+        switch (escape)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        return self.AppendByte(letter);
+    }
+
+    internal unsafe fn JsonStatus AppendRawText(mut borrow JsonWriter self, ascii value)
+    {
+        stack i64[min max] signedLength = System.Text.AsciiLength(value);
+        if (signedLength <= 0)
+        {
+            return JsonStatus.Ok;
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+        if (data == null)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+        stack i8[min max][] bytes = slice(data, length);
+        switch (System.Memory.AppendBytes(self.Buffer, bytes, length))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return JsonStatus.Err(JsonError.Memory(error));
+            case System.Memory.MemoryStatus.Ok:
+                return JsonStatus.Ok;
+        }
+    }
+
+    internal unsafe fn JsonStatus AppendByte(mut borrow JsonWriter self, i8[min max] value)
+    {
+        stack mut i8[min max][1] storage;
+        storage[0] = value;
+        stack i8[min max][] bytes = slice(&storage[0], 1);
+        switch (System.Memory.AppendBytes(self.Buffer, bytes, 1))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return JsonStatus.Err(JsonError.Memory(error));
+            case System.Memory.MemoryStatus.Ok:
+                return JsonStatus.Ok;
+        }
+    }
+}
+
+internal finite law i8[min max] HexDigit(u64[0 2 ** 63 - 1] value)
+{
+    stack u64[0 2 ** 63 - 1] digit = (u64[0 2 ** 63 - 1])(value % 16);
+    if (digit < 10)
+    {
+        return (i8[min max])(48 + digit);
+    }
+
+    return (i8[min max])(87 + digit);
+}

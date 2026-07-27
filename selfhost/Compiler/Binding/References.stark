@@ -1,0 +1,293 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import System.Text
+import System.Memory
+module Compiler.Binding.References
+
+// Counts the identifier references in a function body that bind to nothing —
+// neither an in-scope function-scope symbol nor a top-level declaration. Delegates
+// to the lexical `ResolveReferences` so the answer matches the full resolution.
+public fn u32[0 max] CountUnresolvedReferences(borrow FunctionScope scope, borrow DeclarationTable table, ascii source, borrow TokenStream stream, borrow StatementList body)
+{
+    switch (ResolveReferences(scope, table, source, stream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var error):
+            return 0;
+        case BindResult<ReferenceTable>.Ok(var refs):
+            return refs.UnboundCount();
+    }
+}
+
+// How an identifier reference resolved: to a parameter or local (in the function
+// scope), to a top-level declaration (global/function/type), or to nothing.
+public enum ReferenceKind
+{
+    Parameter,
+    Local,
+    Declaration,
+    Unbound,
+}
+
+// The resolution of every identifier reference in a function body's expressions,
+// in expression-node order. Each entry carries the reference's expression-tree
+// node, its name token, what it resolved to, and the 1-based index of the target
+// (a `FunctionScope` symbol for Parameter/Local, a `DeclarationTable` entry for
+// Declaration, 0 for Unbound).
+public struct ReferenceTable
+{
+    internal dynamic u32[0 max] Nodes;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic ReferenceKind Kinds;
+    internal dynamic u32[0 max] Targets;
+
+    ReferenceTable()
+    {
+        self.Nodes = new();
+        self.NameTokens = new();
+        self.Kinds = new();
+        self.Targets = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ReferenceTable self)
+    {
+        return self.Nodes.Length;
+    }
+
+    // The expression-tree node of reference `index`, or 0 when out of range.
+    public finite law u32[0 max] NodeAt(borrow ReferenceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.Nodes.Length)
+        {
+            node = self.Nodes[index];
+        }
+
+        return node;
+    }
+
+    // The name token of reference `index`, or 0 when out of range.
+    public finite law u32[0 max] NameTokenAt(borrow ReferenceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    // The resolution kind of reference `index` (Unbound when out of range).
+    public finite law ReferenceKind KindAt(borrow ReferenceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ReferenceKind kind = ReferenceKind.Unbound;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    // The 1-based target index of reference `index` (0 = none / unbound).
+    public finite law u32[0 max] TargetAt(borrow ReferenceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] target = 0;
+        if (index < self.Targets.Length)
+        {
+            target = self.Targets[index];
+        }
+
+        return target;
+    }
+
+    // The number of references that resolved to nothing.
+    public finite law u32[0 max] UnboundCount(borrow ReferenceTable self)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u64[0 2 ** 63 - 1] total = self.Nodes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < total; index += 1)
+        {
+            if (self.KindAt(index) == ReferenceKind.Unbound)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ReferenceTable self, u32[0 max] node, u32[0 max] nameToken, ReferenceKind kind, u32[0 max] target)
+    {
+        if (!self.Nodes.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.Targets.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Nodes[self.Nodes.Length] = node;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.Targets[self.Targets.Length] = target;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+// The 1-based index of the reference-table entry for expression `node`, or 0
+// when the node is not an identifier reference.
+internal fn u32[0 max] ReferenceIndexForNode(borrow ReferenceTable refs, u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && refs.NodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+// Resolves every identifier reference in a function body LEXICALLY. References are
+// visited per owning statement (using the parser's per-statement node ranges), so
+// each is resolved at its own source position against (1) the function scope —
+// parameters (always visible) and locals that both precede the reference and whose
+// block still encloses it, with the innermost (deepest, then latest-declared)
+// binding winning — and otherwise (2) the top-level declaration table. Member
+// names, operators, and literals are not identifier references and are skipped.
+public fn BindResult<ReferenceTable> ResolveReferences(borrow FunctionScope scope, borrow DeclarationTable table, ascii source, borrow TokenStream stream, borrow StatementList body)
+{
+    stack mut ReferenceTable refs = new();
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack u64[0 2 ** 63 - 1] totalNodes = body.ExprNodeCount();
+    stack u64[0 2 ** 63 - 1] scopeCount = scope.Count();
+    stack u64[0 2 ** 63 - 1] tableCount = table.Count();
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] stmt = 0; stmt < statementCount; stmt += 1)
+    {
+        // Expression nodes `(low, high]` (1-based) belong to this statement.
+        stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(stmt);
+        stack mut u64[0 2 ** 63 - 1] high = totalNodes;
+        if ((u64[0 2 ** 63 - 1])(stmt + 1) < statementCount)
+        {
+            high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(stmt + 1));
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] n = (u64[0 2 ** 63 - 1])(low + 1); n <= high; n += 1)
+        {
+            stack u32[0 max] node = (u32[0 max])n;
+            if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                stack u32[0 max] nameToken = body.ExprTokenAt(node);
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])nameToken);
+                stack mut ReferenceKind kind = ReferenceKind.Unbound;
+                stack mut u32[0 max] target = 0;
+
+                // Pick the innermost in-scope binding: greater block depth wins,
+                // ties broken by later declaration (so an inner/later local shadows
+                // an outer one or a parameter). Parameters rank at depth 0, order 0;
+                // a local ranks at its depth, order = declaring-statement + 1.
+                stack mut bool found = false;
+                stack mut u32[0 max] bestDepth = 0;
+                stack mut u64[0 2 ** 63 - 1] bestOrder = 0;
+                stack mut SymbolKind bestKind = SymbolKind.Parameter;
+                stack mut u32[0 max] bestTarget = 0;
+                for willexit (stack mut u64[0 2 ** 63 - 1] s = 0; s < scopeCount; s += 1)
+                {
+                    stack ascii symbolName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(s));
+                    if (System.Text.Equals(symbolName, name))
+                    {
+                        stack mut bool candidate = false;
+                        stack mut u32[0 max] candDepth = 0;
+                        stack mut u64[0 2 ** 63 - 1] candOrder = 0;
+                        if (scope.KindAt(s) == SymbolKind.Parameter)
+                        {
+                            candidate = true;
+                        }
+                        else
+                        {
+                            stack u32[0 max] declStmt = scope.StmtIndexAt(s);
+                            if (LocalVisibleAt(body, (u64[0 2 ** 63 - 1])declStmt, stmt))
+                            {
+                                candidate = true;
+                                candDepth = scope.DepthAt(s);
+                                candOrder = (u64[0 2 ** 63 - 1])(declStmt + 1);
+                            }
+                        }
+
+                        if (candidate)
+                        {
+                            stack mut bool better = !found;
+                            if (found && candDepth > bestDepth)
+                            {
+                                better = true;
+                            }
+                            else if (found && candDepth == bestDepth && candOrder > bestOrder)
+                            {
+                                better = true;
+                            }
+
+                            if (better)
+                            {
+                                found = true;
+                                bestDepth = candDepth;
+                                bestOrder = candOrder;
+                                bestKind = scope.KindAt(s);
+                                bestTarget = (u32[0 max])(s + 1);
+                            }
+                        }
+                    }
+                }
+
+                if (found)
+                {
+                    target = bestTarget;
+                    switch (bestKind)
+                    {
+                        case SymbolKind.Parameter:
+                            kind = ReferenceKind.Parameter;
+                        case SymbolKind.Local:
+                            kind = ReferenceKind.Local;
+                    }
+                }
+                else
+                {
+                    stack mut u32[0 max] tableMatch = 0;
+                    for willexit (stack mut u64[0 2 ** 63 - 1] t = 0; t < tableCount; t += 1)
+                    {
+                        if (tableMatch == 0)
+                        {
+                            stack ascii declName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(t));
+                            if (System.Text.Equals(declName, name))
+                            {
+                                tableMatch = (u32[0 max])(t + 1);
+                            }
+                        }
+                    }
+
+                    if (tableMatch != 0)
+                    {
+                        kind = ReferenceKind.Declaration;
+                        target = tableMatch;
+                    }
+                }
+
+                switch (refs.Append(node, nameToken, kind, target))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return BindResult<ReferenceTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return BindResult<ReferenceTable>.Ok(refs);
+}

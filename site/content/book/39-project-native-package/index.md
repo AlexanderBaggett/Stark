@@ -30,7 +30,16 @@ projects consume it through ordinary package dependencies.
 Build a Stark package that wraps a native library and lets downstream Stark
 executables depend on it without repeating native link details.
 
-Use the Raylib example as the concrete model for this package shape.
+Use the Raylib example as the concrete model for direct symbol bindings and
+C-layout aggregate carriers. Use `Vendor.SDL3` as the model when a native
+adapter is required for real ABI reasons: SDL3 keeps C `bool` returns,
+`SDL_Event`'s union layout, nullable handles, and callback-shaped audio entry
+points inside `Sdl3Binding.c`, while safe Stark callers use handles, result
+enums, flat event values, and caller-owned byte buffers.
+Use `Vendor.Miniaudio` and `Vendor.Cgltf` as models for pinned single-header
+source drops behind small native implementation files. Use `Vendor.GLFW` as the
+model for native callback bridges that translate C callbacks into caller-polled
+Stark values without retaining Stark closures in foreign code.
 
 ## Step 2: Write The Stark Wrapper First
 
@@ -158,11 +167,39 @@ public unsafe ffi varargs fn i32[min max] printf(ascii format);
 
 Only wrap the argument shapes your package actually supports.
 
-## Step 3: Add A Boring Native Shim
+## Step 3: Name Native Symbols Directly
 
-Use a small C shim when the native library's ABI shape is awkward for direct
-Stark declarations. The shim should translate between the native library and a
-simple C ABI surface.
+Use `[LinkName("symbol")]` when the Stark declaration name should differ from
+the foreign linker symbol:
+
+```stark
+[LinkName("vendor_current_value")]
+unsafe ffi(c) fn i32[min max] CurrentValue();
+
+[LinkName("vendor_abs_i32")]
+unsafe ffi(c) fn i32[min max] AbsI32(i32[min max] value);
+```
+
+This is the zero-overhead path: the Stark source name stays clear and private to
+the binding, while LLVM declares and calls the named foreign symbol directly.
+`LinkName` does not change the ABI shape. The parameters, return type, calling
+convention, ownership, and safety contract must already match the native
+function.
+
+When a C struct is passed or returned by value, `[StructLayout(C)]` on the Stark
+struct plus `ffi(c)` on the declaration is the matching ABI contract. The
+compiler lowers those aggregate parameters and returns through the target C ABI
+carrier shape, so use `[LinkName]` directly for raylib-style `Vector2`,
+`Vector3`, `Vector4`, `Rectangle`, and similar C-layout structs.
+Parameter and result carriers are independent target facts. On AArch64
+AAPCS64, an integer-like four-byte struct such as Raylib `Color` uses an `i64`
+parameter carrier and an exact `i32` return carrier.
+
+## Step 4: Add A Boring Native Shim
+
+Use a small C shim only when the native library's ABI shape is genuinely
+awkward for direct Stark declarations. The shim should translate between the
+native library and a simple C ABI surface.
 
 Keep the shim boring:
 
@@ -171,25 +208,20 @@ Keep the shim boring:
 - no global configuration unless unavoidable
 - small functions with clear inputs and outputs
 
-A shim can also rename or narrow the native surface:
+A shim should do real ABI adaptation, not just rename a symbol:
 
 ```c
 #include "vendor_math.h"
 
-int stark_native_value(void) {
-    return vendor_current_value();
-}
-
-int stark_native_abs_i32(int value) {
-    return vendor_abs_i32(value);
+int stark_read_count(int *count) {
+    return vendor_read_count(count);
 }
 ```
 
 The Stark declarations should match the shim, not the larger vendor header:
 
 ```stark
-unsafe ffi fn i32[min max] stark_native_value();
-unsafe ffi fn i32[min max] stark_native_abs_i32(i32[min max] value);
+unsafe ffi fn i32[min max] stark_read_count(rawmutptr<i32[min max]> count);
 ```
 
 For callbacks, expose an explicit registration wrapper:
@@ -212,7 +244,12 @@ public unsafe fn void RegisterNativeCallback()
 Use that shape only when the native side stores a plain function pointer and
 the callback's requirements are satisfied by the registration call.
 
-## Step 4: Put Native Build Settings In The Manifest
+## Step 5: Put Native Build Settings In The Manifest
+
+This section is for authoring a custom/source native package. An official
+`Vendor.*` package in a release SDK already contains its target-native payload
+and ordered link facts, indexed and checksummed by `sdk.json`; applications do
+not repeat this manifest metadata or run `pkg-config`.
 
 Native requirements belong in `Stark.toml`:
 
@@ -227,7 +264,6 @@ root = "Raylib.stark"
 output = "RaylibStark"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 ```
 
@@ -254,14 +290,13 @@ libraries = ["raylib"]
 frameworks = ["CoreVideo", "IOKit", "Cocoa", "OpenGL"]
 ```
 
-## Step 5: Consume The Package Without Repeating Native Flags
+## Step 6: Consume The Package Without Repeating Native Flags
 
 The executable should only name the dependency:
 
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 That is the point of package-owned native metadata: the package carries the
@@ -304,7 +339,7 @@ export unsafe fn i32[min max] main()
 }
 ```
 
-## Step 6: Review The Boundary Before Publishing
+## Step 7: Review The Boundary Before Publishing
 
 Before treating a native-backed package as reusable, check that:
 

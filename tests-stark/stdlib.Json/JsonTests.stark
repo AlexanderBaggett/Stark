@@ -1,0 +1,166 @@
+import System.Testing
+import System.Json
+import System.Text
+[Collection("json")]
+module JsonTests
+
+// Stark-native tests for the System.Json f64 number accessor. F64At reads a
+// Number node, defers to the shared correctly-rounded System.Text.ParseF64Ascii
+// parser, and maps a TextError to JsonError.InvalidNumber. The root node of a
+// parsed object document is node 0.
+
+const JsonRootNode = 0;
+
+// F64At returns a scalar f64, so this reads the value of an object member and
+// compares it with a Stark f64 literal. The parsed token and the literal go
+// through the same correctly-rounded text->f64 conversion, so `==` is a
+// bit-exact check inside the supported window (significand <= 2**53,
+// |exp10| <= 22).
+fn bool MemberF64Equals(mut borrow JsonDocument document, ascii key, f64 expected)
+{
+    stack mut u64[0 2 ** 63 - 1] node = 0;
+    if (!document.TryFindMember(JsonRootNode, key, node))
+    {
+        return false;
+    }
+
+    switch (document.F64At(node))
+    {
+        case JsonResult<f64>.Err(var error):
+            return false;
+        case JsonResult<f64>.Ok(var value):
+            return value == expected;
+    }
+}
+
+fn bool IsInvalidNumber(JsonError error)
+{
+    return error == JsonError.InvalidNumber;
+}
+
+[Fact]
+fn bool NumbersParseToExactValues()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+{ "half": 1.5, "negzero": -0.0, "thousand": 1e3, "pi": 3.14 }
+"""))
+        {
+            case JsonResult<JsonDocument>.Err(var error):
+                return false;
+            case JsonResult<JsonDocument>.Ok(var value):
+                stack mut JsonDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] half = 0;
+                if (!document.TryFindMember(JsonRootNode, "half", half))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(half) != JsonKind.Number)
+                {
+                    return false;
+                }
+
+                return MemberF64Equals(document, "half", 1.5)
+                    && MemberF64Equals(document, "negzero", -0.0)
+                    && MemberF64Equals(document, "thousand", 1000.0)
+                    && MemberF64Equals(document, "pi", 3.14);
+        }
+    }
+}
+
+[Fact]
+fn bool F64AtOnNonNumberReportsWrongKind()
+{
+    // A Text node is not a Number, so F64At must reject it before parsing.
+    unsafe
+    {
+        switch (ParseText(raw"""
+{ "label": "not a number" }
+"""))
+        {
+            case JsonResult<JsonDocument>.Err(var error):
+                return false;
+            case JsonResult<JsonDocument>.Ok(var value):
+                stack mut JsonDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] label = 0;
+                if (!document.TryFindMember(JsonRootNode, "label", label))
+                {
+                    return false;
+                }
+
+                switch (document.F64At(label))
+                {
+                    case JsonResult<f64>.Err(var error):
+                        return error == JsonError.WrongKind;
+                    case JsonResult<f64>.Ok(var parsedValue):
+                        return false;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool NumberOutsideExactWindowReportsInvalidNumber()
+{
+    // |exp10| > 22 is outside the correctly-rounded window: F64At must report
+    // InvalidNumber rather than mis-round the value.
+    unsafe
+    {
+        switch (ParseText(raw"""
+{ "tiny": 1e40 }
+"""))
+        {
+            case JsonResult<JsonDocument>.Err(var error):
+                return false;
+            case JsonResult<JsonDocument>.Ok(var value):
+                stack mut JsonDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] tiny = 0;
+                if (!document.TryFindMember(JsonRootNode, "tiny", tiny))
+                {
+                    return false;
+                }
+
+                switch (document.F64At(tiny))
+                {
+                    case JsonResult<f64>.Err(var error):
+                        return IsInvalidNumber(error);
+                    case JsonResult<f64>.Ok(var parsedValue):
+                        return false;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool ForwardSiblingWalkSkipsNestedDescendants()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+{ "first": { "nested": 1 }, "second": [1, 2], "third": "done" }
+"""))
+        {
+            case JsonResult<JsonDocument>.Err(var error):
+                return false;
+            case JsonResult<JsonDocument>.Ok(var value):
+                stack mut JsonDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                stack mut u64[0 2 ** 63 - 1] third = 0;
+                stack mut u64[0 2 ** 63 - 1] pastEnd = 0;
+                if (!document.TryFirstChild(JsonRootNode, first)
+                    || !document.TryNextSibling(JsonRootNode, first, second)
+                    || !document.TryNextSibling(JsonRootNode, second, third))
+                {
+                    return false;
+                }
+
+                return System.Text.Equals(document.KeyAt(first), "first")
+                    && System.Text.Equals(document.KeyAt(second), "second")
+                    && System.Text.Equals(document.KeyAt(third), "third")
+                    && !document.TryNextSibling(JsonRootNode, third, pastEnd);
+        }
+    }
+}

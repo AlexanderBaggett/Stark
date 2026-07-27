@@ -14,11 +14,47 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [command|path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|doctor|inspect-pkg|inspect-package|--host-test-inspect|--host-test-server|--print-sdk-compatibility] [-I dir|--search-dir dir]* [--sdk-root dir] [--no-stark-path] [--explain-modules] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [--package-typed-only] [--package-profile dev|release] [--format text|json] [--strict] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [--strict-integer-ranges] [--toolchain-dir dir] [--llvm-lib path] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
+    private static readonly IReadOnlySet<string> EmptyImportedInlineCloneSeedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
+        if (args is [SdkCompilerCompatibility.PrintOption])
+        {
+            await stdout.WriteLineAsync(SdkCompilerCompatibility.SupportedLine);
+            return 0;
+        }
+
+        if (args is [DevelopmentSdkManifestWriter.CommandOption, var developmentSdkRoot])
+        {
+            if (!DevelopmentSdkManifestWriter.TryWrite(developmentSdkRoot, out var manifestPath, out var error))
+            {
+                await stderr.WriteLineAsync($"Could not write the repository development SDK manifest: {error}");
+                return 1;
+            }
+
+            await stdout.WriteLineAsync(manifestPath);
+            return 0;
+        }
+
+        if (args is [StageSdkManifestWriter.CommandOption, var stageSdkRoot, var stageName])
+        {
+            if (!StageSdkManifestWriter.TryWrite(stageSdkRoot, stageName, out var manifestPath, out var error))
+            {
+                await stderr.WriteLineAsync($"Could not write the stage SDK manifest: {error}");
+                return 1;
+            }
+
+            await stdout.WriteLineAsync(manifestPath);
+            return 0;
+        }
+
+        if (args.Length != 0 && HostCompilerTestRunner.IsCommand(args[0]))
+        {
+            return await HostCompilerTestRunner.RunAsync(args, stdin, stdout, stderr);
+        }
+
         if (args.Length != 0 && ProjectCliDriver.IsProjectCommand(args[0]))
         {
             return await ProjectCliDriver.RunAsync(args, stdout, stderr);
@@ -41,13 +77,22 @@ internal static class CompilerCli
         string? targetCpu = null;
         var targetFeatures = new List<string>();
         var relocationModel = LlvmRelocationModel.Default;
+        var hasExplicitRelocationModel = false;
         LlvmCodeModel? codeModel = null;
-        var optimizationLevel = CompilerOptimizationLevel.O3;
+        string? sdkRootDirectory = null;
+        string? toolchainDirectory = null;
+        string? llvmLibraryPath = null;
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
         string? toolchainMetricsPath = null;
         string? packageLibraryFile = null;
+        string? packageImageOutputPath = null;
+        string? packageProfile = null;
+        var emitPackageImageJson = false;
+        var emitTypedOnlyPackageImage = false;
+        var packageInspectionFormat = PackageInspectionFormat.Text;
+        var hasPackageInspectionFormat = false;
         var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
@@ -55,6 +100,9 @@ internal static class CompilerCli
         var logStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logKinds = new HashSet<CompilerLogKind>();
         var strictIntegerRanges = true;
+        var useStarkPathEnvironment = true;
+        var explainModules = false;
+        var doctorStrict = false;
         var showHelp = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -127,6 +175,7 @@ internal static class CompilerCli
                     return 1;
                 }
 
+                hasExplicitRelocationModel = true;
                 continue;
             }
 
@@ -142,24 +191,43 @@ internal static class CompilerCli
                 continue;
             }
 
-            if (TryParseOptimizationLevelArgument(argument, out var shortOptimizationLevel))
-            {
-                optimizationLevel = shortOptimizationLevel;
-                continue;
-            }
-
             if (string.Equals(argument, "--strict-integer-ranges", StringComparison.Ordinal))
             {
                 strictIntegerRanges = true;
                 continue;
             }
 
-            if (TryReadOptionValue(argument, "--optimize", args, ref index, out var optimizeValue)
-                || TryReadOptionValue(argument, "-O", args, ref index, out optimizeValue))
+            if (string.Equals(argument, "--strict", StringComparison.Ordinal))
             {
-                if (!TryParseOptimizationLevel(optimizeValue, out optimizationLevel))
+                doctorStrict = true;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--sdk-root", args, ref index, out var sdkRootValue))
+            {
+                if (string.IsNullOrWhiteSpace(sdkRootValue))
                 {
-                    await stderr.WriteLineAsync($"Unknown optimization level '{optimizeValue}'. Expected 0, g, 1, 2, or 3.");
+                    await stderr.WriteLineAsync("SDK root must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                try
+                {
+                    sdkRootDirectory = Path.GetFullPath(
+                        Environment.ExpandEnvironmentVariables(sdkRootValue.Trim()));
+                    if (!Directory.Exists(sdkRootDirectory))
+                    {
+                        await stderr.WriteLineAsync($"SDK root '{sdkRootDirectory}' was not found.");
+                        await stderr.WriteLineAsync(Usage);
+                        return 1;
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException
+                    or NotSupportedException
+                    or PathTooLongException)
+                {
+                    await stderr.WriteLineAsync($"SDK root path '{sdkRootValue.Trim()}' is invalid: {exception.Message}");
                     await stderr.WriteLineAsync(Usage);
                     return 1;
                 }
@@ -176,6 +244,46 @@ internal static class CompilerCli
             if (TryReadOptionValue(argument, "--archiver", args, ref index, out var archiverValue))
             {
                 archiverTool = archiverValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--toolchain-dir", args, ref index, out var toolchainDirectoryValue))
+            {
+                if (string.IsNullOrWhiteSpace(toolchainDirectoryValue))
+                {
+                    await stderr.WriteLineAsync("Toolchain directory must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                toolchainDirectory = Path.GetFullPath(Environment.ExpandEnvironmentVariables(toolchainDirectoryValue.Trim()));
+                if (!Directory.Exists(toolchainDirectory))
+                {
+                    await stderr.WriteLineAsync($"Toolchain directory '{toolchainDirectory}' was not found.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--llvm-lib", args, ref index, out var llvmLibraryValue))
+            {
+                if (string.IsNullOrWhiteSpace(llvmLibraryValue))
+                {
+                    await stderr.WriteLineAsync("LLVM library path must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                llvmLibraryPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(llvmLibraryValue.Trim()));
+                if (!File.Exists(llvmLibraryPath))
+                {
+                    await stderr.WriteLineAsync($"LLVM library '{llvmLibraryPath}' was not found.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
                 continue;
             }
 
@@ -294,6 +402,43 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (TryReadOptionValue(argument, "--package-image-output", args, ref index, out var packageImageOutputValue))
+            {
+                if (string.IsNullOrWhiteSpace(packageImageOutputValue))
+                {
+                    await stderr.WriteLineAsync("Package image output path must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                packageImageOutputPath = packageImageOutputValue.Trim();
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--package-profile", args, ref index, out var packageProfileValue))
+            {
+                if (!TryParsePackageProfile(packageProfileValue, out packageProfile))
+                {
+                    await stderr.WriteLineAsync($"Unknown package profile '{packageProfileValue}'. Expected dev or release.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(argument, "--package-image-json", StringComparison.Ordinal))
+            {
+                emitPackageImageJson = true;
+                continue;
+            }
+
+            if (string.Equals(argument, "--package-typed-only", StringComparison.Ordinal))
+            {
+                emitTypedOnlyPackageImage = true;
+                continue;
+            }
+
             if (TryReadOptionValue(argument, "--log-level", args, ref index, out var logLevelValue))
             {
                 if (!TryParseLogLevel(logLevelValue, out logLevel))
@@ -315,6 +460,19 @@ internal static class CompilerCli
                     return 1;
                 }
 
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--format", args, ref index, out var packageInspectionFormatValue))
+            {
+                if (!TryParsePackageInspectionFormat(packageInspectionFormatValue, out packageInspectionFormat))
+                {
+                    await stderr.WriteLineAsync($"Unknown output format '{packageInspectionFormatValue}'. Expected text or json.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                hasPackageInspectionFormat = true;
                 continue;
             }
 
@@ -394,6 +552,18 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (string.Equals(argument, "--no-stark-path", StringComparison.Ordinal))
+            {
+                useStarkPathEnvironment = false;
+                continue;
+            }
+
+            if (string.Equals(argument, "--explain-modules", StringComparison.Ordinal))
+            {
+                explainModules = true;
+                continue;
+            }
+
             if (string.Equals(argument, "-L", StringComparison.Ordinal)
                 || string.Equals(argument, "--library-dir", StringComparison.Ordinal))
             {
@@ -429,42 +599,54 @@ internal static class CompilerCli
             return 0;
         }
 
-        if (mode == CliMode.InspectPackage)
+        if (hasPackageInspectionFormat && mode is not (CliMode.InspectPackage or CliMode.Doctor))
         {
-            return await InspectPackageImageAsync(inputPath, outputPath, stdin, stdout, stderr, diagnosticFormat);
+            await stderr.WriteLineAsync("--format is only valid for doctor or inspect-pkg.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
         }
 
-        var requiresTargetInfo = mode is CliMode.Default
-            or CliMode.EmitLlvmIr
-            or CliMode.EmitObject
-            or CliMode.EmitLibrary
-            or CliMode.EmitExecutable;
-        var targetInfo = ResolveTargetInfo(
-            requiresTargetInfo,
-            targetTriple,
-            targetDataLayout,
-            targetCpu,
-            targetFeatures,
-            relocationModel,
-            codeModel);
-        var source = inputPath is not null
-            ? await File.ReadAllTextAsync(inputPath)
-            : await stdin.ReadToEndAsync();
-        var effectiveMode = mode == CliMode.Default
-            ? InferDefaultBuildMode(source, targetInfo)
-            : mode;
+        if (doctorStrict && mode != CliMode.Doctor)
+        {
+            await stderr.WriteLineAsync("--strict is only valid for doctor.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
+        }
 
-        var moduleResolver = ResolveModuleResolver(inputPath, searchDirectories, targetInfo);
-        var pipeline = DefaultCompilerPipeline.Create();
-        var compilerOptions = new CompilerOptions(
-            EmitLlvmIr: effectiveMode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
-            TargetInfo: targetInfo,
-            StopAfterPassId: ResolveStopAfterPassId(effectiveMode),
-            ModuleResolver: moduleResolver,
-            QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
-            OptimizationLevel: optimizationLevel,
-            InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
-            EnforceIntegerRangeStorageRules: strictIntegerRanges);
+        if (mode == CliMode.InspectPackage)
+        {
+            if (packageImageOutputPath is not null)
+            {
+                await stderr.WriteLineAsync("--package-image-output is only valid for library emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (emitTypedOnlyPackageImage)
+            {
+                await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            return await InspectPackageImageAsync(inputPath, outputPath, packageInspectionFormat, stdin, stdout, stderr, diagnosticFormat);
+        }
+
+        var activeSdk = SdkCompilerIntegration.Resolve(sdkRootDirectory);
+        if (activeSdk.Diagnostics.Count != 0 && mode != CliMode.Doctor)
+        {
+            await SdkCompilerIntegration.WriteDiagnosticsAsync(stderr, activeSdk.Diagnostics);
+            return 1;
+        }
+
+        var nativeToolchain = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+            CliToolchainDirectory: toolchainDirectory,
+            LinkerTool: linkerTool,
+            ArchiverTool: archiverTool,
+            LlvmLibraryPath: llvmLibraryPath,
+            SdkRootDirectory: activeSdk.Root?.RootPath,
+            AllowAmbientCompilerBackendFallback:
+                activeSdk.Manifest?.Manifest?.Kind != SdkDistributionKind.Release));
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
@@ -472,9 +654,183 @@ internal static class CompilerCli
             nativeLibraries,
             nativePkgConfigPackages,
             nativeLinkArguments);
+
+        if (mode == CliMode.Doctor)
+        {
+            if (inputPath is not null)
+            {
+                await stderr.WriteLineAsync("doctor does not take a source input path.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (outputPath is not null)
+            {
+                await stderr.WriteLineAsync("-o is not valid for doctor.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (packageImageOutputPath is not null)
+            {
+                await stderr.WriteLineAsync("--package-image-output is only valid for library emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (emitPackageImageJson)
+            {
+                await stderr.WriteLineAsync("--package-image-json is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (emitTypedOnlyPackageImage)
+            {
+                await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            var doctorTargetInfo = ResolveTargetInfo(
+                requiresTargetInfo: true,
+                targetTriple,
+                targetDataLayout,
+                targetCpu,
+                targetFeatures,
+                relocationModel,
+                codeModel,
+                nativeToolchain);
+            return await CompilerDoctor.RunAsync(
+                stdout,
+                new CompilerDoctorOptions(
+                    doctorTargetInfo,
+                    relocationModel,
+                    codeModel,
+                    linkerTool,
+                    archiverTool,
+                    nativeToolchain,
+                    nativeDependencies.PkgConfigPackages,
+                    nativeDependencies.HasAny,
+                    RequiresLlvmLibrary: false,
+                    useStarkPathEnvironment,
+                    activeSdk,
+                    packageInspectionFormat == PackageInspectionFormat.Json
+                        ? DoctorOutputFormat.Json
+                        : DoctorOutputFormat.Text,
+                    doctorStrict));
+        }
+
+        var requiresTargetInfo = mode is CliMode.Default
+            or CliMode.EmitLlvmIr
+            or CliMode.EmitObject
+            or CliMode.EmitLibrary
+            or CliMode.EmitExecutable
+            or CliMode.EmitPackage;
+        // An active SDK is target-specific. Its descriptor supplies omitted target
+        // defaults in every compilation mode so source-only inspection and package
+        // publication validate the same ABI/layout contract as native emission.
+        var sdkTargetDefaults = activeSdk.IsActive
+            && activeSdk.Manifest?.Manifest is { } activeSdkManifest
+                ? activeSdkManifest.Target
+                : null;
+        var effectiveTargetTriple = targetTriple ?? sdkTargetDefaults?.LlvmTriple;
+        var effectiveTargetDataLayout = targetDataLayout ?? sdkTargetDefaults?.DataLayout;
+        var effectiveTargetCpu = targetCpu ?? sdkTargetDefaults?.BaselineCpu;
+        IReadOnlyList<string> effectiveTargetFeatures = targetFeatures.Count != 0
+            ? targetFeatures
+            : sdkTargetDefaults?.BaselineFeatures ?? targetFeatures;
+        var effectiveRelocationModel = relocationModel;
+        if (!hasExplicitRelocationModel
+            && sdkTargetDefaults is not null
+            && TryParseRelocationModel(sdkTargetDefaults.RelocationModel, out var sdkRelocationModel))
+        {
+            effectiveRelocationModel = sdkRelocationModel;
+        }
+
+        var effectiveCodeModel = codeModel;
+        if (effectiveCodeModel is null
+            && sdkTargetDefaults?.CodeModel is { } sdkCodeModelText
+            && TryParseCodeModel(sdkCodeModelText, out var sdkCodeModel))
+        {
+            effectiveCodeModel = sdkCodeModel;
+        }
+
+        var targetInfo = ResolveTargetInfo(
+            requiresTargetInfo,
+            effectiveTargetTriple,
+            effectiveTargetDataLayout,
+            effectiveTargetCpu,
+            effectiveTargetFeatures,
+            effectiveRelocationModel,
+            effectiveCodeModel,
+            nativeToolchain);
+        if (targetInfo is not null
+            && activeSdk.IsActive
+            && activeSdk.Manifest?.Manifest is { } sdkManifest)
+        {
+            var targetCompatibility = SdkTargetCompatibility.ValidateActiveTarget(
+                sdkManifest.Target,
+                targetInfo,
+                activeSdk.Manifest.ManifestPath);
+            if (!targetCompatibility.IsCompatible)
+            {
+                await SdkCompilerIntegration.WriteDiagnosticsAsync(stderr, targetCompatibility.Diagnostics);
+                return 1;
+            }
+        }
+
+        var source = inputPath is not null
+            ? await File.ReadAllTextAsync(inputPath)
+            : await stdin.ReadToEndAsync();
+        var effectiveMode = mode == CliMode.Default
+            ? InferDefaultBuildMode(source, targetInfo)
+            : mode;
+
+        if (packageImageOutputPath is not null && effectiveMode != CliMode.EmitLibrary)
+        {
+            await stderr.WriteLineAsync("--package-image-output is only valid for library emission.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
+        }
+
+        if (emitTypedOnlyPackageImage && effectiveMode is not (CliMode.EmitLibrary or CliMode.EmitPackage))
+        {
+            await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
+        }
+
+        var moduleResolver = CompilerModuleResolverFactory.Create(
+            inputPath,
+            searchDirectories,
+            targetInfo,
+            useStarkPathEnvironment,
+            activeSdk,
+            out var fileSystemModuleResolver);
+        var pipeline = DefaultCompilerPipeline.Create();
+        var compilerOptions = new CompilerOptions(
+            EmitLlvmIr: effectiveMode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
+            TargetInfo: targetInfo,
+            StopAfterPassId: ResolveStopAfterPassId(effectiveMode),
+            ModuleResolver: moduleResolver,
+            QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
+            InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
+            EnforceIntegerRangeStorageRules: strictIntegerRanges,
+            // One invocation compiles the root plus each source-dependency module; parsed
+            // source modules are shared across those sequential pipeline runs.
+            SharedSourceModuleParseCache: new SharedSourceModuleParseCache(),
+            SdkManifestIdentity: activeSdk.IsActive && activeSdk.Manifest?.ManifestPath is { } sdkManifestPath
+                ? DependencyLlvmCache.ComputeSdkManifestIdentity(sdkManifestPath)
+                : null,
+            // Binary outputs only emit owned definitions plus referenced clones, so lowered
+            // functions outside that reachable set are dead weight. Inspection modes
+            // (--check/--emit-mir/--emit-ssa/--emit-llvm) keep the full lowered view.
+            PruneUnusedLoweredFunctions: effectiveMode is CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable);
         var toolchainOptions = new ToolchainCliOptions(
             linkerTool,
             archiverTool,
+            nativeToolchain,
             librarySearchDirectories,
             linkArguments,
             saveTempsDirectory,
@@ -487,10 +843,24 @@ internal static class CompilerCli
             new CompilationInput(source, inputPath),
             compilerOptions);
 
+        // Provenance prints on failure too: a stale shadowing package is a common
+        // cause of otherwise-baffling diagnostics.
+        await WriteModuleResolutionNotesAsync(stderr, fileSystemModuleResolver, explainModules, diagnosticFormat);
+
         if (!result.Succeeded)
         {
             await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: false, source, inputPath);
             return 1;
+        }
+
+        if (RequiresBackendTargetValidation(effectiveMode))
+        {
+            var targetDiagnostics = TargetCompatibilityValidator.ValidateBeforeBackendUse(result, compilerOptions.TargetInfo, inputPath, packageProfile);
+            if (targetDiagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                await WriteDiagnosticsAsync(stderr, result.Diagnostics.Concat(targetDiagnostics).ToArray(), diagnosticFormat, succeeded: false, source, inputPath);
+                return 1;
+            }
         }
 
         await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: true, source, inputPath);
@@ -498,6 +868,11 @@ internal static class CompilerCli
         switch (effectiveMode)
         {
             case CliMode.Check:
+                if (!await ValidateSourceDependencyModulesForCheckAsync(stderr, result, compilerOptions, diagnosticFormat))
+                {
+                    return 1;
+                }
+
                 await stdout.WriteLineAsync("Check succeeded.");
                 return 0;
             case CliMode.EmitMir:
@@ -509,11 +884,20 @@ internal static class CompilerCli
             case CliMode.EmitObject:
                 return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitLibrary:
-                return await EmitLibraryAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
+                return await EmitLibraryAsync(outputPath, packageImageOutputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat, emitPackageImageJson, emitTypedOnlyPackageImage, packageProfile);
             case CliMode.EmitExecutable:
-                return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
+                return await EmitExecutableAsync(
+                    outputPath,
+                    inputPath,
+                    stdout,
+                    stderr,
+                    result,
+                    compilerOptions,
+                    toolchainOptions,
+                    diagnosticFormat,
+                    activeSdk);
             case CliMode.EmitPackage:
-                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat);
+                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat, emitPackageImageJson, emitTypedOnlyPackageImage, packageProfile);
             default:
                 throw new InvalidOperationException($"Unhandled compiler mode '{effectiveMode}'.");
         }
@@ -527,7 +911,8 @@ internal static class CompilerCli
         CompilationResult result,
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
-        DiagnosticOutputFormat diagnosticFormat)
+        DiagnosticOutputFormat diagnosticFormat,
+        ActiveSdkResolution activeSdk)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -537,9 +922,10 @@ internal static class CompilerCli
 
         var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result, compilerOptions.TargetInfo);
         var linkInputs = new List<string>();
+        var packageLibraryInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
-        var canUseExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool);
+        var canUseExecutableLto = ShouldEnableExecutableLto(toolchainOptions.Toolchain);
         var enableRootModuleLto = canUseExecutableLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseExecutableLto;
@@ -554,8 +940,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel,
-                enableLto: enableRootModuleLto);
+                enableLto: enableRootModuleLto,
+                toolchain: toolchainOptions.Toolchain);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -577,6 +963,7 @@ internal static class CompilerCli
                 && loadedModules is not null)
             {
                 var sourceDependencyModules = new List<LoadedModuleDocument>();
+                var packageProvidedModuleNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
                     if (!string.IsNullOrWhiteSpace(module.Reference.LibraryPath))
@@ -584,7 +971,8 @@ internal static class CompilerCli
                         var libraryPath = Path.GetFullPath(module.Reference.LibraryPath!);
                         if (linkedLibraries.Add(libraryPath))
                         {
-                            linkInputs.Add(libraryPath);
+                            packageLibraryInputs.Add(libraryPath);
+                            CollectPackageProvidedModuleNames(module.Reference.ManifestPath, packageProvidedModuleNames);
                         }
 
                         continue;
@@ -592,6 +980,13 @@ internal static class CompilerCli
 
                     sourceDependencyModules.Add(module);
                 }
+
+                // A linked package archive bundles every module object its own
+                // build compiled (its modules plus its stdlib closure). Any of
+                // those modules that this build ALSO reaches from source must
+                // not be compiled locally, or the link sees duplicate symbols.
+                sourceDependencyModules.RemoveAll(module =>
+                    packageProvidedModuleNames.Contains(module.SyntaxModel.ModuleName));
 
                 var importedInlineCloneSeedsByModule = BuildImportedInlineCloneSeedsByModule(result);
                 var sourceDependencyResult = CompileAndEmitReferencedDependencyObjects(
@@ -602,6 +997,7 @@ internal static class CompilerCli
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                     toolchainMetrics: toolchainMetrics,
                     enableLto: enableDependencyLto,
+                    toolchain: toolchainOptions.Toolchain,
                     importedInlineCloneSeedsByModule);
                 if (!sourceDependencyResult.Success)
                 {
@@ -622,13 +1018,21 @@ internal static class CompilerCli
                 requiresNtDllLibrary |= sourceDependencyResult.RequiresNtDllLibrary;
             }
 
+            var sdkLinkPlan = SdkLinkPlanner.Create(activeSdk, result, packageLibraryInputs);
+            if (!sdkLinkPlan.Succeeded)
+            {
+                await SdkCompilerIntegration.WriteDiagnosticsAsync(stderr, sdkLinkPlan.Diagnostics);
+                return 1;
+            }
+
             var nativeDependencyResult = CompileNativeDependenciesForExecutable(
                 result,
                 inputPath,
                 compilerOptions,
                 toolchainOptions,
                 intermediateDirectory,
-                toolchainMetrics);
+                toolchainMetrics,
+                sdkLinkPlan.PackageImages);
             if (!nativeDependencyResult.Success)
             {
                 await WriteDiagnosticsAsync(stderr, nativeDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -642,12 +1046,17 @@ internal static class CompilerCli
             }
 
             linkInputs.AddRange(nativeDependencyResult.ObjectPaths);
+            linkInputs.AddRange(sdkLinkPlan.PackageLibraries);
 
             var combinedLibrarySearchDirectories = CombineDistinct(
                 toolchainOptions.LibrarySearchDirectories,
                 nativeDependencyResult.LibrarySearchDirectories);
-            var combinedExplicitLinkArguments = CombineDistinct(
-                nativeDependencyResult.LinkArguments,
+            var combinedExplicitLinkArguments = CombineOrdered(
+                CombineOrdered(
+                    nativeDependencyResult.LinkArguments,
+                    BuildSdkRuntimeSearchLinkArguments(
+                        sdkLinkPlan.RuntimeFiles,
+                        compilerOptions.TargetInfo)),
                 toolchainOptions.LinkArguments);
             var linkArguments = BuildImplicitLinkArguments(
                 combinedExplicitLinkArguments,
@@ -663,8 +1072,8 @@ internal static class CompilerCli
                 combinedLibrarySearchDirectories,
                 linkArguments,
                 compilerOptions.TargetInfo,
-                compilerOptions.OptimizationLevel,
-                enableRootModuleLto || enableDependencyLto);
+                enableRootModuleLto || enableDependencyLto,
+                toolchainOptions.Toolchain);
             toolchainMetrics.AddLink(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
@@ -687,6 +1096,14 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
+            var runtimeLibraryPaths = CombineDistinct(
+                nativeDependencyResult.RuntimeLibraryPaths,
+                sdkLinkPlan.RuntimeFiles);
+            if (!TryStageNativeRuntimeLibraries(toolchainResult.OutputPath, runtimeLibraryPaths, stderr))
+            {
+                return 1;
+            }
+
             await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted executable: {toolchainResult.OutputPath}");
             return 0;
@@ -706,13 +1123,17 @@ internal static class CompilerCli
 
     private static async Task<int> EmitLibraryAsync(
         string? outputPath,
+        string? packageImageOutputPath,
         string? inputPath,
         TextWriter stdout,
         TextWriter stderr,
         CompilationResult result,
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
-        DiagnosticOutputFormat diagnosticFormat)
+        DiagnosticOutputFormat diagnosticFormat,
+        bool emitPackageImageJson,
+        bool emitTypedOnlyPackageImage,
+        string? packageProfile)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -723,7 +1144,7 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
-        var canUseLibraryLto = ShouldEnableLibraryLto(compilerOptions.OptimizationLevel);
+        var canUseLibraryLto = ShouldEnableLibraryLto(toolchainOptions.Toolchain);
         var enableRootModuleLto = canUseLibraryLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseLibraryLto;
@@ -738,8 +1159,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel,
-                enableLto: enableRootModuleLto);
+                enableLto: enableRootModuleLto,
+                toolchain: toolchainOptions.Toolchain);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -760,18 +1181,53 @@ internal static class CompilerCli
             if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
                 && loadedModules is not null)
             {
-                foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+                var packageOwnedModuleNames = PackageImageBuilder.BuildPackagedModuleNames(loadedModules);
+                var dependencyModules = loadedModules.ImportedModules
+                    .Where(module => IsSourceBackedDependencyModule(module)
+                        && packageOwnedModuleNames.Contains(module.SyntaxModel.ModuleName))
+                    .ToArray();
+                var libraryGraphModules = new Dictionary<string, LoadedModuleDocument>(StringComparer.Ordinal);
+                foreach (var graphModule in loadedModules.ImportedModules)
                 {
-                    var dependencyResult = CompileDependencyObject(
-                        module,
+                    libraryGraphModules.TryAdd(graphModule.SyntaxModel.ModuleName, graphModule);
+                }
+
+                // Optimization decisions write to the metrics stream, so they resolve
+                // sequentially in module order before the compiles fan out. Every archive
+                // member is needed, so all modules compile in parallel; the runs only
+                // share the module resolver and the parse cache, which are thread-safe.
+                var dependencyLtoDecisions = new bool[dependencyModules.Length];
+                for (var index = 0; index < dependencyModules.Length; index++)
+                {
+                    dependencyLtoDecisions[index] = AddOptimizationDecision(
+                        toolchainMetrics,
+                        "library_dependency",
+                        AnalyzeModuleOptimizationSafety(dependencyModules[index], enableDependencyLto)).CanEmitThinLtoBitcode;
+                }
+
+                var dependencyResults = new DependencyCompileResult[dependencyModules.Length];
+                Parallel.For(
+                    0,
+                    dependencyModules.Length,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    index => dependencyResults[index] = CompileDependencyObject(
+                        dependencyModules[index],
                         compilerOptions,
                         intermediateDirectory,
                         preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
-                        toolchainMetrics: toolchainMetrics,
-                        enableLto: AddOptimizationDecision(
-                            toolchainMetrics,
-                            "library_dependency",
-                            AnalyzeModuleOptimizationSafety(module, enableDependencyLto)).CanEmitThinLtoBitcode);
+                        toolchainMetrics: null,
+                        enableLto: dependencyLtoDecisions[index],
+                        toolchain: toolchainOptions.Toolchain,
+                        graphModules: libraryGraphModules));
+                DependencyLlvmCache.WriteLogSummary();
+
+                foreach (var dependencyResult in dependencyResults)
+                {
+                    if (dependencyResult.ToolchainResult is not null)
+                    {
+                        toolchainMetrics.AddLlvmObject(dependencyResult.ToolchainResult);
+                    }
+
                     if (!dependencyResult.Success)
                     {
                         await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -796,7 +1252,11 @@ internal static class CompilerCli
                 }
             }
 
-            var toolchainResult = NativeToolchain.CreateStaticLibrary(objectPaths, resolvedOutputPath, toolchainOptions.ArchiverTool);
+            var toolchainResult = NativeToolchain.CreateStaticLibrary(
+                objectPaths,
+                resolvedOutputPath,
+                toolchainOptions.ArchiverTool,
+                toolchainOptions.Toolchain);
             toolchainMetrics.AddArchive(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
@@ -814,22 +1274,40 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
-            var manifestPath = DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result);
-            var manifest = PackageImageBuilder.Create(
-                result,
-                toolchainResult.OutputPath,
-                BuildPackageNativeDependencyManifest(
-                    toolchainOptions.NativeDependencies,
-                    Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory,
-                    requiresMathLibrary,
-                    requiresWinsockLibrary,
-                    requiresWindowsSynchronizationLibrary,
-                    requiresNtDllLibrary));
-            await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
+            var manifestPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(
+                packageImageOutputPath ?? DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result)));
+            var manifestDirectory = Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory;
+            Directory.CreateDirectory(manifestDirectory);
+            var packageLibraryPath = StagePackageLibraryBesideImage(toolchainResult.OutputPath, manifestPath);
+            var manifest = PreparePackageImageForOutput(
+                PackageImageBuilder.Create(
+                    result,
+                    packageLibraryPath,
+                    BuildPackageNativeDependencyManifest(
+                        toolchainOptions.NativeDependencies,
+                        manifestDirectory,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary),
+                    packageProfile),
+                emitTypedOnlyPackageImage)
+                with
+                {
+                    LibraryFileName = Path.GetFileName(packageLibraryPath)
+                };
+            await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(manifest));
 
             await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted static library: {toolchainResult.OutputPath}");
             await stdout.WriteLineAsync($"Emitted package image: {manifestPath}");
+            if (emitPackageImageJson)
+            {
+                var jsonPath = PackageImageBinaryFormat.JsonSidecarPath(manifestPath);
+                await File.WriteAllTextAsync(jsonPath, manifest.ToJson());
+                await stdout.WriteLineAsync($"Emitted package image JSON: {jsonPath}");
+            }
+
             return 0;
         }
         finally
@@ -872,7 +1350,7 @@ internal static class CompilerCli
             resolvedOutputPath,
             preservedLlvmOutputPath: preservedLlvmPath,
             targetInfo: compilerOptions.TargetInfo,
-            optimizationLevel: compilerOptions.OptimizationLevel);
+            toolchain: toolchainOptions.Toolchain);
         toolchainMetrics.AddLlvmObject(toolchainResult);
         if (!toolchainResult.Succeeded)
         {
@@ -912,14 +1390,21 @@ internal static class CompilerCli
         CompilationResult result,
         string? packageLibraryFile,
         NativeDependencyCliOptions nativeDependencies,
-        DiagnosticOutputFormat diagnosticFormat)
+        DiagnosticOutputFormat diagnosticFormat,
+        bool emitPackageImageJson,
+        bool emitTypedOnlyPackageImage,
+        string? packageProfile)
     {
         var packageLibraryFileName = ResolvePackageLibraryFileName(packageLibraryFile, inputPath, result);
-        var resolvedOutputPath = Path.GetFullPath(outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName));
-        var packageImage = PackageImageBuilder.Create(
-            result,
-            packageLibraryFileName,
-            nativeDependencies.ToManifest(Path.GetDirectoryName(resolvedOutputPath) ?? Environment.CurrentDirectory));
+        var resolvedOutputPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(
+            outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName)));
+        var packageImage = PreparePackageImageForOutput(
+            PackageImageBuilder.Create(
+                result,
+                packageLibraryFileName,
+                nativeDependencies.ToManifest(Path.GetDirectoryName(resolvedOutputPath) ?? Environment.CurrentDirectory),
+                packageProfile),
+            emitTypedOnlyPackageImage);
         var diagnostics = PackageImageLoader.ValidateManifest(packageImage, inputPath);
         if (diagnostics.Count > 0)
         {
@@ -930,21 +1415,79 @@ internal static class CompilerCli
             }
         }
 
-        await File.WriteAllTextAsync(resolvedOutputPath, packageImage.ToJson());
+        await File.WriteAllBytesAsync(resolvedOutputPath, PackageImageBinaryFormat.Encode(packageImage));
         await stdout.WriteLineAsync($"Emitted package image: {resolvedOutputPath}");
         await stdout.WriteLineAsync($"Package library file: {packageImage.LibraryFileName}");
+        if (emitPackageImageJson)
+        {
+            var jsonPath = PackageImageBinaryFormat.JsonSidecarPath(resolvedOutputPath);
+            await File.WriteAllTextAsync(jsonPath, packageImage.ToJson());
+            await stdout.WriteLineAsync($"Emitted package image JSON: {jsonPath}");
+        }
+
         return 0;
+    }
+
+    private static StarkPackageManifest PreparePackageImageForOutput(
+        StarkPackageManifest packageImage,
+        bool emitTypedOnlyPackageImage)
+    {
+        var prepared = emitTypedOnlyPackageImage
+            ? StripPackageSourceSurface(packageImage)
+            : packageImage;
+        return PackageImageIdentity.Apply(prepared, prepared.Identity?.Dependencies);
+    }
+
+    private static StarkPackageManifest StripPackageSourceSurface(StarkPackageManifest packageImage)
+    {
+        return packageImage with
+        {
+            Modules = packageImage.Modules
+                .Select(static module =>
+                {
+                    var typedInterface = module.EffectiveTypedInterface;
+                    var compilerFacts = module.EffectiveCompilerFacts;
+                    var genericTemplates = module.EffectiveGenericTemplates;
+                    var sourceSurface = module.EffectiveSourceSurface;
+
+                    return module with
+                    {
+                        Functions = [],
+                        Types = [],
+                        Globals = [],
+                        TypeAliases = [],
+                        TypedInterface = typedInterface,
+                        CompilerFacts = compilerFacts,
+                        GenericTemplates = genericTemplates,
+                        Imports = null,
+                        SourceSurface = new StarkPackageSourceSurfaceSection(
+                            Imports: sourceSurface.Imports,
+                            ReExports: sourceSurface.ReExports,
+                            Functions: [],
+                            Types: [],
+                            Globals: [],
+                            TypeAliases: []),
+                        CompilerSections = new StarkPackageCompilerSectionsManifest(
+                            TypedInterface: typedInterface,
+                            CompilerFacts: compilerFacts,
+                            GenericTemplates: genericTemplates)
+                    };
+                })
+                .ToArray()
+        };
     }
 
     private static async Task<int> InspectPackageImageAsync(
         string? inputPath,
         string? outputPath,
+        PackageInspectionFormat inspectionFormat,
         TextReader stdin,
         TextWriter stdout,
         TextWriter stderr,
         DiagnosticOutputFormat diagnosticFormat)
     {
-        string json;
+        StarkPackageManifest manifest;
+        IReadOnlyList<CompilerDiagnostic> diagnostics;
         string sourceName;
 
         if (inputPath is not null)
@@ -957,19 +1500,39 @@ internal static class CompilerCli
                 return 1;
             }
 
-            json = await File.ReadAllTextAsync(fullPath);
+            var bytes = await File.ReadAllBytesAsync(fullPath);
+            if (PackageImageBinaryFormat.HasBinaryMagic(bytes)
+                || PackageImageBinaryFormat.HasBinaryFileName(fullPath))
+            {
+                if (!PackageImageBinaryFormat.TryDecode(bytes, fullPath, out manifest, out diagnostics))
+                {
+                    await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+                    return 1;
+                }
+
+                diagnostics = PackageImageLoader.ValidateManifest(manifest, fullPath);
+            }
+            else
+            {
+                var json = System.Text.Encoding.UTF8.GetString(bytes);
+                if (!PackageImageLoader.TryParseManifestJson(json, fullPath, out manifest, out diagnostics))
+                {
+                    await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+                    return 1;
+                }
+            }
+
             sourceName = fullPath;
         }
         else
         {
-            json = await stdin.ReadToEndAsync();
             sourceName = "<stdin>";
-        }
-
-        if (!PackageImageLoader.TryParseManifestJson(json, sourceName, out var manifest, out var diagnostics))
-        {
-            await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
-            return 1;
+            var json = await stdin.ReadToEndAsync();
+            if (!PackageImageLoader.TryParseManifestJson(json, sourceName, out manifest, out diagnostics))
+            {
+                await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+                return 1;
+            }
         }
 
         if (diagnostics.Count > 0)
@@ -981,7 +1544,12 @@ internal static class CompilerCli
             }
         }
 
-        var inspection = RenderPackageImageInspection(sourceName, manifest);
+        var inspection = inspectionFormat switch
+        {
+            PackageInspectionFormat.Text => RenderPackageImageInspection(sourceName, manifest),
+            PackageInspectionFormat.Json => manifest.ToJson(),
+            _ => RenderPackageImageInspection(sourceName, manifest)
+        };
         if (outputPath is not null)
         {
             await File.WriteAllTextAsync(Path.GetFullPath(outputPath), inspection);
@@ -1000,6 +1568,19 @@ internal static class CompilerCli
         builder.AppendLine($"package image: {sourceName}");
         builder.AppendLine($"root module: {manifest.RootModule}");
         builder.AppendLine($"library file: {manifest.LibraryFileName}");
+        builder.AppendLine($"build profile: {manifest.BuildProfile?.Name ?? "<unspecified>"}");
+        builder.AppendLine($"package API hash: {manifest.Identity?.ApiHash ?? "<unspecified>"}");
+        builder.AppendLine($"package content hash: {manifest.Identity?.ContentHash ?? "<unspecified>"}");
+        builder.AppendLine($"package dependencies: {string.Join(", ", manifest.Identity?.Dependencies.Select(static dependency => dependency.PackageId) ?? [])}");
+        builder.AppendLine($"target: {manifest.Target?.Triple ?? "<unspecified>"}");
+        if (manifest.Target is not null)
+        {
+            builder.AppendLine($"target data layout: {manifest.Target.DataLayout ?? "<unspecified>"}");
+            builder.AppendLine($"target c data model: {manifest.Target.CDataModel?.Kind ?? "<unresolved>"}");
+            builder.AppendLine(
+                $"target aggregate layout: pointer-size={manifest.Target.AggregateLayout?.PointerSizeBytes.ToString() ?? "<unresolved>"}, pointer-align={manifest.Target.AggregateLayout?.PointerAlignmentBytes.ToString() ?? "<unresolved>"}");
+        }
+
         builder.AppendLine($"module count: {manifest.Modules.Count}");
         builder.AppendLine(
             $"native dependencies: sources={manifest.NativeDependencies?.Sources?.Count ?? 0}, includes={manifest.NativeDependencies?.IncludeDirectories?.Count ?? 0}, library-dirs={manifest.NativeDependencies?.LibraryDirectories?.Count ?? 0}, libraries={manifest.NativeDependencies?.Libraries?.Count ?? 0}, pkg-config={manifest.NativeDependencies?.PkgConfigPackages?.Count ?? 0}, link-args={manifest.NativeDependencies?.LinkArguments?.Count ?? 0}");
@@ -1027,43 +1608,74 @@ internal static class CompilerCli
         return builder.ToString().TrimEnd();
     }
 
-    private static IModuleResolver? ResolveModuleResolver(string? inputPath, IReadOnlyList<string> searchDirectories, LlvmTargetInfo? targetInfo)
+    private static async Task WriteModuleResolutionNotesAsync(
+        TextWriter stderr,
+        FileSystemModuleResolver? resolver,
+        bool explainModules,
+        DiagnosticOutputFormat diagnosticFormat)
     {
-        var resolvedDirectories = new List<string>();
-
-        if (inputPath is not null)
+        // JSON diagnostics consumers parse stderr; keep it machine-clean.
+        if (resolver is null || diagnosticFormat == DiagnosticOutputFormat.Json)
         {
-            var fullInputPath = Path.GetFullPath(inputPath);
-            var directory = Path.GetDirectoryName(fullInputPath);
-            if (!string.IsNullOrWhiteSpace(directory))
+            return;
+        }
+
+        var notes = resolver.SnapshotResolutionNotes();
+        if (notes.Count == 0)
+        {
+            return;
+        }
+
+        var manifestHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // Successful compiles keep stderr clean by default (tools and tests rely
+        // on that), so full provenance is opt-in. Source-first resolution keeps
+        // ordinary stale package artifacts from producing package-over-source
+        // notes; if a future resolver supplies one, keep the warning always-on.
+        if (explainModules)
+        {
+            foreach (var note in notes)
             {
-                resolvedDirectories.Add(directory);
+                await stderr.WriteLineAsync(note.ManifestPath is not null
+                    ? $"stark: module {note.ModuleName} <- package '{note.ManifestPath}' ({HashLabel(note.ManifestPath, manifestHashes)})"
+                    : $"stark: module {note.ModuleName} <- source '{note.SourceFilePath}'");
             }
         }
 
-        resolvedDirectories.AddRange(searchDirectories.Where(static path => !string.IsNullOrWhiteSpace(path)));
-
-        var environmentSearchPath = Environment.GetEnvironmentVariable("STARK_PATH");
-        if (!string.IsNullOrWhiteSpace(environmentSearchPath))
+        foreach (var note in notes)
         {
-            foreach (var path in environmentSearchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (note.ShadowedSourcePath is not null)
             {
-                resolvedDirectories.Add(path);
+                await stderr.WriteLineAsync(
+                    $"warning: implicitly discovered package '{note.ManifestPath}' ({HashLabel(note.ManifestPath!, manifestHashes)}) shadows source module '{note.ModuleName}' at '{note.ShadowedSourcePath}'; the package wins — rebuild or delete it if it is stale.");
             }
         }
 
-        if (resolvedDirectories.Count == 0)
+        static string HashLabel(string manifestPath, Dictionary<string, string> cache)
         {
-            return null;
-        }
+            if (cache.TryGetValue(manifestPath, out var cached))
+            {
+                return cached;
+            }
 
-        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories);
-        if (targetInfo is not null)
-        {
-            resolver = new TargetAwareStdLibModuleResolver(resolver, resolvedDirectories, targetInfo);
-        }
+            string label;
+            try
+            {
+                using var stream = File.OpenRead(manifestPath);
+                label = $"sha256:{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream))[..12]}";
+            }
+            catch (IOException)
+            {
+                label = "sha256:unavailable";
+            }
+            catch (UnauthorizedAccessException)
+            {
+                label = "sha256:unavailable";
+            }
 
-        return resolver;
+            cache[manifestPath] = label;
+            return label;
+        }
     }
 
     private static async Task WriteToolchainFailureAsync(TextWriter stdout, TextWriter stderr, NativeToolchainResult toolchainResult)
@@ -1419,10 +2031,52 @@ internal static class CompilerCli
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
         string intermediateDirectory,
-        ToolchainMetrics? toolchainMetrics = null)
+        ToolchainMetrics? toolchainMetrics = null,
+        IReadOnlyList<string>? orderedSdkPackageManifestPaths = null)
     {
         var diagnostics = new List<CompilerDiagnostic>();
         var dependencySets = new List<NativeDependencySet>();
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var sdkManifestPaths = (orderedSdkPackageManifestPaths ?? [])
+            .Select(Path.GetFullPath)
+            .Distinct(pathComparer)
+            .ToArray();
+        var sdkManifestPathSet = sdkManifestPaths.ToHashSet(pathComparer);
+        var seenManifests = new HashSet<string>(pathComparer);
+
+        void AddPackageManifest(string manifestPath)
+        {
+            manifestPath = Path.GetFullPath(manifestPath);
+            if (!seenManifests.Add(manifestPath))
+            {
+                return;
+            }
+
+            if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest, out var loadDiagnostics))
+            {
+                diagnostics.Add(new CompilerDiagnostic(
+                    Code: "STK7200",
+                    Severity: DiagnosticSeverity.Error,
+                    Message: $"Package image '{manifestPath}' could not be read while gathering native dependencies.",
+                    Stage: "native-link",
+                    Location: new SourceLocation(manifestPath, 1, 1)));
+                diagnostics.AddRange(loadDiagnostics);
+                return;
+            }
+
+            if (!HasNativeDependencies(manifest.NativeDependencies))
+            {
+                return;
+            }
+
+            dependencySets.Add(new NativeDependencySet(
+                manifest.RootModule,
+                Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory,
+                manifestPath,
+                manifest.NativeDependencies!));
+        }
 
         if (toolchainOptions.NativeDependencies.HasAny)
         {
@@ -1436,7 +2090,6 @@ internal static class CompilerCli
         if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
             && loadedModules is not null)
         {
-            var seenManifests = new HashSet<string>(StringComparer.Ordinal);
             foreach (var module in loadedModules.ImportedModules)
             {
                 if (string.IsNullOrWhiteSpace(module.Reference.ManifestPath))
@@ -1445,43 +2098,33 @@ internal static class CompilerCli
                 }
 
                 var manifestPath = Path.GetFullPath(module.Reference.ManifestPath!);
-                if (!seenManifests.Add(manifestPath))
+                if (sdkManifestPathSet.Contains(manifestPath))
                 {
                     continue;
                 }
 
-                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
-                {
-                    diagnostics.Add(new CompilerDiagnostic(
-                        Code: "STK7200",
-                        Severity: DiagnosticSeverity.Error,
-                        Message: $"Package image '{manifestPath}' could not be read while gathering native dependencies.",
-                        Stage: "native-link",
-                        Location: new SourceLocation(manifestPath, 1, 1)));
-                    continue;
-                }
-
-                if (!HasNativeDependencies(manifest.NativeDependencies))
-                {
-                    continue;
-                }
-
-                dependencySets.Add(new NativeDependencySet(
-                    manifest.RootModule,
-                    Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory,
-                    manifestPath,
-                    manifest.NativeDependencies!));
+                AddPackageManifest(manifestPath);
             }
+        }
+
+        // SDK package native facts follow the exact dependent-before-dependency
+        // archive order. This also includes package-graph dependencies whose
+        // modules did not need to be materialized by semantic analysis, while
+        // leaving every unrelated SDK package untouched.
+        foreach (var manifestPath in sdkManifestPaths)
+        {
+            AddPackageManifest(manifestPath);
         }
 
         if (diagnostics.Count != 0)
         {
-            return new NativeDependencyLinkResult(false, [], [], [], diagnostics, null);
+            return new NativeDependencyLinkResult(false, [], [], [], [], diagnostics, null);
         }
 
         var objectPaths = new List<string>();
         var librarySearchDirectories = new List<string>();
         var linkArguments = new List<string>();
+        var runtimeLibraryPaths = new List<string>();
         var compiledNativeSources = new HashSet<string>(StringComparer.Ordinal);
         var objectIndex = 0;
 
@@ -1497,6 +2140,7 @@ internal static class CompilerCli
                 continue;
             }
 
+            var dependencyLibrarySearchDirectories = new List<string>();
             var includeDirectories = CombineDistinct(
                 ResolveNativePaths(
                     dependencySet.Dependencies.IncludeDirectories,
@@ -1534,6 +2178,7 @@ internal static class CompilerCli
                     continue;
                 }
 
+                dependencyLibrarySearchDirectories.Add(libraryDirectory);
                 librarySearchDirectories.Add(libraryDirectory);
             }
 
@@ -1567,11 +2212,11 @@ internal static class CompilerCli
                     objectPath,
                     includeDirectories,
                     compilerOptions.TargetInfo,
-                    compilerOptions.OptimizationLevel);
+                    toolchain: toolchainOptions.Toolchain);
                 toolchainMetrics?.AddNativeObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
-                    return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, [], toolchainResult);
+                    return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, runtimeLibraryPaths, [], toolchainResult);
                 }
 
                 objectPaths.Add(toolchainResult.OutputPath);
@@ -1594,20 +2239,89 @@ internal static class CompilerCli
                     linkArguments.Add(linkArgument.Trim());
                 }
             }
+
+            runtimeLibraryPaths.AddRange(ResolveNativeRuntimeLibraryPaths(
+                dependencySet.Dependencies.Libraries ?? [],
+                CombineDistinct(pkgConfigResult.LinkArguments, dependencySet.Dependencies.LinkArguments),
+                dependencyLibrarySearchDirectories,
+                compilerOptions.TargetInfo));
         }
 
         if (diagnostics.Count != 0)
         {
-            return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, diagnostics, null);
+            return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, runtimeLibraryPaths, diagnostics, null);
         }
 
         return new NativeDependencyLinkResult(
             true,
             objectPaths,
             CombineDistinct(librarySearchDirectories),
-            CombineDistinct(linkArguments),
+            CombineOrdered(linkArguments),
+            CombineDistinct(runtimeLibraryPaths),
             [],
             null);
+    }
+
+    private static bool TryStageNativeRuntimeLibraries(
+        string executablePath,
+        IReadOnlyList<string> runtimeLibraryPaths,
+        TextWriter stderr)
+    {
+        if (runtimeLibraryPaths.Count == 0)
+        {
+            return true;
+        }
+
+        var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(executablePath)) ?? Environment.CurrentDirectory;
+        Directory.CreateDirectory(outputDirectory);
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        foreach (var runtimeLibraryPath in runtimeLibraryPaths.Distinct(pathComparer))
+        {
+            if (!File.Exists(runtimeLibraryPath))
+            {
+                continue;
+            }
+
+            var sourcePath = Path.GetFullPath(runtimeLibraryPath);
+            var destinationPath = Path.Combine(outputDirectory, Path.GetFileName(sourcePath));
+            if (string.Equals(sourcePath, Path.GetFullPath(destinationPath), pathComparison))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                stderr.WriteLine(
+                    $"Could not copy native runtime library '{sourcePath}' to '{destinationPath}': {exception.Message}");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IReadOnlyList<string> BuildSdkRuntimeSearchLinkArguments(
+        IReadOnlyList<string> runtimeFiles,
+        LlvmTargetInfo? targetInfo)
+    {
+        if (runtimeFiles.Count == 0 || IsWindowsTarget(targetInfo))
+        {
+            return [];
+        }
+
+        return IsMacOSTarget(targetInfo)
+            ? ["-Wl,-rpath,@loader_path"]
+            : ["-Wl,-rpath,$ORIGIN"];
     }
 
     private static bool HasNativeDependencies(StarkPackageNativeDependencyManifest? dependencies)
@@ -1770,7 +2484,7 @@ internal static class CompilerCli
         return NativePkgConfigResolveResult.Successful(
             CombineDistinct(includeDirectories),
             CombineDistinct(librarySearchDirectories),
-            CombineDistinct(linkArguments));
+            CombineOrdered(linkArguments));
     }
 
     private static IReadOnlyList<string> SplitPkgConfigFlags(string text)
@@ -1858,6 +2572,268 @@ internal static class CompilerCli
 
         return $"-l{library}";
     }
+
+    private static IReadOnlyList<string> ResolveNativeRuntimeLibraryPaths(
+        IReadOnlyList<string> libraries,
+        IReadOnlyList<string>? linkArguments,
+        IReadOnlyList<string> librarySearchDirectories,
+        LlvmTargetInfo? targetInfo)
+    {
+        if (!IsWindowsTarget(targetInfo))
+        {
+            return [];
+        }
+
+        var searchDirectories = CombineDistinct(
+            librarySearchDirectories,
+            ExtractLibrarySearchDirectoriesFromLinkArguments(linkArguments));
+        var runtimeLibraries = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var library in libraries)
+        {
+            AddNativeRuntimeLibraryCandidates(library, searchDirectories, runtimeLibraries, seen);
+        }
+
+        foreach (var linkArgument in linkArguments ?? [])
+        {
+            AddNativeRuntimeLibraryCandidates(linkArgument, searchDirectories, runtimeLibraries, seen);
+        }
+
+        return runtimeLibraries;
+    }
+
+    private static IReadOnlyList<string> ExtractLibrarySearchDirectoriesFromLinkArguments(IReadOnlyList<string>? linkArguments)
+    {
+        if (linkArguments is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        var directories = new List<string>();
+        for (var index = 0; index < linkArguments.Count; index++)
+        {
+            var argument = linkArguments[index].Trim();
+            if (argument.Length == 0)
+            {
+                continue;
+            }
+
+            if (string.Equals(argument, "-L", StringComparison.Ordinal)
+                && index + 1 < linkArguments.Count
+                && !string.IsNullOrWhiteSpace(linkArguments[index + 1]))
+            {
+                directories.Add(Path.GetFullPath(linkArguments[++index].Trim()));
+                continue;
+            }
+
+            if (argument.StartsWith("-L", StringComparison.Ordinal) && argument.Length > 2)
+            {
+                directories.Add(Path.GetFullPath(argument[2..]));
+                continue;
+            }
+
+            const string libPathPrefix = "/LIBPATH:";
+            if (argument.StartsWith(libPathPrefix, StringComparison.OrdinalIgnoreCase)
+                && argument.Length > libPathPrefix.Length)
+            {
+                directories.Add(Path.GetFullPath(argument[libPathPrefix.Length..]));
+            }
+        }
+
+        return directories;
+    }
+
+    private static void AddNativeRuntimeLibraryCandidates(
+        string value,
+        IReadOnlyList<string> searchDirectories,
+        List<string> runtimeLibraries,
+        HashSet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith("-L", StringComparison.Ordinal)
+            || trimmed.StartsWith("/LIBPATH:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (trimmed.StartsWith("-l:", StringComparison.Ordinal))
+        {
+            AddNativeRuntimeLibraryPath(trimmed[3..], searchDirectories, runtimeLibraries, seen);
+            return;
+        }
+
+        if (trimmed.StartsWith("-l", StringComparison.Ordinal) && trimmed.Length > 2)
+        {
+            AddNativeRuntimeLibraryPath(trimmed[2..], searchDirectories, runtimeLibraries, seen);
+            return;
+        }
+
+        if (trimmed.StartsWith("-", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        AddNativeRuntimeLibraryPath(trimmed, searchDirectories, runtimeLibraries, seen);
+    }
+
+    private static void AddNativeRuntimeLibraryPath(
+        string library,
+        IReadOnlyList<string> searchDirectories,
+        List<string> runtimeLibraries,
+        HashSet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(library))
+        {
+            return;
+        }
+
+        var trimmed = library.Trim();
+        if (trimmed.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            if (TryResolveNativeRuntimeFile(trimmed, searchDirectories, out var directRuntimePath)
+                && seen.Add(directRuntimePath))
+            {
+                runtimeLibraries.Add(directRuntimePath);
+            }
+
+            return;
+        }
+
+        var candidateNames = BuildWindowsRuntimeLibraryFileNameCandidates(trimmed);
+        var candidateSearchDirectories = searchDirectories;
+        if (ContainsDirectorySeparator(trimmed) || Path.IsPathRooted(trimmed))
+        {
+            var fullLibraryPath = Path.GetFullPath(trimmed);
+            var libraryDirectory = Path.GetDirectoryName(fullLibraryPath);
+            if (!string.IsNullOrWhiteSpace(libraryDirectory))
+            {
+                candidateSearchDirectories = CombineDistinct([libraryDirectory], searchDirectories);
+            }
+        }
+
+        foreach (var searchDirectory in candidateSearchDirectories)
+        {
+            foreach (var candidateName in candidateNames)
+            {
+                if (TryFindFile(searchDirectory, candidateName, out var runtimePath)
+                    && seen.Add(runtimePath))
+                {
+                    runtimeLibraries.Add(runtimePath);
+                    return;
+                }
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> BuildWindowsRuntimeLibraryFileNameCandidates(string library)
+    {
+        var fileName = Path.GetFileName(library.Trim());
+        if (fileName.Length == 0)
+        {
+            return [];
+        }
+
+        if (fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return [fileName];
+        }
+
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = fileName;
+        }
+
+        var candidates = new List<string> { $"{baseName}.dll" };
+        if (baseName.StartsWith("lib", StringComparison.OrdinalIgnoreCase) && baseName.Length > 3)
+        {
+            candidates.Add($"{baseName[3..]}.dll");
+        }
+        else
+        {
+            candidates.Add($"lib{baseName}.dll");
+        }
+
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool TryResolveNativeRuntimeFile(
+        string value,
+        IReadOnlyList<string> searchDirectories,
+        out string runtimePath)
+    {
+        if (Path.IsPathRooted(value) || ContainsDirectorySeparator(value))
+        {
+            var fullPath = Path.GetFullPath(value);
+            if (File.Exists(fullPath))
+            {
+                runtimePath = fullPath;
+                return true;
+            }
+
+            runtimePath = string.Empty;
+            return false;
+        }
+
+        foreach (var searchDirectory in searchDirectories)
+        {
+            if (TryFindFile(searchDirectory, value, out runtimePath))
+            {
+                return true;
+            }
+        }
+
+        runtimePath = string.Empty;
+        return false;
+    }
+
+    private static bool TryFindFile(string directory, string fileName, out string path)
+    {
+        if (!Directory.Exists(directory))
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        var candidate = Path.GetFullPath(Path.Combine(directory, fileName));
+        if (File.Exists(candidate))
+        {
+            path = candidate;
+            return true;
+        }
+
+        try
+        {
+            var match = Directory.EnumerateFiles(directory)
+                .FirstOrDefault(file => string.Equals(Path.GetFileName(file), fileName, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                path = Path.GetFullPath(match);
+                return true;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    private static bool ContainsDirectorySeparator(string value)
+        => value.Contains(Path.DirectorySeparatorChar)
+           || value.Contains(Path.AltDirectorySeparatorChar)
+           || value.Contains('/')
+           || value.Contains('\\');
 
     private static IReadOnlyList<CompilerDiagnostic> BuildMissingNativeLibraryDiagnostics(
         NativeToolchainResult toolchainResult,
@@ -2005,6 +2981,18 @@ internal static class CompilerCli
         return OperatingSystem.IsWindows();
     }
 
+    private static bool IsMacOSTarget(LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo?.Triple is { Length: > 0 } triple)
+        {
+            return triple.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("macos", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("macosx", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsMacOS();
+    }
+
     private static IReadOnlyList<string> CombineDistinct(
         IEnumerable<string> first,
         IEnumerable<string>? second = null)
@@ -2029,15 +3017,64 @@ internal static class CompilerCli
         return combined;
     }
 
+    private static IReadOnlyList<string> CombineOrdered(
+        IEnumerable<string> first,
+        IEnumerable<string>? second = null)
+    {
+        var combined = new List<string>();
+
+        foreach (var value in first.Concat(second ?? []))
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            combined.Add(value.Trim());
+        }
+
+        return combined;
+    }
+
+    private static void CollectPackageProvidedModuleNames(string? manifestPath, HashSet<string> providedModuleNames)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(manifestPath));
+            if (!File.Exists(fullPath)
+                || !PackageImageBinaryFormat.TryDecode(File.ReadAllBytes(fullPath), out var manifest))
+            {
+                return;
+            }
+
+            foreach (var module in manifest.Modules)
+            {
+                providedModuleNames.Add(module.ModuleName);
+            }
+        }
+        catch (IOException)
+        {
+            // Unreadable manifests fall back to the previous behavior; the
+            // linker reports any resulting duplicates.
+        }
+    }
+
     private static DependencyCompileResult CompileDependencyObject(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics = null,
-        bool enableLto = false)
+        bool enableLto = false,
+        NativeToolchainResolution? toolchain = null,
+        IReadOnlyDictionary<string, LoadedModuleDocument>? graphModules = null)
     {
-        var dependencyResult = CompileDependencyLlvm(module, rootOptions, importedInlineCloneSeedFunctions: null);
+        var dependencyResult = CompileDependencyLlvm(module, rootOptions, importedInlineCloneSeedFunctions: null, graphModules);
         if (!dependencyResult.Success)
         {
             return new DependencyCompileResult(
@@ -2052,7 +3089,7 @@ internal static class CompilerCli
                 RequiresNtDllLibrary: false);
         }
 
-        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
+        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto, toolchain);
         toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary, dependencyResult.RequiresNtDllLibrary)
@@ -2067,60 +3104,97 @@ internal static class CompilerCli
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics,
         bool enableLto,
+        NativeToolchainResolution toolchain,
         IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
     {
-        var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
-        foreach (var module in modules)
-        {
-            var dependencyResult = CompileDependencyLlvm(
-                module,
-                rootOptions,
-                ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule));
-            if (!dependencyResult.Success)
-            {
-                return new SourceDependencyLinkResult(
-                    false,
-                    [],
-                    dependencyResult.Diagnostics,
-                    dependencyResult.Logs,
-                    null,
-                    RequiresMathLibrary: false,
-                    RequiresWinsockLibrary: false,
-                    RequiresWindowsSynchronizationLibrary: false,
-                    RequiresNtDllLibrary: false);
-            }
-
-            compiledModules.Add(dependencyResult);
-        }
-
         var rootSymbols = SummarizeLlvmSymbols(rootLlvmText);
         var unresolvedSymbols = new HashSet<string>(rootSymbols.ReferencedSymbols, StringComparer.Ordinal);
-        var forceEmittedModuleIndexes = new HashSet<int>(
-            compiledModules
-                .Select(static (module, index) => new { Module = module, Index = index })
-                .Where(static item => item.Module.LlvmText is not null && ContainsMonomorphizedStarkSymbols(item.Module.LlvmText))
-                .Select(static item => item.Index));
         var emittedModuleIndexes = new HashSet<int>();
+        var broadenedModuleIndexes = new HashSet<int>();
         var objectPaths = new List<string>();
         var requiresMathLibrary = false;
         var requiresWinsockLibrary = false;
         var requiresWindowsSynchronizationLibrary = false;
         var requiresNtDllLibrary = false;
-        var madeProgress = true;
 
-        while (madeProgress)
+        // Dependency modules compile lazily: a module's pipeline only runs once the
+        // unresolved-symbol loop suspects it (by sanitized name match), with one
+        // completeness fallback wave that compiles everything left when suspicion
+        // misses. Fully inlined roots therefore skip dependency compilation entirely.
+        // Each wave compiles its modules in parallel; the runs only share the module
+        // resolver and the parse cache, which are thread-safe.
+        var compiledModules = new DependencyLlvmCompileResult?[modules.Count];
+        var graphModules = new Dictionary<string, LoadedModuleDocument>(StringComparer.Ordinal);
+        foreach (var graphModule in modules)
         {
-            madeProgress = false;
-            for (var index = 0; index < compiledModules.Count; index++)
+            graphModules.TryAdd(graphModule.SyntaxModel.ModuleName, graphModule);
+        }
+
+        SourceDependencyLinkResult? CompileWave(IReadOnlyList<int> indexes)
+        {
+            Parallel.For(
+                0,
+                indexes.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                position =>
+                {
+                    var index = indexes[position];
+                    var module = modules[index];
+                    compiledModules[index] = CompileDependencyLlvm(
+                        module,
+                        rootOptions,
+                        ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule),
+                        graphModules);
+                });
+
+            foreach (var index in indexes)
             {
-                if (emittedModuleIndexes.Contains(index))
+                var dependencyResult = compiledModules[index]!;
+                if (!dependencyResult.Success)
+                {
+                    return new SourceDependencyLinkResult(
+                        false,
+                        objectPaths,
+                        dependencyResult.Diagnostics,
+                        dependencyResult.Logs,
+                        null,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary);
+                }
+            }
+
+            return null;
+        }
+
+        List<int> CollectSuspectedUncompiledIndexes()
+        {
+            var indexes = new List<int>();
+            for (var index = 0; index < modules.Count; index++)
+            {
+                if (compiledModules[index] is null
+                    && ModuleMayDefineUnresolvedSymbol(unresolvedSymbols, modules[index]))
+                {
+                    indexes.Add(index);
+                }
+            }
+
+            return indexes;
+        }
+
+        while (true)
+        {
+            var madeProgress = false;
+            for (var index = 0; index < compiledModules.Length; index++)
+            {
+                if (emittedModuleIndexes.Contains(index)
+                    || compiledModules[index] is not { } dependencyResult)
                 {
                     continue;
                 }
 
-                var dependencyResult = compiledModules[index];
-                if (!forceEmittedModuleIndexes.Contains(index)
-                    && !dependencyResult.Symbols.DefinedSymbols.Overlaps(unresolvedSymbols))
+                if (!dependencyResult.Symbols.DefinedSymbols.Overlaps(unresolvedSymbols))
                 {
                     continue;
                 }
@@ -2128,12 +3202,13 @@ internal static class CompilerCli
                 var toolchainResult = EmitDependencyObject(
                     dependencyResult,
                     rootOptions,
-                    intermediateDirectory,
-                    preserveTemps,
-                    AddOptimizationDecision(
-                        toolchainMetrics,
-                        "source_dependency",
-                        AnalyzeModuleOptimizationSafety(dependencyResult.Module, enableLto)).CanEmitThinLtoBitcode);
+                        intermediateDirectory,
+                        preserveTemps,
+                        AddOptimizationDecision(
+                            toolchainMetrics,
+                            "source_dependency",
+                            AnalyzeModuleOptimizationSafety(dependencyResult.Module, enableLto)).CanEmitThinLtoBitcode,
+                        toolchain);
                 toolchainMetrics?.AddLlvmObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -2166,13 +3241,78 @@ internal static class CompilerCli
 
                 madeProgress = true;
             }
+
+            if (madeProgress)
+            {
+                continue;
+            }
+
+            if (unresolvedSymbols.Count != 0)
+            {
+                var suspectedIndexes = CollectSuspectedUncompiledIndexes();
+                if (suspectedIndexes.Count != 0)
+                {
+                    if (CompileWave(suspectedIndexes) is { } waveFailure)
+                    {
+                        return waveFailure;
+                    }
+
+                    continue;
+                }
+            }
+
+            var broadenedDependency = false;
+            for (var index = 0; index < compiledModules.Length; index++)
+            {
+                if (emittedModuleIndexes.Contains(index)
+                    || broadenedModuleIndexes.Contains(index)
+                    || compiledModules[index] is not { } filteredResult
+                    || !filteredResult.UsesFilteredOwnedFunctionEmission
+                    || !UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, filteredResult.Module))
+                {
+                    continue;
+                }
+
+                var dependencyResult = CompileDependencyLlvm(
+                    filteredResult.Module,
+                    rootOptions,
+                    importedInlineCloneSeedFunctions: null,
+                    graphModules);
+                if (!dependencyResult.Success)
+                {
+                    return new SourceDependencyLinkResult(
+                        false,
+                        objectPaths,
+                        dependencyResult.Diagnostics,
+                        dependencyResult.Logs,
+                        null,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary);
+                }
+
+                compiledModules[index] = dependencyResult;
+                broadenedModuleIndexes.Add(index);
+                broadenedDependency = true;
+                break;
+            }
+
+            if (!broadenedDependency)
+            {
+                break;
+            }
         }
 
+        DependencyLlvmCache.WriteLogSummary();
         return new SourceDependencyLinkResult(
             true,
             objectPaths,
             [],
-            compiledModules.SelectMany(static module => module.Logs).ToArray(),
+            compiledModules
+                .Where(static module => module is not null)
+                .SelectMany(static module => module!.Logs)
+                .ToArray(),
             null,
             requiresMathLibrary,
             requiresWinsockLibrary,
@@ -2180,9 +3320,89 @@ internal static class CompilerCli
             requiresNtDllLibrary);
     }
 
-    private static bool ContainsMonomorphizedStarkSymbols(string llvmText)
+    private static bool ModuleMayDefineUnresolvedSymbol(
+        IReadOnlySet<string> unresolvedSymbols,
+        LoadedModuleDocument module)
     {
-        return llvmText.Contains("__stark_mono_", StringComparison.Ordinal);
+        if (UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, module))
+        {
+            return true;
+        }
+
+        // Asm functions and `export` functions define binary symbols spelled exactly as
+        // declared, without the module-qualified shape the name heuristic looks for.
+        foreach (var declaration in module.SyntaxModel.Declarations)
+        {
+            if (declaration.Kind != DeclarationKind.Function || declaration.Function is null)
+            {
+                continue;
+            }
+
+            if ((declaration.Function.Asm is not null || declaration.Visibility == StarkVisibility.Export)
+                && unresolvedSymbols.Contains(declaration.Name))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool UnresolvedSymbolsMayBelongToModule(
+        IReadOnlySet<string> unresolvedSymbols,
+        LoadedModuleDocument module)
+    {
+        var moduleName = module.SyntaxModel.ModuleName;
+        if (string.IsNullOrWhiteSpace(moduleName))
+        {
+            return false;
+        }
+
+        var sanitizedModuleName = SanitizeSymbolComponentForMatch(moduleName);
+        foreach (var symbol in unresolvedSymbols)
+        {
+            if (symbol.StartsWith($"{moduleName}.", StringComparison.Ordinal)
+                || symbol.StartsWith($"{sanitizedModuleName}_", StringComparison.Ordinal)
+                || symbol.Contains($"_{sanitizedModuleName}_", StringComparison.Ordinal)
+                || symbol.Contains($"_{sanitizedModuleName}__", StringComparison.Ordinal)
+                || symbol.Contains($"__{sanitizedModuleName}__", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string SanitizeSymbolComponentForMatch(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "_";
+        }
+
+        var builder = new StringBuilder(text.Length);
+        var previousWasUnderscore = false;
+        foreach (var ch in text)
+        {
+            var normalized = char.IsLetterOrDigit(ch) ? ch : '_';
+            if (normalized == '_')
+            {
+                if (previousWasUnderscore)
+                {
+                    continue;
+                }
+
+                previousWasUnderscore = true;
+                builder.Append('_');
+                continue;
+            }
+
+            previousWasUnderscore = false;
+            builder.Append(normalized);
+        }
+
+        return builder.ToString().Trim('_');
     }
 
     private static IReadOnlyDictionary<string, IReadOnlySet<string>>? BuildImportedInlineCloneSeedsByModule(
@@ -2394,7 +3614,7 @@ internal static class CompilerCli
 
         return importedInlineCloneSeedsByModule.TryGetValue(module.SyntaxModel.ModuleName, out var seeds)
             ? seeds
-            : new HashSet<string>(StringComparer.Ordinal);
+            : EmptyImportedInlineCloneSeedFunctions;
     }
 
     private static IReadOnlySet<string> CollectRootHotPathEntryFunctions(
@@ -2504,18 +3724,66 @@ internal static class CompilerCli
     private static DependencyLlvmCompileResult CompileDependencyLlvm(
         LoadedModuleDocument module,
         CompilerOptions rootOptions,
-        IReadOnlySet<string>? importedInlineCloneSeedFunctions)
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions,
+        IReadOnlyDictionary<string, LoadedModuleDocument>? graphModules = null)
     {
+        if (!IsSourceBackedDependencyModule(module))
+        {
+            return new DependencyLlvmCompileResult(
+                false,
+                module,
+                null,
+                EmptyLlvmSymbolSummary(),
+                [
+                    new CompilerDiagnostic(
+                        Code: "STK7204",
+                        Severity: DiagnosticSeverity.Error,
+                        Message: $"Package-backed module '{module.SyntaxModel.ModuleName}' cannot be recompiled as source; use its package library and package facts.",
+                        Stage: "dependency-compile",
+                        Location: new SourceLocation(module.Reference.ManifestPath ?? module.Reference.FilePath, 1, 1))
+                ],
+                [],
+                UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null,
+                RequiresMathLibrary: false,
+                RequiresWinsockLibrary: false,
+                RequiresWindowsSynchronizationLibrary: false,
+                RequiresNtDllLibrary: false);
+        }
+
         if (rootOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
             || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
         {
             if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
             {
-                return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+                return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
             }
 
             sourceText = File.ReadAllText(module.Reference.FilePath);
             sourceFilePath = module.Reference.FilePath;
+        }
+
+        // A dependency emission is a pure function of the closure content, the
+        // options, and the compiler binary, so cache hits skip the whole
+        // pipeline run — the dominant cost of from-source dependency builds.
+        var cacheDirectory = graphModules is not null ? DependencyLlvmCache.ResolveCacheDirectory() : null;
+        string? cacheKey = null;
+        string? cachedLlvmText = null;
+        if (cacheDirectory is not null)
+        {
+            cacheKey = DependencyLlvmCache.ComputeKey(
+                module.SyntaxModel.ModuleName,
+                sourceText,
+                graphModules!,
+                rootOptions,
+                importedInlineCloneSeedFunctions);
+            if (cacheKey is not null && DependencyLlvmCache.TryGet(cacheDirectory, cacheKey, out var hitText))
+            {
+                cachedLlvmText = hitText;
+                if (!DependencyLlvmCache.VerifyMode)
+                {
+                    return BuildDependencyLlvmSuccessResult(module, rootOptions, hitText, importedInlineCloneSeedFunctions, logs: []);
+                }
+            }
         }
 
         var dependencyPipeline = DefaultCompilerPipeline.Create();
@@ -2528,38 +3796,154 @@ internal static class CompilerCli
                 EmitLlvmIr = true,
                 StopAfterPassId = null,
                 QualifyModuleSymbols = true,
-                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions
+                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions,
+                PruneUnusedLoweredFunctions = true
             });
 
         if (!dependencyResult.Succeeded)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
         if (!dependencyResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
+        if (cachedLlvmText is not null
+            && !string.Equals(cachedLlvmText, llvmModule.Text, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"STARK_DEP_CACHE_VERIFY: cached LLVM for module '{module.SyntaxModel.ModuleName}' (key {cacheKey}) differs from a fresh compile — the cache key is missing an input.");
+        }
+
+        if (cacheDirectory is not null && cacheKey is not null && cachedLlvmText is null)
+        {
+            DependencyLlvmCache.Store(cacheDirectory, cacheKey, llvmModule.Text);
+        }
+
+        return BuildDependencyLlvmSuccessResult(module, rootOptions, llvmModule.Text, importedInlineCloneSeedFunctions, dependencyResult.Logs);
+    }
+
+    private static DependencyLlvmCompileResult BuildDependencyLlvmSuccessResult(
+        LoadedModuleDocument module,
+        CompilerOptions rootOptions,
+        string llvmText,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions,
+        IReadOnlyList<CompilerLogEntry> logs)
+    {
         var requiresMathLibrary = TargetRequiresExplicitMathLibrary(rootOptions.TargetInfo)
-            && LlvmTextRequiresMathLibrary(llvmModule.Text);
+            && LlvmTextRequiresMathLibrary(llvmText);
         var requiresWinsockLibrary = TargetRequiresWinsockLibrary(rootOptions.TargetInfo)
-            && LlvmTextRequiresWinsockLibrary(llvmModule.Text);
+            && LlvmTextRequiresWinsockLibrary(llvmText);
         var requiresWindowsSynchronizationLibrary = TargetRequiresWindowsSynchronizationLibrary(rootOptions.TargetInfo)
-            && LlvmTextRequiresWindowsSynchronizationLibrary(llvmModule.Text);
+            && LlvmTextRequiresWindowsSynchronizationLibrary(llvmText);
         var requiresNtDllLibrary = TargetRequiresNtDllLibrary(rootOptions.TargetInfo)
-            && LlvmTextRequiresNtDllLibrary(llvmModule.Text);
+            && LlvmTextRequiresNtDllLibrary(llvmText);
         return new DependencyLlvmCompileResult(
             true,
             module,
-            llvmModule.Text,
-            SummarizeLlvmSymbols(llvmModule.Text),
+            llvmText,
+            SummarizeLlvmSymbols(llvmText),
             [],
-            dependencyResult.Logs,
+            logs,
+            importedInlineCloneSeedFunctions is not null,
             requiresMathLibrary,
             requiresWinsockLibrary,
             requiresWindowsSynchronizationLibrary,
             requiresNtDllLibrary);
+    }
+
+    private static bool IsSourceBackedDependencyModule(LoadedModuleDocument module)
+    {
+        return !module.Reference.IsRoot
+            && !module.Reference.IsExternal
+            && module.Reference.ManifestPath is null
+            && module.Reference.LibraryPath is null
+            && module.PackageImageFacts is null;
+    }
+
+    /// <summary>
+    /// Check-mode parity with binary builds: imported source module bodies skip
+    /// checking inside the root pipeline because "their own compile as a root
+    /// module" is expected to validate them, and on executable/library builds
+    /// the per-dependency compiles do exactly that. A bare <c>--check</c> has no
+    /// such later compile, so this sweep runs each source-backed dependency
+    /// module through the same check pipeline as its own root. Modules are
+    /// validated independently and failures are aggregated across the whole
+    /// sweep, so one broken module does not hide the rest.
+    /// </summary>
+    private static async Task<bool> ValidateSourceDependencyModulesForCheckAsync(
+        TextWriter stderr,
+        CompilationResult rootResult,
+        CompilerOptions compilerOptions,
+        DiagnosticOutputFormat diagnosticFormat)
+    {
+        if (!rootResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
+            || loadedModules is null)
+        {
+            return true;
+        }
+
+        var sourceModules = new List<(string SourceText, string? FilePath)>();
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (!IsSourceBackedDependencyModule(module))
+            {
+                continue;
+            }
+
+            if (compilerOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
+                || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
+            {
+                if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
+                {
+                    continue;
+                }
+
+                sourceText = File.ReadAllText(module.Reference.FilePath);
+                sourceFilePath = module.Reference.FilePath;
+            }
+
+            sourceModules.Add((sourceText, sourceFilePath ?? module.Reference.FilePath));
+        }
+
+        // The per-module check runs only share the module resolver and the parse
+        // cache, both thread-safe, so modules validate in parallel exactly like
+        // the executable path's dependency compiles; diagnostics are collected
+        // per module and written sequentially afterwards.
+        var moduleResults = new CompilationResult[sourceModules.Count];
+        Parallel.For(
+            0,
+            sourceModules.Count,
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+            index =>
+            {
+                var modulePipeline = DefaultCompilerPipeline.Create();
+                moduleResults[index] = modulePipeline.Run(
+                    new CompilationInput(sourceModules[index].SourceText, sourceModules[index].FilePath),
+                    compilerOptions);
+            });
+
+        var succeeded = true;
+        for (var index = 0; index < sourceModules.Count; index++)
+        {
+            if (moduleResults[index].Succeeded)
+            {
+                continue;
+            }
+
+            await WriteDiagnosticsAsync(
+                stderr,
+                moduleResults[index].Diagnostics,
+                diagnosticFormat,
+                succeeded: false,
+                sourceModules[index].SourceText,
+                sourceModules[index].FilePath);
+            succeeded = false;
+        }
+
+        return succeeded;
     }
 
     private static NativeToolchainResult EmitDependencyObject(
@@ -2567,7 +3951,8 @@ internal static class CompilerCli
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
-        bool enableLto = false)
+        bool enableLto = false,
+        NativeToolchainResolution? toolchain = null)
     {
         if (dependencyResult.LlvmText is null)
         {
@@ -2590,34 +3975,24 @@ internal static class CompilerCli
             objectPath,
             preservedLlvmOutputPath: llvmPath,
             targetInfo: rootOptions.TargetInfo,
-            optimizationLevel: rootOptions.OptimizationLevel,
-            enableLto: enableLto);
+            enableLto: enableLto,
+            toolchain: toolchain);
     }
 
-    private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel, string? linkerTool)
+    private static bool ShouldEnableExecutableLto(NativeToolchainResolution toolchain)
     {
-        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
+        if (!toolchain.Linker.IsAvailable
+            || !Path.GetFileName(toolchain.Linker.Path!).Contains("clang", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(linkerTool)
-            && !Path.GetFileName(linkerTool).Contains("clang", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return NativeToolchain.SupportsExecutableThinLto();
+        return NativeToolchain.SupportsExecutableThinLto(toolchain);
     }
 
-    private static bool ShouldEnableLibraryLto(CompilerOptimizationLevel optimizationLevel)
+    private static bool ShouldEnableLibraryLto(NativeToolchainResolution toolchain)
     {
-        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
-        {
-            return false;
-        }
-
-        return NativeToolchain.SupportsExecutableThinLto();
+        return NativeToolchain.SupportsExecutableThinLto(toolchain);
     }
 
     internal static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
@@ -2630,21 +4005,24 @@ internal static class CompilerCli
         bool toolchainCanUseThinLto)
     {
         var isBackendOpaque = IsBackendOpaque(module);
+        var containsStoredBorrow = ModuleContainsStoreBorrowSyntax(module);
         var exposesHotInlineCandidates = ModuleExposesHotInlineCandidates(module);
-        var canEmitThinLtoBitcode = toolchainCanUseThinLto && !isBackendOpaque;
+        var canEmitThinLtoBitcode = toolchainCanUseThinLto && !isBackendOpaque && !containsStoredBorrow;
         var reason = canEmitThinLtoBitcode
             ? exposesHotInlineCandidates
                 ? "thinlto-enabled-hot-inline-candidates"
                 : "thinlto-enabled"
             : !toolchainCanUseThinLto
                 ? "thinlto-unavailable"
-                : "backend-opaque";
+                : isBackendOpaque
+                    ? "backend-opaque"
+                    : "stored-borrow-aliasing";
 
         return new ModuleOptimizationSafetyFacts(
             module.SyntaxModel.ModuleName,
             CanEmitThinLtoBitcode: canEmitThinLtoBitcode,
             CanRunNormalLlvmPasses: canEmitThinLtoBitcode,
-            ContainsKnownFragileConstructs: isBackendOpaque,
+            ContainsKnownFragileConstructs: isBackendOpaque || containsStoredBorrow,
             ExposesHotInlineCandidates: exposesHotInlineCandidates,
             reason);
     }
@@ -2660,8 +4038,132 @@ internal static class CompilerCli
 
     internal static bool ShouldEnableRootModuleLto(CompilationResult result)
     {
-        return !result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
-            || syntaxModel?.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque;
+        if (result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+            && syntaxModel?.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+        {
+            return false;
+        }
+
+        return !result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeModel)
+            || typeModel is null
+            || syntaxModel is null
+            || !RootTypeCheckModelContainsStoredBorrow(syntaxModel, typeModel);
+    }
+
+    private static bool ModuleContainsStoreBorrowSyntax(LoadedModuleDocument module)
+    {
+        return module.ParseResult.SourceText.Contains("storeborrow", StringComparison.Ordinal);
+    }
+
+    private static bool TypeCheckModelContainsStoredBorrow(TypeCheckModel typeModel)
+    {
+        foreach (var namedType in typeModel.NamedTypes.Values)
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                if (TypeCanReachStoredBorrow(field.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var function in typeModel.Functions.Values)
+        {
+            if (TypeCanReachStoredBorrow(function.ReturnType, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                return true;
+            }
+
+            foreach (var parameter in function.Parameters)
+            {
+                if (TypeCanReachStoredBorrow(parameter.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RootTypeCheckModelContainsStoredBorrow(
+        SyntaxModel syntaxModel,
+        TypeCheckModel typeModel)
+    {
+        foreach (var declaration in syntaxModel.Declarations)
+        {
+            if (declaration.Function is not null)
+            {
+                var functionName = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration);
+                if (typeModel.Functions.TryGetValue(functionName, out var function)
+                    || typeModel.Functions.TryGetValue($"{syntaxModel.ModuleName}.{functionName}", out function))
+                {
+                    if (TypeCanReachStoredBorrow(function.ReturnType, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                    {
+                        return true;
+                    }
+
+                    foreach (var parameter in function.Parameters)
+                    {
+                        if (TypeCanReachStoredBorrow(parameter.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            if (declaration.Kind is DeclarationKind.Struct or DeclarationKind.Enum
+                && (typeModel.NamedTypes.TryGetValue(declaration.Name, out var namedType)
+                    || typeModel.NamedTypes.TryGetValue($"{syntaxModel.ModuleName}.{declaration.Name}", out namedType)))
+            {
+                foreach (var field in namedType.OrderedFields)
+                {
+                    if (TypeCanReachStoredBorrow(field.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TypeCanReachStoredBorrow(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        HashSet<string> visitedNamedTypes)
+    {
+        if (type.BorrowKind == StarkBorrowKind.StoreBorrow)
+        {
+            return true;
+        }
+
+        var valueType = StarkTypeSymbols.BorrowReturnValueType(type);
+        if (valueType.Kind == StarkTypeKind.FixedArray && valueType.ElementType is not null)
+        {
+            return TypeCanReachStoredBorrow(valueType.ElementType, namedTypes, visitedNamedTypes);
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is not { } namedTypeName
+            || !visitedNamedTypes.Add(namedTypeName)
+            || !namedTypes.TryGetValue(namedTypeName, out var namedType))
+        {
+            return false;
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            if (TypeCanReachStoredBorrow(field.Type, namedTypes, visitedNamedTypes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsBackendOpaque(LoadedModuleDocument module)
@@ -2689,7 +4191,8 @@ internal static class CompilerCli
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)
     {
-        var definedSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var allDefinedSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var linkerVisibleDefinedSymbols = new HashSet<string>(StringComparer.Ordinal);
         var referencedSymbols = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var rawLine in llvmText.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
@@ -2699,9 +4202,13 @@ internal static class CompilerCli
                 continue;
             }
 
-            if (TryReadDefinedLlvmSymbol(rawLine, out var definedSymbol))
+            if (TryReadDefinedLlvmSymbol(rawLine, out var definedSymbol, out var isLinkerVisible))
             {
-                definedSymbols.Add(definedSymbol);
+                allDefinedSymbols.Add(definedSymbol);
+                if (isLinkerVisible)
+                {
+                    linkerVisibleDefinedSymbols.Add(definedSymbol);
+                }
             }
 
             for (var index = 0; index < rawLine.Length; index++)
@@ -2714,8 +4221,8 @@ internal static class CompilerCli
             }
         }
 
-        referencedSymbols.ExceptWith(definedSymbols);
-        return new LlvmSymbolSummary(definedSymbols, referencedSymbols);
+        referencedSymbols.ExceptWith(allDefinedSymbols);
+        return new LlvmSymbolSummary(linkerVisibleDefinedSymbols, referencedSymbols);
     }
 
     private static bool IsPureLlvmDeclarationLine(string line)
@@ -2749,14 +4256,21 @@ internal static class CompilerCli
             new HashSet<string>(StringComparer.Ordinal));
     }
 
-    private static bool TryReadDefinedLlvmSymbol(string line, out string symbol)
+    private static bool TryReadDefinedLlvmSymbol(string line, out string symbol, out bool isLinkerVisible)
     {
         symbol = string.Empty;
+        isLinkerVisible = false;
         var trimmed = line.TrimStart();
         if (trimmed.StartsWith("define ", StringComparison.Ordinal))
         {
             var atIndex = trimmed.IndexOf('@');
-            return atIndex >= 0 && TryReadLlvmSymbolAt(trimmed, atIndex, out symbol, out _);
+            if (atIndex < 0 || !TryReadLlvmSymbolAt(trimmed, atIndex, out symbol, out _))
+            {
+                return false;
+            }
+
+            isLinkerVisible = IsLinkerVisibleFunctionDefinition(trimmed[..atIndex]);
+            return true;
         }
 
         if (!trimmed.StartsWith("@", StringComparison.Ordinal))
@@ -2777,7 +4291,32 @@ internal static class CompilerCli
             return false;
         }
 
-        return TryReadLlvmSymbolAt(trimmed, 0, out symbol, out _);
+        if (!TryReadLlvmSymbolAt(trimmed, 0, out symbol, out _))
+        {
+            return false;
+        }
+
+        isLinkerVisible = IsLinkerVisibleGlobalInitializer(initializer);
+        return true;
+    }
+
+    private static bool IsLinkerVisibleFunctionDefinition(string definitionPrefix)
+    {
+        foreach (var token in definitionPrefix.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (token is "internal" or "private" or "available_externally")
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsLinkerVisibleGlobalInitializer(string initializer)
+    {
+        var firstToken = initializer.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        return firstToken is not ("internal" or "private" or "available_externally");
     }
 
     private static bool TryReadLlvmSymbolAt(string text, int atIndex, out string symbol, out int endIndex)
@@ -2829,10 +4368,12 @@ internal static class CompilerCli
     {
         await stdout.WriteLineAsync(Usage);
         await stdout.WriteLineAsync();
-        await stdout.WriteLineAsync("Project Commands:");
+        await stdout.WriteLineAsync("Commands:");
         await stdout.WriteLineAsync("  build          Build the current Stark project or solution from a manifest");
         await stdout.WriteLineAsync("  run            Build and run the current Stark project or solution target");
         await stdout.WriteLineAsync("  test           Run tests for the current Stark project or solution");
+        await stdout.WriteLineAsync("  doctor         Inspect compiler, private backend, host development layer, SDK, stdlib, and vendor setup");
+        await stdout.WriteLineAsync("  inspect-pkg    Inspect and validate a Stark package image");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");
         await stdout.WriteLineAsync("  (default)      Build an executable when the root source exports main; otherwise build a library");
@@ -2843,18 +4384,27 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --compile-only Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package image");
-        await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps");
+        await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps\n  --package-image-json    Also write the indented JSON inspection sidecar next to the binary package image");
         await stdout.WriteLineAsync("  --emit-package Emit a Stark package image without linker/archive steps");
-        await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image");
-        await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image");
+        await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image (legacy flag form)");
+        await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image (legacy flag form)");
+        await stdout.WriteLineAsync("  --host-test-inspect [path] Run structured host-compiler test inspection JSON");
+        await stdout.WriteLineAsync("  --host-test-server Run persistent newline-delimited host-test inspection");
+        await stdout.WriteLineAsync("  --print-sdk-compatibility Print the stable SDK compatibility line and exit");
         await stdout.WriteLineAsync("  --emit-exe    Build a native executable");
         await stdout.WriteLineAsync("  --link-only   Build a native executable from the current compilation output");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Inputs and Outputs:");
         await stdout.WriteLineAsync("  [path]                 Read a Stark source file instead of stdin");
         await stdout.WriteLineAsync("  -o <path>              Write the selected output artifact to <path>");
+        await stdout.WriteLineAsync("  --format <text|json>   Select doctor/inspect-pkg output format (default: text)");
+        await stdout.WriteLineAsync("  --strict               Make doctor exit nonzero when any required capability is unavailable");
         await stdout.WriteLineAsync("  --package-library-file <name>  Library file name stored in emitted package images");
+        await stdout.WriteLineAsync("  --package-profile <dev|release>  Record and validate the package build profile");
         await stdout.WriteLineAsync("  -I, --search-dir <dir> Add a Stark module/package search directory");
+        await stdout.WriteLineAsync("  --sdk-root <dir>       Use the relocatable Stark SDK rooted at <dir>");
+        await stdout.WriteLineAsync("  --no-stark-path       Ignore STARK_PATH module/package search entries");
+        await stdout.WriteLineAsync("  --explain-modules     Print one resolution provenance line per module (package + hash, or source file)");
         await stdout.WriteLineAsync("  -L, --library-dir <dir> Add a native library search directory for linking");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Targeting and Native Toolchain:");
@@ -2864,9 +4414,9 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --target-feature <feature>     Forward a target feature string; repeatable (for example: +sse4.1)");
         await stdout.WriteLineAsync("  --relocation-model <default|static|pic|pie>  Choose the native relocation/PIC model");
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
-        await stdout.WriteLineAsync("  -O0|-Og|-O1|-O2|-O3            Select the optimization level for frontend/codegen behavior (default: -O3)");
-        await stdout.WriteLineAsync("  --optimize <0|g|1|2|3>         Long-form optimization level control");
         await stdout.WriteLineAsync("  --strict-integer-ranges        Keep strict integer range storage checks enabled (default)");
+        await stdout.WriteLineAsync("  --toolchain-dir <dir>          Resolve Stark-bundled LLVM/helper tools from <dir>");
+        await stdout.WriteLineAsync("  --llvm-lib <path>              Override the libLLVM library path used by the LLVM backend");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -2878,6 +4428,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --native-link-arg <arg>        Add a package-owned native linker argument");
         await stdout.WriteLineAsync("  --save-temps <dir>             Preserve intermediate LLVM and object files in <dir>");
         await stdout.WriteLineAsync("  --toolchain-metrics <path>     Write native LLVM/link timing metrics as key=value lines");
+        await stdout.WriteLineAsync("  --package-image-output <path>  Write the --emit-lib package image to a specific path");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Compiler Logs:");
         await stdout.WriteLineAsync("  --diagnostic-format <text|json>      Choose text diagnostics or a stable JSON diagnostic document (default: text)");
@@ -2890,20 +4441,26 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
         await stdout.WriteLineAsync("  --emit-lib and --emit-exe force the archive/link workflow.");
-        await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
-        await stdout.WriteLineAsync("  --inspect-pkg accepts a .starkpkg.json file path or JSON from stdin.");
+        await stdout.WriteLineAsync("  --emit-pkg validates and emits a binary package image.");
+        await stdout.WriteLineAsync("  inspect-pkg accepts a binary .starkpkg or legacy .starkpkg.json file path, or JSON from stdin.");
+        await stdout.WriteLineAsync("  --inspect-pkg and --inspect-package remain accepted as legacy flag forms.");
+        await stdout.WriteLineAsync("  --host-test-inspect and --host-test-server are for Stark-native tests targeting the current host compiler.");
         await stdout.WriteLineAsync("  With no workflow flag, the compiler infers executable vs library from the root source.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
-        await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
+        await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable unless --no-stark-path is passed.");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Examples:");
         await stdout.WriteLineAsync("  compiler app.stark");
         await stdout.WriteLineAsync("  compiler app.stark --check");
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
         await stdout.WriteLineAsync("  compiler libFacade.stark --emit-lib -o libFacade.a");
-        await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg.json");
-        await stdout.WriteLineAsync("  compiler libFacade.starkpkg.json --inspect-pkg");
+        await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg");
+        await stdout.WriteLineAsync("  compiler doctor");
+        await stdout.WriteLineAsync("  compiler doctor --strict --format json");
+        await stdout.WriteLineAsync("  compiler inspect-pkg libFacade.starkpkg");
+        await stdout.WriteLineAsync("  compiler inspect-pkg libFacade.starkpkg --format json -o libFacade.starkpkg.json");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
+        await stdout.WriteLineAsync("  compiler --host-test-inspect request.json");
     }
 
     private static async Task<int> EmitTextArtifactAsync<T>(
@@ -2943,7 +4500,8 @@ internal static class CompilerCli
             "--emit-lib" => CliMode.EmitLibrary,
             "--emit-exe" or "--link-only" => CliMode.EmitExecutable,
             "--emit-pkg" or "--emit-package" => CliMode.EmitPackage,
-            "--inspect-pkg" or "--inspect-package" => CliMode.InspectPackage,
+            "doctor" or "--doctor" => CliMode.Doctor,
+            "inspect-pkg" or "inspect-package" or "--inspect-pkg" or "--inspect-package" => CliMode.InspectPackage,
             _ => CliMode.Default
         };
 
@@ -2981,20 +4539,36 @@ internal static class CompilerCli
         string? targetCpu,
         IReadOnlyList<string> targetFeatures,
         LlvmRelocationModel relocationModel,
-        LlvmCodeModel? codeModel)
+        LlvmCodeModel? codeModel,
+        NativeToolchainResolution? toolchain = null)
     {
+        // An explicit --target steers target-dependent decisions (asm variant selection,
+        // package facts) in every mode; only host-toolchain detection stays reserved for
+        // the modes that need native output.
+        var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures, relocationModel, codeModel);
+        if (explicitTargetInfo is not null)
+        {
+            if (string.IsNullOrWhiteSpace(targetDataLayout)
+                && NativeToolchain.TryDetectTargetInfo(
+                    explicitTargetInfo.Triple,
+                    out var explicitDetectedTargetInfo,
+                    toolchain))
+            {
+                return explicitTargetInfo with
+                {
+                    DataLayout = explicitDetectedTargetInfo.DataLayout
+                };
+            }
+
+            return explicitTargetInfo;
+        }
+
         if (!requiresTargetInfo)
         {
             return null;
         }
 
-        var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures, relocationModel, codeModel);
-        if (explicitTargetInfo is not null)
-        {
-            return explicitTargetInfo;
-        }
-
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, toolchain))
         {
             return null;
         }
@@ -3061,6 +4635,15 @@ internal static class CompilerCli
             CliMode.EmitPackage => "lower-abi",
             _ => null
         };
+    }
+
+    private static bool RequiresBackendTargetValidation(CliMode mode)
+    {
+        return mode is CliMode.EmitLlvmIr
+            or CliMode.EmitObject
+            or CliMode.EmitLibrary
+            or CliMode.EmitExecutable
+            or CliMode.EmitPackage;
     }
 
     private static string DeriveExecutableOutputPath(
@@ -3161,6 +4744,38 @@ internal static class CompilerCli
         }
     }
 
+    private static bool TryParsePackageInspectionFormat(string value, out PackageInspectionFormat format)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "text":
+                format = PackageInspectionFormat.Text;
+                return true;
+            case "json":
+                format = PackageInspectionFormat.Json;
+                return true;
+            default:
+                format = PackageInspectionFormat.Text;
+                return false;
+        }
+    }
+
+    private static bool TryParsePackageProfile(string value, out string? profile)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "dev":
+                profile = "dev";
+                return true;
+            case "release":
+                profile = "release";
+                return true;
+            default:
+                profile = null;
+                return false;
+        }
+    }
+
     private static bool TryParseLogKind(string value, out CompilerLogKind kind)
     {
         switch (value.Trim().ToLowerInvariant())
@@ -3210,7 +4825,7 @@ internal static class CompilerCli
         var emittedLibraryFileName = Path.GetFileName(libraryOutputPath);
         var canonicalLibraryFileName = ResolvePackageLibraryFileName(null, inputPath, result);
         var baseName = GetLibraryPackageImageBaseName(emittedLibraryFileName, canonicalLibraryFileName);
-        return Path.Combine(directory, $"{baseName}.starkpkg.json");
+        return Path.Combine(directory, $"{baseName}{PackageImageBinaryFormat.FileExtension}");
     }
 
     private static string GetLibraryPackageImageBaseName(string emittedLibraryFileName, string canonicalLibraryFileName)
@@ -3229,6 +4844,27 @@ internal static class CompilerCli
         return emittedBaseName;
     }
 
+    private static string StagePackageLibraryBesideImage(string libraryOutputPath, string manifestPath)
+    {
+        var libraryFullPath = Path.GetFullPath(libraryOutputPath);
+        var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(manifestPath)) ?? Environment.CurrentDirectory;
+        var packageLibraryPath = Path.Combine(manifestDirectory, Path.GetFileName(libraryFullPath));
+        if (!PathsEqual(libraryFullPath, packageLibraryPath))
+        {
+            File.Copy(libraryFullPath, packageLibraryPath, overwrite: true);
+        }
+
+        return packageLibraryPath;
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        return string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
     private static string ResolvePackageLibraryFileName(string? requestedLibraryFile, string? inputPath, CompilationResult result)
     {
         if (!string.IsNullOrWhiteSpace(requestedLibraryFile))
@@ -3241,7 +4877,7 @@ internal static class CompilerCli
 
     private static string DerivePackageImageOutputPath(string? inputPath, CompilationResult result, string packageLibraryFileName)
     {
-        var packageImageFileName = $"{Path.GetFileNameWithoutExtension(packageLibraryFileName)}.starkpkg.json";
+        var packageImageFileName = $"{Path.GetFileNameWithoutExtension(packageLibraryFileName)}{PackageImageBinaryFormat.FileExtension}";
 
         if (inputPath is not null)
         {
@@ -3266,48 +4902,6 @@ internal static class CompilerCli
         return string.Equals(text, "info", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "warning", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "error", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryParseOptimizationLevelArgument(string argument, out CompilerOptimizationLevel optimizationLevel)
-    {
-        optimizationLevel = CompilerOptimizationLevel.O3;
-
-        if (argument.Length != 3 || !argument.StartsWith("-O", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return TryParseOptimizationLevel(argument[2..], out optimizationLevel);
-    }
-
-    private static bool TryParseOptimizationLevel(string value, out CompilerOptimizationLevel optimizationLevel)
-    {
-        switch (value.Trim().ToUpperInvariant())
-        {
-            case "0":
-            case "O0":
-                optimizationLevel = CompilerOptimizationLevel.O0;
-                return true;
-            case "G":
-            case "OG":
-                optimizationLevel = CompilerOptimizationLevel.Og;
-                return true;
-            case "1":
-            case "O1":
-                optimizationLevel = CompilerOptimizationLevel.O1;
-                return true;
-            case "2":
-            case "O2":
-                optimizationLevel = CompilerOptimizationLevel.O2;
-                return true;
-            case "3":
-            case "O3":
-                optimizationLevel = CompilerOptimizationLevel.O3;
-                return true;
-            default:
-                optimizationLevel = CompilerOptimizationLevel.O3;
-                return false;
-        }
     }
 
     private static bool TryParseRelocationModel(string value, out LlvmRelocationModel relocationModel)
@@ -3368,7 +4962,14 @@ internal static class CompilerCli
         EmitLibrary,
         EmitExecutable,
         EmitPackage,
-        InspectPackage
+        InspectPackage,
+        Doctor
+    }
+
+    private enum PackageInspectionFormat
+    {
+        Text,
+        Json
     }
 
     private sealed record DependencyCompileResult(
@@ -3389,6 +4990,7 @@ internal static class CompilerCli
         LlvmSymbolSummary Symbols,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         IReadOnlyList<CompilerLogEntry> Logs,
+        bool UsesFilteredOwnedFunctionEmission,
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
         bool RequiresWindowsSynchronizationLibrary,
@@ -3420,6 +5022,7 @@ internal static class CompilerCli
         IReadOnlyList<string> ObjectPaths,
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
+        IReadOnlyList<string> RuntimeLibraryPaths,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         NativeToolchainResult? ToolchainResult);
 
@@ -3473,7 +5076,7 @@ internal static class CompilerCli
                 IncludeDirectories: NormalizePathList(IncludeDirectories, packageImageDirectory),
                 LibraryDirectories: NormalizePathList(LibraryDirectories, packageImageDirectory),
                 Libraries: NormalizeTextList(Libraries),
-                LinkArguments: NormalizeTextList(LinkArguments),
+                LinkArguments: NormalizeOrderedTextList(LinkArguments),
                 PkgConfigPackages: NormalizeTextList(PkgConfigPackages));
         }
 
@@ -3544,11 +5147,22 @@ internal static class CompilerCli
 
             return normalized.Length == 0 ? null : normalized;
         }
+
+        private static IReadOnlyList<string>? NormalizeOrderedTextList(IReadOnlyList<string> values)
+        {
+            var normalized = values
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim())
+                .ToArray();
+
+            return normalized.Length == 0 ? null : normalized;
+        }
     }
 
     private sealed record ToolchainCliOptions(
         string? LinkerTool,
         string? ArchiverTool,
+        NativeToolchainResolution Toolchain,
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
         string? SaveTempsDirectory,

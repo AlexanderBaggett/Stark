@@ -1,0 +1,266 @@
+import Compiler.Sdk.ManifestModel
+import Compiler.Sdk.TargetDescriptor
+import System.Memory
+import System.Text
+module Compiler.Sdk.ManifestNormalization
+
+// Stable line-oriented SDK fact rendering shared with Stage0 compatibility
+// tests. This is deliberately not the persisted manifest or identity format.
+
+internal finite law ascii NormalizedSdkDistributionKind(SdkDistributionKind kind)
+{
+    switch (kind)
+    {
+        case SdkDistributionKind.Release:
+            return "release";
+        case SdkDistributionKind.Development:
+            return "development";
+        case SdkDistributionKind.Stage:
+            return "stage";
+        case SdkDistributionKind.Unknown:
+            return "unknown";
+    }
+}
+
+internal finite law ascii NormalizedSdkEndianness(SdkTargetEndianness endianness)
+{
+    switch (endianness)
+    {
+        case SdkTargetEndianness.Little:
+            return "little";
+        case SdkTargetEndianness.Big:
+            return "big";
+        case SdkTargetEndianness.Unknown:
+            return "unknown";
+    }
+}
+
+internal fn MemoryStatus BeginNormalizedSdkRow(
+    mut borrow OwnedAscii destination,
+    ascii label)
+    where overlap(destination, label)
+{
+    return destination.AppendAscii(label);
+}
+
+internal fn MemoryStatus AppendNormalizedSdkField(
+    mut borrow OwnedAscii destination,
+    ascii value)
+    where overlap(destination, value)
+{
+    try destination.AppendConstAscii("|");
+    try destination.AppendAscii(value);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendNormalizedSdkU64Field(
+    mut borrow OwnedAscii destination,
+    u64[0 max] value)
+{
+    try destination.AppendConstAscii("|");
+    try destination.AppendU64(value);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EndNormalizedSdkRow(mut borrow OwnedAscii destination)
+{
+    return destination.AppendConstAscii("\n");
+}
+
+public fn MemoryStatus AppendNormalizedSdkManifestSummary(
+    mut borrow SdkManifest manifest,
+    mut borrow OwnedAscii destination)
+{
+    try BeginNormalizedSdkRow(destination, "manifest");
+    try AppendNormalizedSdkU64Field(destination, (u64[0 max])manifest.SchemaVersion());
+    try AppendNormalizedSdkField(destination, NormalizedSdkDistributionKind(manifest.Kind()));
+    try AppendNormalizedSdkField(destination, manifest.SdkVersion());
+    try AppendNormalizedSdkField(destination, manifest.CompilerCompatibility());
+    try AppendNormalizedSdkU64Field(destination, (u64[0 max])manifest.PackageFormatVersion());
+    try EndNormalizedSdkRow(destination);
+
+    try BeginNormalizedSdkRow(destination, "target");
+    try AppendNormalizedSdkField(destination, manifest.Target().Id());
+    try AppendNormalizedSdkField(destination, manifest.Target().LlvmTriple());
+    try AppendNormalizedSdkField(destination, manifest.Target().Architecture());
+    try AppendNormalizedSdkField(destination, manifest.Target().OperatingSystem());
+    try AppendNormalizedSdkField(destination, manifest.Target().Abi());
+    try AppendNormalizedSdkU64Field(destination, (u64[0 max])manifest.Target().PointerBitWidth());
+    try AppendNormalizedSdkField(destination, NormalizedSdkEndianness(manifest.Target().Endianness()));
+    try AppendNormalizedSdkField(destination, manifest.Target().DataLayout());
+    try AppendNormalizedSdkField(destination, manifest.Target().BaselineCpu());
+    try AppendNormalizedSdkField(destination, manifest.Target().RelocationModel());
+    try AppendNormalizedSdkField(destination, manifest.Target().CodeModel());
+    try AppendNormalizedSdkField(destination, manifest.Target().CDataModel());
+    try AppendNormalizedSdkField(destination, manifest.Target().MinimumOperatingSystemVersion());
+    try EndNormalizedSdkRow(destination);
+
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] featureIndex = 0;
+        featureIndex < manifest.Target().BaselineFeatureCount();
+        featureIndex += 1)
+    {
+        try BeginNormalizedSdkRow(destination, "feature");
+        try AppendNormalizedSdkField(destination, manifest.Target().BaselineFeatureAt(featureIndex));
+        try EndNormalizedSdkRow(destination);
+    }
+
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] moduleIndex = 0;
+        moduleIndex < manifest.ModuleCount();
+        moduleIndex += 1)
+    {
+        try BeginNormalizedSdkRow(destination, "module");
+        try AppendNormalizedSdkField(destination, manifest.ModuleAt(moduleIndex).ModuleName());
+        try AppendNormalizedSdkField(destination, manifest.ModuleAt(moduleIndex).PackageId());
+        try EndNormalizedSdkRow(destination);
+    }
+
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+        packageIndex < manifest.PackageCount();
+        packageIndex += 1)
+    {
+        try BeginNormalizedSdkRow(destination, "package");
+        try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Id());
+        try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Version());
+        try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Profile());
+        try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).ImagePath());
+        if (manifest.PackageAt(packageIndex).HasLibraryPath())
+        {
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).LibraryPath());
+        }
+        else
+        {
+            try AppendNormalizedSdkField(destination, "");
+        }
+        if (manifest.PackageAt(packageIndex).HasApiHash())
+        {
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).ApiHash());
+        }
+        else
+        {
+            try AppendNormalizedSdkField(destination, "");
+        }
+        if (manifest.PackageAt(packageIndex).HasContentHash())
+        {
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).ContentHash());
+        }
+        else
+        {
+            try AppendNormalizedSdkField(destination, "");
+        }
+        if (manifest.PackageAt(packageIndex).HasImageSha256())
+        {
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).ImageSha256());
+        }
+        else
+        {
+            try AppendNormalizedSdkField(destination, "");
+        }
+        if (manifest.PackageAt(packageIndex).HasLibrarySha256())
+        {
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).LibrarySha256());
+        }
+        else
+        {
+            try AppendNormalizedSdkField(destination, "");
+        }
+        try EndNormalizedSdkRow(destination);
+
+        for willexit (
+            stack mut u64[0 2 ** 63 - 1] dependencyIndex = 0;
+            dependencyIndex < manifest.PackageAt(packageIndex).DependencyCount();
+            dependencyIndex += 1)
+        {
+            try BeginNormalizedSdkRow(destination, "dependency");
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Id());
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).PackageId());
+            if (manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).HasApiHash())
+            {
+                try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).ApiHash());
+            }
+            else
+            {
+                try AppendNormalizedSdkField(destination, "");
+            }
+            if (manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).HasContentHash())
+            {
+                try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).ContentHash());
+            }
+            else
+            {
+                try AppendNormalizedSdkField(destination, "");
+            }
+            try EndNormalizedSdkRow(destination);
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().ArtifactCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-artifact", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().ArtifactAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().IncludeDirectoryCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-include", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().IncludeDirectoryAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().LibraryDirectoryCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-library-directory", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().LibraryDirectoryAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().RuntimeFileCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-runtime", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().RuntimeFileAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().LicenseFileCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-license", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().LicenseFileAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().FileChecksumCount(); index += 1)
+        {
+            try BeginNormalizedSdkRow(destination, "native-checksum");
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Id());
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Native().FileChecksumAt(index).Path());
+            try AppendNormalizedSdkField(destination, manifest.PackageAt(packageIndex).Native().FileChecksumAt(index).Sha256());
+            try EndNormalizedSdkRow(destination);
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().LibraryCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-library", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().LibraryAt(index));
+        }
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < manifest.PackageAt(packageIndex).Native().LinkArgumentCount(); index += 1)
+        {
+            try AppendNormalizedSdkPackageValue(destination, "native-link-argument", manifest.PackageAt(packageIndex).Id(), manifest.PackageAt(packageIndex).Native().LinkArgumentAt(index));
+        }
+    }
+
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] rootIndex = 0;
+        rootIndex < manifest.DevelopmentSourceRootCount();
+        rootIndex += 1)
+    {
+        try BeginNormalizedSdkRow(destination, "source-root");
+        try AppendNormalizedSdkField(destination, manifest.DevelopmentSourceRootAt(rootIndex));
+        try EndNormalizedSdkRow(destination);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendNormalizedSdkPackageValue(
+    mut borrow OwnedAscii destination,
+    ascii label,
+    ascii packageId,
+    ascii value)
+    where overlap(destination, label),
+        overlap(destination, packageId),
+        overlap(destination, value),
+        overlap(label, packageId),
+        overlap(label, value),
+        overlap(packageId, value)
+{
+    try BeginNormalizedSdkRow(destination, label);
+    try AppendNormalizedSdkField(destination, packageId);
+    try AppendNormalizedSdkField(destination, value);
+    try EndNormalizedSdkRow(destination);
+    return MemoryStatus.Ok;
+}

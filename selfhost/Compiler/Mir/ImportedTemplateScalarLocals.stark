@@ -1,0 +1,245 @@
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
+import System.Memory
+import System.Text
+module Compiler.Mir.ImportedTemplateScalarLocals
+
+// Direct scalar template lowering keeps independent local values plus their
+// definite-initialization state in a bounded stack environment. The limit
+// makes package work predictable and allocation-free; larger or observable-
+// storage bodies retain the compatibility fallback.
+internal const ImportedTemplateScalarLocalCapacity = 64;
+
+internal fn bool ImportedTemplateGenericFactTextRowsEqual(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] leftTextRow,
+    u32[0 max] rightTextRow,
+    mut borrow OwnedAscii leftScratch,
+    mut borrow OwnedAscii rightScratch)
+{
+    if (leftTextRow == 0
+        || rightTextRow == 0
+        || (u64[0 2 ** 63 - 1])leftTextRow > graph.TextRowCount()
+        || (u64[0 2 ** 63 - 1])rightTextRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    stack LogicalPackageGenericTemplateFactTextRow left = graph.TextRowAt(leftTextRow);
+    stack LogicalPackageGenericTemplateFactTextRow right = graph.TextRowAt(rightTextRow);
+    leftScratch.Clear();
+    rightScratch.Clear();
+    return AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            left,
+            leftScratch) == MemoryStatus.Ok
+        && AppendLogicalPackageGenericTemplateFactText(
+            graph,
+            right,
+            rightScratch) == MemoryStatus.Ok
+        && System.Text.OwnedAsciiEqualsAscii(leftScratch, rightScratch.View());
+}
+
+internal fn bool TryHashImportedTemplateGenericFactTextRow(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] textRow,
+    mut borrow OwnedAscii scratch,
+    out u64[0 max] hash)
+{
+    hash = 0;
+    if (textRow == 0
+        || (u64[0 2 ** 63 - 1])textRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    stack LogicalPackageGenericTemplateFactTextRow row = graph.TextRowAt(textRow);
+    scratch.Clear();
+    if (AppendLogicalPackageGenericTemplateFactText(graph, row, scratch)
+        != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    hash = System.Text.Hash(scratch.View());
+    return true;
+}
+
+internal struct ImportedTemplateScalarLocalState
+{
+    u32[0 max][64] NameTextRows;
+    u64[0 max][64] NameHashes;
+    u32[0 max][64] TypeReferenceRows;
+    MirType[64] Types;
+    bool[64] UnsignedFlags;
+    bool[64] MutableFlags;
+    bool[64] InitializedFlags;
+    i64[min max][64] Values;
+    u8[0 64] CountValue;
+
+    ImportedTemplateScalarLocalState()
+    {
+        self.CountValue = 0;
+    }
+
+    internal inline finite law u8[0 64] Count(
+        borrow ImportedTemplateScalarLocalState self)
+    {
+        return self.CountValue;
+    }
+
+    internal fn bool TryResolve(
+        borrow ImportedTemplateScalarLocalState self,
+        borrow LogicalPackageGenericTemplateFactGraph graph,
+        u32[0 max] nameTextRow,
+        mut borrow OwnedAscii leftScratch,
+        mut borrow OwnedAscii rightScratch,
+        out u32[0 max] typeReferenceRow,
+        out MirType type,
+        out bool isUnsigned,
+        out bool isMutable,
+        out bool isInitialized,
+        out i64[min max] value)
+    {
+        typeReferenceRow = 0;
+        type = MirType.I64;
+        isUnsigned = false;
+        isMutable = false;
+        isInitialized = false;
+        value = 0;
+        stack mut u64[0 max] nameHash = 0;
+        if (!TryHashImportedTemplateGenericFactTextRow(
+                graph,
+                nameTextRow,
+                leftScratch,
+                nameHash))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        while willexit (index < (u64[0 2 ** 63 - 1])self.CountValue)
+        {
+            if (self.NameHashes[index] == nameHash
+                && ImportedTemplateGenericFactTextRowsEqual(
+                    graph,
+                    self.NameTextRows[index],
+                    nameTextRow,
+                    leftScratch,
+                    rightScratch))
+            {
+                typeReferenceRow = self.TypeReferenceRows[index];
+                type = self.Types[index];
+                isUnsigned = self.UnsignedFlags[index];
+                isMutable = self.MutableFlags[index];
+                isInitialized = self.InitializedFlags[index];
+                value = self.Values[index];
+                return true;
+            }
+
+            index = index + 1;
+        }
+
+        return false;
+    }
+
+    internal fn bool TryAdd(
+        mut borrow ImportedTemplateScalarLocalState self,
+        borrow LogicalPackageGenericTemplateFactGraph graph,
+        u32[0 max] nameTextRow,
+        u32[0 max] typeReferenceRow,
+        MirType type,
+        bool isUnsigned,
+        bool isMutable,
+        bool isInitialized,
+        i64[min max] value,
+        mut borrow OwnedAscii leftScratch,
+        mut borrow OwnedAscii rightScratch)
+    {
+        stack mut u64[0 max] nameHash = 0;
+        if (self.CountValue >= ImportedTemplateScalarLocalCapacity
+            || !TryHashImportedTemplateGenericFactTextRow(
+                graph,
+                nameTextRow,
+                leftScratch,
+                nameHash))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        while willexit (index < (u64[0 2 ** 63 - 1])self.CountValue)
+        {
+            if (self.NameHashes[index] == nameHash
+                && ImportedTemplateGenericFactTextRowsEqual(
+                    graph,
+                    self.NameTextRows[index],
+                    nameTextRow,
+                    leftScratch,
+                    rightScratch))
+            {
+                return false;
+            }
+
+            index = index + 1;
+        }
+
+        stack u8[0 63] destination = (u8[0 63])self.CountValue;
+        self.NameTextRows[destination] = nameTextRow;
+        self.NameHashes[destination] = nameHash;
+        self.TypeReferenceRows[destination] = typeReferenceRow;
+        self.Types[destination] = type;
+        self.UnsignedFlags[destination] = isUnsigned;
+        self.MutableFlags[destination] = isMutable;
+        self.InitializedFlags[destination] = isInitialized;
+        self.Values[destination] = value;
+        self.CountValue = self.CountValue + 1;
+        return true;
+    }
+
+    internal fn bool TryAssignValue(
+        mut borrow ImportedTemplateScalarLocalState self,
+        borrow LogicalPackageGenericTemplateFactGraph graph,
+        u32[0 max] nameTextRow,
+        i64[min max] value,
+        mut borrow OwnedAscii leftScratch,
+        mut borrow OwnedAscii rightScratch)
+    {
+        stack mut u64[0 max] nameHash = 0;
+        if (!TryHashImportedTemplateGenericFactTextRow(
+                graph,
+                nameTextRow,
+                leftScratch,
+                nameHash))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        while willexit (index < (u64[0 2 ** 63 - 1])self.CountValue)
+        {
+            if (self.NameHashes[index] == nameHash
+                && ImportedTemplateGenericFactTextRowsEqual(
+                    graph,
+                    self.NameTextRows[index],
+                    nameTextRow,
+                    leftScratch,
+                    rightScratch))
+            {
+                if (!self.MutableFlags[index])
+                {
+                    return false;
+                }
+
+                self.InitializedFlags[index] = true;
+                self.Values[index] = value;
+                return true;
+            }
+
+            index = index + 1;
+        }
+
+        return false;
+    }
+}

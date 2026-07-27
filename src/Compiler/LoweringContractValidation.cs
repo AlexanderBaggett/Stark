@@ -38,6 +38,7 @@ internal sealed class LoweringContractValidator
     private int _checkedLambdaCount;
     private int _checkedTypeLayoutExpressionCount;
     private int _checkedDynamicStorageOperationCount;
+    private int _checkedDynTraitFromPartsCount;
     private int _checkedSwitchCount;
 
     public LoweringContractValidator(
@@ -94,11 +95,10 @@ internal sealed class LoweringContractValidator
                     continue;
                 }
 
-                if (!module.Reference.IsRoot && !signature.IsGeneric)
-                {
-                    continue;
-                }
-
+                // Non-root non-generic source bodies are validated here too: in a
+                // whole-package build they are lowered and emitted, so their lowering
+                // contracts must be validated like every other emitted body (mirrors the
+                // matching change in TypeChecking.CheckFunctionBodies).
                 if (declaration.Body.block() is not { } body)
                 {
                     continue;
@@ -119,6 +119,7 @@ internal sealed class LoweringContractValidator
             _checkedLambdaCount,
             _checkedTypeLayoutExpressionCount,
             _checkedDynamicStorageOperationCount,
+            _checkedDynTraitFromPartsCount,
             _checkedSwitchCount);
     }
 
@@ -187,6 +188,13 @@ internal sealed class LoweringContractValidator
                     ValidateBoundDynamicStorageOperation(dynamicStorageOperation, arguments, functionName, filePath);
                     ValidateDynamicStorageOperation(postfix, index, dynamicStorageOperation, arguments, filePath);
                     _checkedDynamicStorageOperationCount++;
+                    continue;
+                }
+
+                if (IsDynTraitFromPartsConstructionPrefix(postfix, index, out var dynFromPartsOperationName))
+                {
+                    ValidateBoundDynTraitFromPartsOperation(dynFromPartsOperationName, arguments, functionName, filePath);
+                    _checkedDynTraitFromPartsCount++;
                     continue;
                 }
 
@@ -271,6 +279,11 @@ internal sealed class LoweringContractValidator
                     continue;
                 }
 
+                if (IsCompileTimeStructuralFactCall(postfix, index))
+                {
+                    continue;
+                }
+
                 ReportMissing(
                     arguments,
                     filePath,
@@ -294,6 +307,15 @@ internal sealed class LoweringContractValidator
                     "Lowering contract is missing typed indexing facts for this index or slice expression. Type checking must record the operation family, arity, source type, and result type before MIR lowering.");
             }
         }
+    }
+
+    private static bool IsCompileTimeStructuralFactCall(StarkParser.PostfixExpressionContext postfix, int argumentPartIndex)
+    {
+        return argumentPartIndex == postfix.postfixPart().Length - 1
+            && postfix.primaryExpression().genericQualifiedName() is { } genericQualifiedName
+            && CompileTimeStructuralFacts.TryGetFactKind(genericQualifiedName.qualifiedName().GetText(), out _)
+            && CompileTimeStructuralFacts.HasValidGenericArgumentShape(genericQualifiedName)
+            && postfix.postfixPart()[argumentPartIndex].argumentList()?.argument().Length == 0;
     }
 
     private void ValidateObjectCreation(
@@ -707,6 +729,30 @@ internal sealed class LoweringContractValidator
         }
     }
 
+    private void ValidateBoundDynTraitFromPartsOperation(
+        string operationName,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundDynTraitFromPartsOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "dyn-trait-from-parts");
+            return;
+        }
+
+        if (!string.Equals(operation.OperationName, operationName, StringComparison.Ordinal)
+            || operation.TargetType.Kind != StarkTypeKind.DynTrait
+            || operation.ContextType.Kind != StarkTypeKind.RawPointer
+            || operation.VtableType.Kind != StarkTypeKind.RawPointer)
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound dyn-trait from-parts operation for '{operation.OperationName}' does not match source '{operationName}'.");
+        }
+    }
+
     private void ValidateBoundObjectCreationOperation(
         ObjectCreationTypingRecord record,
         StarkParser.ObjectCreationExpressionContext expression,
@@ -721,6 +767,7 @@ internal sealed class LoweringContractValidator
 
         if (!Equals(operation.CreatedType, record.CreatedType)
             || !Equals(operation.Constructor, record.Constructor)
+            || operation.StorageSelector != record.StorageSelector
             || operation.Members.Count != record.Members.Count)
         {
             ReportInvalid(
@@ -928,7 +975,7 @@ internal sealed class LoweringContractValidator
         {
             foreach (var label in section.switchLabel())
             {
-                if (label.pattern() is { } pattern)
+                foreach (var pattern in label.pattern())
                 {
                     ValidatePatternFacts(pattern, functionName, filePath);
                 }
@@ -940,10 +987,35 @@ internal sealed class LoweringContractValidator
     {
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
-            ValidateEnumPatternContext(enumNamedFieldPattern, functionName, filePath);
-            foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+            if (TryGetRecord(_enumPatterns, enumNamedFieldPattern, functionName, out var enumPattern))
+            {
+                ValidateEnumPatternFact(enumPattern, enumNamedFieldPattern, filePath);
+            }
+            else if (TryGetRecord(_aggregatePatterns, enumNamedFieldPattern, functionName, out var aggregateFact))
+            {
+                ValidateAggregatePatternFact(aggregateFact, enumNamedFieldPattern, filePath);
+            }
+            else
+            {
+                ReportMissing(
+                    enumNamedFieldPattern,
+                    filePath,
+                    "Lowering contract is missing typed enum or aggregate-pattern facts. Type checking must record whether this named-field switch pattern is an enum case or aggregate property pattern before MIR lowering.");
+            }
+
+            foreach (var member in enumNamedFieldPattern.namedPatternPayload().namedPatternMember())
             {
                 ValidatePatternFacts(member.pattern(), functionName, filePath);
+            }
+
+            return;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            foreach (var elementPattern in listPattern.pattern())
+            {
+                ValidatePatternFacts(elementPattern, functionName, filePath);
             }
 
             return;
@@ -970,6 +1042,16 @@ internal sealed class LoweringContractValidator
     {
         if (suffix is null || suffix.Identifier() is not null)
         {
+            return;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            foreach (var member in namedPayload.namedPatternMember())
+            {
+                ValidatePatternFacts(member.pattern(), functionName, filePath);
+            }
+
             return;
         }
 
@@ -1040,7 +1122,7 @@ internal sealed class LoweringContractValidator
                     $"Typed enum-pattern fact for '{record.EnumType.DisplayName}.{record.VariantName}' was attached to a named-field pattern, but the variant is not named-field shaped.");
             }
 
-            var sourceMemberCount = namedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Length;
+            var sourceMemberCount = namedFieldPattern.namedPatternPayload().namedPatternMember().Length;
             if (record.Members.Count != sourceMemberCount)
             {
                 ReportInvalid(
@@ -1121,7 +1203,7 @@ internal sealed class LoweringContractValidator
 
     private void ValidateAggregatePatternFact(
         AggregatePatternTypingRecord record,
-        StarkParser.AggregatePatternContext context,
+        ParserRuleContext context,
         string? filePath)
     {
         if (record.Type.Kind != StarkTypeKind.Named
@@ -1144,9 +1226,35 @@ internal sealed class LoweringContractValidator
             return;
         }
 
-        var suffix = context.aggregatePatternSuffix();
+        StarkParser.NamedPatternPayloadContext? namedPayload = null;
+        var suffix = context switch
+        {
+            StarkParser.AggregatePatternContext aggregatePattern => aggregatePattern.aggregatePatternSuffix(),
+            StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern => null,
+            _ => null
+        };
+        if (context is StarkParser.EnumNamedFieldPatternContext enumNamedField)
+        {
+            namedPayload = enumNamedField.namedPatternPayload();
+        }
+        else if (suffix?.namedPatternPayload() is { } suffixNamedPayload)
+        {
+            namedPayload = suffixNamedPayload;
+        }
+
         if (suffix is null || suffix.Identifier() is not null)
         {
+            if (namedPayload is not null)
+            {
+                ValidateAggregatePatternMemberFact(record, namedType, namedPayload, context, filePath);
+            }
+
+            return;
+        }
+
+        if (namedPayload is not null)
+        {
+            ValidateAggregatePatternMemberFact(record, namedType, namedPayload, context, filePath);
             return;
         }
 
@@ -1156,6 +1264,38 @@ internal sealed class LoweringContractValidator
                 context,
                 filePath,
                 $"Typed aggregate-pattern fact for '{record.Type.DisplayName}' has a field-count mismatch: the named type has {namedType.OrderedFields.Count} field(s), but the source pattern has {suffix.pattern().Length}.");
+        }
+    }
+
+    private void ValidateAggregatePatternMemberFact(
+        AggregatePatternTypingRecord record,
+        NamedTypeSymbol namedType,
+        StarkParser.NamedPatternPayloadContext namedPayload,
+        ParserRuleContext context,
+        string? filePath)
+    {
+        var sourceMemberCount = namedPayload.namedPatternMember().Length;
+        if (record.Members.Count != sourceMemberCount)
+        {
+            ReportInvalid(
+                context,
+                filePath,
+                $"Typed aggregate-pattern fact for '{record.Type.DisplayName}' has a member-count mismatch: recorded {record.Members.Count}, but the source pattern has {sourceMemberCount}.");
+            return;
+        }
+
+        foreach (var member in record.Members)
+        {
+            if (member.FieldIndex < 0
+                || member.FieldIndex >= namedType.OrderedFields.Count
+                || !string.Equals(namedType.OrderedFields[member.FieldIndex].Name, member.FieldName, StringComparison.Ordinal)
+                || !Equals(namedType.OrderedFields[member.FieldIndex].Type, member.FieldType))
+            {
+                ReportInvalid(
+                    context,
+                    filePath,
+                    $"Typed aggregate-pattern fact for '{record.Type.DisplayName}.{member.FieldName}' does not match the aggregate field layout.");
+            }
         }
     }
 
@@ -1581,7 +1721,7 @@ internal sealed class LoweringContractValidator
                 $"Typed object-creation fact must carry a runtime created type, but found '{record.CreatedType.DisplayName}'.");
         }
 
-        var actualArgumentCount = expression.argumentList()?.argument().Length ?? 0;
+        var actualArgumentCount = GetObjectCreationArguments(expression).Length;
         if (record.Constructor is { } constructor
             && constructor.Parameters.Count != actualArgumentCount)
         {
@@ -1896,7 +2036,10 @@ internal sealed class LoweringContractValidator
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
             or StarkTypeKind.Unicode
-            or StarkTypeKind.Named;
+            or StarkTypeKind.Named
+            or StarkTypeKind.FixedArray
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Dynamic;
     }
 
     private static bool RequiresAddressableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
@@ -1949,54 +2092,53 @@ internal sealed class LoweringContractValidator
         {
             foreach (var label in section.switchLabel())
             {
-                labelCount++;
                 if (label.DEFAULT() is not null)
                 {
+                    labelCount++;
                     explicitDefaultLabelCount++;
                     loweredDefaultLabelCount++;
                     continue;
                 }
 
-                if (label.whenClause() is not null)
+                foreach (var pattern in label.pattern())
                 {
-                    guardedLabelCount++;
-                }
-
-                var pattern = label.pattern();
-                if (pattern is null)
-                {
-                    continue;
-                }
-
-                if (pattern.literal() is not null)
-                {
-                    literalLabelCount++;
-                    continue;
-                }
-
-                if (pattern.DISCARD() is not null)
-                {
-                    matchAllLabelCount++;
-                    if (label.whenClause() is null)
+                    labelCount++;
+                    if (label.whenClause() is not null)
                     {
-                        loweredDefaultLabelCount++;
+                        guardedLabelCount++;
                     }
 
-                    continue;
-                }
+                    if (pattern.literal() is not null)
+                    {
+                        literalLabelCount++;
+                        continue;
+                    }
 
-                if (pattern.VAR() is not null)
-                {
-                    matchAllLabelCount++;
-                    captureLabelCount++;
-                    continue;
-                }
+                    if (pattern.DISCARD() is not null)
+                    {
+                        matchAllLabelCount++;
+                        if (label.whenClause() is null)
+                        {
+                            loweredDefaultLabelCount++;
+                        }
 
-                if (pattern.aggregatePattern() is not null
-                    || pattern.enumNamedFieldPattern() is not null
-                    || pattern.genericEnumAggregatePattern() is not null)
-                {
-                    structuredPatternLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.VAR() is not null)
+                    {
+                        matchAllLabelCount++;
+                        captureLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.aggregatePattern() is not null
+                        || pattern.enumNamedFieldPattern() is not null
+                        || pattern.genericEnumAggregatePattern() is not null
+                        || pattern.listPattern() is not null)
+                    {
+                        structuredPatternLabelCount++;
+                    }
                 }
             }
         }
@@ -2017,7 +2159,15 @@ internal sealed class LoweringContractValidator
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private static bool IsUnsafeRawSliceConstructionPrefix(StarkParser.PostfixExpressionContext expression, int postfixPartIndex)
@@ -2026,19 +2176,31 @@ internal sealed class LoweringContractValidator
             && string.Equals(expression.primaryExpression().Identifier()?.GetText(), "slice", StringComparison.Ordinal);
     }
 
+    private static bool IsDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        int postfixPartIndex,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return postfixPartIndex == 0
+            && (string.Equals(operationName, "dynview", StringComparison.Ordinal)
+                || string.Equals(operationName, "dynbox", StringComparison.Ordinal));
+    }
+
     private bool TryGetRecord<T>(
         IReadOnlyDictionary<OperationKey, T> facts,
         ParserRuleContext context,
         string functionName,
         out T record)
     {
-        var key = Key(functionName, context);
-        if (facts.TryGetValue(key, out record!))
-        {
-            return true;
-        }
-
-        return facts.TryGetValue(key with { FunctionName = null }, out record!);
+        // No null-name fallback: records keyed without an enclosing function
+        // (constructor bodies, materialized imported instantiations) live at
+        // OTHER files' coordinates, so a fallback hit here mis-associates a
+        // different call's fact (e.g. a member call matching a constructor's
+        // direct call at the same line/column in another file).
+        return facts.TryGetValue(Key(functionName, context), out record!);
     }
 
     private bool TryGetBoundOperation<T>(

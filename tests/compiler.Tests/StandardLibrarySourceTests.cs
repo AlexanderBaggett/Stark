@@ -15,7 +15,6 @@ public sealed class StandardLibrarySourceTests
             new CompilationInput(File.ReadAllText(sourcePath), sourcePath),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
                     new FileSystemModuleResolver(sourceRoot),

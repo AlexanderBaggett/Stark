@@ -5,6 +5,7 @@ internal sealed class NonLexicalBorrowLifetimeValidator
     private readonly CompilerPassContext _context;
     private readonly MidLevelIrModule _mir;
     private readonly TypeCheckModel _typeModel;
+    private readonly CopyabilityFacts _copyability;
     private readonly OwnershipValidationModel _ownershipModel;
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
 
@@ -19,6 +20,7 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         _typeModel = typeModel;
         _ownershipModel = ownershipModel;
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+        _copyability = new CopyabilityFacts(typeModel.NamedTypes);
         foreach (var function in mir.Functions)
         {
             _signatures.TryAdd(
@@ -993,7 +995,7 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         return merged;
     }
 
-    private static bool IsMoveOnly(StarkTypeSymbol type)
+    private bool IsMoveOnly(StarkTypeSymbol type)
     {
         if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
         {
@@ -1003,6 +1005,11 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         if (type.BorrowKind != StarkBorrowKind.None)
         {
             return type.IsMutableView;
+        }
+
+        if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && _copyability.IsCopyable(type))
+        {
+            return false;
         }
 
             return type.Kind switch

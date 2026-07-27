@@ -14,6 +14,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite i32[min max] Run()
@@ -41,6 +45,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -69,6 +77,35 @@ public sealed class OwnershipValidationTests
     }
 
     [Fact]
+    public void DeadOnReturnCallMakesLocalStorageUnavailable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+            {
+                value = 7;
+                return true;
+            }
+
+            fn u32[0 max] Run()
+            {
+                stack mut u32[0 max] value = 1;
+                if (!WriteAndConsume(value))
+                {
+                    return 0;
+                }
+
+                return value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Move error", "value 'value'", "was moved");
+    }
+
+    [Fact]
     public void MoveDiagnosticsAreNotDuplicatedForTheSameUse()
     {
         var result = Compile(
@@ -78,6 +115,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -125,6 +166,10 @@ public sealed class OwnershipValidationTests
                 finite law void Consume(Box box)
                 {
                     return;
+                }
+
+                drop
+                {
                 }
             }
 
@@ -215,6 +260,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law i32[min max] Run()
@@ -246,6 +295,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -282,6 +335,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law Box Make()
@@ -310,6 +367,10 @@ public sealed class OwnershipValidationTests
             struct Name
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             struct Container
@@ -351,6 +412,10 @@ public sealed class OwnershipValidationTests
             struct Name
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             struct NameBox
@@ -393,6 +458,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             doctrine Sink
@@ -428,6 +497,10 @@ public sealed class OwnershipValidationTests
             struct Box<T>
             {
                 T Value;
+
+                drop
+                {
+                }
             }
 
             doctrine Sink<T>
@@ -502,6 +575,10 @@ public sealed class OwnershipValidationTests
                         public struct OwnedAscii
                         {
                             ascii Text;
+
+                            drop
+                            {
+                            }
                         }
 
                         public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
@@ -546,6 +623,326 @@ public sealed class OwnershipValidationTests
         var ownership = GetOwnership(result);
         Assert.True(ownership.Functions["Run"].OwnershipValid);
         Assert.Empty(ownership.Functions["Run"].Moves);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn dynamic u32[0 max] Bad()
+            {
+                stack mut dynamic u32[0 max] values = new(arena, 4);
+                return values;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed value 'values'");
+    }
+
+    [Fact]
+    public void ArenaStorageRawPointersCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            unsafe fn rawptr<Box> Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                return &box;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed storage");
+    }
+
+    [Fact]
+    public void ArenaObjectInitializerFieldsCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            struct Holder
+            {
+                rawptr<Box> Ptr;
+            }
+
+            unsafe fn Holder Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                stack Holder holder = new Holder()
+                {
+                    Ptr = &box
+                };
+                return holder;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed value 'holder'");
+    }
+
+    [Fact]
+    public void ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            record Holder(rawptr<Box> Ptr)
+            {
+            }
+
+            unsafe fn Holder Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                return new Holder(&box);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed storage");
+    }
+
+    [Fact]
+    public void ArenaEnumPayloadsCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            enum Holder
+            {
+                Ptr(rawptr<Box>)
+            }
+
+            unsafe fn Holder Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                return Holder.Ptr(&box);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed storage");
+    }
+
+    [Fact]
+    public void ArenaFixedArrayElementsCannotReturnOutOfArenaScope()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            unsafe fn rawptr<Box>[1] Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                stack rawptr<Box>[1] values =
+                {
+                    &box
+                };
+                return values;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "cannot return", "arena-backed value 'values'");
+    }
+
+    [Fact]
+    public void ArenaReadCapturesCannotBeRetainedInHeapClosures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            fn heap closure<fn i32[min max]()> Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                return heap capture(read box) () => box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Heap closure capture mode 'read'", "local storage");
+    }
+
+    [Fact]
+    public void ArenaBorrowsCannotBePassedToRetainingParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            fn void Retain(storeborrow Box box);
+
+            fn void Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                Retain(box);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "callee may retain");
+    }
+
+    [Fact]
+    public void ArenaPointersCannotBeStoredInHeapStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            struct Holder
+            {
+                rawptr<Box> Ptr;
+            }
+
+            unsafe fn void Bad()
+            {
+                heap mut Holder holder = new Holder()
+                {
+                    Ptr = null
+                };
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                holder.Ptr = &box;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "heap storage 'holder'");
+    }
+
+    [Fact]
+    public void ArenaPointersCannotBeStoredInStaticStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            static mut rawptr<Box> Saved = null;
+
+            unsafe fn void Bad()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 1
+                };
+                Saved = &box;
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "Arena lifetime error", "global or static storage 'Saved'");
+    }
+
+    [Fact]
+    public void ArenaBorrowsCanBePassedToNonRetainingBorrowParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            finite law i32[min max] Read(borrow Box box)
+            {
+                return box.Value;
+            }
+
+            fn i32[min max] Run()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 2
+                };
+                return Read(box);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

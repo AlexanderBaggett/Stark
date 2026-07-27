@@ -1,0 +1,241 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.References
+import Compiler.Binding.FunctionEffects
+import System.Text
+import System.Memory
+module Compiler.Binding.BecomeValidation
+
+// Exact source-level type-span compatibility for the current self-hosted ABI
+// model. Every token kind and spelling in the type span must match, so generic
+// arguments, integer ranges, callable memory contracts, and pointer element
+// types remain part of tail-call ABI congruence.
+internal fn bool TypeSpansCompatible(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] leftStart,
+    u32[0 max] leftEnd,
+    u32[0 max] rightStart,
+    u32[0 max] rightEnd)
+{
+    if (leftStart >= leftEnd || rightStart >= rightEnd)
+    {
+        return leftStart >= leftEnd && rightStart >= rightEnd;
+    }
+
+    stack u32[0 max] leftLength = (u32[0 max])(leftEnd - leftStart);
+    stack u32[0 max] rightLength = (u32[0 max])(rightEnd - rightStart);
+    if (leftLength != rightLength)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < leftLength)
+    {
+        stack u32[0 max] left = (u32[0 max])(leftStart + offset);
+        stack u32[0 max] right = (u32[0 max])(rightStart + offset);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])left) != stream.KindAt((u64[0 2 ** 63 - 1])right))
+        {
+            return false;
+        }
+
+        stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
+        stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
+        if (!System.Text.Equals(leftText, rightText))
+        {
+            return false;
+        }
+
+        offset = (u32[0 max])(offset + 1);
+    }
+
+    return true;
+}
+
+// The subset of LLVM `musttail` ABI congruence the self-hosted front end can
+// currently represent: same result type span, same parameter count, same
+// parameter type spans, and a call-site argument count matching the callee.
+internal fn bool BecomeAbiCompatible(borrow FunctionSignature caller, borrow FunctionSignature callee, ascii source, borrow TokenStream stream, u32[0 max] callArgCount)
+{
+    if (!TypeSpansCompatible(
+        source,
+        stream,
+        caller.ReturnTypeStartTokenAt(),
+        caller.ReturnTypeEndTokenAt(),
+        callee.ReturnTypeStartTokenAt(),
+        callee.ReturnTypeEndTokenAt()))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = caller.ParamCount();
+    if (paramCount != callee.ParamCount())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])callArgCount != callee.ParamCount())
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
+    {
+        if (!TypeSpansCompatible(
+            source,
+            stream,
+            caller.ParamTypeStartTokenAt(index),
+            caller.ParamTypeEndTokenAt(index),
+            callee.ParamTypeStartTokenAt(index),
+            callee.ParamTypeEndTokenAt(index)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// A `become` edge is still an ordinary call for effect purposes: a law function
+// may only tail-transfer to law code, and a finite function may only transfer to
+// code with a finite guarantee. Plain `tail fn` has no additional effect limit.
+internal fn bool BecomeEffectsCompatible(borrow FunctionSignature caller, borrow FunctionSignature callee)
+{
+    if (caller.LawKind() && !callee.LawKind())
+    {
+        return false;
+    }
+
+    if (caller.FiniteKind() && !callee.FiniteKind())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Emits semantic diagnostics for `become`: the caller must be `tail`, the
+// statement must be a direct call in tail-transfer position, the resolved callee
+// must itself be tail-callable, ordinary law/finite effect rules must allow the
+// call, and the current self-hosted ABI model must be `musttail`-compatible.
+internal fn System.Memory.MemoryStatus CollectBecomeDiagnostics(borrow FunctionSignature signature, borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Become)
+        {
+            if (!signature.TailCallable())
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeOutsideTailFunction, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var callerError):
+                        return System.Memory.MemoryStatus.Err(callerError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack u32[0 max] root = body.ExprRootAt(index);
+            if (root == 0 || body.ExprKindAt(root) != Compiler.Parsing.ExprKind.Call)
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeRequiresDirectCall, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var callError):
+                        return System.Memory.MemoryStatus.Err(callError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            stack u32[0 max] calleeNode = body.ExprLeftAt(root);
+            if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeRequiresDirectCall, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var directError):
+                        return System.Memory.MemoryStatus.Err(directError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+            if (refIndexPlusOne == 0)
+            {
+                continue;
+            }
+
+            stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+            stack ReferenceKind refKind = refs.KindAt(refIndex);
+            if (refKind == ReferenceKind.Unbound)
+            {
+                continue;
+            }
+
+            if (refKind != ReferenceKind.Declaration)
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeTargetNotTailCallable, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var localTargetError):
+                        return System.Memory.MemoryStatus.Err(localTargetError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            stack mut FunctionSignature callee = new();
+            if (!TryParseFunctionSignatureFromTable(table, stream, refs.TargetAt(refIndex), callee))
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeTargetNotTailCallable, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var nonFunctionError):
+                        return System.Memory.MemoryStatus.Err(nonFunctionError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            if (!callee.TailCallable())
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeTargetNotTailCallable, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var targetError):
+                        return System.Memory.MemoryStatus.Err(targetError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            if (!BecomeEffectsCompatible(signature, callee))
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeEffectMismatch, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var effectError):
+                        return System.Memory.MemoryStatus.Err(effectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (!BecomeAbiCompatible(signature, callee, source, stream, body.ExprCallArgCountAt(root)))
+            {
+                switch (diags.Append(BindDiagnosticCode.BecomeAbiMismatch, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var abiError):
+                        return System.Memory.MemoryStatus.Err(abiError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

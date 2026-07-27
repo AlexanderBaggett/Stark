@@ -1,0 +1,106 @@
+import Compiler.Mir.SourceModuleLowering
+import System.Console
+import System.Text
+module Compiler.Probe.StructCapture
+
+fn u8[0 1] CheckLocalTerminalCapture()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked(
+        "struct Box { i64[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 7, flag = true }; switch (box) { case Box(var value, true): return value + 1; default: return 30; } }",
+        sink);
+    if (ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "add i64")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %"))
+    {
+        WriteLine("ok   local-terminal-capture");
+        return 0;
+    }
+
+    WriteLine("FAIL local-terminal-capture");
+    if (sink.Length() > 0)
+    {
+        WriteLine(sink.View());
+    }
+
+    return 1;
+}
+
+fn u8[0 1] CheckValueParamAssignmentCapture()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked(
+        "struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case Box(var value, true): score = value + 1; default: score = 30; } return score }",
+        sink);
+    if (ok
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && !System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && !System.Text.Contains(sink.View(), "switch %"))
+    {
+        WriteLine("ok   value-param-assignment-capture");
+        return 0;
+    }
+
+    WriteLine("FAIL value-param-assignment-capture");
+    if (sink.Length() > 0)
+    {
+        WriteLine(sink.View());
+    }
+
+    return 1;
+}
+
+fn u8[0 1] CheckFieldBackedAssignmentCapture()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked(
+        "struct Box { i64[0 20] value; bool flag; } struct Holder { bool ready; Box box; } fn i64[min max] main() { stack Holder holder = new Holder(); var score = 0; switch (holder.box) { case Box { value: var value, flag: false }: score = value + 1; default: score = 30; } return score }",
+        sink);
+    if (ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "i64 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %"))
+    {
+        WriteLine("ok   field-backed-assignment-capture");
+        return 0;
+    }
+
+    WriteLine("FAIL field-backed-assignment-capture");
+    if (sink.Length() > 0)
+    {
+        WriteLine(sink.View());
+    }
+
+    return 1;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] failures = 0;
+    failures += (i32[min max])CheckLocalTerminalCapture();
+    failures += (i32[min max])CheckValueParamAssignmentCapture();
+    failures += (i32[min max])CheckFieldBackedAssignmentCapture();
+
+    if (failures == 0)
+    {
+        WriteLine("all struct capture probes passed");
+        return 0;
+    }
+
+    return 1;
+}

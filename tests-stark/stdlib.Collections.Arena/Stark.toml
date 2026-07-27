@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-collections-arena-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "ArenaTests.stark"
+output = "stdlib-collections-arena-tests"

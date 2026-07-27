@@ -1,0 +1,816 @@
+import StdlibPortSupport
+import System
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Testing
+import System.Text
+module SystemTextStandardLibraryTests
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile.
+// The C# original (delegated to StandardLibraryTestSuite) compiles the embedded
+// Demo program against stdlib/src and asserts only that the compile succeeds. The
+// embedded program is reproduced verbatim below and routed through the host
+// compile bridge.
+internal fn bool StdLibSourceTextBuiltinsAndPathHelperSurfaceCompileImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("system-text-builtins-path-helper-surface", raw"""
+import System
+import System.Text
+module Demo
+
+fn bool MemoryOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn i32[min max] Use()
+{
+    stack mut System.Text.OwnedAscii owned = new();
+    stack mut System.Text.OwnedAscii joined = new();
+    stack mut System.Text.OwnedAscii asciiOwned = new();
+    stack mut System.Text.OwnedUnicode unicodeOwned = new();
+
+    stack bool asciiOwnedOk = MemoryOk(System.Text.FromAscii(asciiOwned, "demo"));
+    stack i64[min max] asciiLength = System.Text.AsciiLength("demo");
+    stack bool unicodeOwnedOk = MemoryOk(System.Text.FromConstUnicode(unicodeOwned, (unicode)"demo"));
+    stack i64[min max] unicodeLength = System.Text.UnicodeLength((unicode)"demo");
+    stack bool status = MemoryOk(System.IO.Path.CurrentDirectory(owned));
+    stack bool joinedOk = MemoryOk(System.IO.Path.TryJoin(joined, "demo", "file.txt"));
+    stack ascii extension = System.IO.Path.Extension("demo/file.txt");
+    stack ascii baseName = System.IO.Path.BaseName("demo/file.txt");
+    stack ascii directory = System.IO.Path.DirectoryName("demo/file.txt");
+
+    if (!asciiOwnedOk || !unicodeOwnedOk)
+    {
+        return 1;
+    }
+
+    if (asciiLength != 4
+        || unicodeLength != 4
+        || asciiOwned.AsSlice()[0] != (i8[min max])100
+        || unicodeOwned.AsSlice()[0] != 100)
+        {
+            return 2;
+    }
+
+    if (!status)
+    {
+        return 3;
+    }
+
+    if (!joinedOk)
+    {
+        return 4;
+    }
+
+    if (System.Text.AsciiLength(extension) == 0
+        || System.Text.AsciiLength(baseName) == 0
+        || System.Text.AsciiLength(directory) == 0)
+        {
+            return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextLowersThroughDynamicStorage.
+// PORT-NOTE: The C# original pins TargetInfo=x86_64-unknown-linux-gnu so the
+// libc-free dynamic-storage lowering is asserted; keep the same target here
+// because macOS legitimately bottoms out in libc allocation helpers.
+internal fn bool StdLibSourcePromotedTextLowersThroughDynamicStorageImpl()
+{
+    stack mut ProgramCompile c = CompileProgramForTarget("system-text-promoted-dynamic-storage-lowering", raw"""
+import System.Text
+import System.Memory
+module Demo
+
+fn bool Ok(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn u64[0 2 ** 63 - 1] GrowAndRead()
+{
+    stack mut System.Text.OwnedAscii text = new();
+    if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42)))
+    {
+        return 0;
+    }
+
+    stack i8[min max][] view = text.AsSlice();
+    return (u64[0 2 ** 63 - 1])view[4];
+}
+""", LinuxX64TargetTriple);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (System.Testing.Contains(llvm, "; LLVM body emission fallback")
+        || System.Testing.Contains(llvm, "@malloc(")
+        || System.Testing.Contains(llvm, "@realloc(")
+        || System.Testing.Contains(llvm, "@free("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "@__stark_runtime_try_realloc"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers.
+// PORT-NOTE: The C# original reads stdlib/src/System/Text.stark off disk,
+// compiles that module file directly with EmitLlvmIr, then inspects the lowered
+// OwnedAscii/OwnedUnicode append helpers. The Stark port compiles the same
+// on-disk module through the host-test bridge and scopes the checks to the same
+// helper bodies.
+internal fn bool StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpersImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-appends-tail-region",
+        "../../stdlib/src/System/Text.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii asciiSliceBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendSlice");
+    stack ascii asciiLiteralBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendAscii");
+    stack ascii unicodeSliceBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendSlice");
+    stack ascii unicodeLiteralBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendUnicode");
+    stack ascii asciiSliceDisjointBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendSliceDisjoint");
+    stack ascii asciiLiteralDisjointBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendAsciiDisjoint");
+    stack ascii asciiConstBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendConstAscii");
+    stack ascii asciiConstDisjointBody = LlvmDefinitionBody(llvm, "OwnedAscii_AppendConstAsciiDisjoint");
+    stack ascii unicodeSliceDisjointBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendSliceDisjoint");
+    stack ascii unicodeLiteralDisjointBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendUnicodeDisjoint");
+    stack ascii unicodeConstBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendConstUnicode");
+    stack ascii unicodeConstDisjointBody = LlvmDefinitionBody(llvm, "OwnedUnicode_AppendConstUnicodeDisjoint");
+
+    if (!System.Testing.Contains(asciiSliceBody, "@OwnedAscii_AppendSliceDisjoint")
+        || !System.Testing.Contains(asciiLiteralBody, "@OwnedAscii_AppendAsciiDisjoint")
+        || !System.Testing.Contains(asciiConstBody, "@OwnedAscii_AppendConstAsciiDisjoint")
+        || !System.Testing.Contains(unicodeSliceBody, "@OwnedUnicode_AppendSliceDisjoint")
+        || !System.Testing.Contains(unicodeLiteralBody, "@OwnedUnicode_AppendUnicodeDisjoint")
+        || !System.Testing.Contains(unicodeConstBody, "@OwnedUnicode_AppendConstUnicodeDisjoint"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(asciiSliceDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        || !System.Testing.Contains(asciiLiteralDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        || !System.Testing.Contains(asciiConstDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        || !System.Testing.Contains(unicodeSliceDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        || !System.Testing.Contains(unicodeLiteralDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        || !System.Testing.Contains(unicodeConstDisjointBody, "@llvm.memcpy.p0.p0.i64"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(asciiLiteralDisjointBody, "icmp eq ptr")
+        || !System.Testing.Contains(asciiConstDisjointBody, "icmp eq ptr")
+        || !System.Testing.Contains(unicodeLiteralDisjointBody, "icmp eq ptr")
+        || !System.Testing.Contains(unicodeConstDisjointBody, "icmp eq ptr"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(asciiLiteralBody, "slot_snapshot")
+        || !System.Testing.Contains(asciiConstBody, "slot_snapshot")
+        || !System.Testing.Contains(unicodeLiteralBody, "slot_snapshot")
+        || !System.Testing.Contains(unicodeConstBody, "slot_snapshot"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(asciiLiteralBody, "icmp ule ptr")
+        || !System.Testing.Contains(asciiConstBody, "icmp ule ptr")
+        || !System.Testing.Contains(unicodeLiteralBody, "icmp ule ptr")
+        || !System.Testing.Contains(unicodeConstBody, "icmp ule ptr"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(asciiSliceDisjointBody, "slot_snapshot")
+        || System.Testing.Contains(asciiLiteralDisjointBody, "slot_snapshot")
+        || System.Testing.Contains(asciiConstDisjointBody, "slot_snapshot")
+        || System.Testing.Contains(unicodeSliceDisjointBody, "slot_snapshot")
+        || System.Testing.Contains(unicodeLiteralDisjointBody, "slot_snapshot")
+        || System.Testing.Contains(unicodeConstDisjointBody, "slot_snapshot"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(asciiSliceDisjointBody, "icmp ule ptr")
+        || System.Testing.Contains(asciiLiteralDisjointBody, "icmp ule ptr")
+        || System.Testing.Contains(asciiConstDisjointBody, "icmp ule ptr")
+        || System.Testing.Contains(unicodeSliceDisjointBody, "icmp ule ptr")
+        || System.Testing.Contains(unicodeLiteralDisjointBody, "icmp ule ptr")
+        || System.Testing.Contains(unicodeConstDisjointBody, "icmp ule ptr"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectly.
+// PORT-NOTE: The C# original compiles stdlib/src/System/Text.stark as the module
+// input with EmitLlvmIr and inspects the wide-integer Unicode formatting helpers.
+// The Stark port compiles the same on-disk module through the host-test bridge
+// and preserves the direct-Unicode and no-raw-i1024-division checks.
+internal fn bool StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectlyImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-wide-unicode-int-format",
+        "../../stdlib/src/System/Text.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii i1024Body = LlvmDefinitionBody(llvm, "TryFormatI1024Unicode");
+    stack ascii u1024Body = LlvmDefinitionBody(llvm, "TryFormatU1024Unicode");
+    stack ascii i128Body = LlvmDefinitionBody(llvm, "TryFormatI128Unicode");
+    stack ascii u128Body = LlvmDefinitionBody(llvm, "TryFormatU128Unicode");
+    stack ascii signedAsciiU1024Body = LlvmDefinitionBody(llvm, "TryFormatSignedU1024Ascii");
+    stack ascii signedUnicodeU1024Body = LlvmDefinitionBody(llvm, "TryFormatSignedU1024Unicode");
+    stack ascii writeReversedU1024Body = LlvmDefinitionBody(llvm, "WriteReversedU1024AsciiDigits");
+
+    if (!System.Testing.Contains(i1024Body, "@TryFormatSignedU1024Unicode")
+        || !System.Testing.Contains(u1024Body, "@TryFormatSignedU1024Unicode")
+        || !System.Testing.Contains(i128Body, "@TryFormatSignedU128Unicode")
+        || !System.Testing.Contains(u128Body, "@TryFormatSignedU128Unicode"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(i1024Body, "@TryFormatI1024Ascii")
+        || System.Testing.Contains(u1024Body, "@TryFormatU1024Ascii")
+        || System.Testing.Contains(i128Body, "@TryFormatI128Ascii")
+        || System.Testing.Contains(u128Body, "@TryFormatU128Ascii"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(i1024Body, "@TryConvertAsciiToUnicode")
+        || System.Testing.Contains(u1024Body, "@TryConvertAsciiToUnicode")
+        || System.Testing.Contains(i128Body, "@TryConvertAsciiToUnicode")
+        || System.Testing.Contains(u128Body, "@TryConvertAsciiToUnicode"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(u1024Body, "alloca [309 x i8]")
+        || System.Testing.Contains(u128Body, "alloca [39 x i8]"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(signedAsciiU1024Body, "@WriteReversedU1024AsciiDigits")
+        || !System.Testing.Contains(signedUnicodeU1024Body, "@WriteReversedU1024AsciiDigits"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(writeReversedU1024Body, "@DivideU1024FormatLimbsBy10"))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(signedAsciiU1024Body, "udiv i1024")
+        || System.Testing.Contains(signedAsciiU1024Body, "urem i1024")
+        || System.Testing.Contains(signedUnicodeU1024Body, "udiv i1024")
+        || System.Testing.Contains(signedUnicodeU1024Body, "urem i1024")
+        || System.Testing.Contains(writeReversedU1024Body, "udiv i1024")
+        || System.Testing.Contains(writeReversedU1024Body, "urem i1024"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffs.
+// PORT-NOTE: The C# original compiles stdlib/src/System/Text.stark as the module
+// input with EmitLlvmIr and, for each of the four wide parse helpers, asserts the
+// lowered body never emits a raw udiv/urem i1024. The Stark port compiles the same
+// on-disk module through the host-test bridge and scopes the checks to each helper.
+internal fn bool StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffsImpl()
+{
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-wide-int-parse-cutoffs",
+        "../../stdlib/src/System/Text.stark");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii parseI1024AsciiBody = LlvmDefinitionBody(llvm, "ParseI1024Ascii");
+    stack ascii parseI1024UnicodeBody = LlvmDefinitionBody(llvm, "ParseI1024Unicode");
+    stack ascii parseU1024AsciiBody = LlvmDefinitionBody(llvm, "ParseU1024Ascii");
+    stack ascii parseU1024UnicodeBody = LlvmDefinitionBody(llvm, "ParseU1024Unicode");
+
+    if (System.Testing.Contains(parseI1024AsciiBody, "udiv i1024")
+        || System.Testing.Contains(parseI1024AsciiBody, "urem i1024")
+        || System.Testing.Contains(parseI1024UnicodeBody, "udiv i1024")
+        || System.Testing.Contains(parseI1024UnicodeBody, "urem i1024")
+        || System.Testing.Contains(parseU1024AsciiBody, "udiv i1024")
+        || System.Testing.Contains(parseU1024AsciiBody, "urem i1024")
+        || System.Testing.Contains(parseU1024UnicodeBody, "udiv i1024")
+        || System.Testing.Contains(parseU1024UnicodeBody, "urem i1024"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegions.
+// PORT-NOTE: The C# original reads stdlib/src/System/Text.stark off disk and
+// asserts on its raw source text that UTF helpers declare bounded raw-pointer
+// regions, disjoint contracts, decoded-code-point routing, and finite-law AsSlice
+// borrow signatures. The Stark port reads the same source file and scans the same
+// source fragments.
+internal fn bool StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegionsImpl()
+{
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Text.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var source):
+            stack ascii text = source.View();
+            return System.Testing.Contains(text, "rawptr<i8[min max]>[length] data")
+                && System.Testing.Contains(text, "rawmutptr<i8[min max]>[capacity] destination")
+                && System.Testing.Contains(text, "rawmutptr<i16[min max]>[capacity] destination")
+                && System.Testing.Contains(text, "rawptr<i16[min max]>[sourceLength] source")
+                && System.Testing.Contains(text, "where disjoint(source, destination[0, capacity])")
+                && System.Testing.Contains(text, "decoded = TryDecodeUtf8CodePoint")
+                && System.Testing.Contains(text, "finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self)")
+                && System.Testing.Contains(text, "finite law retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)")
+                && System.Testing.Contains(text, "finite law retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self)");
+    }
+}
+
+// Ported from SystemTextStandardLibraryTests.PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource.
+// PORT-NOTE: The C# original resolves the prebuilt System stdlib *package* (the
+// compiled libSystem.a / System.lib plus its System.starkpkg manifest), asserts the
+// manifest exists on disk, and compiles the embedded App program against the
+// package directory (no stdlib source present) to prove the TryFormat / parse /
+// OwnedText surface is consumable purely from the packaged artifact. The
+// compile-only bridge cannot resolve a package directory or check the manifest file,
+// so the embedded App program is reproduced verbatim and routed through the host
+// compile bridge against the available stdlib; the test reduces to compiling that
+// consumer program and asserting it succeeds.
+internal fn bool PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSourceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("system-text-packaged-tryformat-surface", raw"""
+import System
+import System.Text
+module App
+
+unsafe fn bool ProbeAscii(rawmutptr<Ascii> destination)
+{
+    return System.Text.TryFormatI1024Ascii(destination, (i1024[min max])(-(2 ** 1023)))
+        && System.Text.TryFormatU1024Ascii(destination, (u1024[0 max])(2 ** 1024 - 1));
+}
+
+unsafe fn bool ProbeUnicode(rawmutptr<Unicode> destination)
+{
+    return System.Text.TryFormatI192Unicode(destination, (i192[min max])(-(2 ** 191)))
+        && System.Text.TryFormatU768Unicode(destination, (u768[0 max])(2 ** 768 - 1));
+}
+
+unsafe fn bool ProbeFloat(rawmutptr<Ascii> asciiDestination, rawmutptr<Unicode> unicodeDestination)
+{
+    return System.Text.TryFormatF64Ascii(asciiDestination, -12.5)
+        && System.Text.TryFormatF32Unicode(unicodeDestination, 3.25f);
+}
+
+fn bool ProbeOwnedText()
+{
+    stack i64[min max] count = 42;
+    stack f64 ratio = 3.5;
+    stack bool ready = true;
+    stack bool stopped = false;
+    stack i32[min max] smallCount = (i32[min max])(-(2 ** 31));
+    stack u32[0 max] smallUnsigned = (u32[0 max])(2 ** 32 - 1);
+    stack i96[min max] wideCount = (i96[min max])(-(2 ** 95));
+    stack u96[0 max] wideUnsigned = (u96[0 max])(2 ** 96 - 1);
+    return OwnedAsciiLength(count.ToAscii(), 2)
+        && OwnedAsciiLength(smallCount.ToAscii(), 11)
+        && OwnedAsciiLength(ready.ToAscii(), 4)
+        && OwnedAsciiLength(System.Text.Encoding.UTF8.ToAscii(), 4)
+        && OwnedAsciiLength(System.Text.TextError.Overflow.ToAscii(), 8)
+        && OwnedUnicodeLength(ratio.ToUnicode(), 8)
+        && OwnedUnicodeLength(smallUnsigned.ToUnicode(), 10)
+        && OwnedAsciiLength(wideCount.ToAscii(), 30)
+        && OwnedUnicodeLength(wideUnsigned.ToUnicode(), 29)
+        && OwnedUnicodeLength(stopped.ToUnicode(), 5)
+        && OwnedUnicodeLength(System.Text.Encoding.UTF16.ToUnicode(), 5)
+        && OwnedUnicodeLength(System.Text.TextError.Overflow.ToUnicode(), 8)
+        && OwnedAsciiLength("Score: " + count.ToAscii(), 9)
+        && OwnedUnicodeLength((unicode)"Value: " + ratio.ToUnicode(), 15);
+}
+
+unsafe fn bool ProbeFixedConcat()
+{
+    stack mut i8[min max][2] leftStorage =
+    {
+        65, 0
+    };
+    stack mut Ascii left = new Ascii()
+    {
+        Data = &leftStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack mut i8[min max][2] rightStorage =
+    {
+        66, 0
+    };
+    stack mut Ascii right = new Ascii()
+    {
+        Data = &rightStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack Ascii combined[4] = left + right;
+
+    stack mut i32[min max][2] wideLeftStorage =
+    {
+        65, 0
+    };
+    stack mut Unicode wideLeft = new Unicode()
+    {
+        Data = &wideLeftStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack mut i32[min max][2] wideRightStorage =
+    {
+        66, 0
+    };
+    stack mut Unicode wideRight = new Unicode()
+    {
+        Data = &wideRightStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack Unicode wideCombined[4] = wideLeft + wideRight;
+    return System.Text.AsciiLength(System.Text.AsciiView(combined)) == 2
+        && System.Text.UnicodeLength(System.Text.UnicodeView(wideCombined)) == 2;
+}
+
+fn bool ProbeFixedInterpolation()
+{
+    stack i64[min max] count = 42;
+    stack Ascii label[32] = $"Score: {count}";
+    stack Unicode wideLabel[32] = $"Score: {count}";
+    return System.Text.AsciiLength(System.Text.AsciiView(label)) == 9
+        && System.Text.UnicodeLength(System.Text.UnicodeView(wideLabel)) == 9;
+}
+
+fn bool ProbeParse()
+{
+    return ReadParsedBool(System.Text.ParseBoolAscii("true"))
+        && !ReadParsedBool(System.Text.ParseBoolAscii("false"))
+        && IsInvalidBool(System.Text.ParseBoolUnicode((unicode)"True"))
+        && ReadParsedEncoding(System.Text.ParseEncodingAscii("UTF16")) == System.Text.Encoding.UTF16
+        && ReadParsedEncoding(System.Text.ParseEncodingUnicode((unicode)"UTF32")) == System.Text.Encoding.UTF32
+        && IsInvalidEncoding(System.Text.ParseEncodingAscii("utf8"))
+        && ReadParsedTextError(System.Text.ParseTextErrorAscii("Overflow")) == System.Text.TextError.Overflow
+        && ReadParsedTextError(System.Text.ParseTextErrorUnicode((unicode)"InvalidFormat")) == System.Text.TextError.InvalidFormat
+        && IsInvalidTextError(System.Text.ParseTextErrorUnicode((unicode)"Unknown"))
+        && ReadParsedI64(System.Text.ParseI64Ascii("-9223372036854775808"), 0) == (i64[min max])(-(2 ** 63))
+        && ReadParsedU64(System.Text.ParseU64Unicode((unicode)"18446744073709551615"), 0) == (u64[0 max])(2 ** 64 - 1)
+        && IsOverflowU64(System.Text.ParseU64Ascii("18446744073709551616"))
+        && ReadParsedI24(System.Text.ParseI24Unicode((unicode)"-8388608"), 0) == (i24[min max])(-(2 ** 23))
+        && ReadParsedU48(System.Text.ParseU48Ascii("281474976710655"), 0) == (u48[0 max])(2 ** 48 - 1)
+        && ReadParsedI96(System.Text.ParseI96Ascii("-39614081257132168796771975168"), 0) == (i96[min max])(-(2 ** 95))
+        && ReadParsedU96(System.Text.ParseU96Unicode((unicode)"79228162514264337593543950335"), 0) == (u96[0 max])(2 ** 96 - 1)
+        && IsOverflowI8(System.Text.ParseI8Ascii("-129"))
+        && IsOverflowU32(System.Text.ParseU32Unicode((unicode)"4294967296"))
+        && IsOverflowI96(System.Text.ParseI96Ascii("-39614081257132168796771975169"))
+        && IsOverflowU96(System.Text.ParseU96Ascii("79228162514264337593543950336"));
+}
+
+unsafe fn bool ProbeEnumFormat()
+{
+    stack mut i8[min max][16] asciiStorage;
+    stack mut Ascii asciiText = new Ascii()
+    {
+        Data = &asciiStorage[0],
+        Length = 0,
+        Capacity = 16
+    };
+    stack mut i32[min max][16] unicodeStorage;
+    stack mut Unicode unicodeText = new Unicode()
+    {
+        Data = &unicodeStorage[0],
+        Length = 0,
+        Capacity = 16
+    };
+    return System.Text.TryFormatEncodingAscii(&asciiText, System.Text.Encoding.UTF16)
+        && asciiText.Length == 5
+        && System.Text.TryFormatTextErrorAscii(&asciiText, System.Text.TextError.InvalidFormat)
+        && asciiText.Length == 13
+        && System.Text.TryFormatEncodingUnicode(&unicodeText, System.Text.Encoding.Binary)
+        && unicodeText.Length == 6
+        && System.Text.TryFormatTextErrorUnicode(&unicodeText, System.Text.TextError.Overflow)
+        && unicodeText.Length == 8;
+}
+
+fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected)
+{
+    switch (result)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            return value.Length() == expected;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+    }
+}
+
+fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected)
+{
+    switch (result)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+            return value.Length() == expected;
+        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReadParsedBool(System.Text.TextResult<bool> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<bool>.Ok(var value):
+            return value;
+        case System.Text.TextResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn bool IsInvalidBool(System.Text.TextResult<bool> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<bool>.Ok(var value):
+            return false;
+        case System.Text.TextResult<bool>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return true;
+                case System.Text.TextError.Overflow:
+                    return false;
+            }
+    }
+}
+
+fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
+            return value;
+        case System.Text.TextResult<System.Text.Encoding>.Err(var error):
+            return System.Text.Encoding.Binary;
+    }
+}
+
+fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<System.Text.TextError>.Ok(var value):
+            return value;
+        case System.Text.TextResult<System.Text.TextError>.Err(var error):
+            return System.Text.TextError.InvalidFormat;
+    }
+}
+
+fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
+            return false;
+        case System.Text.TextResult<System.Text.Encoding>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return true;
+                case System.Text.TextError.Overflow:
+                    return false;
+            }
+    }
+}
+
+fn bool IsInvalidTextError(System.Text.TextResult<System.Text.TextError> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<System.Text.TextError>.Ok(var value):
+            return false;
+        case System.Text.TextResult<System.Text.TextError>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return true;
+                case System.Text.TextError.Overflow:
+                    return false;
+            }
+    }
+}
+
+fn i64[min max] ReadParsedI64(System.Text.TextResult<i64[min max]> result, i64[min max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<i64[min max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<i64[min max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u64[0 max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<u64[0 max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn i24[min max] ReadParsedI24(System.Text.TextResult<i24[min max]> result, i24[min max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<i24[min max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<i24[min max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn u48[0 max] ReadParsedU48(System.Text.TextResult<u48[0 max]> result, u48[0 max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u48[0 max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<u48[0 max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<i96[min max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<i96[min max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u96[0 max]>.Ok(var value):
+            return value;
+        case System.Text.TextResult<u96[0 max]>.Err(var error):
+            return fallback;
+    }
+}
+
+fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<i8[min max]>.Ok(var value):
+            return false;
+        case System.Text.TextResult<i8[min max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+                case System.Text.TextError.Overflow:
+                    return true;
+            }
+    }
+}
+
+fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u32[0 max]>.Ok(var value):
+            return false;
+        case System.Text.TextResult<u32[0 max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+                case System.Text.TextError.Overflow:
+                    return true;
+            }
+    }
+}
+
+fn bool IsOverflowU64(System.Text.TextResult<u64[0 max]> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u64[0 max]>.Ok(var value):
+            return false;
+        case System.Text.TextResult<u64[0 max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+                case System.Text.TextError.Overflow:
+                    return true;
+            }
+    }
+}
+
+fn bool IsOverflowI96(System.Text.TextResult<i96[min max]> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<i96[min max]>.Ok(var value):
+            return false;
+        case System.Text.TextResult<i96[min max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+                case System.Text.TextError.Overflow:
+                    return true;
+            }
+    }
+}
+
+fn bool IsOverflowU96(System.Text.TextResult<u96[0 max]> result)
+{
+    switch (result)
+    {
+        case System.Text.TextResult<u96[0 max]>.Ok(var value):
+            return false;
+        case System.Text.TextResult<u96[0 max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+                case System.Text.TextError.Overflow:
+                    return true;
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

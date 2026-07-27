@@ -1,0 +1,76 @@
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Builder.ManifestTypeReferenceBuilder
+
+internal fn bool LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+    mut borrow LogicalPackageImageStringTableBuilder strings,
+    ascii kind,
+    out LogicalPackageManifestJsonTypeReferenceDescriptor descriptor)
+{
+    descriptor = new();
+    stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+    if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+    {
+        return false;
+    }
+
+    descriptor.KindStringIndex = kindStringIndex;
+    return true;
+}
+
+internal fn bool LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+    mut borrow LogicalPackageImageStringTableBuilder strings,
+    mut borrow LogicalPackageManifestJsonTypeReferenceDescriptor descriptor,
+    ascii name)
+{
+    stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+    if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+    {
+        return false;
+    }
+
+    descriptor.NameStringIndex = nameStringIndex;
+    descriptor.HasName = true;
+    return true;
+}
+
+internal fn bool LogicalPackageManifestJsonTypeReferenceDescriptorSetBitWidth(
+    mut borrow LogicalPackageManifestJsonTypeReferenceDescriptor descriptor,
+    u32[0 max] bitWidth)
+{
+    if (bitWidth == 0)
+    {
+        return false;
+    }
+
+    descriptor.BitWidth = bitWidth;
+    descriptor.HasBitWidth = true;
+    return true;
+}
+
+internal fn bool LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+    mut borrow LogicalPackageImageStringTableBuilder strings,
+    mut borrow LogicalPackageManifestJsonTypeReferenceDescriptor descriptor,
+    u32[0 max] bitWidth,
+    ascii rangeMin,
+    ascii rangeMax,
+    bool isUnsigned)
+{
+    stack mut u32[0 max] rangeMinStringIndex = PackageImageNullStringIndex();
+    stack mut u32[0 max] rangeMaxStringIndex = PackageImageNullStringIndex();
+    if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetBitWidth(descriptor, bitWidth)
+        || !LogicalPackageImageStringTableBuilderTryAdd(strings, rangeMin, rangeMinStringIndex)
+        || !LogicalPackageImageStringTableBuilderTryAdd(strings, rangeMax, rangeMaxStringIndex))
+    {
+        return false;
+    }
+
+    descriptor.RangeMinStringIndex = rangeMinStringIndex;
+    descriptor.RangeMaxStringIndex = rangeMaxStringIndex;
+    descriptor.HasRangeMin = true;
+    descriptor.HasRangeMax = true;
+    descriptor.HasIsUnsigned = true;
+    descriptor.IsUnsigned = isUnsigned;
+    return true;
+}

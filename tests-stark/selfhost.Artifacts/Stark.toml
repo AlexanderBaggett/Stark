@@ -1,0 +1,11 @@
+[project]
+name = "selfhost-artifacts-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "ArtifactsTests.stark"
+output = "selfhost-artifacts-tests"
+
+[dependencies]
+stark-compiler = { path = "../../selfhost" }

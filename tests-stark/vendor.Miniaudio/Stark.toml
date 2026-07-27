@@ -1,0 +1,17 @@
+[project]
+name = "vendor-miniaudio-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "MiniaudioTests.stark"
+output = "vendor-miniaudio-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/MiniaudioImplementation.c"]
+
+[native.fallback.linux]
+libraries = ["pthread", "m", "dl"]

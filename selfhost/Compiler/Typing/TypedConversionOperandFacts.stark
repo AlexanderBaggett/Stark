@@ -1,0 +1,262 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedConversionHelpers
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexHelpers
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMemberLookup
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedMemberReceiverFacts
+module Compiler.Typing.TypedConversionOperandFacts
+
+internal fn void TypedConversionOperandFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow ExprTree tree,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] operandNode,
+    mut borrow TypedMemberTypeFacts operandFacts,
+    out TypedConversionOperandKind operandKind)
+{
+    operandKind = TypedConversionOperandKind.Unknown;
+    stack ExprKind kind = tree.NodeKindAt(operandNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        operandKind = TypedConversionOperandKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        operandKind = TypedConversionOperandKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        operandKind = TypedConversionOperandKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        operandKind = TypedConversionOperandKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedConversionIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        operandKind = TypedConversionOperandKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedConversionLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        operandKind = TypedConversionOperandKind.New;
+        stack u32[0 max] typeNode = tree.LeftAt(operandNode);
+        if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, tree.TokenAt(typeNode), operandFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        operandKind = TypedConversionOperandKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, operandFacts);
+    }
+}
+
+internal fn void TypedConversionOperandFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow StatementList body,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] operandNode,
+    mut borrow TypedMemberTypeFacts operandFacts,
+    out TypedConversionOperandKind operandKind)
+{
+    operandKind = TypedConversionOperandKind.Unknown;
+    stack ExprKind kind = body.ExprKindAt(operandNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        operandKind = TypedConversionOperandKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        operandKind = TypedConversionOperandKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        operandKind = TypedConversionOperandKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        operandKind = TypedConversionOperandKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedConversionIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        operandKind = TypedConversionOperandKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedConversionLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        operandKind = TypedConversionOperandKind.New;
+        stack u32[0 max] typeNode = body.ExprLeftAt(operandNode);
+        if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, body.ExprTokenAt(typeNode), operandFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        operandKind = TypedConversionOperandKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, operandFacts);
+    }
+}

@@ -7,6 +7,55 @@
     "documentation": "Imports a module. Imported declarations are available by final name."
   },
   {
+    "label": "import Vendor.Raylib",
+    "insertText": "import Vendor.Raylib",
+    "kind": "snippet",
+    "detail": "Import bundled Raylib binding",
+    "documentation": "Imports Stark's bundled Raylib binding."
+  },
+  {
+    "label": "import Vendor.SQLite",
+    "insertText": "import Vendor.SQLite",
+    "kind": "snippet",
+    "detail": "Import bundled SQLite binding",
+    "documentation": "Imports Stark's bundled SQLite binding."
+  },
+  {
+    "label": "import Vendor.GLFW",
+    "insertText": "import Vendor.GLFW",
+    "kind": "snippet",
+    "detail": "Import bundled GLFW binding",
+    "documentation": "Imports Stark's bundled GLFW binding."
+  },
+  {
+    "label": "import Vendor.SDL3",
+    "insertText": "import Vendor.SDL3",
+    "kind": "snippet",
+    "detail": "Import bundled SDL3 binding",
+    "documentation": "Imports Stark's bundled SDL3 binding."
+  },
+  {
+    "label": "import Vendor.Miniaudio",
+    "insertText": "import Vendor.Miniaudio",
+    "kind": "snippet",
+    "detail": "Import bundled Miniaudio binding",
+    "documentation": "Imports Stark's bundled Miniaudio binding."
+  },
+  {
+    "label": "import Vendor.STB.Image",
+    "insertText": "import Vendor.STB.Image",
+    "kind": "snippet",
+    "detail": "Import bundled STB image binding",
+    "documentation": "Imports Stark's bundled STB image binding."
+  },
+  {
+    "label": "import Vendor.Cgltf",
+    "insertText": "import Vendor.Cgltf",
+    "kind": "snippet",
+    "detail": "Import bundled cgltf binding",
+    "documentation": "Imports Stark's bundled cgltf binding."
+  },
+  {
     "label": "export import",
     "insertText": "export import ${1:Some.Module}",
     "kind": "keyword",
@@ -47,6 +96,13 @@
     "kind": "snippet",
     "detail": "Pure terminating function declaration",
     "documentation": "Declares a function that is both pure and guaranteed to return."
+  },
+  {
+    "label": "tail fn",
+    "insertText": "tail fn ${1:i64[min max]} ${2:Name}(${3:i64[min max] value})\n{\n\tbecome ${4:Next}(${5:value});\n}",
+    "kind": "snippet",
+    "detail": "Tail-callable function declaration",
+    "documentation": "Declares a tail-callable function. Each become edge must target a tail-callable callee in true tail position."
   },
   {
     "label": "struct",
@@ -119,6 +175,20 @@
     "documentation": "Declares an assembly-backed Stark function."
   },
   {
+    "label": "LinkName",
+    "insertText": "[LinkName(\"${1:foreign_symbol}\")]\nunsafe ffi(c) fn ${2:i32[min max]} ${3:LocalName}(${4});",
+    "kind": "snippet",
+    "detail": "FFI external symbol attribute",
+    "documentation": "Declares an imported FFI function whose Stark source name differs from the foreign linker symbol."
+  },
+  {
+    "label": "StructLayout C FFI",
+    "insertText": "[StructLayout(C)]\npublic struct ${1:NativeStruct}\n{\n\tpublic ${2:f32} ${3:X};\n\tpublic ${4:f32} ${5:Y};\n}\n\n[LinkName(\"${6:NativeSymbol}\")]\nunsafe ffi(c) fn ${1:NativeStruct} ${7:LocalName}(${8});",
+    "kind": "snippet",
+    "detail": "C aggregate FFI declaration",
+    "documentation": "Declares a C-layout aggregate and a direct by-value FFI declaration that lowers through the target C ABI carrier."
+  },
+  {
     "label": "stack",
     "insertText": "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
     "kind": "keyword",
@@ -137,7 +207,7 @@
     "insertText": "arena ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
     "kind": "keyword",
     "detail": "Arena storage declaration",
-    "documentation": "Declares arena storage."
+    "documentation": "Declares compiler-managed lexical arena storage. Arena-backed values are bulk-reclaimed at the arena lifetime boundary."
   },
   {
     "label": "register",
@@ -152,6 +222,13 @@
     "kind": "keyword",
     "detail": "Constant declaration",
     "documentation": "Declares a compile-time constant."
+  },
+  {
+    "label": "comptime",
+    "insertText": "comptime ${1:u64[0 max]} ${2:N}",
+    "kind": "keyword",
+    "detail": "Comptime generic value parameter",
+    "documentation": "Declares a typed compile-time value parameter in a generic parameter list."
   },
   {
     "label": "borrow",
@@ -221,6 +298,13 @@
     "kind": "keyword",
     "detail": "Memory contract",
     "documentation": "States that expressions refer to the same storage."
+  },
+  {
+    "label": "dead_on_return",
+    "insertText": "dead_on_return(${1:value})",
+    "kind": "keyword",
+    "detail": "Pointee lifetime contract",
+    "documentation": "Marks a memory-backed parameter's pointee storage as unavailable to the caller after return."
   },
   {
     "label": "rawptr",
@@ -349,6 +433,13 @@
     "documentation": "Applies the static modifier to a function or member where valid."
   },
   {
+    "label": "tail",
+    "insertText": "tail",
+    "kind": "keyword",
+    "detail": "tail-callable function modifier",
+    "documentation": "Marks a function or callable type as tail-callable for guaranteed become edges."
+  },
+  {
     "label": "if",
     "insertText": "if",
     "kind": "keyword",
@@ -405,6 +496,13 @@
     "documentation": "Stark control flow keyword: return."
   },
   {
+    "label": "become",
+    "insertText": "become ${1:Next}(${2:value});",
+    "kind": "snippet",
+    "detail": "Guaranteed tail-transfer statement",
+    "documentation": "Terminates the current tail function by transferring to a tail-callable callee without growing the stack."
+  },
+  {
     "label": "break",
     "insertText": "break",
     "kind": "keyword",
@@ -452,6 +550,13 @@
     "kind": "keyword",
     "detail": "new keyword",
     "documentation": "Stark keyword: new."
+  },
+  {
+    "label": "new(arena, ...)",
+    "insertText": "new(arena, ${1:capacity})",
+    "kind": "snippet",
+    "detail": "Arena-backed dynamic storage allocation",
+    "documentation": "Allocates dynamic backing storage from the current compiler-managed arena lifetime."
   },
   {
     "label": "drop",

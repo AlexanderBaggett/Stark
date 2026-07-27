@@ -1,0 +1,998 @@
+import Compiler.AsmFacts
+import System.Text
+module Compiler.TargetFacts
+
+public enum StarkTargetOperatingSystem
+{
+    Unknown,
+    Windows,
+    Linux,
+    MacOS,
+}
+
+public enum StarkFfiAbi
+{
+    C,
+    CDecl,
+    StdCall,
+    FastCall,
+    ThisCall,
+    VectorCall,
+    SysV,
+    Win64,
+    Aapcs,
+    Aapcs64,
+}
+
+public enum StarkCDataModelKind
+{
+    Unknown,
+    ILP32,
+    LP64,
+    LLP64,
+}
+
+public enum StarkCPrimitiveAlias
+{
+    Unknown,
+    CChar,
+    CSChar,
+    CUChar,
+    CShort,
+    CUShort,
+    CInt,
+    CUInt,
+    CLong,
+    CULong,
+    CLongLong,
+    CULongLong,
+    CSizeT,
+    CPtrDiffT,
+    CVoid,
+}
+
+public struct StarkTargetPlatform
+{
+    StarkTargetOperatingSystem OperatingSystemValue;
+    StarkAsmArchitecture ArchitectureValue;
+
+    StarkTargetPlatform()
+    {
+        self.OperatingSystemValue = StarkTargetOperatingSystem.Unknown;
+        self.ArchitectureValue = StarkAsmArchitecture.Unknown;
+    }
+
+    public inline finite law StarkTargetOperatingSystem OperatingSystem(borrow StarkTargetPlatform self)
+    {
+        return self.OperatingSystemValue;
+    }
+
+    public inline finite law StarkAsmArchitecture Architecture(borrow StarkTargetPlatform self)
+    {
+        return self.ArchitectureValue;
+    }
+
+    public inline finite law bool IsKnown(borrow StarkTargetPlatform self)
+    {
+        return self.OperatingSystemValue != StarkTargetOperatingSystem.Unknown
+            && self.ArchitectureValue != StarkAsmArchitecture.Unknown;
+    }
+}
+
+public fn StarkTargetPlatform StarkTargetPlatformOf(
+    StarkTargetOperatingSystem operatingSystem,
+    StarkAsmArchitecture architecture)
+{
+    stack mut StarkTargetPlatform platform = new();
+    platform.OperatingSystemValue = operatingSystem;
+    platform.ArchitectureValue = architecture;
+    return platform;
+}
+
+public struct StarkCDataModel
+{
+    StarkCDataModelKind KindValue;
+    bool CharSigned;
+    u32[0 max] PointerBits;
+    u32[0 max] LongBits;
+    u32[0 max] SizeTBits;
+    u32[0 max] PtrDiffTBits;
+
+    StarkCDataModel()
+    {
+        self.KindValue = StarkCDataModelKind.Unknown;
+        self.CharSigned = false;
+        self.PointerBits = 0;
+        self.LongBits = 0;
+        self.SizeTBits = 0;
+        self.PtrDiffTBits = 0;
+    }
+
+    public inline finite law StarkCDataModelKind Kind(borrow StarkCDataModel self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law bool IsValid(borrow StarkCDataModel self)
+    {
+        return self.KindValue != StarkCDataModelKind.Unknown;
+    }
+
+    public inline finite law bool CharIsSigned(borrow StarkCDataModel self)
+    {
+        return self.CharSigned;
+    }
+
+    public inline finite law u32[0 max] PointerBitWidth(borrow StarkCDataModel self)
+    {
+        return self.PointerBits;
+    }
+
+    public inline finite law u32[0 max] LongBitWidth(borrow StarkCDataModel self)
+    {
+        return self.LongBits;
+    }
+
+    public inline finite law u32[0 max] SizeTBitWidth(borrow StarkCDataModel self)
+    {
+        return self.SizeTBits;
+    }
+
+    public inline finite law u32[0 max] PtrDiffTBitWidth(borrow StarkCDataModel self)
+    {
+        return self.PtrDiffTBits;
+    }
+}
+
+public fn StarkCDataModel StarkCDataModelOf(
+    StarkCDataModelKind kind,
+    bool charIsSigned,
+    u32[0 max] pointerBitWidth,
+    u32[0 max] longBitWidth,
+    u32[0 max] sizeTBitWidth,
+    u32[0 max] ptrDiffTBitWidth)
+{
+    stack mut StarkCDataModel model = new();
+    model.KindValue = kind;
+    model.CharSigned = charIsSigned;
+    model.PointerBits = pointerBitWidth;
+    model.LongBits = longBitWidth;
+    model.SizeTBits = sizeTBitWidth;
+    model.PtrDiffTBits = ptrDiffTBitWidth;
+    return model;
+}
+
+internal inline finite law bool IsAsciiTrimUnit(i8[min max] unit)
+{
+    return unit == 9
+        || unit == 10
+        || unit == 11
+        || unit == 12
+        || unit == 13
+        || unit == 32;
+}
+
+internal inline finite law i8[min max] AsciiLowerUnit(i8[min max] unit)
+{
+    if (unit >= 65 && unit <= 90)
+    {
+        return unit + 32;
+    }
+
+    return unit;
+}
+
+internal finite law bool EqualsTrimmedAsciiIgnoreCase(ascii value, ascii expectedLower)
+    where overlap(value, expectedLower)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        stack i64[min max] expectedLength = System.Text.AsciiLength(expectedLower);
+        if (valueLength < 0 || expectedLength < 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        if (valueLength == 0)
+        {
+            return expectedLength == 0;
+        }
+
+        if (valueData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && IsAsciiTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        if (end - start != expectedLength)
+        {
+            return false;
+        }
+
+        if (expectedLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expectedLower);
+        if (expectedData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+        {
+            if (AsciiLowerUnit(*(&valueData[start + index])) != *(&expectedData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+internal finite law bool ContainsAsciiIgnoreCase(ascii source, ascii needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] sourceLength = System.Text.AsciiLength(source);
+        stack i64[min max] needleLength = System.Text.AsciiLength(needle);
+        if (sourceLength <= 0 || needleLength <= 0 || needleLength > sourceLength)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> sourceData = System.Text.AsciiData(source);
+        stack rawptr<i8[min max]> needleData = System.Text.AsciiData(needle);
+        if (sourceData == null || needleData == null)
+        {
+            return false;
+        }
+
+        stack i64[min max] lastStart = sourceLength - needleLength;
+        for willexit (stack mut i64[min max] start = 0; start <= lastStart; start += 1)
+        {
+            stack mut bool matched = true;
+            for willexit (stack mut i64[min max] index = 0; index < needleLength; index += 1)
+            {
+                if (AsciiLowerUnit(*(&sourceData[start + index])) != AsciiLowerUnit(*(&needleData[index])))
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+internal unsafe finite law bool AsciiSegmentEqualsIgnoreCase(
+    rawptr<i8[min max]> sourceData,
+    i64[min max] sourceStart,
+    i64[min max] sourceLength,
+    ascii expectedLower)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expectedLower);
+    if (sourceLength != expectedLength || expectedLength < 0)
+    {
+        return false;
+    }
+
+    if (expectedLength == 0)
+    {
+        return true;
+    }
+
+    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expectedLower);
+    if (sourceData == null || expectedData == null)
+    {
+        return false;
+    }
+
+    for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+    {
+        if (AsciiLowerUnit(*(&sourceData[sourceStart + index])) != *(&expectedData[index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal unsafe fn bool TryParseOperatingSystemSegment(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] length,
+    out StarkTargetOperatingSystem operatingSystem)
+{
+    operatingSystem = StarkTargetOperatingSystem.Unknown;
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "windows")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "win32")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "win64"))
+    {
+        operatingSystem = StarkTargetOperatingSystem.Windows;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "linux"))
+    {
+        operatingSystem = StarkTargetOperatingSystem.Linux;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "macos")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "darwin"))
+    {
+        operatingSystem = StarkTargetOperatingSystem.MacOS;
+        return true;
+    }
+
+    return false;
+}
+
+internal unsafe fn bool TryParseArchitectureSegment(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] length,
+    out StarkAsmArchitecture architecture)
+{
+    architecture = StarkAsmArchitecture.Unknown;
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "x86_64")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "x64")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "amd64"))
+    {
+        architecture = StarkAsmArchitecture.X86_64;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "aarch64")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "arm64"))
+    {
+        architecture = StarkAsmArchitecture.AArch64;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "riscv64"))
+    {
+        architecture = StarkAsmArchitecture.RiscV64;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "x86")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "i386")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "i486")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "i586")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "i686"))
+    {
+        architecture = StarkAsmArchitecture.X86;
+        return true;
+    }
+
+    if (AsciiSegmentEqualsIgnoreCase(data, start, length, "arm")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "arm32")
+        || AsciiSegmentEqualsIgnoreCase(data, start, length, "thumb"))
+    {
+        architecture = StarkAsmArchitecture.Arm32;
+        return true;
+    }
+
+    return false;
+}
+
+public finite law ascii OperatingSystemName(StarkTargetOperatingSystem operatingSystem)
+{
+    switch (operatingSystem)
+    {
+        case StarkTargetOperatingSystem.Windows:
+            return "windows";
+        case StarkTargetOperatingSystem.Linux:
+            return "linux";
+        case StarkTargetOperatingSystem.MacOS:
+            return "macos";
+        default:
+            return "unknown";
+    }
+}
+
+public finite law ascii TargetArchitectureDisplayName(StarkAsmArchitecture architecture)
+{
+    switch (architecture)
+    {
+        case StarkAsmArchitecture.X86_64:
+            return "x64";
+        case StarkAsmArchitecture.AArch64:
+            return "arm64";
+        case StarkAsmArchitecture.RiscV64:
+            return "riscv64";
+        case StarkAsmArchitecture.X86:
+            return "x86";
+        case StarkAsmArchitecture.Arm32:
+            return "arm";
+        default:
+            return "unknown";
+    }
+}
+
+public finite law StarkTargetOperatingSystem ParseOperatingSystemName(ascii text)
+{
+    if (EqualsTrimmedAsciiIgnoreCase(text, "windows")
+        || EqualsTrimmedAsciiIgnoreCase(text, "win32")
+        || EqualsTrimmedAsciiIgnoreCase(text, "win64"))
+    {
+        return StarkTargetOperatingSystem.Windows;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "linux"))
+    {
+        return StarkTargetOperatingSystem.Linux;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "macos")
+        || EqualsTrimmedAsciiIgnoreCase(text, "darwin"))
+    {
+        return StarkTargetOperatingSystem.MacOS;
+    }
+
+    return StarkTargetOperatingSystem.Unknown;
+}
+
+public fn bool TryParseOperatingSystemName(ascii text, out StarkTargetOperatingSystem operatingSystem)
+{
+    stack StarkTargetOperatingSystem parsed = ParseOperatingSystemName(text);
+    operatingSystem = parsed;
+    return parsed != StarkTargetOperatingSystem.Unknown;
+}
+
+public finite law StarkTargetOperatingSystem ParseTargetTripleOperatingSystem(ascii triple)
+{
+    if (ContainsAsciiIgnoreCase(triple, "windows")
+        || ContainsAsciiIgnoreCase(triple, "win32")
+        || ContainsAsciiIgnoreCase(triple, "mingw")
+        || ContainsAsciiIgnoreCase(triple, "msvc"))
+    {
+        return StarkTargetOperatingSystem.Windows;
+    }
+
+    if (ContainsAsciiIgnoreCase(triple, "apple")
+        || ContainsAsciiIgnoreCase(triple, "darwin")
+        || ContainsAsciiIgnoreCase(triple, "macos"))
+    {
+        return StarkTargetOperatingSystem.MacOS;
+    }
+
+    if (ContainsAsciiIgnoreCase(triple, "android")
+        || ContainsAsciiIgnoreCase(triple, "linux")
+        || ContainsAsciiIgnoreCase(triple, "gnu")
+        || ContainsAsciiIgnoreCase(triple, "musl"))
+    {
+        return StarkTargetOperatingSystem.Linux;
+    }
+
+    return StarkTargetOperatingSystem.Unknown;
+}
+
+public fn bool TryParseTargetTripleOperatingSystem(ascii triple, out StarkTargetOperatingSystem operatingSystem)
+{
+    stack StarkTargetOperatingSystem parsed = ParseTargetTripleOperatingSystem(triple);
+    operatingSystem = parsed;
+    return parsed != StarkTargetOperatingSystem.Unknown;
+}
+
+public finite law StarkTargetPlatform ResolveTargetPlatformFromTriple(ascii triple)
+{
+    return StarkTargetPlatformOf(
+        ParseTargetTripleOperatingSystem(triple),
+        Compiler.AsmFacts.ParseTargetTripleArchitecture(triple));
+}
+
+public fn bool TryGetFfiPlatformKeySpecificity(
+    ascii platformKey,
+    StarkTargetPlatform target,
+    out i32[min max] specificity)
+{
+    specificity = -1;
+    unsafe
+    {
+        stack i64[min max] keyLength = System.Text.AsciiLength(platformKey);
+        if (keyLength <= 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> keyData = System.Text.AsciiData(platformKey);
+        if (keyData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < keyLength && IsAsciiTrimUnit(*(&keyData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = keyLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&keyData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        if (start == end)
+        {
+            return false;
+        }
+
+        stack i64[min max] trimmedLength = end - start;
+        if (AsciiSegmentEqualsIgnoreCase(keyData, start, trimmedLength, "default"))
+        {
+            specificity = 0;
+            return true;
+        }
+
+        stack mut i64[min max] dotIndex = -1;
+        for willexit (stack mut i64[min max] index = start; index < end; index += 1)
+        {
+            if (*(&keyData[index]) == 46)
+            {
+                if (dotIndex >= 0)
+                {
+                    return false;
+                }
+
+                dotIndex = index;
+            }
+        }
+
+        stack mut StarkTargetOperatingSystem operatingSystem = StarkTargetOperatingSystem.Unknown;
+        if (dotIndex < 0)
+        {
+            if (!TryParseOperatingSystemSegment(keyData, start, trimmedLength, operatingSystem))
+            {
+                return false;
+            }
+
+            if (operatingSystem == target.OperatingSystem())
+            {
+                specificity = 1;
+            }
+
+            return true;
+        }
+
+        if (dotIndex == start || dotIndex == end - 1)
+        {
+            return false;
+        }
+
+        if (!TryParseOperatingSystemSegment(keyData, start, dotIndex - start, operatingSystem))
+        {
+            return false;
+        }
+
+        if (operatingSystem != target.OperatingSystem())
+        {
+            return true;
+        }
+
+        stack mut StarkAsmArchitecture architecture = StarkAsmArchitecture.Unknown;
+        if (!TryParseArchitectureSegment(keyData, dotIndex + 1, end - dotIndex - 1, architecture))
+        {
+            return false;
+        }
+
+        if (architecture == target.Architecture())
+        {
+            specificity = 2;
+        }
+
+        return true;
+    }
+}
+
+public finite law ascii FfiAbiName(StarkFfiAbi abi)
+{
+    switch (abi)
+    {
+        case StarkFfiAbi.C:
+            return "c";
+        case StarkFfiAbi.CDecl:
+            return "cdecl";
+        case StarkFfiAbi.StdCall:
+            return "stdcall";
+        case StarkFfiAbi.FastCall:
+            return "fastcall";
+        case StarkFfiAbi.ThisCall:
+            return "thiscall";
+        case StarkFfiAbi.VectorCall:
+            return "vectorcall";
+        case StarkFfiAbi.SysV:
+            return "sysv";
+        case StarkFfiAbi.Win64:
+            return "win64";
+        case StarkFfiAbi.Aapcs:
+            return "aapcs";
+        case StarkFfiAbi.Aapcs64:
+            return "aapcs64";
+    }
+}
+
+public finite law StarkFfiAbi ParseFfiAbiName(ascii text)
+{
+    if (EqualsTrimmedAsciiIgnoreCase(text, "cdecl"))
+    {
+        return StarkFfiAbi.CDecl;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "stdcall"))
+    {
+        return StarkFfiAbi.StdCall;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "fastcall"))
+    {
+        return StarkFfiAbi.FastCall;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "thiscall"))
+    {
+        return StarkFfiAbi.ThisCall;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "vectorcall"))
+    {
+        return StarkFfiAbi.VectorCall;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "sysv"))
+    {
+        return StarkFfiAbi.SysV;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "win64"))
+    {
+        return StarkFfiAbi.Win64;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "aapcs"))
+    {
+        return StarkFfiAbi.Aapcs;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(text, "aapcs64"))
+    {
+        return StarkFfiAbi.Aapcs64;
+    }
+
+    return StarkFfiAbi.C;
+}
+
+public finite law bool FfiAbiNameIsKnown(ascii text)
+{
+    return EqualsTrimmedAsciiIgnoreCase(text, "c")
+        || EqualsTrimmedAsciiIgnoreCase(text, "cdecl")
+        || EqualsTrimmedAsciiIgnoreCase(text, "stdcall")
+        || EqualsTrimmedAsciiIgnoreCase(text, "fastcall")
+        || EqualsTrimmedAsciiIgnoreCase(text, "thiscall")
+        || EqualsTrimmedAsciiIgnoreCase(text, "vectorcall")
+        || EqualsTrimmedAsciiIgnoreCase(text, "sysv")
+        || EqualsTrimmedAsciiIgnoreCase(text, "win64")
+        || EqualsTrimmedAsciiIgnoreCase(text, "aapcs")
+        || EqualsTrimmedAsciiIgnoreCase(text, "aapcs64");
+}
+
+public fn bool TryParseFfiAbiName(ascii text, out StarkFfiAbi abi)
+{
+    stack StarkFfiAbi parsed = ParseFfiAbiName(text);
+    abi = parsed;
+    return FfiAbiNameIsKnown(text);
+}
+
+public finite law ascii FfiAbiLlvmCallingConventionName(StarkFfiAbi abi)
+{
+    switch (abi)
+    {
+        case StarkFfiAbi.C:
+            return "";
+        case StarkFfiAbi.CDecl:
+            return "";
+        case StarkFfiAbi.StdCall:
+            return "x86_stdcallcc";
+        case StarkFfiAbi.FastCall:
+            return "x86_fastcallcc";
+        case StarkFfiAbi.ThisCall:
+            return "x86_thiscallcc";
+        case StarkFfiAbi.VectorCall:
+            return "x86_vectorcallcc";
+        case StarkFfiAbi.SysV:
+            return "x86_64_sysvcc";
+        case StarkFfiAbi.Win64:
+            return "win64cc";
+        case StarkFfiAbi.Aapcs:
+            return "aapcscc";
+        case StarkFfiAbi.Aapcs64:
+            return "aarch64_aapcscc";
+    }
+}
+
+public finite law bool FfiAbiSupportsCVarargs(StarkFfiAbi abi)
+{
+    return abi == StarkFfiAbi.C
+        || abi == StarkFfiAbi.CDecl
+        || abi == StarkFfiAbi.SysV
+        || abi == StarkFfiAbi.Win64
+        || abi == StarkFfiAbi.Aapcs
+        || abi == StarkFfiAbi.Aapcs64;
+}
+
+public finite law bool FfiAbiIsSupportedOnTarget(StarkFfiAbi abi, StarkTargetPlatform target)
+{
+    stack StarkAsmArchitecture architecture = target.Architecture();
+    stack StarkTargetOperatingSystem operatingSystem = target.OperatingSystem();
+    switch (abi)
+    {
+        case StarkFfiAbi.C:
+            return true;
+        case StarkFfiAbi.CDecl:
+            return architecture == StarkAsmArchitecture.X86;
+        case StarkFfiAbi.StdCall:
+            return operatingSystem == StarkTargetOperatingSystem.Windows
+                && architecture == StarkAsmArchitecture.X86;
+        case StarkFfiAbi.FastCall:
+            return architecture == StarkAsmArchitecture.X86;
+        case StarkFfiAbi.ThisCall:
+            return architecture == StarkAsmArchitecture.X86;
+        case StarkFfiAbi.VectorCall:
+            return operatingSystem == StarkTargetOperatingSystem.Windows
+                && (architecture == StarkAsmArchitecture.X86 || architecture == StarkAsmArchitecture.X86_64);
+        case StarkFfiAbi.SysV:
+            return architecture == StarkAsmArchitecture.X86_64;
+        case StarkFfiAbi.Win64:
+            return architecture == StarkAsmArchitecture.X86_64;
+        case StarkFfiAbi.Aapcs:
+            return architecture == StarkAsmArchitecture.Arm32;
+        case StarkFfiAbi.Aapcs64:
+            return architecture == StarkAsmArchitecture.AArch64;
+    }
+}
+
+public finite law bool DefaultCCharIsSigned(
+    StarkAsmArchitecture architecture,
+    StarkTargetOperatingSystem operatingSystem)
+{
+    if (operatingSystem == StarkTargetOperatingSystem.Windows
+        || operatingSystem == StarkTargetOperatingSystem.MacOS)
+    {
+        return true;
+    }
+
+    return architecture != StarkAsmArchitecture.Arm32
+        && architecture != StarkAsmArchitecture.AArch64;
+}
+
+public fn bool TryResolveCDataModel(StarkTargetPlatform target, out StarkCDataModel model)
+{
+    model = new();
+    stack StarkAsmArchitecture architecture = target.Architecture();
+    stack StarkTargetOperatingSystem operatingSystem = target.OperatingSystem();
+    stack bool charIsSigned = DefaultCCharIsSigned(architecture, operatingSystem);
+
+    switch (architecture)
+    {
+        case StarkAsmArchitecture.X86:
+        case StarkAsmArchitecture.Arm32:
+            model = StarkCDataModelOf(StarkCDataModelKind.ILP32, charIsSigned, 32, 32, 32, 32);
+            return true;
+        case StarkAsmArchitecture.X86_64:
+        case StarkAsmArchitecture.AArch64:
+        case StarkAsmArchitecture.RiscV64:
+            if (operatingSystem == StarkTargetOperatingSystem.Windows)
+            {
+                model = StarkCDataModelOf(StarkCDataModelKind.LLP64, charIsSigned, 64, 32, 64, 64);
+                return true;
+            }
+
+            model = StarkCDataModelOf(StarkCDataModelKind.LP64, charIsSigned, 64, 64, 64, 64);
+            return true;
+        default:
+            return false;
+    }
+}
+
+public fn bool TryResolveCDataModelFromTriple(ascii triple, out StarkCDataModel model)
+{
+    return TryResolveCDataModel(ResolveTargetPlatformFromTriple(triple), model);
+}
+
+public finite law StarkCPrimitiveAlias ParseCPrimitiveAliasName(ascii aliasName)
+{
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_char")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_char"))
+    {
+        return StarkCPrimitiveAlias.CChar;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_schar")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_schar"))
+    {
+        return StarkCPrimitiveAlias.CSChar;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_uchar")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_uchar"))
+    {
+        return StarkCPrimitiveAlias.CUChar;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_short")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_short"))
+    {
+        return StarkCPrimitiveAlias.CShort;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_ushort")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_ushort"))
+    {
+        return StarkCPrimitiveAlias.CUShort;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_int")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_int"))
+    {
+        return StarkCPrimitiveAlias.CInt;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_uint")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_uint"))
+    {
+        return StarkCPrimitiveAlias.CUInt;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_long")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_long"))
+    {
+        return StarkCPrimitiveAlias.CLong;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_ulong")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_ulong"))
+    {
+        return StarkCPrimitiveAlias.CULong;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_longlong")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_longlong"))
+    {
+        return StarkCPrimitiveAlias.CLongLong;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_ulonglong")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_ulonglong"))
+    {
+        return StarkCPrimitiveAlias.CULongLong;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_size_t")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_size_t"))
+    {
+        return StarkCPrimitiveAlias.CSizeT;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_ptrdiff_t")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_ptrdiff_t"))
+    {
+        return StarkCPrimitiveAlias.CPtrDiffT;
+    }
+
+    if (EqualsTrimmedAsciiIgnoreCase(aliasName, "c_void")
+        || EqualsTrimmedAsciiIgnoreCase(aliasName, "system.c.c_void"))
+    {
+        return StarkCPrimitiveAlias.CVoid;
+    }
+
+    return StarkCPrimitiveAlias.Unknown;
+}
+
+public fn bool TryParseCPrimitiveAliasName(ascii aliasName, out StarkCPrimitiveAlias aliasKind)
+{
+    stack StarkCPrimitiveAlias parsed = ParseCPrimitiveAliasName(aliasName);
+    aliasKind = parsed;
+    return parsed != StarkCPrimitiveAlias.Unknown;
+}
+
+public finite law bool CPrimitiveAliasHasIntegerShape(StarkCPrimitiveAlias aliasKind)
+{
+    return aliasKind != StarkCPrimitiveAlias.Unknown
+        && aliasKind != StarkCPrimitiveAlias.CVoid;
+}
+
+public finite law bool CPrimitiveAliasIsVoid(StarkCPrimitiveAlias aliasKind)
+{
+    return aliasKind == StarkCPrimitiveAlias.CVoid;
+}
+
+public finite law u32[0 max] CPrimitiveAliasBitWidth(StarkCPrimitiveAlias aliasKind, StarkCDataModel model)
+{
+    switch (aliasKind)
+    {
+        case StarkCPrimitiveAlias.CChar:
+        case StarkCPrimitiveAlias.CSChar:
+        case StarkCPrimitiveAlias.CUChar:
+            return 8;
+        case StarkCPrimitiveAlias.CShort:
+        case StarkCPrimitiveAlias.CUShort:
+            return 16;
+        case StarkCPrimitiveAlias.CInt:
+        case StarkCPrimitiveAlias.CUInt:
+            return 32;
+        case StarkCPrimitiveAlias.CLong:
+        case StarkCPrimitiveAlias.CULong:
+            return model.LongBitWidth();
+        case StarkCPrimitiveAlias.CLongLong:
+        case StarkCPrimitiveAlias.CULongLong:
+            return 64;
+        case StarkCPrimitiveAlias.CSizeT:
+            return model.SizeTBitWidth();
+        case StarkCPrimitiveAlias.CPtrDiffT:
+            return model.PtrDiffTBitWidth();
+        default:
+            return 0;
+    }
+}
+
+public finite law bool CPrimitiveAliasIsUnsigned(StarkCPrimitiveAlias aliasKind, StarkCDataModel model)
+{
+    switch (aliasKind)
+    {
+        case StarkCPrimitiveAlias.CChar:
+            return !model.CharIsSigned();
+        case StarkCPrimitiveAlias.CUChar:
+        case StarkCPrimitiveAlias.CUShort:
+        case StarkCPrimitiveAlias.CUInt:
+        case StarkCPrimitiveAlias.CULong:
+        case StarkCPrimitiveAlias.CULongLong:
+        case StarkCPrimitiveAlias.CSizeT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+public finite law bool CPrimitiveAliasIsSigned(StarkCPrimitiveAlias aliasKind, StarkCDataModel model)
+{
+    switch (aliasKind)
+    {
+        case StarkCPrimitiveAlias.CChar:
+            return model.CharIsSigned();
+        case StarkCPrimitiveAlias.CSChar:
+        case StarkCPrimitiveAlias.CShort:
+        case StarkCPrimitiveAlias.CInt:
+        case StarkCPrimitiveAlias.CLong:
+        case StarkCPrimitiveAlias.CLongLong:
+        case StarkCPrimitiveAlias.CPtrDiffT:
+            return true;
+        default:
+            return false;
+    }
+}

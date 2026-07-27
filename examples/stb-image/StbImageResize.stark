@@ -1,0 +1,66 @@
+import System.Console
+import Vendor.STB.Image
+module StbImageResize
+
+fn bool CheckOriginalPixels(borrow u8[0 max][] pixels)
+{
+    return pixels.Length == 6
+        && pixels[0] == 100
+        && pixels[1] == 110
+        && pixels[2] == 120
+        && pixels[3] == 40
+        && pixels[4] == 50
+        && pixels[5] == 60;
+}
+
+export fn i32[min max] main()
+{
+    stack mut u8[0 max][17] encoded =
+    {
+        80, 54, 10, 50, 32, 49, 10, 50,
+        53, 53, 10, 100, 110, 120, 40, 50,
+        60
+    };
+    stack u8[0 max][] encodedBytes = encoded;
+
+    switch (LoadFromMemory(encodedBytes, ImageChannels.Rgb))
+    {
+        case ImageResult.Err(var error):
+            return 1;
+        case ImageResult.Ok(var loaded):
+            stack mut Image image = loaded;
+            if (image.Width() != 2 || image.Height() != 1 || image.Channels() != 3)
+            {
+                return 2;
+            }
+
+            if (!CheckOriginalPixels(image.Pixels()))
+            {
+                return 3;
+            }
+
+            stack mut mut u8[0 max][] pixels = image.MutablePixels();
+            pixels[0] = 155;
+            pixels[1] = 145;
+            pixels[2] = 135;
+
+            switch (ResizeLinear(image, 4, 2))
+            {
+                case ImageResult.Err(var resizeError):
+                    return 4;
+                case ImageResult.Ok(var resized):
+                    if (resized.Width() != 4 || resized.Height() != 2 || resized.Channels() != 3)
+                    {
+                        return 5;
+                    }
+
+                    if (resized.PixelByteLength() != 24)
+                    {
+                        return 6;
+                    }
+            }
+    }
+
+    WriteLine("STB image ok");
+    return 0;
+}

@@ -348,48 +348,6 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
-    public void DevirtualizeSsaSkipsAtO0()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                noinline finite law i32[min max] Target()
-                {
-                    return 1;
-                }
-
-                unsafe fn i32[min max] Run()
-                {
-                    stack fnptr<fn i32[min max]()> op = Target;
-                    return op();
-                }
-                """),
-            new CompilerOptions(
-                StopAfterPassId: "devirt-ssa",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.Equal("Target", Assert.Single(ssa.AddressTakenFunctions));
-
-        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
-        Assert.Contains(
-            run.Blocks.SelectMany(static block => block.Instructions),
-            static instruction => instruction is SsaValueInstruction { Value: SsaIndirectCallRValue });
-        Assert.DoesNotContain(
-            run.Blocks
-                .SelectMany(static block => block.Instructions)
-                .OfType<SsaValueInstruction>()
-                .Select(static instruction => instruction.Value)
-                .OfType<SsaCallRValue>(),
-            static call => call.FunctionName == "Target");
-    }
-
-    [Fact]
     public void CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentities()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -839,34 +797,6 @@ public sealed class CompilerPipelineOptimizeSsaTests
 
         var binaries = GetBinaryRValues(run);
         Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.SaturatingSubtract);
-        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
-    }
-
-    [Fact]
-    public void ArithmeticFoldSsaLeavesDebugOptimizedBuildsSourceShaped()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                fn i32[min max] Run(i32[min max] value)
-                {
-                    return value + value + value;
-                }
-                """),
-            new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.Og,
-                StopAfterPassId: "arithmetic-fold-ssa"));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
-        var binaries = GetBinaryRValues(run);
-
-        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.Add);
         Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
     }
 
@@ -1409,8 +1339,78 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void OwnershipTrafficSsaKeepsSiblingFieldCopiesIntoLiveAggregate()
+    {
+        // Regression: dead-aggregate-copy elimination treated a copy into a
+        // FIELD as a whole-local kill, so the later sibling-field copy killed
+        // the aggregate's liveness and the earlier sibling copy was deleted as
+        // "dead" (the bundle field-store wrong-code bug — emptied
+        // SourceModuleLoweringFacts.Declarations/EnumPayloads in package
+        // builds). Field copies must not kill whole-local liveness.
+        const string source = """
+            module Demo
+
+            struct Table
+            {
+                i64[min max][16] Values;
+            }
+
+            struct Bundle
+            {
+                Table First;
+                Table Second;
+            }
+
+            fn bool Run(out Bundle bundle)
+            {
+                stack mut Table first = new Table();
+                first.Values[0] = 7;
+                stack mut Table second = new Table();
+                second.Values[0] = 9;
+
+                stack mut Bundle built = new Bundle();
+                built.First = first;
+                built.Second = second;
+                bundle = built;
+                return true;
+            }
+            """;
+
+        var pipeline = DefaultCompilerPipeline.Create();
+        var before = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "sroa-ssa"));
+        Assert.True(before.Succeeded, string.Join(", ", before.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(before.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? beforeSsa));
+        Assert.NotNull(beforeSsa);
+        var beforeRun = Assert.Single(beforeSsa.Functions, static function => function.Name == "Run");
+        var beforeCopies = beforeRun.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaCopyMemoryInstruction>()
+            .Count();
+        Assert.True(beforeCopies >= 2, $"expected at least the two sibling field copies before ownership traffic, saw {beforeCopies}");
+
+        var after = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "ownership-traffic-ssa"));
+        Assert.True(after.Succeeded, string.Join(", ", after.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(after.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? afterSsa));
+        Assert.NotNull(afterSsa);
+        var afterRun = Assert.Single(afterSsa.Functions, static function => function.Name == "Run");
+        var afterCopies = afterRun.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaCopyMemoryInstruction>()
+            .Count();
+        Assert.Equal(beforeCopies, afterCopies);
+    }
+
+    [Fact]
     public void OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots()
     {
+        // Pair carries an empty destructor so it stays MOVE-ONLY: structural
+        // copyability (scalar-only, destructor-free types are copy types)
+        // otherwise turns this assignment into Copy-kind traffic with no
+        // move-invalidation store, which is not what this test exercises.
         const string source = """
             module Demo
 
@@ -1418,6 +1418,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             fn void Run()
@@ -1468,6 +1472,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
     [Fact]
     public void OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRoots()
     {
+        // Empty destructor keeps Pair move-only (see the sibling test above).
         const string source = """
             module Demo
 
@@ -1475,6 +1480,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe ffi fn void Observe(rawptr<Pair> pointer);
@@ -1522,6 +1531,11 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 struct Box
                 {
                     i32[min max] Value;
+
+                    drop
+                    {
+                        ;
+                    }
                 }
 
                 inline finite law i32[min max] AddOne(i32[min max] value)
@@ -3034,43 +3048,6 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
-    public void InlineSsaSkipsAtO0()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                inline finite law i32[min max] AddOne(i32[min max] value)
-                {
-                    return value + 1;
-                }
-
-                fn i32[min max] Run(i32[min max] value)
-                {
-                    return AddOne(value);
-                }
-                """),
-            new CompilerOptions(
-                StopAfterPassId: "inline-ssa",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-
-        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
-        var call = Assert.Single(run.Blocks
-            .SelectMany(static block => block.Instructions)
-            .OfType<SsaValueInstruction>()
-            .Select(static instruction => instruction.Value)
-            .OfType<SsaCallRValue>());
-
-        Assert.Equal("AddOne", call.FunctionName);
-    }
-
-    [Fact]
     public void ValueFactsCaptureIntegerRangesAndProvenComparisons()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -3085,8 +3062,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 }
                 """),
             new CompilerOptions(
-                StopAfterPassId: "value-facts",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "value-facts"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts));
@@ -3121,8 +3097,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 }
                 """),
             new CompilerOptions(
-                StopAfterPassId: "value-facts",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "value-facts"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var log = Assert.Single(
@@ -3732,8 +3707,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 }
                 """),
             new CompilerOptions(
-                StopAfterPassId: "cleanup-ssa",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "cleanup-ssa"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
@@ -3906,8 +3880,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 public finite law u64[0 2 ** 63 - 1] UnicodeLength(unicode source);
                 """),
             new CompilerOptions(
-                StopAfterPassId: "cleanup-ssa",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "cleanup-ssa"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));

@@ -1,0 +1,921 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.ExpressionTypeHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.LayoutHelpers
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.ConstructorFieldState
+import Compiler.Binding.ConstructorExpressionReads
+import Compiler.Binding.ConstructorStatementTraversal
+import Compiler.Binding.ConstructorSwitchCoverage
+import Compiler.Binding.Copyability
+import System.Memory
+module Compiler.Binding.ConstructorValidation
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInIfArms(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] firstArmStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] parentDepth,
+    bool hasCompleteElse,
+    u32[0 max] sourceArmCount,
+    mut borrow ConstructorAssignedFieldTable assigned,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = false;
+    stack mut ConstructorAssignedFieldTable merged = new();
+    stack mut bool haveMergedArm = false;
+    stack mut u32[0 max] statementArmCount = 0;
+    stack mut u64[0 2 ** 63 - 1] armStart = firstArmStatement;
+    while willexit (armStart < subtreeEnd)
+    {
+        if (body.DepthAt(armStart) != parentDepth + 1)
+        {
+            armStart += 1;
+            continue;
+        }
+
+        stack u32[0 max] armScope = body.ScopeIdAt(armStart);
+        stack u64[0 2 ** 63 - 1] armEnd = ConstructorNextIfArmEnd(body, armStart, subtreeEnd, parentDepth, armScope);
+        stack mut ConstructorAssignedFieldTable armAssigned = new();
+        switch (CopyConstructorAssignedFields(assigned, armAssigned))
+        {
+            case System.Memory.MemoryStatus.Err(var copyArmError):
+                return System.Memory.MemoryStatus.Err(copyArmError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack mut bool armCanContinue = true;
+        switch (CollectConstructorFieldReadsInStatementRange(
+            decls,
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            facts,
+            fields,
+            body,
+            armStart,
+            armEnd,
+            (u32[0 max])(parentDepth + 1),
+            armAssigned,
+            diags,
+            armCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var armError):
+                return System.Memory.MemoryStatus.Err(armError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        statementArmCount = (u32[0 max])(statementArmCount + 1);
+        if (armCanContinue)
+        {
+            canContinue = true;
+            if (!haveMergedArm)
+            {
+                switch (CopyConstructorAssignedFields(armAssigned, merged))
+                {
+                    case System.Memory.MemoryStatus.Err(var firstMergeError):
+                        return System.Memory.MemoryStatus.Err(firstMergeError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                haveMergedArm = true;
+            }
+            else
+            {
+                stack mut ConstructorAssignedFieldTable intersection = new();
+                switch (IntersectConstructorAssignedFields(merged, armAssigned, source, stream, intersection))
+                {
+                    case System.Memory.MemoryStatus.Err(var intersectError):
+                        return System.Memory.MemoryStatus.Err(intersectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                merged = intersection;
+            }
+        }
+
+        armStart = armEnd;
+    }
+
+    if (!hasCompleteElse || sourceArmCount > statementArmCount)
+    {
+        canContinue = true;
+        if (!haveMergedArm)
+        {
+            switch (CopyConstructorAssignedFields(assigned, merged))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitCopyError):
+                    return System.Memory.MemoryStatus.Err(implicitCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            haveMergedArm = true;
+        }
+        else
+        {
+            stack mut ConstructorAssignedFieldTable implicitIntersection = new();
+            switch (IntersectConstructorAssignedFields(merged, assigned, source, stream, implicitIntersection))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitIntersectError):
+                    return System.Memory.MemoryStatus.Err(implicitIntersectError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            merged = implicitIntersection;
+        }
+    }
+
+    if (canContinue && haveMergedArm)
+    {
+        switch (ReplaceConstructorAssignedFields(merged, assigned))
+        {
+            case System.Memory.MemoryStatus.Err(var replaceError):
+                return System.Memory.MemoryStatus.Err(replaceError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInSwitchSection(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] firstLabelStatement,
+    u64[0 2 ** 63 - 1] sectionEnd,
+    u32[0 max] switchDepth,
+    u32[0 max] sectionDepth,
+    mut borrow ConstructorAssignedFieldTable assigned,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = true;
+    stack mut u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(firstLabelStatement + 1);
+    while willexit (statement < sectionEnd)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (body.DepthAt(statement) == switchDepth && item.Kind == StatementKind.Case)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (body.DepthAt(statement) < sectionDepth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (body.DepthAt(statement) > sectionDepth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Break)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+        stack mut bool statementCanContinue = true;
+        switch (CollectConstructorFieldReadsInStatementRange(
+            decls,
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            facts,
+            fields,
+            body,
+            statement,
+            subtreeEnd,
+            sectionDepth,
+            assigned,
+            diags,
+            statementCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var statementError):
+                return System.Memory.MemoryStatus.Err(statementError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        statement = subtreeEnd;
+        if (!statementCanContinue)
+        {
+            canContinue = false;
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInSwitchSections(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    StatementItem switchItem,
+    u32[0 max] switchSubjectRoot,
+    u64[0 2 ** 63 - 1] firstBodyStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] switchDepth,
+    mut borrow ConstructorAssignedFieldTable assigned,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = false;
+    stack mut ConstructorAssignedFieldTable merged = new();
+    stack mut bool haveMergedSection = false;
+    stack bool hasDefault = ConstructorSwitchHasDefaultSection(stream, switchItem);
+    stack mut bool hasExhaustiveNonDefaultSections = false;
+    if (!hasDefault)
+    {
+        hasExhaustiveNonDefaultSections = InitializationSwitchHasExhaustiveNonDefaultSections(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            switchSubjectRoot,
+            firstBodyStatement,
+            subtreeEnd,
+            switchDepth);
+    }
+
+    stack u32[0 max] sectionDepth = (u32[0 max])(switchDepth + 1);
+    stack mut u64[0 2 ** 63 - 1] sectionLabel = ConstructorNextSwitchCaseAt(body, firstBodyStatement, subtreeEnd, switchDepth);
+    while willexit (sectionLabel < subtreeEnd)
+    {
+        stack u64[0 2 ** 63 - 1] sectionEnd = ConstructorSwitchSectionEnd(body, stream, sectionLabel, subtreeEnd, switchDepth);
+        stack mut ConstructorAssignedFieldTable sectionAssigned = new();
+        switch (CopyConstructorAssignedFields(assigned, sectionAssigned))
+        {
+            case System.Memory.MemoryStatus.Err(var copySectionError):
+                return System.Memory.MemoryStatus.Err(copySectionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack mut bool sectionCanContinue = true;
+        switch (CollectConstructorFieldReadsInSwitchSection(
+            decls,
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            facts,
+            fields,
+            body,
+            sectionLabel,
+            sectionEnd,
+            switchDepth,
+            sectionDepth,
+            sectionAssigned,
+            diags,
+            sectionCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var sectionError):
+                return System.Memory.MemoryStatus.Err(sectionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (sectionCanContinue)
+        {
+            canContinue = true;
+            if (!haveMergedSection)
+            {
+                switch (CopyConstructorAssignedFields(sectionAssigned, merged))
+                {
+                    case System.Memory.MemoryStatus.Err(var firstMergeError):
+                        return System.Memory.MemoryStatus.Err(firstMergeError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                haveMergedSection = true;
+            }
+            else
+            {
+                stack mut ConstructorAssignedFieldTable intersection = new();
+                switch (IntersectConstructorAssignedFields(merged, sectionAssigned, source, stream, intersection))
+                {
+                    case System.Memory.MemoryStatus.Err(var intersectError):
+                        return System.Memory.MemoryStatus.Err(intersectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                merged = intersection;
+            }
+        }
+
+        sectionLabel = ConstructorNextSwitchCaseAt(body, sectionEnd, subtreeEnd, switchDepth);
+    }
+
+    if (!hasDefault && !hasExhaustiveNonDefaultSections)
+    {
+        canContinue = true;
+        if (!haveMergedSection)
+        {
+            switch (CopyConstructorAssignedFields(assigned, merged))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitCopyError):
+                    return System.Memory.MemoryStatus.Err(implicitCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            haveMergedSection = true;
+        }
+        else
+        {
+            stack mut ConstructorAssignedFieldTable implicitIntersection = new();
+            switch (IntersectConstructorAssignedFields(merged, assigned, source, stream, implicitIntersection))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitIntersectError):
+                    return System.Memory.MemoryStatus.Err(implicitIntersectError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            merged = implicitIntersection;
+        }
+    }
+
+    if (canContinue && haveMergedSection)
+    {
+        switch (ReplaceConstructorAssignedFields(merged, assigned))
+        {
+            case System.Memory.MemoryStatus.Err(var replaceError):
+                return System.Memory.MemoryStatus.Err(replaceError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInStatementRange(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] startStatement,
+    u64[0 2 ** 63 - 1] endStatement,
+    u32[0 max] depth,
+    mut borrow ConstructorAssignedFieldTable assigned,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = true;
+    stack mut u64[0 2 ** 63 - 1] statement = startStatement;
+    while willexit (statement < endStatement)
+    {
+        if (body.DepthAt(statement) < depth)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (body.DepthAt(statement) > depth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        stack StatementItem item = body.ItemAt(statement);
+        switch (CollectConstructorFieldReadsInExpression(
+            decls,
+            table,
+            source,
+            stream,
+            facts,
+            fields,
+            body,
+            body.ExprRootAt(statement),
+            assigned,
+            diags,
+            0))
+        {
+            case System.Memory.MemoryStatus.Err(var expressionError):
+                return System.Memory.MemoryStatus.Err(expressionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == StatementKind.Return || item.Kind == StatementKind.Become)
+        {
+            canContinue = false;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (item.Kind == StatementKind.If)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool branchCanContinue = true;
+            switch (CollectConstructorFieldReadsInIfArms(
+                decls,
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                facts,
+                fields,
+                body,
+                statement + 1,
+                subtreeEnd,
+                depth,
+                ConstructorIfStatementHasCompleteElse(stream, item),
+                ConstructorIfBraceArmCount(stream, item),
+                assigned,
+                diags,
+                branchCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var branchError):
+                    return System.Memory.MemoryStatus.Err(branchError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!branchCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Switch)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool switchCanContinue = true;
+            switch (CollectConstructorFieldReadsInSwitchSections(
+                decls,
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                facts,
+                fields,
+                body,
+                item,
+                body.ExprRootAt(statement),
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                assigned,
+                diags,
+                switchCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var switchError):
+                    return System.Memory.MemoryStatus.Err(switchError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!switchCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Block || item.Kind == StatementKind.Unsafe)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool blockCanContinue = true;
+            switch (CollectConstructorFieldReadsInStatementRange(
+                decls,
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                facts,
+                fields,
+                body,
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                assigned,
+                diags,
+                blockCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var blockError):
+                    return System.Memory.MemoryStatus.Err(blockError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!blockCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.While
+            || item.Kind == StatementKind.For
+            || item.Kind == StatementKind.ForEach)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut ConstructorAssignedFieldTable nestedAssigned = new();
+            switch (CopyConstructorAssignedFields(assigned, nestedAssigned))
+            {
+                case System.Memory.MemoryStatus.Err(var nestedCopyError):
+                    return System.Memory.MemoryStatus.Err(nestedCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut bool nestedCanContinue = true;
+            switch (CollectConstructorFieldReadsInStatementRange(
+                decls,
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                facts,
+                fields,
+                body,
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                nestedAssigned,
+                diags,
+                nestedCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var nestedError):
+                    return System.Memory.MemoryStatus.Err(nestedError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            continue;
+        }
+
+        statement += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorFieldReadsInBody(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut ConstructorAssignedFieldTable assigned = new();
+    stack mut bool canContinue = true;
+    return CollectConstructorFieldReadsInStatementRange(decls, table, source, refs, scope, stream, facts, fields, body, 0, body.Count(), 0, assigned, diags, canContinue);
+}
+
+internal finite law u32[0 max] ConstructorMemberBodyOpenToken(borrow TokenStream stream, u32[0 max] nameToken, u32[0 max] memberEnd)
+{
+    stack mut u32[0 max] scan = nameToken;
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut u32[0 max] bracketDepth = 0;
+    stack mut u32[0 max] angleDepth = 0;
+    while willexit (scan <= memberEnd)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.LBrace && parenDepth == 0 && bracketDepth == 0 && angleDepth == 0)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.LParen)
+        {
+            parenDepth = (u32[0 max])(parenDepth + 1);
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = (u32[0 max])(parenDepth - 1);
+            }
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = (u32[0 max])(bracketDepth + 1);
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = (u32[0 max])(bracketDepth - 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] ConstructorMemberNameToken(DeclItem item, ascii source, borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberEnd)
+{
+    stack u32[0 max] cursor = LayoutSkipMemberModifiers(stream, memberStart);
+    if (cursor > memberEnd
+        || stream.KindAt((u64[0 2 ** 63 - 1])cursor) != TokenKind.Identifier
+        || !BindingTokenTextEqualsToken(source, stream, cursor, item.NameToken)
+        || stream.KindAt((u64[0 2 ** 63 - 1])(cursor + 1)) != TokenKind.LParen)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] closeParen = MatchingMemberCloseToken(stream, (u32[0 max])(cursor + 1));
+    if (closeParen <= cursor || closeParen > memberEnd)
+    {
+        return 0;
+    }
+
+    if (ConstructorMemberBodyOpenToken(stream, cursor, memberEnd) == 0)
+    {
+        return 0;
+    }
+
+    return cursor;
+}
+
+internal fn System.Memory.MemoryStatus AppendConstructorParametersToSignature(
+    mut borrow FunctionSignature signature,
+    borrow TokenStream stream,
+    u32[0 max] constructorNameToken)
+{
+    stack u32[0 max] openParen = (u32[0 max])(constructorNameToken + 1);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])openParen) != TokenKind.LParen)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] closeParen = MatchingMemberCloseToken(stream, openParen);
+    if (closeParen <= openParen)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] index = (u32[0 max])(openParen + 1);
+    stack mut u32[0 max] paramStart = index;
+    stack mut u32[0 max] depth = 0;
+    while willexit (index < closeParen)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.Comma && depth == 0)
+        {
+            switch (signature.AppendParam(stream, paramStart, index))
+            {
+                case System.Memory.MemoryStatus.Err(var commaError):
+                    return System.Memory.MemoryStatus.Err(commaError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            paramStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return signature.AppendParam(stream, paramStart, closeParen);
+}
+
+internal fn BindResult<FunctionScope> BuildConstructorFunctionScope(
+    DeclItem item,
+    ascii source,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] constructorNameToken)
+{
+    stack mut FunctionScope scope = new();
+    stack u32[0 max] selfToken = DropValidityBodyIdentifierToken(source, stream, body, "self");
+    if (selfToken != 0 && item.NameToken != 0)
+    {
+        switch (scope.Append(
+            selfToken,
+            SymbolKind.Parameter,
+            0,
+            0,
+            item.NameToken,
+            item.NameToken,
+            (u32[0 max])(item.NameToken + 1)))
+        {
+            case System.Memory.MemoryStatus.Err(var selfError):
+                return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (AppendConstructorParametersToSignature(signature, stream, constructorNameToken))
+    {
+        case System.Memory.MemoryStatus.Err(var paramError):
+            return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
+    {
+        stack u32[0 max] nameToken = signature.ParamNameAt(index);
+        if (nameToken != 0)
+        {
+            switch (scope.Append(
+                nameToken,
+                SymbolKind.Parameter,
+                0,
+                0,
+                signature.ParamTypeTokenAt(index),
+                signature.ParamTypeStartTokenAt(index),
+                signature.ParamTypeEndTokenAt(index)))
+            {
+                case System.Memory.MemoryStatus.Err(var paramScopeError):
+                    return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < statementCount; index += 1)
+    {
+        stack StatementItem local = body.ItemAt(index);
+        if ((local.Kind == StatementKind.Local || local.Kind == StatementKind.PatternBinding) && local.NameToken != 0)
+        {
+            switch (scope.Append(
+                local.NameToken,
+                SymbolKind.Local,
+                body.DepthAt(index),
+                (u32[0 max])index,
+                local.TypeToken,
+                local.TypeStartToken,
+                local.TypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<FunctionScope>.Ok(scope);
+}
+
+internal fn System.Memory.MemoryStatus CollectConstructorInitializationDiagnostics(
+    DeclItem item,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    mut borrow BindDiagnosticList diags)
+{
+    if (item.Kind != DeclarationKind.Struct)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, item.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var parsedFields):
+            fields = parsedFields;
+    }
+
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, item.NameToken);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] memberStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])memberStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace || memberStart >= item.EndToken)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] memberEnd = LayoutSkipDeclarationBody(stream, memberStart);
+        if (memberEnd < memberStart)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] constructorNameToken = ConstructorMemberNameToken(item, source, stream, memberStart, memberEnd);
+        if (constructorNameToken != 0)
+        {
+            switch (ParseFunctionBody(stream, constructorNameToken))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                {
+                }
+                case ParseResult<StatementList>.Ok(var body):
+                    stack mut FunctionScope scope = new();
+                    switch (BuildConstructorFunctionScope(item, source, stream, body, constructorNameToken))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                        case BindResult<FunctionScope>.Ok(var builtScope):
+                            scope = builtScope;
+                    }
+
+                    stack mut ReferenceTable refs = new();
+                    switch (ResolveReferences(scope, table, source, stream, body))
+                    {
+                        case BindResult<ReferenceTable>.Err(var refsError):
+                            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                        case BindResult<ReferenceTable>.Ok(var resolvedRefs):
+                            refs = resolvedRefs;
+                    }
+
+                    switch (CollectConstructorFieldReadsInBody(decls, table, source, refs, scope, stream, facts, fields, body, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var readError):
+                            return System.Memory.MemoryStatus.Err(readError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+            }
+        }
+
+        memberStart = (u32[0 max])(memberEnd + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

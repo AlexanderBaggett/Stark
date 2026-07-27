@@ -1,0 +1,508 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Testing
+import System.Testing.HostCompiler
+import System.Testing.HostCompilerDiagnostics
+import System.Text
+module HostDiagnosticAdapterTests
+
+// TEST-06b support: fact-shaped helpers that exercise the host-compiler
+// diagnostic adapter (System.Testing.HostCompiler.HostDiagnosticAt). The
+// [Fact] entry points live in the root CompilerTests module, which imports
+// these; the generated `stark test` runner only collects facts from the root
+// file, so the bodies that actually compile-and-adapt live here.
+
+const AdapterTimeoutMilliseconds = 180000;
+
+// Compiles `source` through the host bridge full pipeline (no artifacts) and
+// returns the outcome. Surfaces transport/path errors so callers can treat
+// "no STARK_HOST_COMPILER" as a failing fact rather than a false pass.
+internal fn HostResult<HostCompileOutcome> CompileForAdapter(ascii id, ascii source)
+{
+    unsafe
+    {
+    stack mut OwnedAscii compilerPath = new();
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            return HostResult<HostCompileOutcome>.Err(pathError);
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    return CompileOnceArtifactIn(
+        compilerPath.View(),
+        id,
+        source,
+        "",
+        "",
+        "",
+        0,
+        AdapterTimeoutMilliseconds);
+    }
+}
+
+// Compiles the known-bad (missing ';') program, adapts its first diagnostic to
+// a System.Testing.Diagnostic, and asserts code/severity/stage/message/location
+// through the existing structured predicates.
+public fn bool MissingSemicolonAdaptsToStructuredDiagnosticImpl()
+{
+    unsafe
+    {
+    stack mut HostCompileOutcome outcome = new();
+    switch (CompileForAdapter(
+        "host-adapter-missing-semicolon",
+        raw"""
+module Demo
+
+unsafe fn void Run()
+{
+    stack i32[min max] value = 1
+}
+"""))
+    {
+        case HostResult<HostCompileOutcome>.Err(var error):
+            return false;
+        case HostResult<HostCompileOutcome>.Ok(var captured):
+            outcome = captured;
+    }
+
+    if (outcome.HadProtocolError() || outcome.CompileSucceeded())
+    {
+        return false;
+    }
+
+    if (HostDiagnosticCount(outcome) == 0)
+    {
+        return false;
+    }
+
+    stack Diagnostic adapted = HostDiagnosticAt(outcome, 0);
+    return DiagnosticCode("STK1000", adapted)
+        && DiagnosticSeverityIs(DiagnosticSeverity.Error, adapted)
+        && DiagnosticStage("parse", adapted)
+        && DiagnosticMessageContains(adapted, "missing ';'")
+        && DiagnosticHasLocation(adapted);
+    }
+}
+
+// The severity-string mapping is total: error -> Error, warning -> Warning,
+// everything else -> Info. Pure; runs without the host compiler.
+public fn bool SeverityMappingCoversKnownTokensImpl()
+{
+    unsafe
+    {
+    return SeverityEquals(HostSeverityFromAscii("error"), DiagnosticSeverity.Error)
+        && SeverityEquals(HostSeverityFromAscii("warning"), DiagnosticSeverity.Warning)
+        && SeverityEquals(HostSeverityFromAscii("info"), DiagnosticSeverity.Info)
+        && SeverityEquals(HostSeverityFromAscii("note"), DiagnosticSeverity.Info)
+        && SeverityEquals(HostSeverityFromAscii(""), DiagnosticSeverity.Info);
+    }
+}
+
+// TEST-06 (item 3): the convenience helpers CompileAssertClean and
+// CompileAssertHasCode behave on a good and a bad compile.
+public fn bool ConvenienceHelpersBehaveImpl()
+{
+    unsafe
+    {
+    stack mut HostCompileOutcome good = new();
+    switch (CompileForAdapter(
+        "host-helpers-clean",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+"""))
+    {
+        case HostResult<HostCompileOutcome>.Err(var goodError):
+            return false;
+        case HostResult<HostCompileOutcome>.Ok(var goodOutcome):
+            good = goodOutcome;
+    }
+
+    stack mut bool goodOk = CompileAssertClean(good)
+        && CompileAssertHasCode(good, "STK1000") == false;
+
+    stack mut HostCompileOutcome bad = new();
+    switch (CompileForAdapter(
+        "host-helpers-bad",
+        raw"""
+module Demo
+
+unsafe fn void Run()
+{
+    stack i32[min max] value = 1
+}
+"""))
+    {
+        case HostResult<HostCompileOutcome>.Err(var badError):
+            return false;
+        case HostResult<HostCompileOutcome>.Ok(var badOutcome):
+            bad = badOutcome;
+    }
+
+    stack mut bool badOk = CompileAssertHasCode(bad, "STK1000")
+        && CompileAssertClean(bad) == false;
+
+    return goodOk && badOk;
+    }
+}
+
+// TEST-06c: a root source that imports a sibling module placed in a temp
+// search directory compiles successfully when that directory is passed, and
+// fails to resolve the import when it is not. Proves searchDirectories drives
+// the server's module resolver.
+public fn bool SearchDirectoryResolvesSiblingModuleImpl()
+{
+    unsafe
+    {
+    stack mut OwnedAscii searchDir = new();
+    switch (System.FileSystem.CreateTempDirectory("stark-hostbridge-searchdir-"))
+    {
+        case IOResult<OwnedAscii>.Err(var rootError):
+            return false;
+        case IOResult<OwnedAscii>.Ok(var created):
+            searchDir = created;
+    }
+
+    stack mut OwnedAscii modulePath = new();
+    stack mut bool ready = MemoryOk2(modulePath.AppendAscii(searchDir.View()));
+    if (ready)
+    {
+        ready = MemoryOk2(modulePath.AppendByte(47))
+            && MemoryOk2(modulePath.AppendAscii("Helpers.stark"));
+    }
+
+    if (ready)
+    {
+        ready = IOOk2(System.IO.File.WriteAllText(
+            modulePath.View(),
+            raw"""
+module Helpers
+
+public finite law i32[min max] Answer()
+{
+    return 42;
+}
+"""));
+    }
+
+    stack mut bool succeededWith = false;
+    stack mut bool failedWithout = false;
+    if (ready)
+    {
+        stack ascii rootSource = raw"""
+import Helpers
+module Demo
+
+export fn i32[min max] main()
+{
+    return Helpers.Answer();
+}
+""";
+
+        succeededWith = CompileSucceedsWithSearchDir("host-searchdir-with", rootSource, searchDir.View());
+        failedWithout = CompileSucceedsWithSearchDir("host-searchdir-without", rootSource, "") == false;
+    }
+
+    stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(searchDir.View()));
+    return ready && succeededWith && failedWithout;
+    }
+}
+
+// Compiles `source` through the host bridge full pipeline, exposing
+// `searchDirectory` (empty disables module resolution), and returns true only
+// when transport, protocol, and the compile itself all succeed.
+internal fn bool CompileSucceedsWithSearchDir(ascii id, ascii source, ascii searchDirectory)
+{
+    unsafe
+    {
+    stack mut OwnedAscii compilerPath = new();
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            return false;
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    switch (CompileOnceIn(
+        compilerPath.View(),
+        id,
+        source,
+        "",
+        false,
+        searchDirectory,
+        AdapterTimeoutMilliseconds))
+    {
+        case HostResult<HostCompileOutcome>.Err(var error):
+            return false;
+        case HostResult<HostCompileOutcome>.Ok(var outcome):
+            stack mut HostCompileOutcome captured = outcome;
+            return !captured.HadProtocolError() && captured.CompileSucceeded();
+    }
+    }
+}
+
+internal finite law bool IOOk2(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
+            return true;
+        case IOStatus.Err(var error):
+            return false;
+    }
+}
+
+internal finite law bool MemoryOk2(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Compares two DiagnosticSeverity values via a probe Diagnostic and the public
+// DiagnosticSeverityIs predicate (the rank table is module-private).
+internal finite law bool SeverityEquals(DiagnosticSeverity actual, DiagnosticSeverity expected)
+{
+    stack Diagnostic probe = new Diagnostic()
+    {
+        Code = "",
+        Severity = actual,
+        Message = "",
+        Stage = "",
+        Location = new DiagnosticLocation()
+        {
+            HasValue = false,
+            FilePath = "",
+            Line = 0,
+            Column = 0,
+            HasEndValue = false,
+            EndLine = 0,
+            EndColumn = 0
+        }
+    };
+
+    return DiagnosticSeverityIs(expected, probe);
+}
+
+// TEST-07: compiles a 2-module program (root `Demo` importing a sibling
+// `Helpers` placed in a temp search directory) and asserts the typed result
+// accessors: LoadedModuleCount() >= 2, RootModuleName() == "Demo", and
+// PassExecuted("type-check").
+public fn bool TypedResultAccessorsReportModulesAndPassesImpl()
+{
+    unsafe
+    {
+    stack mut OwnedAscii compilerPath = new();
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            return false;
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    stack mut OwnedAscii searchDir = new();
+    switch (System.FileSystem.CreateTempDirectory("stark-hostbridge-typed-"))
+    {
+        case IOResult<OwnedAscii>.Err(var rootError):
+            return false;
+        case IOResult<OwnedAscii>.Ok(var created):
+            searchDir = created;
+    }
+
+    stack mut OwnedAscii modulePath = new();
+    stack mut bool ready = MemoryOk2(modulePath.AppendAscii(searchDir.View()));
+    if (ready)
+    {
+        ready = MemoryOk2(modulePath.AppendByte(47))
+            && MemoryOk2(modulePath.AppendAscii("Helpers.stark"));
+    }
+
+    if (ready)
+    {
+        ready = IOOk2(System.IO.File.WriteAllText(
+            modulePath.View(),
+            raw"""
+module Helpers
+
+public finite law i32[min max] Answer()
+{
+    return 42;
+}
+"""));
+    }
+
+    stack mut bool checks = false;
+    if (ready)
+    {
+        switch (CompileOnceIn(
+            compilerPath.View(),
+            "host-typed-accessors",
+            raw"""
+import Helpers
+module Demo
+
+export fn i32[min max] main()
+{
+    return Helpers.Answer();
+}
+""",
+            "",
+            false,
+            searchDir.View(),
+            AdapterTimeoutMilliseconds))
+        {
+            case HostResult<HostCompileOutcome>.Err(var error):
+                checks = false;
+            case HostResult<HostCompileOutcome>.Ok(var outcome):
+                stack mut HostCompileOutcome captured = outcome;
+                checks = !captured.HadProtocolError()
+                    && captured.CompileSucceeded()
+                    && captured.LoadedModuleCount() >= 2
+                    && System.Text.Equals(captured.RootModuleName(), "Demo")
+                    && captured.PassExecuted("type-check");
+        }
+    }
+
+    stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(searchDir.View()));
+    return ready && checks;
+    }
+}
+
+// TEST-06e: compiles a trivial module requesting the `mir` artifact with an
+// artifactOutputDirectory, asserts exactly one artifact file was written, reads
+// the file back with System.IO.File, and asserts the MIR text contains the
+// function name `main`.
+public fn bool ArtifactFileOutputWritesAndReadsBackImpl()
+{
+    unsafe
+    {
+    stack mut OwnedAscii compilerPath = new();
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            return false;
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    stack mut OwnedAscii outputDir = new();
+    switch (System.FileSystem.CreateTempDirectory("stark-hostbridge-artifact-"))
+    {
+        case IOResult<OwnedAscii>.Err(var rootError):
+            return false;
+        case IOResult<OwnedAscii>.Ok(var created):
+            outputDir = created;
+    }
+
+    stack mut bool checks = false;
+    switch (CompileOnceArtifactToDirectory(
+        compilerPath.View(),
+        "host-artifact-file",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""",
+        "",
+        "mir",
+        "",
+        outputDir.View(),
+        0,
+        AdapterTimeoutMilliseconds,
+        "",
+        ""))
+    {
+        case HostResult<HostCompileOutcome>.Err(var error):
+            checks = false;
+        case HostResult<HostCompileOutcome>.Ok(var outcome):
+            stack mut HostCompileOutcome captured = outcome;
+            if (!captured.HadProtocolError()
+                && captured.CompileSucceeded()
+                && captured.ArtifactFileCount() == 1)
+            {
+                // Copy the reported path into owned storage so the read's `path`
+                // and `destination` arguments have distinct, statically
+                // identifiable roots (the raw view borrows the outcome buffer).
+                stack mut OwnedAscii artifactPath = new();
+                stack mut OwnedAscii contents = new();
+                if (MemoryOk2(artifactPath.AppendAscii(captured.ArtifactFilePathAt(0)))
+                    && IOOk2(System.IO.File.ReadAllTextInto(artifactPath.View(), contents)))
+                {
+                    checks = System.Text.Contains(contents.View(), "main")
+                        && System.Text.Contains(contents.View(), "mir module");
+                }
+            }
+    }
+
+    stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(outputDir.View()));
+    return checks;
+    }
+}
+
+// TEST-06d: batches one good source and one with a missing ';' in ONE server
+// round-trip, asserting response[0] succeeded and response[1] reports STK1000.
+public fn bool RequestBatchingReportsPerResponseResultsImpl()
+{
+    unsafe
+    {
+    stack mut OwnedAscii compilerPath = new();
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            return false;
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    switch (CompileBatch2(
+        compilerPath.View(),
+        "host-batch-good",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""",
+        "host-batch-bad",
+        raw"""
+module Demo
+
+unsafe fn void Run()
+{
+    stack i32[min max] value = 1
+}
+""",
+        AdapterTimeoutMilliseconds))
+    {
+        case HostResult<HostBatchOutcome>.Err(var error):
+            return false;
+        case HostResult<HostBatchOutcome>.Ok(var outcome):
+            stack mut HostBatchOutcome batch = outcome;
+            return !batch.HadProtocolError()
+                && batch.ResponseCount() == 2
+                && batch.SucceededAt(0)
+                && batch.SucceededAt(1) == false
+                && System.Text.Equals(batch.FirstDiagnosticCodeAt(1), "STK1000")
+                && batch.HasDiagnosticCodeAt(1, "STK1000");
+    }
+    }
+}

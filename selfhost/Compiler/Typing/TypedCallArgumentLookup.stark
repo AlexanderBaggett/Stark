@@ -1,0 +1,165 @@
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+module Compiler.Typing.TypedCallArgumentLookup
+
+internal finite law TypedIdentifierContext TypedCallIdentifierContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallIdentifierIndexForNode(
+    borrow TypedIdentifierExpressionTable identifiers,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] calleeNode)
+{
+    stack TypedIdentifierContext identifierContext = TypedCallIdentifierContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = identifiers.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && identifiers.ContextAt(index) == identifierContext
+            && identifiers.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && identifiers.OwnerNameTokenAt(index) == ownerNameToken
+            && identifiers.FunctionNameTokenAt(index) == functionNameToken
+            && identifiers.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && identifiers.ExprNodeAt(index) == calleeNode)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal finite law TypedLiteralContext TypedCallLiteralContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedLiteralContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedLiteralContext.FunctionBody;
+    }
+
+    return TypedLiteralContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallLiteralIndexForNode(
+    borrow TypedLiteralExpressionTable literals,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedLiteralContext literalContext = TypedCallLiteralContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == literalContext
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedCallPriorCallIndexForNode(
+    borrow TypedCallExpressionTable calls,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = calls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && calls.ContextAt(index) == context
+            && calls.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && calls.OwnerNameTokenAt(index) == ownerNameToken
+            && calls.FunctionNameTokenAt(index) == functionNameToken
+            && calls.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && calls.CallNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal finite law TypedMemberContext TypedCallMemberContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedMemberContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedMemberContext.FunctionBody;
+    }
+
+    return TypedMemberContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallMemberIndexForNode(
+    borrow TypedMemberExpressionTable members,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedMemberContext memberContext = TypedCallMemberContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && members.ContextAt(index) == memberContext
+            && members.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && members.OwnerNameTokenAt(index) == ownerNameToken
+            && members.FunctionNameTokenAt(index) == functionNameToken
+            && members.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && members.MemberNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}

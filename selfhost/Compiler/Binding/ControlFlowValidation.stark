@@ -1,0 +1,142 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import System.Memory
+module Compiler.Binding.ControlFlowValidation
+
+internal fn System.Memory.MemoryStatus CollectReturnDiagnostics(borrow FunctionSignature signature, borrow StatementList body, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] returnTypeToken = signature.ReturnTypeTokenAt();
+    if (returnTypeToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack bool isVoid = stream.KindAt((u64[0 2 ** 63 - 1])returnTypeToken) == TokenKind.Void;
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Return)
+        {
+            stack bool hasValue = body.ExprRootAt(index) != 0;
+            if (hasValue && isVoid)
+            {
+                switch (diags.Append(BindDiagnosticCode.ValueReturnedFromVoid, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var voidError):
+                        return System.Memory.MemoryStatus.Err(voidError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (!hasValue && !isVoid)
+            {
+                switch (diags.Append(BindDiagnosticCode.MissingReturnValue, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var missingError):
+                        return System.Memory.MemoryStatus.Err(missingError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The index plus one of the nearest statement before `fromIndex` at block depth
+// `targetDepth` (the ancestor block statement at that level), or 0 when none.
+internal fn u64[0 2 ** 63 - 1] NearestPrecedingAtDepth(borrow StatementList body, u64[0 2 ** 63 - 1] fromIndex, u32[0 max] targetDepth)
+{
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = fromIndex;
+    while willexit (scan > 0)
+    {
+        scan = (u64[0 2 ** 63 - 1])(scan - 1);
+        if (found == 0 && body.DepthAt(scan) == targetDepth)
+        {
+            found = (u64[0 2 ** 63 - 1])(scan + 1);
+        }
+    }
+
+    return found;
+}
+
+// Whether the statement at `stmtIndex` is lexically enclosed by a loop (and, when
+// `includeSwitch`, a `switch`): walks the ancestor block-statement chain (nearest
+// preceding statement at each shallower depth) looking for a `While`/`For` (or
+// `Switch`).
+internal fn bool EnclosedByLoopOrSwitch(borrow StatementList body, u64[0 2 ** 63 - 1] stmtIndex, bool includeSwitch)
+{
+    stack mut bool enclosed = false;
+    stack mut u64[0 2 ** 63 - 1] cur = stmtIndex;
+    stack mut u32[0 max] d = body.DepthAt(stmtIndex);
+    while willexit (d > 0 && !enclosed)
+    {
+        stack u64[0 2 ** 63 - 1] ancestorPlus = NearestPrecedingAtDepth(body, cur, (u32[0 max])(d - 1));
+        if (ancestorPlus == 0)
+        {
+            d = 0;
+        }
+        else
+        {
+            stack u64[0 2 ** 63 - 1] ancestor = (u64[0 2 ** 63 - 1])(ancestorPlus - 1);
+            stack StatementItem item = body.ItemAt(ancestor);
+            if (item.Kind == StatementKind.While || item.Kind == StatementKind.For || item.Kind == StatementKind.ForEach)
+            {
+                enclosed = true;
+            }
+            else if (includeSwitch && item.Kind == StatementKind.Switch)
+            {
+                enclosed = true;
+            }
+
+            cur = ancestor;
+            d = (u32[0 max])(d - 1);
+        }
+    }
+
+    return enclosed;
+}
+
+// Emits `BreakOutsideLoop` for a `break` with no enclosing loop/switch and
+// `ContinueOutsideLoop` for a `continue` with no enclosing loop (a `switch` does
+// not satisfy `continue`), matching the host's STK4113/STK4114.
+internal fn System.Memory.MemoryStatus CollectControlFlowDiagnostics(borrow StatementList body, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Break)
+        {
+            if (!EnclosedByLoopOrSwitch(body, index, true))
+            {
+                switch (diags.Append(BindDiagnosticCode.BreakOutsideLoop, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var breakError):
+                        return System.Memory.MemoryStatus.Err(breakError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (item.Kind == StatementKind.Continue)
+        {
+            if (!EnclosedByLoopOrSwitch(body, index, false))
+            {
+                switch (diags.Append(BindDiagnosticCode.ContinueOutsideLoop, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var continueError):
+                        return System.Memory.MemoryStatus.Err(continueError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Binds one function: emits duplicate-parameter, duplicate-local, unresolved-type
+// (per signature type head), unresolved-reference (per unbound identifier), and
+// non-boolean-condition diagnostics. Parse failures for the function are skipped.

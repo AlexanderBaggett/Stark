@@ -1,0 +1,190 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceSwitchLowering
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Memory
+import System.Text
+import System.Testing
+[Collection("switch-pattern-import")]
+module SwitchPatternImportTests
+
+fn bool BuildPatternProbeLoweringFacts(
+    out TokenStream stream,
+    out SourceModuleLoweringFacts moduleFacts,
+    out OwnedAscii sourceText)
+{
+    stack ascii source = raw"""
+    module PatternProbe
+
+    struct Point
+    {
+        i32[min max] X;
+        i32[min max] Y;
+    }
+
+    struct Box
+    {
+        Point Position;
+        i32[min max][2] Values;
+    }
+
+    fn i32[min max] Classify(Box box)
+    {
+        switch (box)
+        {
+            case Box { Position: Point { X: 1, Y: 2 }, Values: [3, 4] }:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+    """;
+
+    stack mut TokenStream parsedStream = new();
+    stack mut SourceModuleLoweringFacts builtFacts = new();
+    stack mut OwnedAscii builtSourceText = new();
+    if (builtSourceText.AppendAscii(source) != MemoryStatus.Ok)
+    {
+        stream = new();
+        moduleFacts = new();
+        sourceText = new();
+        return false;
+    }
+
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            stream = new();
+            moduleFacts = new();
+            sourceText = new();
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack i8[min max][] sourceBytes = builtSourceText.AsSlice();
+    if (!BuildSourceModuleLoweringFacts(builtSourceText.View(), parsedStream, sourceBytes, builtFacts))
+    {
+        stream = new();
+        moduleFacts = new();
+        sourceText = new();
+        return false;
+    }
+
+    stream = parsedStream;
+    moduleFacts = builtFacts;
+    sourceText = builtSourceText;
+    return true;
+}
+
+[Fact]
+fn bool SourceModuleLoweringFactsCarryTypedNestedSwitchPatternRows()
+{
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (!BuildPatternProbeLoweringFacts(stream, moduleFacts, sourceText))
+    {
+        return false;
+    }
+
+    stack u32[0 max] topAggregateStart = moduleFacts.SwitchPatterns.AggregatePatterns.PatternStartTokenAt(0);
+    stack u32[0 max] nestedAggregateStart = moduleFacts.SwitchPatterns.AggregatePatterns.PatternStartTokenAt(1);
+    stack u32[0 max] nestedListStart = moduleFacts.SwitchPatterns.ListPatterns.PatternStartTokenAt(0);
+
+    return moduleFacts.SwitchPatterns.AggregatePatterns.Count() == 2
+        && moduleFacts.SwitchPatterns.ListPatterns.Count() == 1
+        && moduleFacts.SwitchPatterns.Members.Count() == 6
+        && SourceSwitchAggregatePatternRowForStartToken(moduleFacts, topAggregateStart) == 1
+        && SourceSwitchAggregatePatternRowForStartToken(moduleFacts, nestedAggregateStart) == 2
+        && SourceSwitchListPatternRowForStartToken(moduleFacts, nestedListStart) == 1
+        && moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(0) == 1
+        && moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(0) == 2
+        && moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(0) == 0
+        && moduleFacts.SwitchPatterns.Members.KindAt(0) == TypedSwitchPatternKind.Aggregate
+        && moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(0) == 2
+        && moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(1) == 1
+        && moduleFacts.SwitchPatterns.Members.KindAt(1) == TypedSwitchPatternKind.List
+        && moduleFacts.SwitchPatterns.Members.NestedListPatternRowAt(1) == 1
+        && moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(1) == 3
+        && moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(1) == 2
+        && moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(0) == 5
+        && moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(0) == 2;
+}
+
+[Fact]
+fn bool SourceSwitchImportedTypedNestedRowsBuildDecisionDescriptors()
+{
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (!BuildPatternProbeLoweringFacts(stream, moduleFacts, sourceText))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack SourceSwitchAggregatePatternDescriptor descriptor =
+        MakeSourceSwitchAggregatePatternDescriptor(
+            moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypeHeadTokenAt(0),
+            0,
+            0,
+            0);
+    stack mut IrTable<u32[0 max]> emptyNestedFieldIndices = new();
+    stack mut IrTable<u32[0 max]> emptyNestedKinds = new();
+    stack mut IrTable<u32[0 max]> emptyNestedAggregateDescriptorRows = new();
+    stack mut IrTable<u32[0 max]> emptyNestedListDescriptorRows = new();
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors = new();
+    stack mut IrTable<SourceSwitchListPatternDescriptor> listDescriptors = new();
+    stack mut IrTable<SourceSwitchPatternDecisionNode> nodes = new();
+    stack mut IrTable<SourceSwitchPatternDecisionMember> members = new();
+    stack mut u32[0 max] memberStart = 0;
+    stack mut u32[0 max] memberCount = 0;
+    if (!TryTranslateSourceSwitchNestedStructFieldRowsToPatternDecisionMembers(
+            stream,
+            sourceBytes,
+            moduleFacts,
+            descriptor,
+            moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(0),
+            moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(0),
+            emptyNestedFieldIndices,
+            emptyNestedKinds,
+            emptyNestedAggregateDescriptorRows,
+            emptyNestedListDescriptorRows,
+            aggregateDescriptors,
+            listDescriptors,
+            nodes,
+            members,
+            memberStart,
+            memberCount)
+        || memberStart != 1
+        || memberCount != 2
+        || aggregateDescriptors.Count() != 1
+        || listDescriptors.Count() != 1
+        || nodes.Count() != 2
+        || members.Count() != 2)
+    {
+        return false;
+    }
+
+    stack SourceSwitchPatternDecisionMember aggregateMember = members.Get(1);
+    stack SourceSwitchPatternDecisionMember listMember = members.Get(2);
+    stack SourceSwitchPatternDecisionNode aggregateNode = nodes.Get(aggregateMember.NodeRow);
+    stack SourceSwitchPatternDecisionNode listNode = nodes.Get(listMember.NodeRow);
+    stack SourceSwitchAggregatePatternDescriptor nestedAggregate = aggregateDescriptors.Get(aggregateNode.AggregateDescriptorRow);
+    stack SourceSwitchListPatternDescriptor nestedList = listDescriptors.Get(listNode.ListDescriptorRow);
+
+    return aggregateMember.Ordinal == 0
+        && aggregateNode.Kind == SourceSwitchPatternDecisionKindAggregate()
+        && SourceSwitchPatternDecisionNodeUsesAggregateDescriptor(aggregateNode)
+        && nestedAggregate.OwnerTypeToken == moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypeHeadTokenAt(1)
+        && nestedAggregate.FieldPatternCount == 0
+        && listMember.Ordinal == 1
+        && listNode.Kind == SourceSwitchPatternDecisionKindList()
+        && SourceSwitchPatternDecisionNodeUsesListDescriptor(listNode)
+        && nestedList.ElementTypeCode == SourceResolvedFieldTypeCodeI32()
+        && nestedList.FixedLength == 2
+        && nestedList.ElementPatternCount == 0;
+}

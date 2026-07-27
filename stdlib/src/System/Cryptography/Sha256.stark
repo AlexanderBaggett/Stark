@@ -1,0 +1,554 @@
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Text
+module System.Cryptography.Sha256
+
+const Sha256BlockBytes = 64;
+const Sha256HexBytes = 64;
+const Sha256MaximumInputBytes = 2305843009213693951;
+
+static u32[0 max][64] Sha256RoundConstants =
+{
+    1116352408, 1899447441, 3049323471, 3921009573,
+    961987163, 1508970993, 2453635748, 2870763221,
+    3624381080, 310598401, 607225278, 1426881987,
+    1925078388, 2162078206, 2614888103, 3248222580,
+    3835390401, 4022224774, 264347078, 604807628,
+    770255983, 1249150122, 1555081692, 1996064986,
+    2554220882, 2821834349, 2952996808, 3210313671,
+    3336571891, 3584528711, 113926993, 338241895,
+    666307205, 773529912, 1294757372, 1396182291,
+    1695183700, 1986661051, 2177026350, 2456956037,
+    2730485921, 2820302411, 3259730800, 3345764771,
+    3516065817, 3600352804, 4094571909, 275423344,
+    430227734, 506948616, 659060556, 883997877,
+    958139571, 1322822218, 1537002063, 1747873779,
+    1955562222, 2024104815, 2227730452, 2361852424,
+    2428436474, 2756734187, 3204031479, 3329325298
+};
+
+public enum Sha256Error
+{
+    Finalized,
+    InputTooLong,
+}
+
+public enum Sha256Status
+{
+    [Ok] Ok,
+    [Err] Err(Sha256Error),
+}
+
+public enum Sha256Result
+{
+    [Ok] Ok(Sha256Digest),
+    [Err] Err(Sha256Error),
+}
+
+public enum Sha256FileError
+{
+    IO(System.IO.IOError),
+    Hash(Sha256Error),
+}
+
+public enum Sha256FileResult
+{
+    [Ok] Ok(Sha256Digest),
+    [Err] Err(Sha256FileError),
+}
+
+public struct Sha256Digest
+{
+    internal u32[0 max][8] Words;
+
+    Sha256Digest()
+    {
+    }
+
+    public inline finite law u32[0 max] WordAt(
+        borrow Sha256Digest self,
+        u8[0 7] index)
+    {
+        return self.Words[index];
+    }
+}
+
+internal struct Sha256Schedule
+{
+    u32[0 max][64] Words;
+
+    Sha256Schedule()
+    {
+    }
+}
+
+public struct Sha256State
+{
+    u32[0 max][8] HashWords;
+    i8[min max][64] BufferedBytes;
+    u64[0 max] TotalBytes;
+    u8[0 64] BufferedByteCount;
+    bool FinalizedValue;
+
+    Sha256State()
+    {
+        self.Reset();
+    }
+
+    public fn void Reset(mut borrow Sha256State self)
+    {
+        self.HashWords[0] = 1779033703;
+        self.HashWords[1] = 3144134277;
+        self.HashWords[2] = 1013904242;
+        self.HashWords[3] = 2773480762;
+        self.HashWords[4] = 1359893119;
+        self.HashWords[5] = 2600822924;
+        self.HashWords[6] = 528734635;
+        self.HashWords[7] = 1541459225;
+        self.TotalBytes = 0;
+        self.BufferedByteCount = 0;
+        self.FinalizedValue = false;
+    }
+
+    public inline finite law bool IsFinalized(borrow Sha256State self)
+    {
+        return self.FinalizedValue;
+    }
+
+    public inline finite law u64[0 max] InputByteCount(borrow Sha256State self)
+    {
+        return self.TotalBytes;
+    }
+}
+
+internal inline finite law u32[0 max] Sha256UnsignedByte(i8[min max] value)
+{
+    if (value < 0)
+    {
+        return (u32[0 max])(((i32[min max])value) + 256);
+    }
+    return (u32[0 max])value;
+}
+
+internal inline finite law u32[0 max] Sha256RotateRight(
+    u32[0 max] value,
+    u8[1 31] amount)
+{
+    return (value >> amount) | (value << (32 - amount));
+}
+
+internal fn void Sha256PrepareScheduleFromInput(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] offset,
+    mut borrow Sha256Schedule schedule)
+{
+    for willexit (
+        stack mut u8[0 16] wordIndex = 0;
+        wordIndex < 16;
+        wordIndex += 1)
+    {
+        stack u64[0 2 ** 63 - 1] byteIndex =
+            offset + (u64[0 2 ** 63 - 1])wordIndex * 4;
+        schedule.Words[wordIndex] =
+            (Sha256UnsignedByte(source[byteIndex]) << 24)
+            | (Sha256UnsignedByte(source[byteIndex + 1]) << 16)
+            | (Sha256UnsignedByte(source[byteIndex + 2]) << 8)
+            | Sha256UnsignedByte(source[byteIndex + 3]);
+    }
+
+    for willexit (
+        stack mut u8[0 64] wordIndex = 16;
+        wordIndex < 64;
+        wordIndex += 1)
+    {
+        stack u32[0 max] before15 = schedule.Words[wordIndex - 15];
+        stack u32[0 max] before2 = schedule.Words[wordIndex - 2];
+        stack u32[0 max] sigma0 = Sha256RotateRight(before15, 7)
+            ^ Sha256RotateRight(before15, 18)
+            ^ (before15 >> 3);
+        stack u32[0 max] sigma1 = Sha256RotateRight(before2, 17)
+            ^ Sha256RotateRight(before2, 19)
+            ^ (before2 >> 10);
+        schedule.Words[wordIndex] = schedule.Words[wordIndex - 16]
+            +% sigma0
+            +% schedule.Words[wordIndex - 7]
+            +% sigma1;
+    }
+}
+
+internal fn void Sha256PrepareScheduleFromBuffer(
+    borrow Sha256State state,
+    mut borrow Sha256Schedule schedule)
+{
+    for willexit (
+        stack mut u8[0 16] wordIndex = 0;
+        wordIndex < 16;
+        wordIndex += 1)
+    {
+        stack u8[0 63] byteIndex = (u8[0 63])(wordIndex * 4);
+        schedule.Words[wordIndex] =
+            (Sha256UnsignedByte(state.BufferedBytes[byteIndex]) << 24)
+            | (Sha256UnsignedByte(state.BufferedBytes[byteIndex + 1]) << 16)
+            | (Sha256UnsignedByte(state.BufferedBytes[byteIndex + 2]) << 8)
+            | Sha256UnsignedByte(state.BufferedBytes[byteIndex + 3]);
+    }
+
+    for willexit (
+        stack mut u8[0 64] wordIndex = 16;
+        wordIndex < 64;
+        wordIndex += 1)
+    {
+        stack u32[0 max] before15 = schedule.Words[wordIndex - 15];
+        stack u32[0 max] before2 = schedule.Words[wordIndex - 2];
+        stack u32[0 max] sigma0 = Sha256RotateRight(before15, 7)
+            ^ Sha256RotateRight(before15, 18)
+            ^ (before15 >> 3);
+        stack u32[0 max] sigma1 = Sha256RotateRight(before2, 17)
+            ^ Sha256RotateRight(before2, 19)
+            ^ (before2 >> 10);
+        schedule.Words[wordIndex] = schedule.Words[wordIndex - 16]
+            +% sigma0
+            +% schedule.Words[wordIndex - 7]
+            +% sigma1;
+    }
+}
+
+internal fn void Sha256CompressPrepared(
+    mut borrow Sha256State state,
+    borrow Sha256Schedule schedule)
+{
+    stack mut u32[0 max] a = state.HashWords[0];
+    stack mut u32[0 max] b = state.HashWords[1];
+    stack mut u32[0 max] c = state.HashWords[2];
+    stack mut u32[0 max] d = state.HashWords[3];
+    stack mut u32[0 max] e = state.HashWords[4];
+    stack mut u32[0 max] f = state.HashWords[5];
+    stack mut u32[0 max] g = state.HashWords[6];
+    stack mut u32[0 max] h = state.HashWords[7];
+
+    for willexit (
+        stack mut u8[0 64] round = 0;
+        round < 64;
+        round += 1)
+    {
+        stack u32[0 max] sum1 = Sha256RotateRight(e, 6)
+            ^ Sha256RotateRight(e, 11)
+            ^ Sha256RotateRight(e, 25);
+        stack u32[0 max] choose = (e & f) ^ ((~e) & g);
+        stack u32[0 max] temporary1 = h
+            +% sum1
+            +% choose
+            +% Sha256RoundConstants[round]
+            +% schedule.Words[round];
+        stack u32[0 max] sum0 = Sha256RotateRight(a, 2)
+            ^ Sha256RotateRight(a, 13)
+            ^ Sha256RotateRight(a, 22);
+        stack u32[0 max] majority = (a & b) ^ (a & c) ^ (b & c);
+        stack u32[0 max] temporary2 = sum0 +% majority;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d +% temporary1;
+        d = c;
+        c = b;
+        b = a;
+        a = temporary1 +% temporary2;
+    }
+
+    state.HashWords[0] = state.HashWords[0] +% a;
+    state.HashWords[1] = state.HashWords[1] +% b;
+    state.HashWords[2] = state.HashWords[2] +% c;
+    state.HashWords[3] = state.HashWords[3] +% d;
+    state.HashWords[4] = state.HashWords[4] +% e;
+    state.HashWords[5] = state.HashWords[5] +% f;
+    state.HashWords[6] = state.HashWords[6] +% g;
+    state.HashWords[7] = state.HashWords[7] +% h;
+}
+
+internal fn void Sha256CompressInputBlock(
+    mut borrow Sha256State state,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] offset)
+{
+    stack mut Sha256Schedule schedule = new();
+    Sha256PrepareScheduleFromInput(source, offset, schedule);
+    Sha256CompressPrepared(state, schedule);
+}
+
+internal fn void Sha256CompressBufferedBlock(mut borrow Sha256State state)
+{
+    stack mut Sha256Schedule schedule = new();
+    Sha256PrepareScheduleFromBuffer(state, schedule);
+    Sha256CompressPrepared(state, schedule);
+}
+
+public fn Sha256Status UpdateSha256(
+    mut borrow Sha256State state,
+    borrow i8[min max][] source)
+{
+    if (state.FinalizedValue)
+    {
+        return Sha256Status.Err(Sha256Error.Finalized);
+    }
+    if (source.Length > Sha256MaximumInputBytes - state.TotalBytes)
+    {
+        return Sha256Status.Err(Sha256Error.InputTooLong);
+    }
+
+    state.TotalBytes += source.Length;
+    stack mut u64[0 2 ** 63 - 1] sourceIndex = 0;
+
+    if (state.BufferedByteCount != 0)
+    {
+        while willexit (sourceIndex < source.Length && state.BufferedByteCount < 64)
+        {
+            state.BufferedBytes[state.BufferedByteCount] = source[sourceIndex];
+            state.BufferedByteCount += 1;
+            sourceIndex += 1;
+        }
+        if (state.BufferedByteCount == 64)
+        {
+            Sha256CompressBufferedBlock(state);
+            state.BufferedByteCount = 0;
+        }
+    }
+
+    while willexit (source.Length - sourceIndex >= Sha256BlockBytes)
+    {
+        Sha256CompressInputBlock(state, source, sourceIndex);
+        sourceIndex += Sha256BlockBytes;
+    }
+
+    while willexit (sourceIndex < source.Length)
+    {
+        state.BufferedBytes[state.BufferedByteCount] = source[sourceIndex];
+        state.BufferedByteCount += 1;
+        sourceIndex += 1;
+    }
+
+    return Sha256Status.Ok;
+}
+
+public fn Sha256Status UpdateSha256Ascii(
+    mut borrow Sha256State state,
+    ascii source)
+{
+    unsafe
+    {
+        stack i64[min max] signedLength = System.Text.AsciiLength(source);
+        if (signedLength < 0)
+        {
+            return Sha256Status.Err(Sha256Error.InputTooLong);
+        }
+        if (signedLength == 0)
+        {
+            if (state.FinalizedValue)
+            {
+                return Sha256Status.Err(Sha256Error.Finalized);
+            }
+            return Sha256Status.Ok;
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
+        if (data == null)
+        {
+            return Sha256Status.Err(Sha256Error.InputTooLong);
+        }
+        stack i8[min max][] bytes = slice(
+            data,
+            (u64[0 2 ** 63 - 1])signedLength);
+        return UpdateSha256(state, bytes);
+    }
+}
+
+internal fn Sha256Digest Sha256DigestFromState(borrow Sha256State state)
+{
+    stack mut Sha256Digest digest = new();
+    for willexit (
+        stack mut u8[0 8] index = 0;
+        index < 8;
+        index += 1)
+    {
+        digest.Words[index] = state.HashWords[index];
+    }
+    return digest;
+}
+
+public fn Sha256Digest FinishSha256(mut borrow Sha256State state)
+{
+    if (state.FinalizedValue)
+    {
+        return Sha256DigestFromState(state);
+    }
+
+    state.BufferedBytes[state.BufferedByteCount] = (i8[min max])-128;
+    state.BufferedByteCount += 1;
+    if (state.BufferedByteCount > 56)
+    {
+        while willexit (state.BufferedByteCount < 64)
+        {
+            state.BufferedBytes[state.BufferedByteCount] = 0;
+            state.BufferedByteCount += 1;
+        }
+        Sha256CompressBufferedBlock(state);
+        state.BufferedByteCount = 0;
+    }
+
+    while willexit (state.BufferedByteCount < 56)
+    {
+        state.BufferedBytes[state.BufferedByteCount] = 0;
+        state.BufferedByteCount += 1;
+    }
+
+    stack u64[0 max] bitLength = state.TotalBytes * 8;
+    for willexit (
+        stack mut u8[0 8] index = 0;
+        index < 8;
+        index += 1)
+    {
+        stack u8[0 56] shift = (u8[0 56])((7 - index) * 8);
+        stack u64[0 max] unit = (bitLength >> shift) & 255;
+        state.BufferedBytes[56 + index] = unit < 128
+            ? (i8[min max])unit
+            : (i8[min max])((i16[min max])unit - 256);
+    }
+    state.BufferedByteCount = 64;
+    Sha256CompressBufferedBlock(state);
+    state.BufferedByteCount = 0;
+    state.FinalizedValue = true;
+    return Sha256DigestFromState(state);
+}
+
+internal finite law u8[0 16] Sha256LowerHexNibble(ascii unit)
+{
+    if (unit == "0") return 0;
+    if (unit == "1") return 1;
+    if (unit == "2") return 2;
+    if (unit == "3") return 3;
+    if (unit == "4") return 4;
+    if (unit == "5") return 5;
+    if (unit == "6") return 6;
+    if (unit == "7") return 7;
+    if (unit == "8") return 8;
+    if (unit == "9") return 9;
+    if (unit == "a") return 10;
+    if (unit == "b") return 11;
+    if (unit == "c") return 12;
+    if (unit == "d") return 13;
+    if (unit == "e") return 14;
+    if (unit == "f") return 15;
+    return 16;
+}
+
+// Allocation-free comparison used by SDK integrity validation. Expected text
+// is canonical lowercase hexadecimal; the accumulated difference avoids an
+// early exit on digest content.
+public fn bool Sha256DigestMatchesLowerHex(
+    borrow Sha256Digest digest,
+    ascii expected)
+{
+    if (System.Text.AsciiLength(expected) != Sha256HexBytes)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] difference = 0;
+    for willexit (
+        stack mut u8[0 64] nibbleIndex = 0;
+        nibbleIndex < 64;
+        nibbleIndex += 1)
+    {
+        stack u8[0 7] wordIndex = (u8[0 7])(nibbleIndex / 8);
+        stack u8[0 7] wordNibble = (u8[0 7])(nibbleIndex % 8);
+        stack u8[0 28] shift = (u8[0 28])(28 - wordNibble * 4);
+        stack u32[0 max] actual = (digest.Words[wordIndex] >> shift) & 15;
+        stack u8[0 16] declared = Sha256LowerHexNibble(expected[nibbleIndex, 1]);
+        if (declared == 16)
+        {
+            return false;
+        }
+        difference = difference | (actual ^ (u32[0 max])declared);
+    }
+    return difference == 0;
+}
+
+public fn Sha256Result HashSha256(borrow i8[min max][] source)
+{
+    stack mut Sha256State state = new();
+    switch (UpdateSha256(state, source))
+    {
+        case Sha256Status.Err(var error):
+            return Sha256Result.Err(error);
+        case Sha256Status.Ok:
+            return Sha256Result.Ok(FinishSha256(state));
+    }
+}
+
+public fn Sha256Result HashSha256Ascii(ascii source)
+{
+    stack mut Sha256State state = new();
+    switch (UpdateSha256Ascii(state, source))
+    {
+        case Sha256Status.Err(var error):
+            return Sha256Result.Err(error);
+        case Sha256Status.Ok:
+            return Sha256Result.Ok(FinishSha256(state));
+    }
+}
+
+// Streams through a fixed 8 KiB stack buffer. No buffer proportional to file
+// size is allocated, and full 64-byte input blocks bypass Sha256State's tail
+// buffer entirely.
+public fn Sha256FileResult HashSha256File(ascii path)
+{
+    unsafe
+    {
+        switch (System.IO.File.Open(
+            path,
+            System.IO.File.FileMode.Read,
+            System.Text.Encoding.Binary,
+            System.IO.File.FileBuffering.None))
+        {
+            case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+                return Sha256FileResult.Err(Sha256FileError.IO(openError));
+            case System.IO.IOResult<System.IO.File.File>.Ok(var opened):
+                stack mut System.IO.File.File file = opened;
+                stack mut Sha256State state = new();
+                stack mut i8[min max][8192] storage;
+                stack mut i8[min max][] buffer = slice(&storage[0], 8192);
+                while willexit (true)
+                {
+                    switch (file.Read(buffer))
+                    {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var readError):
+                            file.Close();
+                            return Sha256FileResult.Err(Sha256FileError.IO(readError));
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                            if (count == 0)
+                            {
+                                switch (file.Close())
+                                {
+                                    case System.IO.IOStatus.Err(var closeError):
+                                        return Sha256FileResult.Err(
+                                            Sha256FileError.IO(closeError));
+                                    case System.IO.IOStatus.Ok:
+                                        return Sha256FileResult.Ok(FinishSha256(state));
+                                }
+                            }
+
+                            stack i8[min max][] chunk = slice(&storage[0], count);
+                            switch (UpdateSha256(state, chunk))
+                            {
+                                case Sha256Status.Err(var hashError):
+                                    file.Close();
+                                    return Sha256FileResult.Err(
+                                        Sha256FileError.Hash(hashError));
+                                case Sha256Status.Ok:
+                            }
+                    }
+                }
+            }
+        }
+    }

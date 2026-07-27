@@ -1,0 +1,550 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedAssignmentHelpers
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedConversionHelpers
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexHelpers
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMemberLookup
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedMemberReceiverFacts
+module Compiler.Typing.TypedAssignmentNodeFacts
+
+internal fn void TypedAssignmentTargetFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow ExprTree tree,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] targetNode,
+    mut borrow TypedMemberTypeFacts targetFacts,
+    out TypedAssignmentTargetKind targetKind,
+    out TypedIdentifierTargetKind identifierTargetKind,
+    out TypedMemberTargetKind memberTargetKind,
+    out TypedIndexAccessKind indexAccessKind,
+    out u32[0 max] targetDeclarationIndex,
+    out u32[0 max] targetSymbolIndexPlusOne,
+    out u32[0 max] targetNameToken,
+    out TypedGlobalStorageKind targetStorageKind,
+    out TypedGlobalBindingKind targetBindingKind)
+{
+    targetKind = TypedAssignmentTargetKind.Unknown;
+    identifierTargetKind = TypedIdentifierTargetKind.Unknown;
+    memberTargetKind = TypedMemberTargetKind.Unknown;
+    indexAccessKind = TypedIndexAccessKind.Unknown;
+    targetDeclarationIndex = 0;
+    targetSymbolIndexPlusOne = 0;
+    targetNameToken = 0;
+    targetStorageKind = TypedGlobalStorageKind.Unknown;
+    targetBindingKind = TypedGlobalBindingKind.Unknown;
+
+    stack ExprKind kind = tree.NodeKindAt(targetNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        targetKind = TypedAssignmentTargetKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, targetFacts);
+        if (identifierIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] identifierIndex = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+            identifierTargetKind = identifiers.TargetKindAt(identifierIndex);
+            targetDeclarationIndex = identifiers.TargetDeclarationIndexAt(identifierIndex);
+            targetSymbolIndexPlusOne = identifiers.TargetSymbolIndexPlusOneAt(identifierIndex);
+            targetNameToken = identifiers.TargetNameTokenAt(identifierIndex);
+            targetStorageKind = identifiers.StorageKindAt(identifierIndex);
+            targetBindingKind = identifiers.BindingKindAt(identifierIndex);
+            if (targetNameToken == 0)
+            {
+                targetNameToken = identifiers.NameTokenAt(identifierIndex);
+            }
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, targetFacts);
+        if (memberIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberIndexPlusOne - 1);
+            stack TypedMemberTargetKind resolvedMemberTargetKind = members.TargetKindAt(memberIndex);
+            memberTargetKind = resolvedMemberTargetKind;
+            if (resolvedMemberTargetKind == TypedMemberTargetKind.Field)
+            {
+                targetKind = TypedAssignmentTargetKind.Field;
+            }
+
+            targetDeclarationIndex = members.TargetDeclarationIndexAt(memberIndex);
+            targetSymbolIndexPlusOne = members.TargetSymbolIndexPlusOneAt(memberIndex);
+            targetNameToken = members.TargetNameTokenAt(memberIndex);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedAssignmentIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, targetFacts);
+        if (indexIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] indexIndex = (u64[0 2 ** 63 - 1])(indexIndexPlusOne - 1);
+            stack TypedIndexAccessKind resolvedAccessKind = indexes.AccessKindAt(indexIndex);
+            indexAccessKind = resolvedAccessKind;
+            if (TypedAssignmentIndexAccessKindIsSlice(resolvedAccessKind))
+            {
+                targetKind = TypedAssignmentTargetKind.IndexSlice;
+            }
+            else
+            {
+                targetKind = TypedAssignmentTargetKind.IndexElement;
+            }
+
+            targetDeclarationIndex = targetFacts.DeclarationIndex;
+            targetNameToken = targetFacts.NameToken;
+        }
+    }
+}
+
+internal fn void TypedAssignmentTargetFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow StatementList body,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] targetNode,
+    mut borrow TypedMemberTypeFacts targetFacts,
+    out TypedAssignmentTargetKind targetKind,
+    out TypedIdentifierTargetKind identifierTargetKind,
+    out TypedMemberTargetKind memberTargetKind,
+    out TypedIndexAccessKind indexAccessKind,
+    out u32[0 max] targetDeclarationIndex,
+    out u32[0 max] targetSymbolIndexPlusOne,
+    out u32[0 max] targetNameToken,
+    out TypedGlobalStorageKind targetStorageKind,
+    out TypedGlobalBindingKind targetBindingKind)
+{
+    targetKind = TypedAssignmentTargetKind.Unknown;
+    identifierTargetKind = TypedIdentifierTargetKind.Unknown;
+    memberTargetKind = TypedMemberTargetKind.Unknown;
+    indexAccessKind = TypedIndexAccessKind.Unknown;
+    targetDeclarationIndex = 0;
+    targetSymbolIndexPlusOne = 0;
+    targetNameToken = 0;
+    targetStorageKind = TypedGlobalStorageKind.Unknown;
+    targetBindingKind = TypedGlobalBindingKind.Unknown;
+
+    stack ExprKind kind = body.ExprKindAt(targetNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        targetKind = TypedAssignmentTargetKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, targetFacts);
+        if (identifierIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] identifierIndex = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+            identifierTargetKind = identifiers.TargetKindAt(identifierIndex);
+            targetDeclarationIndex = identifiers.TargetDeclarationIndexAt(identifierIndex);
+            targetSymbolIndexPlusOne = identifiers.TargetSymbolIndexPlusOneAt(identifierIndex);
+            targetNameToken = identifiers.TargetNameTokenAt(identifierIndex);
+            targetStorageKind = identifiers.StorageKindAt(identifierIndex);
+            targetBindingKind = identifiers.BindingKindAt(identifierIndex);
+            if (targetNameToken == 0)
+            {
+                targetNameToken = identifiers.NameTokenAt(identifierIndex);
+            }
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, targetFacts);
+        if (memberIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberIndexPlusOne - 1);
+            stack TypedMemberTargetKind resolvedMemberTargetKind = members.TargetKindAt(memberIndex);
+            memberTargetKind = resolvedMemberTargetKind;
+            if (resolvedMemberTargetKind == TypedMemberTargetKind.Field)
+            {
+                targetKind = TypedAssignmentTargetKind.Field;
+            }
+
+            targetDeclarationIndex = members.TargetDeclarationIndexAt(memberIndex);
+            targetSymbolIndexPlusOne = members.TargetSymbolIndexPlusOneAt(memberIndex);
+            targetNameToken = members.TargetNameTokenAt(memberIndex);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedAssignmentIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            targetNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, targetFacts);
+        if (indexIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] indexIndex = (u64[0 2 ** 63 - 1])(indexIndexPlusOne - 1);
+            stack TypedIndexAccessKind resolvedAccessKind = indexes.AccessKindAt(indexIndex);
+            indexAccessKind = resolvedAccessKind;
+            if (TypedAssignmentIndexAccessKindIsSlice(resolvedAccessKind))
+            {
+                targetKind = TypedAssignmentTargetKind.IndexSlice;
+            }
+            else
+            {
+                targetKind = TypedAssignmentTargetKind.IndexElement;
+            }
+
+            targetDeclarationIndex = targetFacts.DeclarationIndex;
+            targetNameToken = targetFacts.NameToken;
+        }
+    }
+}
+
+internal fn void TypedAssignmentValueFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    borrow ExprTree tree,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] valueNode,
+    mut borrow TypedMemberTypeFacts valueFacts,
+    out TypedAssignmentValueKind valueKind)
+{
+    valueKind = TypedAssignmentValueKind.Unknown;
+    stack ExprKind kind = tree.NodeKindAt(valueNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        valueKind = TypedAssignmentValueKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        valueKind = TypedAssignmentValueKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        valueKind = TypedAssignmentValueKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        valueKind = TypedAssignmentValueKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedAssignmentIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        valueKind = TypedAssignmentValueKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedAssignmentLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        valueKind = TypedAssignmentValueKind.New;
+        stack u32[0 max] typeNode = tree.LeftAt(valueNode);
+        if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, tree.TokenAt(typeNode), valueFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        valueKind = TypedAssignmentValueKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            TypedAssignmentConversionContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Assign)
+    {
+        valueKind = TypedAssignmentValueKind.Assignment;
+        stack u32[0 max] assignmentIndexPlusOne = TypedAssignmentExpressionIndexForNode(
+            assignments,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedAssignmentFactsFromAssignment(assignments, assignmentIndexPlusOne, valueFacts);
+    }
+}
+
+internal fn void TypedAssignmentValueFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow TypedAssignmentExpressionTable assignments,
+    borrow StatementList body,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] valueNode,
+    mut borrow TypedMemberTypeFacts valueFacts,
+    out TypedAssignmentValueKind valueKind)
+{
+    valueKind = TypedAssignmentValueKind.Unknown;
+    stack ExprKind kind = body.ExprKindAt(valueNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        valueKind = TypedAssignmentValueKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        valueKind = TypedAssignmentValueKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        valueKind = TypedAssignmentValueKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedAssignmentMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        valueKind = TypedAssignmentValueKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedAssignmentIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        valueKind = TypedAssignmentValueKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedAssignmentLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        valueKind = TypedAssignmentValueKind.New;
+        stack u32[0 max] typeNode = body.ExprLeftAt(valueNode);
+        if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, body.ExprTokenAt(typeNode), valueFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        valueKind = TypedAssignmentValueKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            TypedAssignmentConversionContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, valueFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Assign)
+    {
+        valueKind = TypedAssignmentValueKind.Assignment;
+        stack u32[0 max] assignmentIndexPlusOne = TypedAssignmentExpressionIndexForNode(
+            assignments,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            valueNode);
+        TypedAssignmentFactsFromAssignment(assignments, assignmentIndexPlusOne, valueFacts);
+    }
+}

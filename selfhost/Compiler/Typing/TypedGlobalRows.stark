@@ -1,0 +1,116 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGlobalHelpers
+import Compiler.Typing.TypedGlobalModel
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedGlobalRows
+
+internal fn System.Memory.MemoryStatus AppendTypedGlobalDeclaration(
+    mut borrow TypedGlobalDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    stack u32[0 max] nameToken = TypedGlobalFindNameToken(stream, item);
+    stack u32[0 max] typeStartToken = TypedGlobalTypeStartToken(stream, item, nameToken);
+    stack mut u32[0 max] typeEndToken = 0;
+    if (typeStartToken != 0)
+    {
+        typeEndToken = nameToken;
+    }
+
+    stack mut TypedSignatureTypeKind typeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] typeFlags = 0;
+
+    if (typeStartToken != 0 && typeEndToken > typeStartToken)
+    {
+        stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+        TypedSignatureScanTopLevelTypeFacts(
+            stream,
+            typeStartToken,
+            typeEndToken,
+            rangeStartToken,
+            rangeEndToken,
+            elementCountStartToken,
+            elementCountEndToken,
+            arrayKind);
+
+        typeHeadToken = TypedGlobalTypeHeadToken(stream, typeStartToken, typeEndToken);
+        typePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typeHeadToken);
+        typeKind = TypedSignatureKindForType(source, stream, typePrimaryToken, typeHeadToken, 0, 0, arrayKind);
+
+        stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+        if (primaryKind == TokenKind.IntegerType)
+        {
+            bitWidth = TypedSignatureIntegerBitWidth(source, stream, typePrimaryToken);
+        }
+        else if (primaryKind == TokenKind.FloatType)
+        {
+            bitWidth = TypedSignatureFloatBitWidth(source, stream, typePrimaryToken);
+        }
+
+        if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+        {
+            TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+        }
+
+        typeFlags = TypedSignatureFlagsForType(
+            source,
+            stream,
+            typePrimaryToken,
+            typeHeadToken,
+            typeStartToken,
+            typeEndToken,
+            0,
+            0,
+            rangeStartToken,
+            rangeEndToken,
+            elementCountStartToken,
+            false,
+            0,
+            false);
+    }
+
+    stack mut u32[0 max] initializerStartToken = 0;
+    stack mut u32[0 max] initializerEndToken = 0;
+    stack u32[0 max] assignToken = TypedGlobalFindAssignToken(stream, item);
+    if (assignToken != 0)
+    {
+        initializerStartToken = (u32[0 max])(assignToken + 1);
+        initializerEndToken = TypedGlobalInitializerEndExclusive(stream, item);
+    }
+
+    return table.Append(
+        declarationIndex,
+        item,
+        nameToken,
+        TypedGlobalBindingKindForItem(stream, item),
+        TypedGlobalStorageKindForItem(stream, item),
+        typeKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        typeFlags,
+        initializerStartToken,
+        initializerEndToken);
+}

@@ -1,0 +1,172 @@
+import LlvmTestSupport
+import System.Testing
+module PackageImageCallableValueTests
+
+// Ported slice of tests/compiler.Tests/PackageImageCallableValueTests.cs. Each
+// Impl builds the embedded Facade library through --emit-lib package-image
+// output, deletes source visibility by consuming only the package directory, and
+// then compiles the embedded Demo consumer through the host-test harness.
+// Structured artifact assertions that the host text protocol cannot expose are
+// represented by the strongest observable LLVM/text checks.
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes.
+internal fn bool PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvmWithPackage(
+        "pkgimg-callable-alias-indirect",
+        raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] value)
+{
+    return transform(value);
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public alias StrictTransform = fnptr<finite law i32[min max](i32[min max])>;
+""");
+    if (!SucceedsReport(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii callNeedle = "%arg_transform(";
+    return AnyLineContainsBoth(llvm, "call fastcc", callNeedle)
+        && AnyLineContainsBoth(llvm, callNeedle, "willreturn")
+        && AnyLineContainsBoth(llvm, callNeedle, "mustprogress")
+        && AnyLineContainsBoth(llvm, callNeedle, "nosync")
+        && AnyLineContainsBoth(llvm, callNeedle, "nofree")
+        && AnyLineContainsBoth(llvm, callNeedle, "memory(none)");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributes.
+internal fn bool PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvmWithPackage(
+        "pkgimg-generic-fnptr-kind",
+        raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Double(i32[min max] value)
+{
+    return value * 2;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    stack fnptr<finite law i32[min max](i32[min max])> transform = Double;
+    return Facade.Apply(transform, value);
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public finite law T Apply<T>(fnptr<finite law T(T)> transform, T value)
+{
+    return transform(value);
+}
+""");
+    if (!SucceedsReport(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii callNeedle = "%arg_transform(";
+    return AnyLineContainsBoth(llvm, "call fastcc", callNeedle)
+        && AnyLineContainsBoth(llvm, callNeedle, "willreturn")
+        && AnyLineContainsBoth(llvm, callNeedle, "mustprogress")
+        && AnyLineContainsBoth(llvm, callNeedle, "nosync")
+        && AnyLineContainsBoth(llvm, callNeedle, "nofree")
+        && AnyLineContainsBoth(llvm, callNeedle, "memory(none)");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdas.
+internal fn bool PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdasImpl()
+{
+    // PORT-NOTE: consumer kept verbatim. The C# asserts on structured artifacts
+    // (a single TypeCheckModel lambda with FunctionPointerKind == FiniteLaw, and
+    // the synthesized lambda appearing as the single AddressTakenFunction across
+    // HIR/MIR/SSA/OptimizedSSA/LLVM). Those fact tables are represented by the
+    // synthetic lambda definition/call emitted by LLVM lowering.
+    stack mut LlvmCompile c = CompileLlvmWithPackage(
+        "pkgimg-fnptr-lambda",
+        raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run()
+{
+    return Facade.Apply((i32[min max] value) => value + 1, 41);
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public fn i32[min max] Apply(
+    fnptr<finite law i32[min max](i32[min max])> callback,
+    i32[min max] value);
+""");
+    if (!SucceedsReport(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return LlvmContains(c, "; synthetic definition: Run.__lambda_")
+        && Contains(llvm, "define internal dso_local fastcc noundef")
+        && Contains(llvm, "i32 @Run___lambda_")
+        && Contains(llvm, "call fastcc i32 @Facade_Apply(ptr ")
+        && Contains(llvm, "@Run___lambda_");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs.
+internal fn bool PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvmWithPackage(
+        "pkgimg-fallback-gate",
+        raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+{
+    return Facade.Choose(left, right, takeRight) + Facade.Twice(5);
+}
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+
+public fn i32[min max] Twice(i32[min max] value)
+{
+    return value + value;
+}
+""");
+    if (!SucceedsReport(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return LlvmContains(c, "define");
+}

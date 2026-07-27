@@ -1,0 +1,189 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import System.Text
+import System.Memory
+module Compiler.Binding.Declarations
+
+// A flat table mapping each named top-level declaration to its index in the
+// `DeclarationList`.
+public struct DeclarationTable
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] DeclIndices;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic DeclarationKind Kinds;
+
+    DeclarationTable()
+    {
+        self.NameTokens = new();
+        self.DeclIndices = new();
+        self.KeywordTokens = new();
+        self.Kinds = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow DeclarationTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    // The name token of table entry `index`, or 0 when out of range.
+    public finite law u32[0 max] NameTokenAt(borrow DeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    // The declaration index of table entry `index`, or 0 when out of range.
+    public finite law u32[0 max] DeclIndexAt(borrow DeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] declIndex = 0;
+        if (index < self.DeclIndices.Length)
+        {
+            declIndex = self.DeclIndices[index];
+        }
+
+        return declIndex;
+    }
+
+    // The declaration keyword token (`fn`, `struct`, ...), or 0 when out of range.
+    public finite law u32[0 max] KeywordTokenAt(borrow DeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] keyword = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            keyword = self.KeywordTokens[index];
+        }
+
+        return keyword;
+    }
+
+    // The top-level declaration kind, or Unknown when out of range.
+    public finite law DeclarationKind KindAt(borrow DeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DeclarationKind kind = DeclarationKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow DeclarationTable self, u32[0 max] nameToken, u32[0 max] declIndex, u32[0 max] keywordToken, DeclarationKind kind)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.DeclIndices.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.Kinds.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.DeclIndices[self.DeclIndices.Length] = declIndex;
+        init self.KeywordTokens[self.KeywordTokens.Length] = keywordToken;
+        init self.Kinds[self.Kinds.Length] = kind;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+// Builds a declaration table from `decls`, recording every declaration that has
+// a name (in declaration order).
+public fn BindResult<DeclarationTable> BuildDeclarationTable(ascii source, borrow TokenStream stream, borrow DeclarationList decls)
+{
+    stack mut DeclarationTable table = new();
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.NameToken != 0)
+        {
+            switch (table.Append(item.NameToken, (u32[0 max])index, item.KeywordToken, item.Kind))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return BindResult<DeclarationTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<DeclarationTable>.Ok(table);
+}
+
+// The table index of the first declaration named `name`, plus one (0 if none).
+public fn u32[0 max] LookupDeclaration(borrow DeclarationTable table, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii entryName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(index));
+            if (System.Text.Equals(entryName, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+// True when two declarations in the table share a name (a redefinition).
+public fn bool HasDuplicateDeclaration(borrow DeclarationTable table, ascii source, borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] outer = 0; outer < count; outer += 1)
+    {
+        stack ascii outerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(outer));
+        for willexit (stack mut u64[0 2 ** 63 - 1] inner = (u64[0 2 ** 63 - 1])(outer + 1); inner < count; inner += 1)
+        {
+            stack ascii innerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(inner));
+            if (System.Text.Equals(outerName, innerName))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Collects a `DuplicateDeclaration` diagnostic (anchored at the later name) for
+// every top-level declaration whose name repeats an earlier one.
+internal fn System.Memory.MemoryStatus CollectDuplicateDeclarations(borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] later = 0; later < count; later += 1)
+    {
+        stack ascii laterName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(later));
+        stack mut bool repeats = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] earlier = 0; earlier < later; earlier += 1)
+        {
+            stack ascii earlierName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(earlier));
+            if (System.Text.Equals(earlierName, laterName))
+            {
+                repeats = true;
+            }
+        }
+
+        if (repeats)
+        {
+            switch (diags.Append(BindDiagnosticCode.DuplicateDeclaration, table.NameTokenAt(later)))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

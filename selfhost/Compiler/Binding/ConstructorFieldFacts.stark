@@ -1,0 +1,84 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Declarations
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.Copyability
+module Compiler.Binding.ConstructorFieldFacts
+
+internal fn bool ConstructorTypeSpanIsFixedArray(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] open = 0;
+    stack mut u32[0 max] close = 0;
+    if (!CopyabilityTryTopLevelSuffixBracket(stream, start, endExclusive, open, close)
+        || close <= (u32[0 max])(open + 1))
+    {
+        return false;
+    }
+
+    if (open == 0)
+    {
+        return false;
+    }
+
+    // `i32[min max]` is an integer range, not a fixed array suffix.
+    return stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) != TokenKind.IntegerType;
+}
+
+internal fn bool ConstructorFieldRequiresAssignment(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    u32[0 max] fieldToken)
+{
+    stack u64[0 2 ** 63 - 1] count = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, fields.NameTokenAt(index), fieldToken))
+        {
+            stack u32[0 max] typeStart = fields.TypeStartAt(index);
+            stack u32[0 max] typeEnd = fields.TypeEndAt(index);
+            return !ConstructorTypeSpanIsFixedArray(stream, typeStart, typeEnd)
+                && !CopyabilityTypeSpanIsCopyable(decls, table, source, stream, facts, typeStart, typeEnd, 0);
+        }
+    }
+
+    return false;
+}
+
+internal fn bool ConstructorSelfFieldMemberRequiresAssignment(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FieldList fields,
+    borrow StatementList body,
+    u32[0 max] node,
+    out u32[0 max] fieldToken)
+{
+    fieldToken = 0;
+    if (node == 0 || body.ExprKindAt(node) != Compiler.Parsing.ExprKind.Member)
+    {
+        return false;
+    }
+
+    stack u32[0 max] receiver = body.ExprLeftAt(node);
+    if (receiver == 0
+        || body.ExprKindAt(receiver) != Compiler.Parsing.ExprKind.Identifier
+        || !TokenTextEquals(source, stream, body.ExprTokenAt(receiver), "self"))
+    {
+        return false;
+    }
+
+    stack u32[0 max] memberToken = body.ExprTokenAt(node);
+    if (!ConstructorFieldRequiresAssignment(decls, table, source, stream, facts, fields, memberToken))
+    {
+        return false;
+    }
+
+    fieldToken = memberToken;
+    return true;
+}

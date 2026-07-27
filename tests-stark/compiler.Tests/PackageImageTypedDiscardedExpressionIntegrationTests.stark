@@ -1,0 +1,36 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedDiscardedExpressionIntegrationTests
+
+// Ported from PackageImageTypedDiscardedExpressionIntegrationTests.ManifestBackedTypedDiscardedExpressionBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedDiscardedExpressionBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed discarded expression bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "manifest-backed-typed-discarded-expression-bodies",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Observe(7, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    value + 1;
+    return value;
+}
+""",
+            "Facade.Observe",
+            "",
+            7);
+    }
+}

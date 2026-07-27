@@ -1,0 +1,481 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.ManifestModel
+import Compiler.Sdk.PackageIndex
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Sdk.LinkPlan
+
+// A model-level selected SDK package graph. Entries are indices into the
+// original SdkManifest and are ordered for a left-to-right static linker:
+// every dependent precedes each dependency. Package image/library paths and
+// native/backend facts remain owned by the manifest and are never flattened
+// or copied into this plan.
+public struct SdkPackageLinkPlan
+{
+    internal dynamic u64[0 2 ** 63 - 1] OrderedPackageIndices;
+
+    SdkPackageLinkPlan()
+    {
+        self.OrderedPackageIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] PackageCount(
+        borrow SdkPackageLinkPlan self)
+    {
+        return self.OrderedPackageIndices.Length;
+    }
+
+    public finite law u64[0 2 ** 63 - 1] PackageIndexAt(
+        borrow SdkPackageLinkPlan self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.OrderedPackageIndices.Length)
+        {
+            return 0;
+        }
+
+        return self.OrderedPackageIndices[0, self.OrderedPackageIndices.Length][index];
+    }
+}
+
+internal fn MemoryStatus SdkLinkPlanAppendIndex(
+    mut borrow dynamic u64[0 2 ** 63 - 1] destination,
+    u64[0 2 ** 63 - 1] value)
+{
+    if (!destination.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    init destination[destination.Length] = value;
+    return MemoryStatus.Ok;
+}
+
+internal fn void SdkLinkPlanClearIndices(
+    mut borrow dynamic u64[0 2 ** 63 - 1] destination)
+{
+    while willexit (destination.Length > 0)
+    {
+        stack u64[0 2 ** 63 - 1] removed = destination.MoveLast();
+    }
+    return;
+}
+
+// The caller has already reserved and initialized every slot written through
+// these helpers. Keep the sparse mutation proof at one small boundary instead
+// of forming a temporary full-length slice, whose nested assignment place is
+// not yet supported by Stage0 MIR lowering.
+internal inline fn void SdkLinkPlanSetIndex(
+    mut borrow dynamic u64[0 2 ** 63 - 1] destination,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] value)
+{
+    unsafe
+    {
+        destination[index] = value;
+    }
+    return;
+}
+
+internal inline fn void SdkLinkPlanSetState(
+    mut borrow dynamic u8[0 1] destination,
+    u64[0 2 ** 63 - 1] index,
+    u8[0 1] value)
+{
+    unsafe
+    {
+        destination[index] = value;
+    }
+    return;
+}
+
+internal fn MemoryStatus SdkLinkPlanAppendState(
+    mut borrow dynamic u8[0 1] destination,
+    u8[0 1] value)
+{
+    if (!destination.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    init destination[destination.Length] = value;
+    return MemoryStatus.Ok;
+}
+
+internal fn bool SdkLinkPlanPackagePrecedes(
+    mut borrow SdkManifest manifest,
+    u64[0 2 ** 63 - 1] leftIndex,
+    u64[0 2 ** 63 - 1] rightIndex)
+{
+    stack ascii leftId = manifest.PackageAt(leftIndex).Id();
+    stack ascii rightId = manifest.PackageAt(rightIndex).Id();
+    stack Ordering ordering = System.Text.Compare(leftId, rightId);
+    return ordering == Ordering.Less
+        || (ordering == Ordering.Equal && leftIndex < rightIndex);
+}
+
+internal fn MemoryStatus SdkLinkPlanReadyPush(
+    mut borrow dynamic u64[0 2 ** 63 - 1] ready,
+    mut borrow SdkManifest manifest,
+    u64[0 2 ** 63 - 1] packageIndex)
+{
+    switch (SdkLinkPlanAppendIndex(ready, packageIndex))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] position =
+        (u64[0 2 ** 63 - 1])(ready.Length - 1);
+    while willexit (position > 0)
+    {
+        stack u64[0 2 ** 63 - 1] parent =
+            (u64[0 2 ** 63 - 1])((position - 1) / 2);
+        stack u64[0 2 ** 63 - 1] childValue = ready[0, ready.Length][position];
+        stack u64[0 2 ** 63 - 1] parentValue = ready[0, ready.Length][parent];
+        if (!SdkLinkPlanPackagePrecedes(manifest, childValue, parentValue))
+        {
+            return MemoryStatus.Ok;
+        }
+
+        SdkLinkPlanSetIndex(ready, position, parentValue);
+        SdkLinkPlanSetIndex(ready, parent, childValue);
+        position = parent;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool SdkLinkPlanReadyPop(
+    mut borrow dynamic u64[0 2 ** 63 - 1] ready,
+    mut borrow SdkManifest manifest,
+    out u64[0 2 ** 63 - 1] packageIndex)
+{
+    if (ready.Length == 0)
+    {
+        packageIndex = 0;
+        return false;
+    }
+
+    packageIndex = ready[0, ready.Length][0];
+    stack u64[0 2 ** 63 - 1] tail = ready.MoveLast();
+    if (ready.Length == 0)
+    {
+        return true;
+    }
+
+    SdkLinkPlanSetIndex(ready, 0, tail);
+    stack mut u64[0 2 ** 63 - 1] position = 0;
+    while willexit (true)
+    {
+        stack u64[0 2 ** 63 - 1] left =
+            (u64[0 2 ** 63 - 1])(position * 2 + 1);
+        if (left >= ready.Length)
+        {
+            return true;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] best = left;
+        stack u64[0 2 ** 63 - 1] right = left + 1;
+        if (right < ready.Length
+            && SdkLinkPlanPackagePrecedes(
+                manifest,
+                ready[0, ready.Length][right],
+                ready[0, ready.Length][left]))
+        {
+            best = right;
+        }
+
+        if (!SdkLinkPlanPackagePrecedes(
+            manifest,
+            ready[0, ready.Length][best],
+            ready[0, ready.Length][position]))
+        {
+            return true;
+        }
+
+        stack u64[0 2 ** 63 - 1] bestValue = ready[0, ready.Length][best];
+        stack u64[0 2 ** 63 - 1] positionValue = ready[0, ready.Length][position];
+        SdkLinkPlanSetIndex(ready, best, positionValue);
+        SdkLinkPlanSetIndex(ready, position, bestValue);
+        position = best;
+    }
+}
+
+internal fn MemoryStatus SdkLinkPlanAppendDiagnostic(
+    mut borrow SdkDiagnosticList diagnostics,
+    SdkDiagnosticCode code,
+    ascii message,
+    ascii packageId)
+{
+    return diagnostics.Append(code, message, packageId);
+}
+
+// Selects only packages owning exact imported module names, closes over their
+// exact package dependencies, and emits a deterministic topological order.
+// Unknown imported modules are ordinary project/source modules and are ignored.
+// Semantic failures append existing SDK identity diagnostics and leave the
+// destination empty; allocation failures are returned.
+public fn MemoryStatus BuildSelectedSdkPackageLinkPlan(
+    mut borrow SdkPackageLinkPlan destination,
+    mut borrow SdkManifest manifest,
+    borrow SdkPackageIndex packageIndex,
+    borrow ascii[] importedModuleNames,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap(manifest, packageIndex)
+{
+    SdkLinkPlanClearIndices(destination.OrderedPackageIndices);
+    stack u64[0 2 ** 63 - 1] packageCount = manifest.PackageCount();
+    stack u64[0 2 ** 63 - 1] diagnosticStart = diagnostics.Count();
+
+    stack mut dynamic u8[0 1] selected = new();
+    stack mut dynamic u64[0 2 ** 63 - 1] incomingEdges = new();
+    stack mut dynamic u64[0 2 ** 63 - 1] pending = new();
+    stack mut dynamic u64[0 2 ** 63 - 1] ready = new();
+    if (!selected.TryReserve(packageCount)
+        || !incomingEdges.TryReserve(packageCount)
+        || !pending.TryReserve(packageCount)
+        || !ready.TryReserve(packageCount)
+        || !destination.OrderedPackageIndices.TryReserve(packageCount))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < packageCount;
+        index += 1)
+    {
+        switch (SdkLinkPlanAppendState(selected, 0))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+        switch (SdkLinkPlanAppendIndex(incomingEdges, 0))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] moduleIndex = 0;
+        moduleIndex < importedModuleNames.Length;
+        moduleIndex += 1)
+    {
+        stack mut u64[0 2 ** 63 - 1] ownerIndex = 0;
+        if (!packageIndex.TryGetPackageIndexForModule(
+            importedModuleNames[moduleIndex],
+            ownerIndex))
+        {
+            continue;
+        }
+
+        if (ownerIndex >= packageCount)
+        {
+            switch (SdkLinkPlanAppendDiagnostic(
+                diagnostics,
+                SdkDiagnosticCode.ModulePackageMissing,
+                "Selected SDK module owner does not name a manifest package.",
+                importedModuleNames[moduleIndex]))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+            continue;
+        }
+
+        if (selected[0, selected.Length][ownerIndex] == 0)
+        {
+            SdkLinkPlanSetState(selected, ownerIndex, 1);
+            switch (SdkLinkPlanAppendIndex(pending, ownerIndex))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] pendingCursor = 0;
+    while willexit (pendingCursor < pending.Length)
+    {
+        stack u64[0 2 ** 63 - 1] currentIndex =
+            pending[0, pending.Length][pendingCursor];
+        pendingCursor += 1;
+        for willexit (stack mut u64[0 2 ** 63 - 1] dependencyIndex = 0;
+            dependencyIndex < manifest.PackageAt(currentIndex).DependencyCount();
+            dependencyIndex += 1)
+        {
+            stack ascii dependencyId =
+                manifest.PackageAt(currentIndex).DependencyAt(dependencyIndex).PackageId();
+            stack mut u64[0 2 ** 63 - 1] resolvedIndex = 0;
+            if (!packageIndex.TryGetPackageIndex(dependencyId, resolvedIndex)
+                || resolvedIndex >= packageCount)
+            {
+                switch (SdkLinkPlanAppendDiagnostic(
+                    diagnostics,
+                    SdkDiagnosticCode.DependencyMissing,
+                    "Selected SDK package dependency does not name an indexed package.",
+                    dependencyId))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+                continue;
+            }
+
+            if (resolvedIndex == currentIndex)
+            {
+                switch (SdkLinkPlanAppendDiagnostic(
+                    diagnostics,
+                    SdkDiagnosticCode.SelfDependency,
+                    "Selected SDK package must not depend on itself.",
+                    dependencyId))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+                continue;
+            }
+
+            if (selected[0, selected.Length][resolvedIndex] == 0)
+            {
+                SdkLinkPlanSetState(selected, resolvedIndex, 1);
+                switch (SdkLinkPlanAppendIndex(pending, resolvedIndex))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] selectedCount = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] currentIndex = 0;
+        currentIndex < packageCount;
+        currentIndex += 1)
+    {
+        if (selected[0, selected.Length][currentIndex] == 0)
+        {
+            continue;
+        }
+
+        selectedCount += 1;
+        for willexit (stack mut u64[0 2 ** 63 - 1] dependencyIndex = 0;
+            dependencyIndex < manifest.PackageAt(currentIndex).DependencyCount();
+            dependencyIndex += 1)
+        {
+            stack ascii dependencyId =
+                manifest.PackageAt(currentIndex).DependencyAt(dependencyIndex).PackageId();
+            stack mut u64[0 2 ** 63 - 1] resolvedIndex = 0;
+            if (packageIndex.TryGetPackageIndex(dependencyId, resolvedIndex)
+                && resolvedIndex < packageCount
+                && resolvedIndex != currentIndex
+                && selected[0, selected.Length][resolvedIndex] != 0)
+            {
+                incomingEdges[0, incomingEdges.Length][resolvedIndex] += 1;
+            }
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] package = 0;
+        package < packageCount;
+        package += 1)
+    {
+        if (selected[0, selected.Length][package] != 0
+            && incomingEdges[0, incomingEdges.Length][package] == 0)
+        {
+            switch (SdkLinkPlanReadyPush(ready, manifest, package))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] currentIndex = 0;
+    while willexit (SdkLinkPlanReadyPop(ready, manifest, currentIndex))
+    {
+        switch (SdkLinkPlanAppendIndex(destination.OrderedPackageIndices, currentIndex))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] dependencyIndex = 0;
+            dependencyIndex < manifest.PackageAt(currentIndex).DependencyCount();
+            dependencyIndex += 1)
+        {
+            stack ascii dependencyId =
+                manifest.PackageAt(currentIndex).DependencyAt(dependencyIndex).PackageId();
+            stack mut u64[0 2 ** 63 - 1] resolvedIndex = 0;
+            if (!packageIndex.TryGetPackageIndex(dependencyId, resolvedIndex)
+                || resolvedIndex >= packageCount
+                || resolvedIndex == currentIndex
+                || selected[0, selected.Length][resolvedIndex] == 0)
+            {
+                continue;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] incoming =
+                incomingEdges[0, incomingEdges.Length][resolvedIndex];
+            if (incoming > 0)
+            {
+                incoming -= 1;
+                SdkLinkPlanSetIndex(incomingEdges, resolvedIndex, incoming);
+                if (incoming == 0)
+                {
+                    switch (SdkLinkPlanReadyPush(ready, manifest, resolvedIndex))
+                    {
+                        case MemoryStatus.Err(var error):
+                            return MemoryStatus.Err(error);
+                        case MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    if (destination.PackageCount() != selectedCount)
+    {
+        stack mut ascii cyclePackageId = "";
+        for willexit (stack mut u64[0 2 ** 63 - 1] package = 0;
+            package < packageCount;
+            package += 1)
+        {
+            if (System.Text.AsciiLength(cyclePackageId) == 0
+                && selected[0, selected.Length][package] != 0
+                && incomingEdges[0, incomingEdges.Length][package] > 0)
+            {
+                cyclePackageId = manifest.PackageAt(package).Id();
+            }
+        }
+
+        switch (SdkLinkPlanAppendDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.DependencyCycle,
+            "Selected SDK package dependency graph contains a cycle.",
+            cyclePackageId))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+    }
+
+    if (diagnostics.Count() != diagnosticStart)
+    {
+        SdkLinkPlanClearIndices(destination.OrderedPackageIndices);
+    }
+
+    return MemoryStatus.Ok;
+}

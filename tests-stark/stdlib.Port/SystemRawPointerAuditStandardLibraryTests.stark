@@ -1,0 +1,452 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Testing
+import System.Text
+module SystemRawPointerAuditStandardLibraryTests
+
+const StdlibSystemSourceRoot = "../../stdlib/src/System";
+
+static mut i32[min max] RawPointerAuditVisitedFiles = 0;
+static mut i32[min max] RawPointerAuditFilesWithRawPointers = 0;
+static mut i32[min max] RawPointerAuditBoundaryViolations = 0;
+
+static mut i32[min max] PublicSurfaceAuditVisitedFiles = 0;
+static mut i32[min max] PublicSurfaceAuditRawDeclarations = 0;
+static mut i32[min max] PublicSurfaceAuditViolations = 0;
+
+// Ported from SystemRawPointerAuditStandardLibraryTests.StdLibRawPointerUseStaysInDocumentedBoundaryFiles.
+internal fn bool StdLibRawPointerUseStaysInDocumentedBoundaryFilesImpl()
+{
+    ResetRawPointerBoundaryAudit();
+
+    stack System.IO.IOStatus status =
+        System.FileSystem.Glob(StdlibSystemSourceRoot, "**/*.stark", VisitRawPointerBoundaryFile);
+    if (!IsOk(status))
+    {
+        return false;
+    }
+
+    return RawPointerAuditVisitedFiles > 0
+        && RawPointerAuditFilesWithRawPointers > 0
+        && RawPointerAuditBoundaryViolations == 0;
+}
+
+// Ported from SystemRawPointerAuditStandardLibraryTests.StdLibPublicRawPointerSurfaceStaysExplicitlyUnsafeAndAllowlisted.
+internal fn bool StdLibPublicRawPointerSurfaceStaysExplicitlyUnsafeAndAllowlistedImpl()
+{
+    ResetPublicSurfaceAudit();
+
+    stack System.IO.IOStatus status =
+        System.FileSystem.Glob(StdlibSystemSourceRoot, "**/*.stark", VisitPublicRawPointerSurfaceFile);
+    if (!IsOk(status))
+    {
+        return false;
+    }
+
+    return PublicSurfaceAuditVisitedFiles > 0
+        && PublicSurfaceAuditRawDeclarations > 0
+        && PublicSurfaceAuditViolations == 0;
+}
+
+// Ported from SystemRawPointerAuditStandardLibraryTests.StdLibRootDoesNotReExportPublicRawPointerSurfaceModules.
+internal fn bool StdLibRootDoesNotReExportPublicRawPointerSurfaceModulesImpl()
+{
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var systemError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var systemSourceOwner):
+            stack ascii systemSource = systemSourceOwner.View();
+            return !System.Testing.Contains(systemSource, "export import System.Text")
+                && !System.Testing.Contains(systemSource, "export import System.Testing")
+                && !System.Testing.Contains(systemSource, "export import System.Testing.HostCompiler")
+                && System.Testing.Contains(systemSource, "export import System.IO.File")
+                && System.Testing.Contains(systemSource, "export import System.Collections")
+                && System.Testing.Contains(systemSource, "export import System.Json")
+                && System.Testing.Contains(systemSource, "export import System.Toml");
+    }
+}
+
+internal fn void ResetRawPointerBoundaryAudit()
+{
+    RawPointerAuditVisitedFiles = 0;
+    RawPointerAuditFilesWithRawPointers = 0;
+    RawPointerAuditBoundaryViolations = 0;
+    return;
+}
+
+internal fn void ResetPublicSurfaceAudit()
+{
+    PublicSurfaceAuditVisitedFiles = 0;
+    PublicSurfaceAuditRawDeclarations = 0;
+    PublicSurfaceAuditViolations = 0;
+    return;
+}
+
+internal fn System.IO.IOStatus VisitRawPointerBoundaryFile(
+    ascii path,
+    System.FileSystem.FileSystemEntryKind kind)
+{
+    if (kind != System.FileSystem.FileSystemEntryKind.File)
+    {
+        return System.IO.IOStatus.Ok;
+    }
+
+    RawPointerAuditVisitedFiles += 1;
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var readError):
+            return System.IO.IOStatus.Err(readError);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var sourceOwner):
+            stack ascii source = sourceOwner.View();
+            if (!SourceContainsRawPointerToken(source))
+            {
+                return System.IO.IOStatus.Ok;
+            }
+
+            RawPointerAuditFilesWithRawPointers += 1;
+            if (!IsDocumentedRawPointerBoundaryFile(path))
+            {
+                RawPointerAuditBoundaryViolations += 1;
+                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            }
+    }
+
+    return System.IO.IOStatus.Ok;
+}
+
+internal fn System.IO.IOStatus VisitPublicRawPointerSurfaceFile(
+    ascii path,
+    System.FileSystem.FileSystemEntryKind kind)
+{
+    if (kind != System.FileSystem.FileSystemEntryKind.File)
+    {
+        return System.IO.IOStatus.Ok;
+    }
+
+    PublicSurfaceAuditVisitedFiles += 1;
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var readError):
+            return System.IO.IOStatus.Err(readError);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var sourceOwner):
+            if (PublicSurfaceHasRawPointerViolation(path, sourceOwner.View()))
+            {
+                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            }
+    }
+
+    return System.IO.IOStatus.Ok;
+}
+
+internal finite law bool SourceContainsRawPointerToken(ascii source)
+{
+    return System.Text.Contains(source, "rawptr<")
+        || System.Text.Contains(source, "rawmutptr<");
+}
+
+internal finite law bool IsDocumentedRawPointerBoundaryFile(ascii path)
+{
+    return PathEndsWith(path, "System/C.stark", raw"System\C.stark")
+        || PathEndsWith(path, "System/Collections.stark", raw"System\Collections.stark")
+        || PathEndsWith(path, "System/Console.stark", raw"System\Console.stark")
+        || PathEndsWith(path, "System/Cryptography/Sha256.stark", raw"System\Cryptography\Sha256.stark")
+        || PathEndsWith(path, "System/FileSystem.stark", raw"System\FileSystem.stark")
+        || PathEndsWith(path, "System/IO/File.stark", raw"System\IO\File.stark")
+        || PathEndsWith(path, "System/IO/Path.stark", raw"System\IO\Path.stark")
+        || PathEndsWith(path, "System/Json.stark", raw"System\Json.stark")
+        || PathEndsWith(path, "System/Memory.stark", raw"System\Memory.stark")
+        || PathEndsWith(path, "System/Net/Tcp.stark", raw"System\Net\Tcp.stark")
+        || PathEndsWith(path, "System/Process.stark", raw"System\Process.stark")
+        || PathEndsWith(path, "System/Runtime.stark", raw"System\Runtime.stark")
+        || PathEndsWith(path, "System/Runtime/Buffer.stark", raw"System\Runtime\Buffer.stark")
+        || PathEndsWith(path, "System/Runtime/ConsoleInput.stark", raw"System\Runtime\ConsoleInput.stark")
+        || PathEndsWith(path, "System/Runtime/Platform.stark", raw"System\Runtime\Platform.stark")
+        || PathEndsWith(path, "System/Runtime/Platform/Linux.stark", raw"System\Runtime\Platform\Linux.stark")
+        || PathEndsWith(path, "System/Runtime/Platform/MacOS.stark", raw"System\Runtime\Platform\MacOS.stark")
+        || PathEndsWith(path, "System/Runtime/Platform/Windows.stark", raw"System\Runtime\Platform\Windows.stark")
+        || PathEndsWith(path, "System/Testing/HostCompiler.stark", raw"System\Testing\HostCompiler.stark")
+        || PathEndsWith(path, "System/Text.stark", raw"System\Text.stark")
+        || PathEndsWith(path, "System/Threading.stark", raw"System\Threading.stark")
+        || PathEndsWith(path, "System/Toml.stark", raw"System\Toml.stark");
+}
+
+internal finite law bool IsPublicRawPointerSurfaceFile(ascii path)
+{
+    return PathEndsWith(path, "System/C.stark", raw"System\C.stark")
+        || PathEndsWith(path, "System/Memory.stark", raw"System\Memory.stark")
+        || PathEndsWith(path, "System/Text.stark", raw"System\Text.stark");
+}
+
+internal finite law bool IsSystemMemoryFile(ascii path)
+{
+    return PathEndsWith(path, "System/Memory.stark", raw"System\Memory.stark");
+}
+
+internal finite law bool IsSystemTextFile(ascii path)
+{
+    return PathEndsWith(path, "System/Text.stark", raw"System\Text.stark");
+}
+
+internal finite law bool PathEndsWith(ascii path, ascii slashSuffix, ascii backslashSuffix)
+    where overlap(path, slashSuffix), overlap(path, backslashSuffix), overlap(slashSuffix, backslashSuffix)
+{
+    return System.Text.EndsWith(path, slashSuffix) || System.Text.EndsWith(path, backslashSuffix);
+}
+
+internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
+    where overlap(path, source)
+{
+    stack bool allowlistedFile = IsPublicRawPointerSurfaceFile(path);
+    stack bool systemMemoryFile = IsSystemMemoryFile(path);
+    stack bool systemTextFile = IsSystemTextFile(path);
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    stack mut i64[min max] depth = 0;
+    stack mut i64[min max] publicStructDepth = -1;
+    stack mut bool inPublicDeclaration = false;
+    stack mut bool declarationHasRawPointer = false;
+    stack mut bool declarationHasUnsafe = false;
+    stack mut bool declarationHasAllowedRestrictedPrefix = false;
+
+    while willexit (lineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(source, lineStart);
+        stack ascii line = source[(i64[min max])lineStart, (i64[min max])(lineEnd - lineStart)];
+        stack ascii trimmed = TrimStartAscii(line);
+
+        if (publicStructDepth >= 0 && depth < publicStructDepth)
+        {
+            publicStructDepth = -1;
+        }
+
+        if (inPublicDeclaration)
+        {
+            declarationHasRawPointer = declarationHasRawPointer || SourceContainsRawPointerToken(trimmed);
+            declarationHasUnsafe = declarationHasUnsafe || ContainsUnsafeToken(trimmed);
+            if (DeclarationEnds(trimmed))
+            {
+                if (RawPointerPublicDeclarationViolatesPolicy(
+                    allowlistedFile,
+                    systemMemoryFile,
+                    systemTextFile,
+                    declarationHasRawPointer,
+                    declarationHasUnsafe,
+                    declarationHasAllowedRestrictedPrefix))
+                {
+                    PublicSurfaceAuditViolations += 1;
+                    return true;
+                }
+
+                inPublicDeclaration = false;
+                declarationHasRawPointer = false;
+                declarationHasUnsafe = false;
+                declarationHasAllowedRestrictedPrefix = false;
+            }
+        }
+        else if (System.Text.StartsWith(trimmed, "public "))
+        {
+            inPublicDeclaration = true;
+            declarationHasRawPointer = SourceContainsRawPointerToken(trimmed);
+            declarationHasUnsafe = ContainsUnsafeToken(trimmed);
+            declarationHasAllowedRestrictedPrefix = IsAllowedPublicRawPointerPrefix(
+                trimmed,
+                systemMemoryFile,
+                systemTextFile);
+
+            if (System.Text.StartsWith(trimmed, "public struct ") && System.Text.Contains(trimmed, "{"))
+            {
+                publicStructDepth = depth + 1;
+            }
+
+            if (DeclarationEnds(trimmed))
+            {
+                if (RawPointerPublicDeclarationViolatesPolicy(
+                    allowlistedFile,
+                    systemMemoryFile,
+                    systemTextFile,
+                    declarationHasRawPointer,
+                    declarationHasUnsafe,
+                    declarationHasAllowedRestrictedPrefix))
+                {
+                    PublicSurfaceAuditViolations += 1;
+                    return true;
+                }
+
+                inPublicDeclaration = false;
+                declarationHasRawPointer = false;
+                declarationHasUnsafe = false;
+                declarationHasAllowedRestrictedPrefix = false;
+            }
+        }
+        else if (publicStructDepth >= 0
+            && depth == publicStructDepth
+            && !System.Text.StartsWith(trimmed, "internal ")
+            && SourceContainsRawPointerToken(trimmed)
+            && LooksLikeMemberDeclaration(trimmed))
+        {
+            if (RawPointerPublicDeclarationViolatesPolicy(
+                allowlistedFile,
+                systemMemoryFile,
+                systemTextFile,
+                true,
+                ContainsUnsafeToken(trimmed),
+                IsAllowedPublicRawPointerPrefix(trimmed, systemMemoryFile, systemTextFile)))
+            {
+                PublicSurfaceAuditViolations += 1;
+                return true;
+            }
+        }
+
+        depth += CountBraceDelta(line);
+        lineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return false;
+}
+
+internal fn bool RawPointerPublicDeclarationViolatesPolicy(
+    bool allowlistedFile,
+    bool systemMemoryFile,
+    bool systemTextFile,
+    bool declarationHasRawPointer,
+    bool declarationHasUnsafe,
+    bool declarationHasAllowedRestrictedPrefix)
+{
+    if (!declarationHasRawPointer)
+    {
+        return false;
+    }
+
+    PublicSurfaceAuditRawDeclarations += 1;
+    if (!allowlistedFile || !declarationHasUnsafe)
+    {
+        return true;
+    }
+
+    if ((systemMemoryFile || systemTextFile) && !declarationHasAllowedRestrictedPrefix)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+internal finite law bool IsAllowedPublicRawPointerPrefix(
+    ascii declaration,
+    bool systemMemoryFile,
+    bool systemTextFile)
+{
+    if (systemMemoryFile)
+    {
+        return System.Text.StartsWith(
+            declaration,
+            "public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint(");
+    }
+
+    return systemTextFile
+        && (System.Text.StartsWith(declaration, "public unsafe finite bool TryConcat")
+            || System.Text.StartsWith(declaration, "public unsafe finite bool TryFormat")
+            || System.Text.StartsWith(declaration, "public unsafe fn bool TryFormat"));
+}
+
+internal finite law bool ContainsUnsafeToken(ascii declaration)
+{
+    return System.Text.Contains(declaration, "unsafe");
+}
+
+internal finite law bool DeclarationEnds(ascii declaration)
+{
+    return System.Text.Contains(declaration, ";") || System.Text.Contains(declaration, "{");
+}
+
+internal finite law bool LooksLikeMemberDeclaration(ascii declaration)
+{
+    return System.Text.Contains(declaration, " fn ")
+        || System.Text.StartsWith(declaration, "fn ")
+        || System.Text.StartsWith(declaration, "unsafe fn ")
+        || System.Text.Contains(declaration, " law ")
+        || System.Text.EndsWith(declaration, ";");
+}
+
+internal finite law u64[0 2 ** 63 - 1] LineEndFrom(ascii value, u64[0 2 ** 63 - 1] searchStart)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] index = searchStart;
+    while willexit (index < totalLength)
+    {
+        if (IsActualUnit(value, index, "\n"))
+        {
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return totalLength;
+}
+
+internal finite law ascii TrimStartAscii(ascii value)
+{
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    while willexit (start < length)
+    {
+        if (!IsAsciiWhitespace(value, start))
+        {
+            return value[(i64[min max])start, (i64[min max])(length - start)];
+        }
+
+        start += 1;
+    }
+
+    return "";
+}
+
+internal finite law bool IsAsciiWhitespace(ascii value, u64[0 2 ** 63 - 1] index)
+{
+    return IsActualUnit(value, index, " ")
+        || IsActualUnit(value, index, "\t")
+        || IsActualUnit(value, index, "\r")
+        || IsActualUnit(value, index, "\n");
+}
+
+internal finite law i64[min max] CountBraceDelta(ascii line)
+{
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(line);
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    stack mut i64[min max] delta = 0;
+    while willexit (index < length)
+    {
+        if (IsActualUnit(line, index, "{"))
+        {
+            delta += 1;
+        }
+        else if (IsActualUnit(line, index, "}"))
+        {
+            delta -= 1;
+        }
+
+        index += 1;
+    }
+
+    return delta;
+}
+
+internal finite law bool IsActualUnit(ascii value, u64[0 2 ** 63 - 1] index, ascii unit)
+    where overlap(value, unit)
+{
+    return value[(i64[min max])index, 1] == unit;
+}
+
+internal finite law bool IsOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}

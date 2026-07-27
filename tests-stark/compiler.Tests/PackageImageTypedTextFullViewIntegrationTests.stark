@@ -1,0 +1,43 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedTextFullViewIntegrationTests
+
+// Ported from PackageImageTypedTextFullViewIntegrationTests.ManifestBackedTypedFullViewTextBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedFullViewTextBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed full-view text bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "manifest-backed-typed-full-view-text-bodies-compile-and-run-without-synthetic-source",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    stack ascii text = Facade.WholeAscii("hello", 0);
+    if (text != "hello")
+    {
+        return 1;
+    }
+    if (text[1] != 'e')
+    {
+        return 2;
+    }
+    return 0;
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn ascii WholeAscii<T>(ascii text, T tag)
+{
+    return text[];
+}
+""",
+            "Facade.WholeAscii",
+            "",
+            0);
+    }
+}

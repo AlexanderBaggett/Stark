@@ -1,0 +1,89 @@
+import Compiler.NativeFacts
+import Compiler.TargetFacts
+import System.Testing
+import System.Text
+[Collection("native-facts")]
+module NativeFactsTests
+
+[Fact]
+fn bool NativeDependencyListMetadataMatchesPackageImageDiagnostics()
+{
+    stack bool source = System.Text.Equals(NativeDependencyListKindLabel(NativeDependencyListKind.Sources), "native source")
+        && System.Text.Equals(NativeDependencyListKindDiagnosticCode(NativeDependencyListKind.Sources), "STK7110")
+        && System.Text.Equals(NativeDependencyListKindCliOption(NativeDependencyListKind.Sources), "--native-source")
+        && NativeDependencyListKindIsPathLike(NativeDependencyListKind.Sources);
+    stack bool pkgConfig = System.Text.Equals(NativeDependencyListKindLabel(NativeDependencyListKind.PkgConfigPackages), "native pkg-config package")
+        && System.Text.Equals(NativeDependencyListKindDiagnosticCode(NativeDependencyListKind.PkgConfigPackages), "STK7115")
+        && System.Text.Equals(NativeDependencyListKindCliOption(NativeDependencyListKind.PkgConfigPackages), "--native-pkg-config")
+        && !NativeDependencyListKindIsPathLike(NativeDependencyListKind.PkgConfigPackages);
+    stack bool entries = NativeDependencyEntryIsValid("raylib")
+        && NativeDependencyEntryIsValid(" include ")
+        && !NativeDependencyEntryIsValid("")
+        && !NativeDependencyEntryIsValid(" \t\n ");
+    return source && pkgConfig && entries;
+}
+
+[Fact]
+fn bool NativeFallbackPlatformKeysMatchTargetOperatingSystems()
+{
+    stack StarkTargetPlatform windows = ResolveTargetPlatformFromTriple("x86_64-pc-windows-msvc");
+    stack StarkTargetPlatform linux = ResolveTargetPlatformFromTriple("x86_64-unknown-linux-gnu");
+    stack StarkTargetPlatform mac = ResolveTargetPlatformFromTriple("aarch64-apple-darwin");
+    return NativeFallbackPlatformKeyMatchesTarget("windows", windows)
+        && NativeFallbackPlatformKeyMatchesTarget("linux", linux)
+        && NativeFallbackPlatformKeyMatchesTarget("macos", mac)
+        && NativeFallbackPlatformKeyMatchesTarget("darwin", mac)
+        && !NativeFallbackPlatformKeyMatchesTarget("linux", windows)
+        && !NativeFallbackPlatformKeyMatchesTarget("freebsd", linux);
+}
+
+[Fact]
+fn bool TargetTripleNativeLibraryRequirementsMatchHostPolicy()
+{
+    return TargetTripleRequiresExplicitMathLibrary("x86_64-unknown-linux-gnu")
+        && !TargetTripleRequiresExplicitMathLibrary("x86_64-pc-windows-msvc")
+        && TargetTripleRequiresWinsockLibrary("x86_64-pc-windows-msvc")
+        && TargetTripleRequiresWinsockLibrary("x86_64-w64-mingw32")
+        && TargetTripleRequiresWindowsSynchronizationLibrary("x86_64-pc-windows-msvc")
+        && !TargetTripleRequiresWindowsSynchronizationLibrary("x86_64-w64-mingw32")
+        && TargetTripleRequiresNtDllLibrary("x86_64-pc-windows-msvc")
+        && !TargetTripleRequiresNtDllLibrary("x86_64-w64-mingw32");
+}
+
+[Fact]
+fn bool LlvmTextRequirementScansDetectReferencedNativeSymbols()
+{
+    stack ascii llvmText = "declare double @llvm.sin.f64(double)\ndeclare i32 @WSAStartup(ptr, ptr)\ndeclare void @WakeByAddressSingle(ptr)\ndeclare i32 @NtReadFile(ptr)\n";
+    stack ascii quietText = "declare void @NotNativeDependency(ptr)\n";
+    return LlvmTextRequiresMathLibrary(llvmText)
+        && LlvmTextRequiresWinsockLibrary(llvmText)
+        && LlvmTextRequiresWindowsSynchronizationLibrary(llvmText)
+        && LlvmTextRequiresNtDllLibrary(llvmText)
+        && !LlvmTextRequiresMathLibrary(quietText)
+        && !LlvmTextRequiresWinsockLibrary(quietText)
+        && !LlvmTextRequiresWindowsSynchronizationLibrary(quietText)
+        && !LlvmTextRequiresNtDllLibrary(quietText);
+}
+
+[Fact]
+fn bool NativeImplicitLibraryPresenceMatchesLibrariesAndLinkArguments()
+{
+    stack bool libraryNames = NativeLibraryEntryNamesLibrary("-lm", "m")
+        && NativeLibraryEntryNamesLibrary(" Ws2_32.lib ", "ws2_32")
+        && NativeLibraryEntryNamesLibrary("ntdll.lib", "ntdll")
+        && NativeLibraryEntrySatisfiesImplicitLibrary("-lsynchronization", NativeImplicitLibrary.WindowsSynchronization)
+        && !NativeLibraryEntryNamesLibrary("libm.a", "m");
+    stack bool linkArguments = NativeLinkArgumentSatisfiesImplicitLibrary("-lm", NativeImplicitLibrary.Math)
+        && NativeLinkArgumentSatisfiesImplicitLibrary("Ws2_32.lib", NativeImplicitLibrary.Winsock)
+        && NativeLinkArgumentSatisfiesImplicitLibrary("-lsynchronization", NativeImplicitLibrary.WindowsSynchronization)
+        && NativeLinkArgumentSatisfiesImplicitLibrary("-lntdll", NativeImplicitLibrary.NtDll)
+        && !NativeLinkArgumentSatisfiesImplicitLibrary("-lraylib", NativeImplicitLibrary.Math);
+    stack bool formatted = System.Text.Equals(
+            NativeImplicitLibraryLinkArgumentForTarget(NativeImplicitLibrary.Winsock, "x86_64-pc-windows-msvc"),
+            "-lws2_32")
+        && System.Text.Equals(
+            NativeImplicitLibraryLinkArgumentForTarget(NativeImplicitLibrary.Winsock, ""),
+            "Ws2_32.lib")
+        && System.Text.Equals(NativeImplicitLibraryDefaultLinkArgument(NativeImplicitLibrary.NtDll), "-lntdll");
+    return libraryNames && linkArguments && formatted;
+}

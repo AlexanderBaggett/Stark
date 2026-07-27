@@ -1,0 +1,389 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+module ImportedTemplateInitializationTests
+
+public fn bool ImportedTemplateScalarInitializationFoldsDirectlyWithExactLlvmFacts()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.InitializedScalars#0",
+                      "QualifiedName": "Demo.InitializedScalars",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 6,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "100"
+                          }
+                        },
+                        {
+                          "Kind": "var",
+                          "Line": 2,
+                          "Column": 1,
+                          "Type": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "100"
+                          }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "first",
+                            "StorageClass": "stack",
+                            "IsMutable": true,
+                            "Type": {
+                              "Kind": "integer",
+                              "BitWidth": 16,
+                              "RangeMin": "0",
+                              "RangeMax": "100"
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "first",
+                            "AssignmentOperator": "init =",
+                            "TargetExpression": {
+                              "Kind": "name",
+                              "Name": "first"
+                            },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "40",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "second",
+                            "StorageClass": "register",
+                            "IsMutable": true,
+                            "Type": {
+                              "Kind": "integer",
+                              "BitWidth": 16,
+                              "RangeMin": "0",
+                              "RangeMax": "100"
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "second",
+                            "AssignmentOperator": "=",
+                            "TargetExpression": {
+                              "Kind": "name",
+                              "Name": "second"
+                            },
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              },
+                              "Arguments": [
+                                { "Kind": "name", "Name": "first" },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "second",
+                            "AssignmentOperator": "+=",
+                            "TargetExpression": {
+                              "Kind": "name",
+                              "Name": "second"
+                            },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "second" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.ReadBeforeInit#0",
+                      "QualifiedName": "Demo.ReadBeforeInit",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 2,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 16 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "value",
+                            "StorageClass": "stack",
+                            "IsMutable": true,
+                            "Type": { "Kind": "integer", "BitWidth": 16 }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "value" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.CompoundBeforeInit#0",
+                      "QualifiedName": "Demo.CompoundBeforeInit",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 3,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 16 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "value",
+                            "StorageClass": "register",
+                            "IsMutable": true,
+                            "Type": { "Kind": "integer", "BitWidth": 16 }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "value",
+                            "AssignmentOperator": "+=",
+                            "TargetExpression": { "Kind": "name", "Name": "value" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "0",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.ImmutableInit#0",
+                      "QualifiedName": "Demo.ImmutableInit",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 3,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 16 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "value",
+                            "StorageClass": "stack",
+                            "ConstProvenance": "immutable-binding",
+                            "Type": { "Kind": "integer", "BitWidth": 16 }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "value",
+                            "AssignmentOperator": "init =",
+                            "TargetExpression": { "Kind": "name", "Name": "value" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "0",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+                manifestJson,
+                0,
+                graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(0, 101);
+    stack mut MirFuncId function = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            function) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut u32[0 max] invalidTemplateRow = 2;
+    while willexit (invalidTemplateRow <= 4)
+    {
+        stack mut MirFuncId invalidFunction = MirFuncIdOf(0);
+        if (LowerImportedTemplateScalarReturnToMir(
+                graph,
+                invalidTemplateRow,
+                MirType.I16,
+                false,
+                expectedReturnFacts,
+                instructions,
+                blocks,
+                functions,
+                valueFacts,
+                functionReturnFacts,
+                invalidFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+            || invalidFunction.IsValid()
+            || instructions.Count() != instructionCount
+            || blocks.Count() != blockCount
+            || functions.Count() != functionCount
+            || valueFacts.Count() != instructionCount
+            || functionReturnFacts.Count() != functionCount)
+        {
+            return false;
+        }
+
+        invalidTemplateRow = invalidTemplateRow + 1;
+    }
+
+    stack MirInstruction literal = instructions.Get(1);
+    stack ValueFacts literalFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(1));
+    stack ValueFacts returnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        function.Index());
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_initialized_scalars",
+            returnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            lowered.EntryIndex(),
+            lowered.FirstInstrIndex(),
+            lowered.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return function.Index() == 1
+        && instructionCount == 1
+        && blockCount == 1
+        && functionCount == 1
+        && literal.Opcode() == MirOp.ConstInt
+        && literal.ResultType() == MirType.I16
+        && literal.Immediate() == 43
+        && literalFacts.HasIntegerRange()
+        && literalFacts.IntegerRangeLower() == 43
+        && literalFacts.IntegerRangeUpperExclusive() == 44
+        && returnFacts.HasIntegerRange()
+        && returnFacts.IntegerRangeLower() == 43
+        && returnFacts.IntegerRangeUpperExclusive() == 44
+        && System.Text.OwnedAsciiEqualsAscii(
+            llvm,
+            "define range(i16 43, 44) i16 @imported_initialized_scalars() {\nb1:\n  %v1 = add i16 0, 43\n  ret i16 %v1\n}\n");
+}

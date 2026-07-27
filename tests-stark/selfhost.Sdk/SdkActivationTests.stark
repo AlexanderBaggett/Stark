@@ -1,0 +1,292 @@
+import Compiler.Sdk
+import System.Memory
+import System.Testing
+import System.Text
+[Collection("sdk")]
+module SdkActivationTests
+
+fn bool InitializeActivationTarget(
+    mut borrow SdkTargetDescriptor target,
+    ascii dataLayout)
+    where overlap_all(target)
+{
+    if (InitializeSdkTargetDescriptor(
+        target,
+        "active-macos-arm64",
+        "arm64-apple-macosx11.0.0",
+        dataLayout,
+        "arm64",
+        "macos",
+        "darwin",
+        64,
+        SdkTargetEndianness.Little,
+        "apple-m2",
+        "pic",
+        "small",
+        "lp64",
+        "11.0") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return AddSdkTargetBaselineFeature(target, "+aes") == MemoryStatus.Ok
+        && AddSdkTargetBaselineFeature(target, "+neon") == MemoryStatus.Ok;
+}
+
+fn bool ActivationDiagnosticsContain(
+    borrow SdkDiagnosticList diagnostics,
+    SdkDiagnosticCode expected)
+{
+    for willexit (
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < diagnostics.Count();
+        index += 1)
+    {
+        if (diagnostics.CodeAt(index) == expected)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+[Fact]
+unsafe fn bool DeferredActivationRetainsManifestFactsAndValidatesOnlySelectedIndices()
+{
+    unsafe
+    {
+        stack mut SdkTargetDescriptor activeTarget = new();
+        if (!InitializeActivationTarget(
+            activeTarget,
+            "e-m:o-i64:64-i128:128-n32:64-S128"))
+        {
+            return false;
+        }
+
+        switch (ActivateSdkSession(
+            "../../tests/fixtures/sdk-activation",
+            "/ignored/environment",
+            "/ignored/stage",
+            "/ignored/bin/stark",
+            activeTarget,
+            SdkPayloadValidationMode.Deferred))
+        {
+            case SdkActivationResult.Err(var error):
+                return false;
+            case SdkActivationResult.Ok(var activated):
+                stack mut SdkActivationSession session = activated;
+                stack mut u64[0 2 ** 63 - 1] vendorIndex = 0;
+                if (session.PayloadValidationMode() != SdkPayloadValidationMode.Deferred
+                    || session.Root().Origin() != SdkRootOrigin.CommandLine
+                    || !System.Text.Equals(
+                        session.Root().RootPath(),
+                        "../../tests/fixtures/sdk-activation")
+                    || session.PackageIndex().PackageCount() != 2
+                    || session.PackageIndex().ModuleCount() != 2
+                    || !session.TryGetPackageIndexForModule("Vendor.Raylib", vendorIndex)
+                    || vendorIndex != 1)
+                {
+                    return false;
+                }
+
+                if (!System.Text.Equals(
+                        session.Manifest().Target().LlvmTriple(),
+                        "arm64-apple-macosx11.0.0")
+                    || !System.Text.Equals(
+                        session.Manifest().Target().DataLayout(),
+                        "e-m:o-i64:64-i128:128-n32:64-S128")
+                    || !System.Text.Equals(session.Manifest().Target().BaselineCpu(), "apple-m2")
+                    || session.Manifest().Target().BaselineFeatureCount() != 2
+                    || !System.Text.Equals(session.Manifest().Target().BaselineFeatureAt(1), "+neon")
+                    || !System.Text.Equals(session.Manifest().Target().RelocationModel(), "pic")
+                    || !System.Text.Equals(session.Manifest().Target().CodeModel(), "small")
+                    || !System.Text.Equals(session.Manifest().Target().CDataModel(), "lp64")
+                    || !System.Text.Equals(
+                        session.Manifest().Target().MinimumOperatingSystemVersion(),
+                        "11.0"))
+                {
+                    return false;
+                }
+
+                if (!System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).Id(),
+                        "Vendor.Raylib")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).LibraryPath(),
+                        "packages/libVendor.Raylib.a")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).ApiHash(),
+                        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).DependencyAt(0).ContentHash(),
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).Native().ArtifactAt(0),
+                        "vendor/native/libraylib.a")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).Native().LibraryAt(0),
+                        "raylib")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).Native().LinkArgumentAt(1),
+                        "Cocoa")
+                    || !System.Text.Equals(
+                        session.Manifest().PackageAt(vendorIndex).Native().FileChecksumAt(2).Sha256(),
+                        "3333333333333333333333333333333333333333333333333333333333333333"))
+                {
+                    return false;
+                }
+
+                stack mut SdkDiagnosticList diagnostics = new();
+                stack mut bool found = false;
+                return session.ValidatePackagePayloadAt(
+                        vendorIndex,
+                        diagnostics,
+                        found) == MemoryStatus.Ok
+                    && found
+                    && diagnostics.Count() == 7
+                    && diagnostics.CodeAt(0) == SdkDiagnosticCode.PackageImageMissing
+                    && diagnostics.CodeAt(1) == SdkDiagnosticCode.PackageLibraryMissing
+                    && diagnostics.CodeAt(2) == SdkDiagnosticCode.NativeArtifactMissing
+                    && diagnostics.CodeAt(3) == SdkDiagnosticCode.NativeIncludeDirectoryMissing
+                    && diagnostics.CodeAt(4) == SdkDiagnosticCode.NativeLibraryDirectoryMissing
+                    && diagnostics.CodeAt(5) == SdkDiagnosticCode.NativeRuntimeFileMissing
+                    && diagnostics.CodeAt(6) == SdkDiagnosticCode.NativeLicenseFileMissing
+                    && !ActivationDiagnosticsContain(
+                        diagnostics,
+                        SdkDiagnosticCode.PackageChecksumMismatch)
+                    && !ActivationDiagnosticsContain(
+                        diagnostics,
+                        SdkDiagnosticCode.NativeChecksumMismatch);
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool EagerActivationRunsDoctorStyleIntegrityAcrossAllPackages()
+{
+    unsafe
+    {
+        stack mut SdkTargetDescriptor activeTarget = new();
+        if (!InitializeActivationTarget(
+            activeTarget,
+            "e-m:o-i64:64-i128:128-n32:64-S128"))
+        {
+            return false;
+        }
+
+        switch (ActivateSdkSession(
+            "../../tests/fixtures/sdk-activation",
+            "",
+            "",
+            "/ignored/bin/stark",
+            activeTarget,
+            SdkPayloadValidationMode.EagerAllPackages))
+        {
+            case SdkActivationResult.Ok(var session):
+                return false;
+            case SdkActivationResult.Err(var error):
+                switch (error)
+                {
+                    case SdkActivationError.Memory(var memoryError):
+                        return false;
+                    case SdkActivationError.Diagnostics(var value):
+                        stack mut SdkDiagnosticList diagnostics = value;
+                        return diagnostics.Count() == 9
+                            && diagnostics.CodeAt(0) == SdkDiagnosticCode.PackageImageMissing
+                            && diagnostics.CodeAt(1) == SdkDiagnosticCode.PackageLibraryMissing
+                            && ActivationDiagnosticsContain(
+                                diagnostics,
+                                SdkDiagnosticCode.NativeArtifactMissing)
+                            && ActivationDiagnosticsContain(
+                                diagnostics,
+                                SdkDiagnosticCode.NativeRuntimeFileMissing)
+                            && !ActivationDiagnosticsContain(
+                                diagnostics,
+                                SdkDiagnosticCode.PackageChecksumMismatch)
+                            && !ActivationDiagnosticsContain(
+                                diagnostics,
+                                SdkDiagnosticCode.NativeChecksumMismatch);
+                }
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool ActivationRejectsBackendFactMismatchBeforePayloadScanning()
+{
+    unsafe
+    {
+        stack mut SdkTargetDescriptor activeTarget = new();
+        if (!InitializeActivationTarget(activeTarget, "e-m:o-i64:64-n32:64-S128"))
+        {
+            return false;
+        }
+
+        switch (ActivateSdkSession(
+            "../../tests/fixtures/sdk-activation",
+            "",
+            "",
+            "/ignored/bin/stark",
+            activeTarget,
+            SdkPayloadValidationMode.EagerAllPackages))
+        {
+            case SdkActivationResult.Ok(var session):
+                return false;
+            case SdkActivationResult.Err(var error):
+                switch (error)
+                {
+                    case SdkActivationError.Memory(var memoryError):
+                        return false;
+                    case SdkActivationError.Diagnostics(var value):
+                        stack mut SdkDiagnosticList diagnostics = value;
+                        return diagnostics.Count() == 1
+                            && diagnostics.CodeAt(0) == SdkDiagnosticCode.TargetIncompatible
+                            && System.Text.Equals(
+                                SdkDiagnosticIdentifier(diagnostics.CodeAt(0)),
+                                "STK7430")
+                            && System.Text.Equals(diagnostics.PathAt(0), "data layout");
+                }
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool ExplicitMissingRootWinsAndReturnsManifestDiagnostic()
+{
+    unsafe
+    {
+        stack mut SdkTargetDescriptor activeTarget = new();
+        if (!InitializeActivationTarget(
+            activeTarget,
+            "e-m:o-i64:64-i128:128-n32:64-S128"))
+        {
+            return false;
+        }
+
+        switch (ActivateSdkSession(
+            "../../tests/fixtures/sdk-activation-does-not-exist",
+            "../../tests/fixtures/sdk-activation",
+            "",
+            "/ignored/bin/stark",
+            activeTarget,
+            SdkPayloadValidationMode.Deferred))
+        {
+            case SdkActivationResult.Ok(var session):
+                return false;
+            case SdkActivationResult.Err(var error):
+                switch (error)
+                {
+                    case SdkActivationError.Memory(var memoryError):
+                        return false;
+                    case SdkActivationError.Diagnostics(var value):
+                        stack mut SdkDiagnosticList diagnostics = value;
+                        return diagnostics.Count() == 1
+                            && diagnostics.CodeAt(0) == SdkDiagnosticCode.ManifestMissing
+                            && System.Text.Equals(
+                                SdkDiagnosticIdentifier(diagnostics.CodeAt(0)),
+                                "STK7400");
+                }
+        }
+    }
+}
+

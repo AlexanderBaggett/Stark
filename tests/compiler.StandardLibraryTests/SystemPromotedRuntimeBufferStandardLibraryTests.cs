@@ -326,7 +326,6 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -348,7 +347,6 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -374,7 +372,6 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -423,8 +420,7 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory(tempPrefix);
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");

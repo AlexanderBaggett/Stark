@@ -1,0 +1,494 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.LinkNameValidation
+import Compiler.Binding.InlineLayoutValidation
+import Compiler.Binding.EnumValidation
+import Compiler.Binding.ExpressionValidation
+import Compiler.Binding.LayoutValidation
+import Compiler.Binding.ExportedSurfaces
+import Compiler.Binding.ControlFlowValidation
+import Compiler.Binding.RecursionValidation
+import Compiler.Binding.BecomeValidation
+import Compiler.Binding.LawValidation
+import Compiler.Binding.FunctionKindValidation
+import Compiler.Binding.DestructorValidation
+import Compiler.Binding.ConstructorValidation
+import Compiler.Binding.OwnershipInitialization
+import Compiler.Binding.OwnershipMove
+import Compiler.Binding.OwnershipBorrow
+import Compiler.Binding.OwnershipArena
+import Compiler.Binding.OwnershipDeadOnReturn
+import Compiler.Binding.Copyability
+import Compiler.Binding.AssemblyBinding
+import System.Memory
+module Compiler.Binding.BindingPipeline
+
+// Emits the structural return-statement diagnostics (independent of value
+// coercion, matching the host): `ValueReturnedFromVoid` for a `return value;` in
+// a `void` function, and `MissingReturnValue` for a bare `return;` in a non-void
+// function. Anchored at the `return` statement. Skipped when the return type
+// could not be classified.
+internal fn System.Memory.MemoryStatus BindFunction(
+    u32[0 max] fnKeyword,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable copyabilityFacts,
+    mut borrow BindDiagnosticList diags)
+{
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (CollectAsmSignatureDiagnostics(signature, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var asmError):
+                    return System.Memory.MemoryStatus.Err(asmError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectLawSignatureDiagnostics(signature, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var lawSignatureError):
+                    return System.Memory.MemoryStatus.Err(lawSignatureError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (signature.HasAsm())
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return System.Memory.MemoryStatus.Ok;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            if (HasDuplicateParameter(scope, source, stream))
+                            {
+                                switch (diags.Append(BindDiagnosticCode.DuplicateParameter, signature.Name()))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var e1):
+                                        return System.Memory.MemoryStatus.Err(e1);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+                            }
+
+                            if (HasDuplicateLocalInBlock(source, stream, body))
+                            {
+                                switch (diags.Append(BindDiagnosticCode.DuplicateLocalInBlock, signature.Name()))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var e2):
+                                        return System.Memory.MemoryStatus.Err(e2);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+                            }
+
+                            // The function's own type parameters (`fn RET name<T>(...)`)
+                            // open at the `<` directly after the name token, so a
+                            // return/parameter type naming a type parameter resolves.
+                            stack u32[0 max] genericList = (u32[0 max])(signature.Name() + 1);
+                            stack u32[0 max] returnStart = signature.ReturnTypeStartTokenAt();
+                            stack u32[0 max] returnEnd = signature.ReturnTypeEndTokenAt();
+                            if (returnStart < returnEnd)
+                            {
+                                switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, returnStart, returnEnd, genericList, 0, false, diags))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var e3):
+                                        return System.Memory.MemoryStatus.Err(e3);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+                            }
+
+                            stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] p = 0; p < paramCount; p += 1)
+                            {
+                                stack u32[0 max] paramStart = signature.ParamTypeStartTokenAt(p);
+                                stack u32[0 max] paramEnd = signature.ParamTypeEndTokenAt(p);
+                                if (paramStart < paramEnd)
+                                {
+                                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, paramStart, paramEnd, genericList, 0, false, diags))
+                                    {
+                                        case System.Memory.MemoryStatus.Err(var e4):
+                                            return System.Memory.MemoryStatus.Err(e4);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+
+                            // Each local declaration's named type (its head, 0 for a
+                            // built-in or a `var` pattern binding) must resolve to a
+                            // declaration or the function's own type parameters.
+                            stack u64[0 2 ** 63 - 1] localStmtCount = body.Count();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] s = 0; s < localStmtCount; s += 1)
+                            {
+                                stack u32[0 max] localStart = body.TypeStartTokenAt(s);
+                                stack u32[0 max] localEnd = body.TypeEndTokenAt(s);
+                                if (localStart < localEnd)
+                                {
+                                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, localStart, localEnd, genericList, 0, false, diags))
+                                    {
+                                        case System.Memory.MemoryStatus.Err(var e4b):
+                                            return System.Memory.MemoryStatus.Err(e4b);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+
+                            // Each `where T: Trait, ...` constraint trait must resolve
+                            // to a declaration (or be a function type parameter).
+                            switch (CollectWhereConstraintTypeSpans(stream, fnKeyword))
+                            {
+                                case ParseResult<TypeSpanList>.Err(var whereError):
+                                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                                case ParseResult<TypeSpanList>.Ok(var constraintSpans):
+                                    stack u64[0 2 ** 63 - 1] constraintCount = constraintSpans.Count();
+                                    for willexit (stack mut u64[0 2 ** 63 - 1] c = 0; c < constraintCount; c += 1)
+                                    {
+                                        stack u32[0 max] constraintStart = constraintSpans.StartTokenAt(c);
+                                        stack u32[0 max] constraintEnd = constraintSpans.EndTokenAt(c);
+                                        if (constraintStart < constraintEnd)
+                                        {
+                                            switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, constraintStart, constraintEnd, genericList, 0, false, diags))
+                                            {
+                                                case System.Memory.MemoryStatus.Err(var e4c):
+                                                    return System.Memory.MemoryStatus.Err(e4c);
+                                                case System.Memory.MemoryStatus.Ok:
+                                            }
+                                        }
+                                    }
+                            }
+
+                            switch (CollectDeadOnReturnSignatureDiagnostics(signature, source, stream, fnKeyword, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var deadContractError):
+                                    return System.Memory.MemoryStatus.Err(deadContractError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            // The lexical reference table (resolved with shadowing
+                            // and block scope) is built once and reused so that
+                            // identifier types are read from each reference's
+                            // RESOLVED symbol, not a flat last-name-match.
+                            stack mut ReferenceTable refs = new();
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                                case BindResult<ReferenceTable>.Ok(var built):
+                                    refs = built;
+                            }
+
+                            stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] r = 0; r < refCount; r += 1)
+                            {
+                                if (refs.KindAt(r) == ReferenceKind.Unbound)
+                                {
+                                    switch (diags.Append(BindDiagnosticCode.UnresolvedReference, refs.NameTokenAt(r)))
+                                    {
+                                        case System.Memory.MemoryStatus.Err(var e5):
+                                            return System.Memory.MemoryStatus.Err(e5);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+
+                            switch (CollectLawBodyRestrictionDiagnostics(signature, table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var lawBodyError):
+                                    return System.Memory.MemoryStatus.Err(lawBodyError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectLawExternallyVisibleEffectDiagnostics(signature, table, refs, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var visibleEffectError):
+                                    return System.Memory.MemoryStatus.Err(visibleEffectError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectDeadOnReturnCallDiagnostics(signature, table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var deadCallError):
+                                    return System.Memory.MemoryStatus.Err(deadCallError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectPackedFieldSafeBorrowDiagnostics(signature, decls, table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var packedBorrowError):
+                                    return System.Memory.MemoryStatus.Err(packedBorrowError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectCopyableLawPredicateCallDiagnostics(signature, fnKeyword, decls, table, source, refs, scope, stream, body, copyabilityFacts, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var copyableLawError):
+                                    return System.Memory.MemoryStatus.Err(copyableLawError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectStraightLineInitializationDiagnostics(table, source, refs, scope, stream, body, !signature.LawKind(), diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var initializationError):
+                                    return System.Memory.MemoryStatus.Err(initializationError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectStraightLineBorrowLivenessDiagnostics(decls, table, source, refs, scope, stream, body, copyabilityFacts, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var borrowLivenessError):
+                                    return System.Memory.MemoryStatus.Err(borrowLivenessError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectStraightLineMoveAfterMoveDiagnostics(decls, table, source, refs, scope, stream, body, copyabilityFacts, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var moveAfterMoveError):
+                                    return System.Memory.MemoryStatus.Err(moveAfterMoveError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectConcreteLayoutQueryDiagnostics(fnKeyword, decls, table, source, stream, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var layoutQueryError):
+                                    return System.Memory.MemoryStatus.Err(layoutQueryError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectArenaDiagnostics(signature, table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var arenaError):
+                                    return System.Memory.MemoryStatus.Err(arenaError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectNonBooleanConditions(table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var condError):
+                                    return System.Memory.MemoryStatus.Err(condError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectExpressionTypeErrors(table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var operandError):
+                                    return System.Memory.MemoryStatus.Err(operandError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectFunctionKindObligationDiagnostics(signature, table, source, refs, scope, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var functionKindError):
+                                    return System.Memory.MemoryStatus.Err(functionKindError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectBecomeDiagnostics(signature, table, source, refs, stream, body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var becomeError):
+                                    return System.Memory.MemoryStatus.Err(becomeError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectReturnDiagnostics(signature, body, stream, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var returnError):
+                                    return System.Memory.MemoryStatus.Err(returnError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectControlFlowDiagnostics(body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var cfError):
+                                    return System.Memory.MemoryStatus.Err(cfError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            return System.Memory.MemoryStatus.Ok;
+                    }
+            }
+    }
+}
+
+// Binds a whole compilation unit from its lexed token stream: parses the header
+// and declarations, builds the top-level declaration table, and collects every
+// binder diagnostic (duplicate declarations/parameters/locals, unresolved value
+// references, and unresolved signature types). This is the binder's pass-level
+// entry point; an empty diagnostic list means the unit binds cleanly.
+public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borrow TokenStream stream)
+{
+    stack mut BindDiagnosticList diags = new();
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    switch (CollectDuplicateDeclarations(table, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var dupError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectLinkNameDiagnostics(decls, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var linkNameError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectLayoutControlDiagnostics(decls, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var layoutError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectExportedSurfaceDiagnostics(decls, table, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var exportedSurfaceError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut CopyabilityFactTable copyabilityFacts = new();
+    switch (BuildCopyabilityFacts(decls, table, source, stream))
+    {
+        case BindResult<CopyabilityFactTable>.Err(var factError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case BindResult<CopyabilityFactTable>.Ok(var builtFacts):
+            copyabilityFacts = builtFacts;
+    }
+
+    switch (CollectCopyableAssertionDiagnostics(decls, table, source, stream, copyabilityFacts, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var copyableError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectRecursiveInlineLayoutDiagnostics(decls, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var recursiveLayoutError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] declCount = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declCount; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (BindFunction(item.KeywordToken, decls, table, source, stream, copyabilityFacts, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var fnError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+        {
+            switch (CollectDropValidityDiagnostics(item, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var dropValidityError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectConstructorInitializationDiagnostics(item, decls, table, source, stream, copyabilityFacts, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var constructorInitError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectUnresolvedFieldTypes(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var fieldTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectUnresolvedTypeDeclarationWhereConstraints(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var whereTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (item.Kind == DeclarationKind.Enum)
+        {
+            switch (ParseEnumVariants(stream, item.KeywordToken))
+            {
+                case ParseResult<VariantList>.Err(var variantError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case ParseResult<VariantList>.Ok(var variants):
+                    switch (CollectDuplicateEnumVariants(variants, source, stream, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var dupError):
+                            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+            }
+
+            switch (CollectUnresolvedVariantTypes(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var variantTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectUnresolvedTypeDeclarationWhereConstraints(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var whereTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    switch (CollectRecursionDiagnostics(table, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var recursionError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return BindResult<BindDiagnosticList>.Ok(diags);
+}

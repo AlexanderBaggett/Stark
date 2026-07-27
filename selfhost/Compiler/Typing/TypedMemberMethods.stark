@@ -1,0 +1,158 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedMemberModelRows
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedMemberMethods
+
+internal finite law bool TypedMemberFunctionHasStaticBefore(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    stack mut u32[0 max] scan = fnKeyword;
+    while willexit (scan > 0)
+    {
+        scan = (u32[0 max])(scan - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Static)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LBrace || kind == TokenKind.RBrace || kind == TokenKind.Semi)
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TypedMemberSignatureMatches(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    u64[0 2 ** 63 - 1] signatureIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] memberNameToken,
+    bool wantStatic)
+{
+    if (signatures.OwnerKindAt(signatureIndex) != TypedSignatureOwnerKind.MemberMethod)
+    {
+        return false;
+    }
+
+    if (!TypedSignatureTokenTextEqualsToken(source, stream, signatures.OwnerNameTokenAt(signatureIndex), ownerNameToken))
+    {
+        return false;
+    }
+
+    if (!TypedSignatureTokenTextEqualsToken(source, stream, signatures.NameTokenAt(signatureIndex), memberNameToken))
+    {
+        return false;
+    }
+
+    return TypedMemberFunctionHasStaticBefore(stream, signatures.KeywordTokenAt(signatureIndex)) == wantStatic;
+}
+
+internal fn u32[0 max] TypedMemberMethodCandidateCount(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] ownerNameToken,
+    u32[0 max] memberNameToken,
+    bool wantStatic)
+{
+    stack mut u32[0 max] count = 0;
+    stack u64[0 2 ** 63 - 1] signatureCount = signatures.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < signatureCount; index += 1)
+    {
+        if (TypedMemberSignatureMatches(source, stream, signatures, index, ownerNameToken, memberNameToken, wantStatic))
+        {
+            count = (u32[0 max])(count + 1);
+        }
+    }
+
+    return count;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedMemberMethodCandidates(
+    mut borrow TypedMemberExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] memberIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    u32[0 max] memberNameToken,
+    bool wantStatic)
+{
+    stack mut TypedMemberTargetKind candidateKind = TypedMemberTargetKind.InstanceMethod;
+    if (wantStatic)
+    {
+        candidateKind = TypedMemberTargetKind.StaticMethod;
+    }
+
+    stack u64[0 2 ** 63 - 1] signatureCount = signatures.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < signatureCount; index += 1)
+    {
+        if (TypedMemberSignatureMatches(source, stream, signatures, index, ownerNameToken, memberNameToken, wantStatic))
+        {
+            stack mut TypedSignatureTypeKind returnTypeKind = TypedSignatureTypeKind.Unknown;
+            stack mut u32[0 max] returnTypeHeadToken = 0;
+            stack mut u32[0 max] returnTypePrimaryToken = 0;
+            stack mut u32[0 max] returnTypeStartToken = 0;
+            stack mut u32[0 max] returnTypeEndToken = 0;
+            stack mut u32[0 max] returnRangeStartToken = 0;
+            stack mut u32[0 max] returnRangeEndToken = 0;
+            stack mut u32[0 max] returnElementCountStartToken = 0;
+            stack mut u32[0 max] returnElementCountEndToken = 0;
+            stack mut u32[0 max] returnBitWidth = 0;
+            stack mut u32[0 max] returnTypeArgumentCount = 0;
+            stack mut u32[0 max] returnComptimeArgumentCount = 0;
+            stack mut u32[0 max] returnTypeFlags = 0;
+            TypedCallSignatureSlotFacts(
+                signatures,
+                signatures.ReturnTypeSlotIndexPlusOneAt(index),
+                returnTypeKind,
+                returnTypeHeadToken,
+                returnTypePrimaryToken,
+                returnTypeStartToken,
+                returnTypeEndToken,
+                returnRangeStartToken,
+                returnRangeEndToken,
+                returnElementCountStartToken,
+                returnElementCountEndToken,
+                returnBitWidth,
+                returnTypeArgumentCount,
+                returnComptimeArgumentCount,
+                returnTypeFlags);
+
+            switch (AppendTypedMemberCandidate(
+                table,
+                memberIndexPlusOne,
+                candidateKind,
+                (u32[0 max])(index + 1),
+                signatures.NameTokenAt(index),
+                signatures.ParamCountAt(index),
+                returnTypeKind,
+                returnTypeHeadToken,
+                returnTypePrimaryToken,
+                returnTypeStartToken,
+                returnTypeEndToken,
+                returnRangeStartToken,
+                returnRangeEndToken,
+                returnElementCountStartToken,
+                returnElementCountEndToken,
+                returnBitWidth,
+                returnTypeArgumentCount,
+                returnComptimeArgumentCount,
+                returnTypeFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

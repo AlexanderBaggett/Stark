@@ -115,6 +115,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
         Assert.Contains("declare i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetFileAttributesExW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
@@ -125,6 +126,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @FileExists(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @ReadPathMetadata(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CreateDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @DeleteDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectoryWithFlags(", llvm, StringComparison.Ordinal);
@@ -136,7 +138,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntry(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntryInfo(", llvm, StringComparison.Ordinal);
         Assert.Contains("@DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WindowsFileTimeToUnixSeconds(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WindowsFileTimeToUnixNanoseconds(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetFileAttributesExW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
@@ -161,6 +166,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("c\"/\\00\"", llvm, StringComparison.Ordinal);
         Assert.Contains("c\";\\00\"", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetTempPathW(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @HasLongPathPrefix(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDriveAbsoluteWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsUncWidePath(", llvm, StringComparison.Ordinal);
@@ -174,7 +180,9 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef %stark_ascii @PathSeparator()", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDirectorySeparator(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryCurrentDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetTempPathW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @TryCopyWideAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryDecodeUtf8PathToWide(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryBuildLongWindowsWidePath(", llvm, StringComparison.Ordinal);
@@ -192,8 +200,23 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
 
         Assert.Contains("declare void @ExitProcess(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @GetCurrentProcessId()", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @CreatePipe(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @CreateProcessW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @TerminateProcess(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetExitCodeProcess(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @PeekNamedPipe(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i64 @GetTickCount64()", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @SetEnvironmentVariableW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetEnvironmentVariableW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @SetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ProcessId(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @StartProcessCapture(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@ReadRawDescriptorBytes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WriteRawDescriptorBytes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @ReadArgumentsBlock(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetCurrentProcessId()", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @CreateProcessW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @PeekNamedPipe(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
     }
 
@@ -221,7 +244,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var manifestPath = Path.Combine(packageDirectory, "System.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "System.starkpkg");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var llvmPath = Path.Combine(appDirectory, "App.ll");
 
@@ -373,6 +396,231 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
             Assert.Equal(0, execution.ExitCode);
             Assert.Equal("Console Status\nPromoted\n", NormalizeNewlines(execution.Stdout));
             Assert.Equal("stderr works\npromoted stderr\n", NormalizeNewlines(execution.Stderr));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceWindowsProcessCaptureRunsCmdWithEnvironmentAndInput()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-windows-process-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "App.exe");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Process
+                import System.Text
+                module WindowsProcessRuntimeProbe
+
+                unsafe fn bool SliceEqualsAscii(borrow i8[min max][] actual, ascii expected)
+                {
+                    stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+                    if (expectedLength < 0 || actual.Length != (u64[0 2 ** 63 - 1])expectedLength)
+                    {
+                        return false;
+                    }
+
+                    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < actual.Length; index += 1)
+                    {
+                        if (actual[index] != *(&expectedData[index]))
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                unsafe fn i32[min max] CheckCapture()
+                {
+                    switch (System.Process.SetEnvironment("STARK_PROCESS_CAPTURE_VALUE", "capture-ok"))
+                    {
+                        case System.Process.ProcessStatus.Err(var error):
+                            return 10;
+                        case System.Process.ProcessStatus.Ok:
+                    }
+
+                    switch (System.Process.ArgumentCount())
+                    {
+                        case System.Process.ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return 11;
+                        case System.Process.ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                            if (count == 0)
+                            {
+                                return 12;
+                            }
+                    }
+
+                    switch (System.Process.CurrentDirectory())
+                    {
+                        case System.Process.ProcessResult<System.Text.OwnedAscii>.Err(var error):
+                            return 13;
+                        case System.Process.ProcessResult<System.Text.OwnedAscii>.Ok(var cwd):
+                            if (cwd.IsEmpty())
+                            {
+                                return 14;
+                            }
+                    }
+
+                    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+                        System.Process.Command("cmd.exe");
+                    switch (commandResult)
+                    {
+                        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+                            return 15;
+                        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+                            stack mut System.Process.ProcessCommand child = command;
+                            switch (child.AddArgument("/C"))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 16;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (child.AddArgument("echo %STARK_PROCESS_CAPTURE_VALUE%&>&2 echo err&exit /b 7"))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 17;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (child.SetWorkingDirectory("."))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 18;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (System.Process.RunCapture(child))
+                            {
+                                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                                    return 19;
+                                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                                    if (output.ExitCode != 7)
+                                    {
+                                        return 20;
+                                    }
+
+                                    if (!SliceEqualsAscii(output.StdoutSlice(), "capture-ok\r\n"))
+                                    {
+                                        return 21;
+                                    }
+
+                                    if (!SliceEqualsAscii(output.StderrSlice(), "err\r\n"))
+                                    {
+                                        return 22;
+                                    }
+
+                                    return 0;
+                            }
+                    }
+                }
+
+                unsafe fn i32[min max] CheckCaptureWithInput()
+                {
+                    stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+                        System.Process.Command("cmd.exe");
+                    switch (commandResult)
+                    {
+                        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+                            return 30;
+                        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+                            stack mut System.Process.ProcessCommand child = command;
+                            switch (child.AddArgument("/V:ON"))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 31;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (child.AddArgument("/C"))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 32;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (child.AddArgument("set /p line=&echo !line!&>&2 echo err-in&exit /b 9"))
+                            {
+                                case System.Process.ProcessStatus.Err(var error):
+                                    return 33;
+                                case System.Process.ProcessStatus.Ok:
+                            }
+
+                            switch (System.Process.RunCaptureWithInput(child, "input-ok\n"))
+                            {
+                                case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                                    return 34;
+                                case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                                    if (output.ExitCode != 9)
+                                    {
+                                        return 35;
+                                    }
+
+                                    if (!SliceEqualsAscii(output.StdoutSlice(), "input-ok\r\n"))
+                                    {
+                                        return 36;
+                                    }
+
+                                    if (!SliceEqualsAscii(output.StderrSlice(), "err-in\r\n"))
+                                    {
+                                        return 37;
+                                    }
+
+                                    return 0;
+                            }
+                    }
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    stack i32[min max] first = CheckCapture();
+                    if (first != 0)
+                    {
+                        return first;
+                    }
+
+                    return CheckCaptureWithInput();
+                }
+                """);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStdout + Environment.NewLine + compileStderr);
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessAsync(outputPath, tempDirectory.FullName);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
         }
         finally
         {
@@ -899,4 +1147,3 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         return text.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }
-

@@ -908,7 +908,10 @@ internal sealed class SsaConstantPropagator
         {
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
-                RewriteRValue(valueInstruction.Value, replacements)),
+                RewriteRValue(valueInstruction.Value, replacements),
+                valueInstruction.Location,
+                valueInstruction.ScopedNoAliasGroups,
+                valueInstruction.LoopAccessGroups),
             SsaCallInstruction call => call with
             {
                 Arguments = call.Arguments
@@ -1037,6 +1040,7 @@ internal sealed class SsaConstantPropagator
             SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                 RewriteValue(allocation.Capacity, replacements),
                 allocation.Type,
+                allocation.AllocationKind,
                 allocation.Text),
             SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                 RewriteValue(free.Storage, replacements),
@@ -1048,16 +1052,19 @@ internal sealed class SsaConstantPropagator
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.TargetCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                 RewriteValue(moveLast.StorageAddress, replacements),
@@ -1199,6 +1206,8 @@ internal sealed class SsaConstantPropagator
             terminator.Targets,
             Condition: rewrittenCondition,
             Value: rewrittenValue,
+            TailDirectCall: RewriteTailDirectCall(terminator.TailDirectCall, replacements),
+            TailIndirectCall: RewriteTailIndirectCall(terminator.TailIndirectCall, replacements),
             SwitchCases: rewrittenCases,
             DefaultTarget: terminator.DefaultTarget,
             Location: terminator.Location,
@@ -1206,6 +1215,69 @@ internal sealed class SsaConstantPropagator
             LoopBehavior: terminator.LoopBehavior,
             LoopContracts: terminator.LoopContracts,
             LoopAccessGroups: terminator.LoopAccessGroups);
+    }
+
+    private static ISsaDirectCallOperation? RewriteTailDirectCall(
+        ISsaDirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue> replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaCallInstruction instruction => instruction with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaCallRValue rValue => rValue with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
+    }
+
+    private static ISsaIndirectCallOperation? RewriteTailIndirectCall(
+        ISsaIndirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue> replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var target = RewriteValue(call.Target, replacements);
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaIndirectCallInstruction instruction => instruction with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaIndirectCallRValue rValue => rValue with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
     }
 
     private static SsaTerminator PreserveLoopMetadata(SsaTerminator source, SsaTerminator replacement)

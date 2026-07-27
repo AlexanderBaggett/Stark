@@ -1,0 +1,220 @@
+import System.C
+import System.Console
+import Vendor.SQLite
+module SQLiteCallbacks
+
+struct CallbackState
+{
+    i32[min max] ScalarCalls;
+    i32[min max] CompareCalls;
+}
+
+fn bool TextResultEquals(SQLiteTextResult result, ascii expected)
+{
+    switch (result)
+    {
+        case SQLiteTextResult.Err(var error):
+            return false;
+        case SQLiteTextResult.Ok(var text):
+            return text.View() == expected;
+    }
+}
+
+unsafe ffi(c) fn void BoostScoreCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack rawmutptr<CallbackState> state = (rawmutptr<CallbackState>)FunctionUserData(nativeContext);
+        if (state != null)
+        {
+            (*state).ScalarCalls += 1;
+        }
+
+        if (argumentCount != 1)
+        {
+            ResultError(nativeContext, "boost_score expects one argument");
+            return;
+        }
+
+        stack rawmutptr<SQLite3ValueNative> value = FunctionArgument(values, argumentCount, 0);
+        if (value == null || ValueType(value) == SQLiteColumnType.Null)
+        {
+            ResultNull(nativeContext);
+            return;
+        }
+
+        ResultInt64(nativeContext, ValueInt64(value) + 10);
+        return;
+    }
+}
+
+unsafe ffi(c) fn c_int ReverseTextCompare(
+    rawmutptr<i8[min max]> data,
+    c_int leftByteCount,
+    rawptr<c_void> leftText,
+    c_int rightByteCount,
+    rawptr<c_void> rightText)
+{
+    if (data != null)
+    {
+        unsafe
+        {
+            stack rawmutptr<CallbackState> state = (rawmutptr<CallbackState>)data;
+            (*state).CompareCalls += 1;
+        }
+    }
+
+    if (leftText == null || rightText == null)
+    {
+        return 0;
+    }
+
+    if (leftByteCount <= 0 && rightByteCount <= 0)
+    {
+        return 0;
+    }
+
+    if (leftByteCount <= 0)
+    {
+        return 1;
+    }
+
+    if (rightByteCount <= 0)
+    {
+        return -1;
+    }
+
+    unsafe
+    {
+        stack rawptr<u8[0 max]> leftBytes = (rawptr<u8[0 max]>)leftText;
+        stack rawptr<u8[0 max]> rightBytes = (rawptr<u8[0 max]>)rightText;
+        stack mut i32[min max] index = 0;
+        while willexit (index < leftByteCount && index < rightByteCount)
+        {
+            stack u8[0 max] leftByte = *(&leftBytes[index]);
+            stack u8[0 max] rightByte = *(&rightBytes[index]);
+            if (leftByte < rightByte)
+            {
+                return 1;
+            }
+
+            if (leftByte > rightByte)
+            {
+                return -1;
+            }
+
+            index += 1;
+        }
+    }
+
+    if (leftByteCount < rightByteCount)
+    {
+        return 1;
+    }
+
+    if (leftByteCount > rightByteCount)
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack SQLiteDatabaseResult opened = OpenInMemory();
+    switch (opened)
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return 1;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (Execute(database, "CREATE TABLE scores(name TEXT NOT NULL, score INTEGER NOT NULL);") != SQLiteStatusResult.Ok)
+            {
+                return 2;
+            }
+
+            if (Execute(database, "INSERT INTO scores(name, score) VALUES('alpha', 1),('beta', 2),('gamma', 3);") != SQLiteStatusResult.Ok)
+            {
+                return 3;
+            }
+
+            stack mut CallbackState state = new();
+            unsafe
+            {
+                stack SQLiteScalarCallback boost = BoostScoreCallback;
+                if (RegisterScalarFunctionWithUserData(
+                        database,
+                        "boost_score",
+                        1,
+                        SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+                        (rawmutptr<c_void>)&state,
+                        boost) != SQLiteStatusResult.Ok)
+                {
+                    return 4;
+                }
+
+                stack SQLiteCollationCompareCallback compare = ReverseTextCompare;
+                if (RegisterCollationWithUserDataNoDestructor<CallbackState>(
+                        database,
+                        "STARK_REVERSE",
+                        SQLITE_UTF8,
+                        state,
+                        compare) != SQLiteStatusResult.Ok)
+                {
+                    return 5;
+                }
+            }
+
+            stack SQLiteStatementResult queryPrepared =
+                Prepare(database, "SELECT name, boost_score(score) FROM scores ORDER BY name COLLATE STARK_REVERSE LIMIT 1;");
+            switch (queryPrepared)
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 6;
+                case SQLiteStatementResult.Ok(var queryValue):
+                    stack mut Statement query = queryValue;
+                    switch (Step(query))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (!TextResultEquals(ColumnText(query, 0), "gamma"))
+                            {
+                                return 7;
+                            }
+
+                            if (ColumnInt(query, 1) != 13)
+                            {
+                                return 8;
+                            }
+                        case SQLiteStepResult.Done:
+                            return 9;
+                        case SQLiteStepResult.Err(var error):
+                            return 10;
+                    }
+
+                    if (Finalize(query) != SQLiteStatusResult.Ok)
+                    {
+                        return 11;
+                    }
+            }
+
+            if (state.ScalarCalls <= 0 || state.CompareCalls <= 0)
+            {
+                return 12;
+            }
+
+            WriteLine("SQLite callback example:");
+            WriteLine("top row = gamma, boosted score = 13");
+
+            if (Close(database) != SQLiteStatusResult.Ok)
+            {
+                return 13;
+            }
+
+            return 0;
+    }
+}

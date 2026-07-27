@@ -11,17 +11,3 @@ fn bool IntegerAssertionsWork() {
 fn bool TextAssertionsWork() {
     return System.Testing.Equal("Stark", "Stark");
 }
-
-export fn i32[min max] main() {
-    stack mut u8[0 1] failed = 0;
-
-    if (System.Testing.RunFact("IntegerAssertionsWork", IntegerAssertionsWork()) != 0) {
-        failed = 1;
-    }
-
-    if (System.Testing.RunFact("TextAssertionsWork", TextAssertionsWork()) != 0) {
-        failed = 1;
-    }
-
-    return System.Testing.ExitCode(failed);
-}

@@ -1,0 +1,377 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import System.Text
+import System.Memory
+module Compiler.Binding.ModuleResolution
+
+public enum ModuleOrigin
+{
+    Source,
+    Package,
+}
+
+public enum ImportResolutionKind
+{
+    Source,
+    Package,
+    Missing,
+    Ambiguous,
+}
+
+public struct ImportResolutionTable
+{
+    internal dynamic ImportResolutionKind Kinds;
+    internal dynamic u32[0 max] ImportTokens;
+    internal dynamic u32[0 max] TargetIndices;
+
+    ImportResolutionTable()
+    {
+        self.Kinds = new();
+        self.ImportTokens = new();
+        self.TargetIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ImportResolutionTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public finite law ImportResolutionKind KindAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ImportResolutionKind kind = ImportResolutionKind.Missing;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public finite law u32[0 max] ImportTokenAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ImportTokens.Length)
+        {
+            token = self.ImportTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] TargetIndexAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] target = 0;
+        if (index < self.TargetIndices.Length)
+        {
+            target = self.TargetIndices[index];
+        }
+
+        return target;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ImportResolutionTable self, ImportResolutionKind kind, u32[0 max] importToken, u32[0 max] targetIndex)
+    {
+        if (!self.Kinds.TryReserve(1)
+            || !self.ImportTokens.TryReserve(1)
+            || !self.TargetIndices.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.ImportTokens[self.ImportTokens.Length] = importToken;
+        init self.TargetIndices[self.TargetIndices.Length] = targetIndex;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public struct ModuleResolver
+{
+    internal dynamic OwnedAscii Names;
+    internal dynamic ModuleOrigin Origins;
+    internal dynamic u32[0 max] OriginIndices;
+
+    ModuleResolver()
+    {
+        self.Names = new();
+        self.Origins = new();
+        self.OriginIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ModuleResolver self)
+    {
+        return self.Origins.Length;
+    }
+
+    public finite law ModuleOrigin OriginAt(borrow ModuleResolver self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ModuleOrigin origin = ModuleOrigin.Source;
+        if (index < self.Origins.Length)
+        {
+            origin = self.Origins[index];
+        }
+
+        return origin;
+    }
+
+    public finite law u32[0 max] OriginIndexAt(borrow ModuleResolver self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] originIndex = 0;
+        if (index < self.OriginIndices.Length)
+        {
+            originIndex = self.OriginIndices[index];
+        }
+
+        return originIndex;
+    }
+
+    public fn bool NameEqualsAt(mut borrow ModuleResolver self, u64[0 2 ** 63 - 1] index, ascii name)
+    {
+        if (index >= self.Names.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.Names[index], name);
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ModuleResolver self, OwnedAscii name, ModuleOrigin origin, u32[0 max] originIndex)
+    {
+        if (!self.Names.TryReserve(1)
+            || !self.Origins.TryReserve(1)
+            || !self.OriginIndices.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Names[self.Names.Length] = name;
+        init self.Origins[self.Origins.Length] = origin;
+        init self.OriginIndices[self.OriginIndices.Length] = originIndex;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendHeaderDottedName(ascii source, borrow TokenStream stream, HeaderItem item, mut borrow OwnedAscii destination)
+{
+    stack u32[0 max] end = (u32[0 max])(item.NameStart + item.NameTokenCount);
+    for willexit (stack mut u32[0 max] token = item.NameStart; token < end; token += 1)
+    {
+        stack ascii piece = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+        switch (destination.AppendAscii(piece))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u64[0 2 ** 63 - 1] FindModuleHeaderIndex(borrow CompilationUnitHeader header)
+{
+    stack u64[0 2 ** 63 - 1] count = header.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack HeaderItem item = header.ItemAt(index);
+        if (item.Kind == SyntaxKind.ModuleDeclaration)
+        {
+            return index;
+        }
+    }
+
+    return count;
+}
+
+internal fn bool ModuleExistsWithOrigin(mut borrow ModuleResolver resolver, ascii name, ModuleOrigin origin)
+{
+    stack u64[0 2 ** 63 - 1] count = resolver.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (resolver.OriginAt(index) == origin && resolver.NameEqualsAt(index, name))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public fn System.Memory.MemoryStatus AddSourceModule(
+    mut borrow ModuleResolver resolver,
+    ascii source,
+    borrow TokenStream stream,
+    borrow CompilationUnitHeader header,
+    u32[0 max] sourceIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] moduleIndex = FindModuleHeaderIndex(header);
+    if (moduleIndex >= header.Count())
+    {
+        switch (diags.Append(BindDiagnosticCode.MissingModuleDeclaration, header.NextToken))
+        {
+            case System.Memory.MemoryStatus.Err(var diagError):
+                return System.Memory.MemoryStatus.Err(diagError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack HeaderItem moduleItem = header.ItemAt(moduleIndex);
+    stack mut OwnedAscii name = new();
+    switch (AppendHeaderDottedName(source, stream, moduleItem, name))
+    {
+        case System.Memory.MemoryStatus.Err(var nameError):
+            return System.Memory.MemoryStatus.Err(nameError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack ascii moduleName = name.View();
+    if (ModuleExistsWithOrigin(resolver, moduleName, ModuleOrigin.Source))
+    {
+        switch (diags.Append(BindDiagnosticCode.DuplicateModule, moduleItem.NameStart))
+        {
+            case System.Memory.MemoryStatus.Err(var duplicateError):
+                return System.Memory.MemoryStatus.Err(duplicateError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return resolver.Append(name, ModuleOrigin.Source, sourceIndex);
+}
+
+public fn System.Memory.MemoryStatus AddPackageModule(
+    mut borrow ModuleResolver resolver,
+    ascii moduleName,
+    u32[0 max] packageIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut OwnedAscii name = new();
+    switch (System.Text.FromAscii(name, moduleName))
+    {
+        case System.Memory.MemoryStatus.Err(var copyError):
+            return System.Memory.MemoryStatus.Err(copyError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (ModuleExistsWithOrigin(resolver, moduleName, ModuleOrigin.Package))
+    {
+        switch (diags.Append(BindDiagnosticCode.DuplicateModule, 0))
+        {
+            case System.Memory.MemoryStatus.Err(var duplicateError):
+                return System.Memory.MemoryStatus.Err(duplicateError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return resolver.Append(name, ModuleOrigin.Package, packageIndex);
+}
+
+internal fn ImportResolutionKind ResolveModuleName(mut borrow ModuleResolver resolver, ascii moduleName, out u32[0 max] targetIndex)
+{
+    targetIndex = 0;
+    stack mut u32[0 max] sourceMatches = 0;
+    stack mut u32[0 max] packageMatches = 0;
+    stack mut u32[0 max] sourceTarget = 0;
+    stack mut u32[0 max] packageTarget = 0;
+    stack u64[0 2 ** 63 - 1] count = resolver.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (resolver.NameEqualsAt(index, moduleName))
+        {
+            stack ModuleOrigin origin = resolver.OriginAt(index);
+            if (origin == ModuleOrigin.Source)
+            {
+                sourceMatches = (u32[0 max])(sourceMatches + 1);
+                sourceTarget = resolver.OriginIndexAt(index);
+            }
+            else
+            {
+                packageMatches = (u32[0 max])(packageMatches + 1);
+                packageTarget = resolver.OriginIndexAt(index);
+            }
+        }
+    }
+
+    if (sourceMatches == 1)
+    {
+        targetIndex = sourceTarget;
+        return ImportResolutionKind.Source;
+    }
+
+    if (sourceMatches > 1)
+    {
+        return ImportResolutionKind.Ambiguous;
+    }
+
+    if (packageMatches == 1)
+    {
+        targetIndex = packageTarget;
+        return ImportResolutionKind.Package;
+    }
+
+    if (packageMatches > 1)
+    {
+        return ImportResolutionKind.Ambiguous;
+    }
+
+    return ImportResolutionKind.Missing;
+}
+
+public fn System.Memory.MemoryStatus ResolveImports(
+    mut borrow ModuleResolver resolver,
+    ascii source,
+    borrow TokenStream stream,
+    borrow CompilationUnitHeader header,
+    mut borrow ImportResolutionTable resolutions,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = header.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack HeaderItem item = header.ItemAt(index);
+        if (item.Kind == SyntaxKind.ImportDeclaration)
+        {
+            stack mut OwnedAscii name = new();
+            switch (AppendHeaderDottedName(source, stream, item, name))
+            {
+                case System.Memory.MemoryStatus.Err(var nameError):
+                    return System.Memory.MemoryStatus.Err(nameError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut u32[0 max] targetIndex = 0;
+            stack ascii importName = name.View();
+            stack ImportResolutionKind kind = ResolveModuleName(resolver, importName, targetIndex);
+            switch (resolutions.Append(kind, item.NameStart, targetIndex))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (kind == ImportResolutionKind.Missing)
+            {
+                switch (diags.Append(BindDiagnosticCode.UnresolvedImport, item.NameStart))
+                {
+                    case System.Memory.MemoryStatus.Err(var missingError):
+                        return System.Memory.MemoryStatus.Err(missingError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (kind == ImportResolutionKind.Ambiguous)
+            {
+                switch (diags.Append(BindDiagnosticCode.AmbiguousImport, item.NameStart))
+                {
+                    case System.Memory.MemoryStatus.Err(var ambiguousError):
+                        return System.Memory.MemoryStatus.Err(ambiguousError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

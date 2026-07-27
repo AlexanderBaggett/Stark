@@ -1,0 +1,681 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir.Facts
+module Compiler.Mir.SourceRangeFacts
+
+// Parses the decimal digits at [start, start+length) of `source` into an integer.
+internal fn i64[min max] ParseDigitSpan(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack mut i64[min max] value = 0;
+    stack mut u64[0 2 ** 63 - 1] j = 0;
+    while willexit (j < length)
+    {
+        stack i8[min max] digitByte = source[start + j];
+        stack i64[min max] digit = (i64[min max])digitByte - 48;
+        value = value * 10 + digit;
+        j = j + 1;
+    }
+
+    return value;
+}
+
+internal fn bool TokenTextIs3(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token, i8[min max] first, i8[min max] second, i8[min max] third)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 3)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == first
+        && source[start + 1] == second
+        && source[start + 2] == third;
+}
+
+internal fn bool TokenIsMin(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIs3(stream, source, token, 109, 105, 110);
+}
+
+internal fn bool TokenIsMax(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIs3(stream, source, token, 109, 97, 120);
+}
+
+internal fn bool IntegerTypeIsUnsigned(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])typeToken);
+    return source[start] == 117;
+}
+
+internal fn u32[0 max] IntegerTypeBitWidth(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return 64;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])typeToken);
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])typeToken);
+    stack mut u64[0 2 ** 63 - 1] i = 1;
+    stack mut u32[0 max] width = 0;
+    while willexit (i < length)
+    {
+        stack i8[min max] byte = source[start + i];
+        if (byte < 48 || byte > 57)
+        {
+            return 64;
+        }
+
+        width = width * 10 + (u32[0 max])((i64[min max])byte - 48);
+        i = i + 1;
+    }
+
+    if (width == 0)
+    {
+        return 64;
+    }
+
+    return width;
+}
+
+internal fn bool IntegerTypeSignedMinValue(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out i64[min max] value)
+{
+    value = 0;
+    stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+    if (IntegerTypeIsUnsigned(stream, source, typeToken))
+    {
+        value = 0;
+        return true;
+    }
+
+    if (width == 64)
+    {
+        value = I64MinValue();
+        return true;
+    }
+
+    if (width > 0 && width < 64)
+    {
+        value = 0 - Pow2I64(width - 1);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool IntegerTypeMaxValue(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out i64[min max] value)
+{
+    value = 0;
+    stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+    if (IntegerTypeIsUnsigned(stream, source, typeToken))
+    {
+        if (width >= 63)
+        {
+            return false;
+        }
+
+        value = Pow2I64(width) - 1;
+        return true;
+    }
+
+    if (width == 64)
+    {
+        value = I64MaxValue();
+        return true;
+    }
+
+    if (width > 0 && width < 64)
+    {
+        value = Pow2I64(width - 1) - 1;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryCheckedPowI64(i64[min max] baseValue, i64[min max] exponent, out i64[min max] value)
+{
+    value = 0;
+    if (exponent < 0)
+    {
+        return false;
+    }
+
+    if (baseValue == 0)
+    {
+        value = exponent == 0 ? 1 : 0;
+        return true;
+    }
+
+    if (baseValue == 1)
+    {
+        value = 1;
+        return true;
+    }
+
+    if (baseValue == -1)
+    {
+        value = exponent % 2 == 0 ? 1 : -1;
+        return true;
+    }
+
+    if (exponent > 63)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] result = 1;
+    stack mut i64[min max] remaining = exponent;
+    while willexit (remaining > 0)
+    {
+        stack mut i64[min max] next = 0;
+        if (!TryCheckedMulI64(result, baseValue, next))
+        {
+            return false;
+        }
+
+        result = next;
+        remaining = remaining - 1;
+    }
+
+    value = result;
+    return true;
+}
+
+internal fn bool TryParseRangeEndpointAdditive(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value,
+    out u32[0 max] nextToken)
+{
+    value = 0;
+    nextToken = start;
+    stack mut i64[min max] current = 0;
+    stack mut u32[0 max] cursor = 0;
+    if (!TryParseRangeEndpointMultiplicative(stream, source, typeToken, start, endExclusive, current, cursor))
+    {
+        return false;
+    }
+
+    while willexit (cursor < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind != TokenKind.Plus && kind != TokenKind.Minus)
+        {
+            break;
+        }
+
+        stack mut i64[min max] right = 0;
+        stack mut u32[0 max] afterRight = 0;
+        if (!TryParseRangeEndpointMultiplicative(stream, source, typeToken, cursor + 1, endExclusive, right, afterRight))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] result = 0;
+        if (kind == TokenKind.Plus)
+        {
+            if (!TryCheckedAddI64(current, right, result))
+            {
+                return false;
+            }
+        }
+        else if (!TryCheckedSubI64(current, right, result))
+        {
+            return false;
+        }
+
+        current = result;
+        cursor = afterRight;
+    }
+
+    value = current;
+    nextToken = cursor;
+    return true;
+}
+
+internal fn bool TryParseRangeEndpointMultiplicative(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value,
+    out u32[0 max] nextToken)
+{
+    value = 0;
+    nextToken = start;
+    stack mut i64[min max] current = 0;
+    stack mut u32[0 max] cursor = 0;
+    if (!TryParseRangeEndpointPower(stream, source, typeToken, start, endExclusive, current, cursor))
+    {
+        return false;
+    }
+
+    while willexit (cursor < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind != TokenKind.Star && kind != TokenKind.Div && kind != TokenKind.Mod)
+        {
+            break;
+        }
+
+        stack mut i64[min max] right = 0;
+        stack mut u32[0 max] afterRight = 0;
+        if (!TryParseRangeEndpointPower(stream, source, typeToken, cursor + 1, endExclusive, right, afterRight))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] result = 0;
+        if (kind == TokenKind.Star)
+        {
+            if (!TryCheckedMulI64(current, right, result))
+            {
+                return false;
+            }
+        }
+        else if (kind == TokenKind.Div)
+        {
+            if (!TryCheckedDivI64(current, right, result))
+            {
+                return false;
+            }
+        }
+        else if (!TryCheckedModI64(current, right, result))
+        {
+            return false;
+        }
+
+        current = result;
+        cursor = afterRight;
+    }
+
+    value = current;
+    nextToken = cursor;
+    return true;
+}
+
+internal fn bool TryParseRangeEndpointPower(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value,
+    out u32[0 max] nextToken)
+{
+    value = 0;
+    nextToken = start;
+    stack mut i64[min max] baseValue = 0;
+    stack mut u32[0 max] cursor = 0;
+    if (!TryParseRangeEndpointUnary(stream, source, typeToken, start, endExclusive, baseValue, cursor))
+    {
+        return false;
+    }
+
+    if (cursor >= endExclusive || stream.KindAt((u64[0 2 ** 63 - 1])cursor) != TokenKind.Pow)
+    {
+        value = baseValue;
+        nextToken = cursor;
+        return true;
+    }
+
+    stack mut i64[min max] exponent = 0;
+    stack mut u32[0 max] afterExponent = 0;
+    if (!TryParseRangeEndpointPower(stream, source, typeToken, cursor + 1, endExclusive, exponent, afterExponent))
+    {
+        return false;
+    }
+
+    if (!TryCheckedPowI64(baseValue, exponent, value))
+    {
+        return false;
+    }
+
+    nextToken = afterExponent;
+    return true;
+}
+
+internal fn bool TryParseRangeEndpointUnary(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value,
+    out u32[0 max] nextToken)
+{
+    value = 0;
+    nextToken = start;
+    if (start < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])start) == TokenKind.Minus)
+    {
+        stack mut i64[min max] operand = 0;
+        stack mut u32[0 max] afterOperand = 0;
+        if (!TryParseRangeEndpointUnary(stream, source, typeToken, start + 1, endExclusive, operand, afterOperand))
+        {
+            return false;
+        }
+
+        if (operand == I64MinValue())
+        {
+            return false;
+        }
+
+        value = 0 - operand;
+        nextToken = afterOperand;
+        return true;
+    }
+
+    return TryParseRangeEndpointPrimary(stream, source, typeToken, start, endExclusive, value, nextToken);
+}
+
+internal fn bool TryParseRangeEndpointPrimary(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value,
+    out u32[0 max] nextToken)
+{
+    value = 0;
+    nextToken = start;
+    if (start >= endExclusive)
+    {
+        return false;
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])start);
+    if (kind == TokenKind.IntegerLiteral)
+    {
+        if (!TryParseDigitSpanI64(source, stream.StartAt((u64[0 2 ** 63 - 1])start), stream.LengthAt((u64[0 2 ** 63 - 1])start), value))
+        {
+            return false;
+        }
+
+        nextToken = start + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMin(stream, source, start))
+    {
+        if (!IntegerTypeSignedMinValue(stream, source, typeToken, value))
+        {
+            return false;
+        }
+
+        nextToken = start + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMax(stream, source, start))
+    {
+        if (!IntegerTypeMaxValue(stream, source, typeToken, value))
+        {
+            return false;
+        }
+
+        nextToken = start + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.LParen)
+    {
+        stack mut i64[min max] inner = 0;
+        stack mut u32[0 max] afterInner = 0;
+        if (!TryParseRangeEndpointAdditive(stream, source, typeToken, start + 1, endExclusive, inner, afterInner)
+            || afterInner >= endExclusive
+            || stream.KindAt((u64[0 2 ** 63 - 1])afterInner) != TokenKind.RParen)
+        {
+            return false;
+        }
+
+        value = inner;
+        nextToken = afterInner + 1;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseRangeEndpointExpression(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out i64[min max] value)
+{
+    value = 0;
+    stack mut u32[0 max] nextToken = 0;
+    return start < endExclusive
+        && TryParseRangeEndpointAdditive(stream, source, typeToken, start, endExclusive, value, nextToken)
+        && nextToken == endExclusive;
+}
+
+internal fn bool TryFindIntegerRangeEndpointSplit(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out u32[0 max] upperEndpointStart)
+{
+    upperEndpointStart = 0;
+    stack mut bool found = false;
+    stack mut u32[0 max] split = start + 1;
+    while willexit (split < endExclusive)
+    {
+        stack mut i64[min max] lowerValue = 0;
+        if (TryParseRangeEndpointExpression(stream, source, typeToken, start, split, lowerValue))
+        {
+            stack mut i64[min max] upperValue = 0;
+            if (TryParseRangeEndpointExpression(stream, source, typeToken, split, endExclusive, upperValue))
+            {
+                upperEndpointStart = split;
+                found = true;
+            }
+        }
+
+        split = split + 1;
+    }
+
+    return found;
+}
+
+internal finite law u32[0 max] FindRangeCloseBracket(borrow TokenStream stream, u32[0 max] openToken)
+{
+    stack mut u32[0 max] token = openToken + 1;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])token) != TokenKind.EndOfFile)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.RBrack)
+        {
+            return token;
+        }
+
+        token = token + 1;
+    }
+
+    return 0;
+}
+
+internal finite bool UpperInclusiveToExclusive(i64[min max] inclusive, out i64[min max] exclusive)
+{
+    if (inclusive == I64MaxValue())
+    {
+        exclusive = I64MinValue();
+    }
+    else
+    {
+        exclusive = inclusive + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryReadRangeLowerInclusive(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, u32[0 max] token, out i64[min max] value)
+{
+    value = 0;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.IntegerLiteral)
+    {
+        value = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+        return true;
+    }
+
+    if (kind == TokenKind.Minus && stream.KindAt((u64[0 2 ** 63 - 1])token + 1) == TokenKind.IntegerLiteral)
+    {
+        value = 0 - ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])token + 1), stream.LengthAt((u64[0 2 ** 63 - 1])token + 1));
+        return true;
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMin(stream, source, token))
+    {
+        return IntegerTypeSignedMinValue(stream, source, typeToken, value);
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMax(stream, source, token))
+    {
+        return IntegerTypeMaxValue(stream, source, typeToken, value);
+    }
+
+    return false;
+}
+
+internal fn bool TryReadRangeUpperExclusive(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, u32[0 max] token, out i64[min max] value)
+{
+    value = 0;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.Identifier && TokenIsMax(stream, source, token))
+    {
+        if (IntegerTypeIsUnsigned(stream, source, typeToken))
+        {
+            stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+            if (width >= 63)
+            {
+                return false;
+            }
+
+            value = Pow2I64(width);
+            return true;
+        }
+
+        stack u32[0 max] signedWidth = IntegerTypeBitWidth(stream, source, typeToken);
+        if (signedWidth == 64)
+        {
+            value = I64MinValue();
+            return true;
+        }
+
+        if (signedWidth > 0 && signedWidth < 64)
+        {
+            value = Pow2I64(signedWidth - 1);
+            return true;
+        }
+
+        return false;
+    }
+
+    stack mut i64[min max] inclusive = 0;
+    if (!TryReadRangeLowerInclusive(stream, source, typeToken, token, inclusive))
+    {
+        return false;
+    }
+
+    if (inclusive == I64MaxValue())
+    {
+        value = I64MinValue();
+    }
+    else
+    {
+        value = inclusive + 1;
+    }
+
+    return true;
+}
+
+internal finite law u32[0 max] NextRangeBoundToken(borrow TokenStream stream, u32[0 max] token)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Minus)
+    {
+        return token + 2;
+    }
+
+    return token + 1;
+}
+
+internal fn bool TryReadIntegerRangeFact(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out ValueFacts facts)
+{
+    facts = new();
+    if (typeToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken + 1) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack u32[0 max] openBracket = typeToken + 1;
+    stack u32[0 max] closeBracket = FindRangeCloseBracket(stream, openBracket);
+    if (closeBracket == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] lowerToken = typeToken + 2;
+    stack mut u32[0 max] upperToken = 0;
+    if (!TryFindIntegerRangeEndpointSplit(stream, source, typeToken, lowerToken, closeBracket, upperToken))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] upperInclusive = 0;
+    stack mut i64[min max] upperExclusive = 0;
+    if (!TryParseRangeEndpointExpression(stream, source, typeToken, lowerToken, upperToken, lower)
+        || !TryParseRangeEndpointExpression(stream, source, typeToken, upperToken, closeBracket, upperInclusive)
+        || !UpperInclusiveToExclusive(upperInclusive, upperExclusive))
+    {
+        return false;
+    }
+
+    if (lower == I64MinValue() && upperExclusive == I64MinValue())
+    {
+        return false;
+    }
+
+    facts.SetIntegerRange(lower, upperExclusive);
+    return true;
+}
+
+// The value of the first IntegerLiteral token in `stream` (parsed from `source`), or
+// -1 if there is none.
+internal fn i64[min max] FirstIntLiteralValue(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.IntegerLiteral)
+        {
+            return ParseDigitSpan(source, stream.StartAt(i), stream.LengthAt(i));
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}

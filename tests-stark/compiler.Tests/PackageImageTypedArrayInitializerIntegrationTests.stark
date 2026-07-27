@@ -1,0 +1,38 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedArrayInitializerIntegrationTests
+
+// Ported from PackageImageTypedArrayInitializerIntegrationTests.ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed typed array initializer bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "package-image-typed-array-initializer-manifest-backed",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.SumArray(4, 7, 0);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public fn i32[min max] SumArray<T>(i32[min max] left, i32[min max] right, T tag)
+{
+    stack i32[min max][2] values =
+    {
+        left, right
+    };
+    return values[0] + values[1];
+}
+""",
+            "Facade.SumArray",
+            "",
+            11);
+    }
+}

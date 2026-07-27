@@ -1,0 +1,432 @@
+import Compiler.Ir
+import System.Memory
+module Compiler.Mir.PackageImage.Shared.BinaryFormat
+
+// === Binary serialization primitives (toward package images, #32) ===
+// A byte buffer is an `IrTable<u8[0 max]>` (1-based, append-only). Integers are
+// encoded little-endian via div/mod (no bitwise); a signed i64 is encoded through its
+// two's-complement bit pattern (`(u64)value`), which Stark's modular casts recover.
+
+// Appends `value` as 4 little-endian bytes.
+public fn void WriteU32(mut borrow IrTable<u8[0 max]> buf, u32[0 max] value)
+{
+    stack u64[0 max] wide = (u64[0 max])value;
+    stack u32[0 max] a0 = buf.Add((u8[0 max])(wide % 256));
+    stack u32[0 max] a1 = buf.Add((u8[0 max])((wide / 256) % 256));
+    stack u32[0 max] a2 = buf.Add((u8[0 max])((wide / 65536) % 256));
+    stack u32[0 max] a3 = buf.Add((u8[0 max])((wide / 16777216) % 256));
+}
+
+// Reads a 4-byte little-endian u32 starting at the 1-based byte index `at`.
+public fn u32[0 max] ReadU32(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    stack u8[0 max] b0 = buf.Get(at);
+    stack u8[0 max] b1 = buf.Get(at + 1);
+    stack u8[0 max] b2 = buf.Get(at + 2);
+    stack u8[0 max] b3 = buf.Get(at + 3);
+    stack u64[0 max] value = (u64[0 max])b0
+        + (u64[0 max])b1 * 256
+        + (u64[0 max])b2 * 65536
+        + (u64[0 max])b3 * 16777216;
+    return (u32[0 max])value;
+}
+
+// Appends `value` as 8 little-endian bytes (two's-complement for negatives).
+public fn void WriteI64(mut borrow IrTable<u8[0 max]> buf, i64[min max] value)
+{
+    stack mut u64[0 max] rem = (u64[0 max])value;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u32[0 max] w = buf.Add((u8[0 max])(rem % 256));
+        rem = rem / 256;
+        i = i + 1;
+    }
+}
+
+// Appends `value` as 8 little-endian bytes.
+public fn void WriteU64(mut borrow IrTable<u8[0 max]> buf, u64[0 max] value)
+{
+    stack mut u64[0 max] rem = value;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u32[0 max] w = buf.Add((u8[0 max])(rem % 256));
+        rem = rem / 256;
+        i = i + 1;
+    }
+}
+
+// Reads an 8-byte little-endian i64 starting at the 1-based byte index `at`.
+public fn i64[min max] ReadI64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    stack mut u64[0 max] acc = 0;
+    stack mut u64[0 max] mul = 1;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u8[0 max] byte = buf.Get(at + i);
+        acc = acc + (u64[0 max])byte * mul;
+        mul = mul * 256;
+        i = i + 1;
+    }
+
+    return (i64[min max])acc;
+}
+
+// Reads an 8-byte little-endian u64 starting at the 1-based byte index `at`.
+public fn u64[0 max] ReadU64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    stack mut u64[0 max] acc = 0;
+    stack mut u64[0 max] mul = 1;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u8[0 max] byte = buf.Get(at + i);
+        acc = acc + (u64[0 max])byte * mul;
+        if (i < 7)
+        {
+            mul = mul * 256;
+        }
+
+        i = i + 1;
+    }
+
+    return acc;
+}
+
+// === Shared sectioned package-image format ===
+internal inline finite law u32[0 max] FourCc(u8[0 max] a, u8[0 max] b, u8[0 max] c, u8[0 max] d)
+{
+    return (u32[0 max])a
+        + (u32[0 max])b * 256
+        + (u32[0 max])c * 65536
+        + (u32[0 max])d * 16777216;
+}
+
+internal inline finite law u32[0 max] SectionedPackageImageVersion()
+{
+    return 2;
+}
+
+internal inline finite law u64[0 max] SectionedPackageImageHeaderLength()
+{
+    return (u64[0 max])24;
+}
+
+internal inline finite law u64[0 max] PackageSectionDirectoryEntryLength()
+{
+    return (u64[0 max])32;
+}
+
+internal inline finite law u64[0 max] PackageSectionDirectoryLength(u32[0 max] sectionCount)
+{
+    return (u64[0 max])sectionCount * PackageSectionDirectoryEntryLength();
+}
+
+internal inline finite law u64[0 max] PackageImageDataOffset(u32[0 max] sectionCount)
+{
+    return SectionedPackageImageHeaderLength() + PackageSectionDirectoryLength(sectionCount);
+}
+
+internal fn u32[0 max] SectionFlagsRequired()
+{
+    return 1;
+}
+
+internal fn u32[0 max] SectionEncodingRaw()
+{
+    return 0;
+}
+
+internal fn u32[0 max] SectionEncodingBrotliUtf8Json()
+{
+    return 1;
+}
+
+internal fn u32[0 max] PackageImageNullStringIndex()
+{
+    return 4294967295;
+}
+
+internal fn u32[0 max] PackageSectionStringTable()
+{
+    return FourCc(83, 84, 82, 83); // STRS
+}
+
+internal fn u32[0 max] PackageSectionPackageFacts()
+{
+    return FourCc(80, 73, 78, 70); // PINF
+}
+
+internal fn u32[0 max] PackageSectionManifest()
+{
+    return FourCc(77, 65, 78, 70); // MANF
+}
+
+internal fn u32[0 max] PackageSectionInstructions()
+{
+    return FourCc(77, 73, 78, 83); // MINS
+}
+
+internal fn u32[0 max] PackageSectionBlocks()
+{
+    return FourCc(77, 66, 76, 75); // MBLK
+}
+
+internal fn u32[0 max] PackageSectionFunctions()
+{
+    return FourCc(77, 70, 85, 78); // MFUN
+}
+
+internal fn u32[0 max] PackageSectionGlobals()
+{
+    return FourCc(77, 71, 76, 66); // MGLB
+}
+
+internal fn u32[0 max] PackageSectionAsmMetadata()
+{
+    return FourCc(77, 65, 83, 77); // MASM
+}
+
+internal fn u32[0 max] PackageSectionEnumLayoutFacts()
+{
+    return FourCc(77, 69, 76, 70); // MELF
+}
+
+internal fn u32[0 max] PackageSectionTextPayloadBytes()
+{
+    return FourCc(77, 84, 80, 66); // MTPB
+}
+
+internal fn u32[0 max] PackageSectionTextConstants()
+{
+    return FourCc(77, 84, 88, 67); // MTXC
+}
+
+internal fn u32[0 max] PackageSectionFloatPayloadBytes()
+{
+    return FourCc(77, 70, 80, 66); // MFPB
+}
+
+internal fn u32[0 max] PackageSectionFloatConstants()
+{
+    return FourCc(77, 70, 88, 67); // MFXC
+}
+
+internal fn void WriteStarkPackageImageMagic(mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u32[0 max] wroteS = buf.Add(83);
+    stack u32[0 max] wroteT = buf.Add(84);
+    stack u32[0 max] wroteA = buf.Add(65);
+    stack u32[0 max] wroteR = buf.Add(82);
+    stack u32[0 max] wroteK = buf.Add(75);
+    stack u32[0 max] wroteP = buf.Add(80);
+    stack u32[0 max] wroteSecondK = buf.Add(75);
+    stack u32[0 max] wroteG = buf.Add(71);
+}
+
+internal fn bool HasStarkPackageImageMagic(borrow IrTable<u8[0 max]> buf)
+{
+    return CanReadImageBytes(buf, 1, 8)
+        && buf.Get(1) == 83
+        && buf.Get(2) == 84
+        && buf.Get(3) == 65
+        && buf.Get(4) == 82
+        && buf.Get(5) == 75
+        && buf.Get(6) == 80
+        && buf.Get(7) == 75
+        && buf.Get(8) == 71;
+}
+
+internal fn void WritePackageSectionDirectoryEntry(
+    mut borrow IrTable<u8[0 max]> buf,
+    u32[0 max] sectionId,
+    u32[0 max] flags,
+    u64[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] encoding)
+{
+    WriteU32(buf, sectionId);
+    WriteU32(buf, flags);
+    WriteU64(buf, offset);
+    WriteU64(buf, length);
+    WriteU32(buf, encoding);
+    WriteU32(buf, 0);
+}
+
+internal fn void WriteSectionedPackageImageHeader(mut borrow IrTable<u8[0 max]> buf, u32[0 max] sectionCount)
+{
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, PackageSectionDirectoryLength(sectionCount));
+}
+
+internal fn bool TryReservePackageImageCapacity(mut borrow IrTable<u8[0 max]> buf, u64[0 max] byteCount)
+{
+    if (byteCount > (u64[0 max])(2 ** 63 - 1))
+    {
+        return false;
+    }
+
+    switch (buf.Reserve((u64[0 2 ** 63 - 1])byteCount))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
+// True when the 1-based byte range `[start, start + byteCount)` is present.
+// This is the guard all package-image readers use before touching raw bytes.
+internal inline finite law bool CanReadImageBytes(borrow IrTable<u8[0 max]> buf, u32[0 max] start, u64[0 max] byteCount)
+{
+    if (start == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] total = buf.Count();
+    stack u64[0 max] first = (u64[0 max])start;
+    if (byteCount == 0)
+    {
+        return first <= (u64[0 max])total + 1;
+    }
+
+    if (first > (u64[0 max])total)
+    {
+        return false;
+    }
+
+    stack u64[0 max] available = (u64[0 max])total - first + 1;
+    return byteCount <= available;
+}
+
+internal inline finite law bool SectionLastByteFitsU32(u32[0 max] start, u64[0 max] byteCount)
+{
+    if (byteCount == 0)
+    {
+        return true;
+    }
+
+    return (u64[0 max])start + byteCount - 1 <= (u64[0 max])(2 ** 32 - 1);
+}
+
+internal fn bool TryReadU32FromImage(borrow IrTable<u8[0 max]> buf, u32[0 max] at, out u32[0 max] value)
+{
+    value = 0;
+    if (!CanReadImageBytes(buf, at, 4))
+    {
+        return false;
+    }
+
+    value = ReadU32(buf, at);
+    return true;
+}
+
+internal fn bool TryReadU64FromImage(borrow IrTable<u8[0 max]> buf, u32[0 max] at, out u64[0 max] value)
+{
+    value = 0;
+    if (!CanReadImageBytes(buf, at, 8))
+    {
+        return false;
+    }
+
+    value = ReadU64(buf, at);
+    return true;
+}
+
+internal fn bool TryAdvanceImageCursor(borrow IrTable<u8[0 max]> buf, u32[0 max] cursor, u64[0 max] byteCount, out u32[0 max] nextCursor)
+{
+    nextCursor = cursor;
+    if (!CanReadImageBytes(buf, cursor, byteCount))
+    {
+        return false;
+    }
+
+    if (!SectionLastByteFitsU32(cursor, byteCount))
+    {
+        return false;
+    }
+
+    stack u64[0 max] next = (u64[0 max])cursor + byteCount;
+    if (next > (u64[0 max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    nextCursor = (u32[0 max])next;
+    return true;
+}
+
+internal fn bool TryReadFixedRecordSectionSize(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize,
+    out u32[0 max] rowCount,
+    out u64[0 max] byteCount)
+{
+    rowCount = 0;
+    byteCount = 0;
+    stack mut u32[0 max] localRowCount = 0;
+    if (!TryReadU32FromImage(buf, offset, localRowCount))
+    {
+        return false;
+    }
+
+    stack u64[0 max] localByteCount = 4 + (u64[0 max])localRowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, localByteCount))
+    {
+        return false;
+    }
+
+    if (!CanReadImageBytes(buf, offset, localByteCount))
+    {
+        return false;
+    }
+
+    rowCount = localRowCount;
+    byteCount = localByteCount;
+    return true;
+}
+
+internal inline finite law bool LogicalStringIndexIsPresent(u32[0 max] index)
+{
+    return index != PackageImageNullStringIndex();
+}
+
+internal inline finite law i8[min max] ImageByteAsI8(u8[0 max] value)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide <= 127)
+    {
+        return (i8[min max])wide;
+    }
+
+    return (i8[min max])((i16[min max])wide - 256);
+}
+
+internal inline finite law u8[0 max] ImageByteFromI8(i8[min max] value)
+{
+    stack mut i64[min max] wide = (i64[min max])value;
+    if (wide < 0)
+    {
+        wide = wide + 256;
+    }
+
+    return (u8[0 max])wide;
+}
+
+internal fn void AppendBytes(mut borrow IrTable<u8[0 max]> dst, borrow IrTable<u8[0 max]> src)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack u32[0 max] w = dst.Add(b);
+        i = i + 1;
+    }
+}

@@ -6,12 +6,3 @@ kind = "test"
 [test]
 root = "StandardLibraryTests.stark"
 output = "standard-library-tests"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

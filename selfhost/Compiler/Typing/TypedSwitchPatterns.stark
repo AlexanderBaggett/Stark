@@ -1,0 +1,1403 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedFieldModel
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedSignatures
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Memory
+module Compiler.Typing.TypedSwitchPatterns
+
+internal inline finite law bool TypedSwitchPatternOpenToken(TokenKind kind)
+{
+    return kind == TokenKind.Lt
+        || kind == TokenKind.LParen
+        || kind == TokenKind.LBrack
+        || kind == TokenKind.LBrace;
+}
+
+internal inline finite law bool TypedSwitchPatternCloseToken(TokenKind kind)
+{
+    return kind == TokenKind.Gt
+        || kind == TokenKind.RParen
+        || kind == TokenKind.RBrack
+        || kind == TokenKind.RBrace;
+}
+
+internal finite law u32[0 max] TypedSwitchPatternEndBeforeGuard(borrow TokenStream stream, u32[0 max] patternStart, u32[0 max] colon)
+{
+    stack mut u32[0 max] scan = patternStart;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < colon)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.When && depth == 0)
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return colon;
+}
+
+internal finite law u32[0 max] TypedSwitchTopLevelAggregateOpenToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && (kind == TokenKind.LParen || kind == TokenKind.LBrace))
+        {
+            return scan;
+        }
+
+        if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] TypedSwitchLastDepthZeroIdentifierBefore(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] found = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            found = scan;
+        }
+
+        if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return found;
+}
+
+internal fn bool TypedSwitchTryResolveEnumVariantOrdinalPlusOne(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] variantNameToken,
+    out u32[0 max] ordinalPlusOne)
+{
+    ordinalPlusOne = 0;
+    if (ownerTypeHeadToken == 0
+        || variantNameToken == 0
+        || variantNameToken == 1
+        || stream.KindAt((u64[0 2 ** 63 - 1])((u32[0 max])(variantNameToken - 1))) != TokenKind.Dot)
+    {
+        return false;
+    }
+
+    stack u32[0 max] ownerDeclarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, ownerTypeHeadToken);
+    if (ownerDeclarationIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] ownerDeclarationIndex = (u32[0 max])(ownerDeclarationIndexPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] count = layouts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (layouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant
+            && layouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && TypedSignatureTokenTextEqualsToken(source, stream, layouts.VariantNameTokenAt(index), variantNameToken))
+        {
+            ordinalPlusOne = (u32[0 max])(layouts.VariantOrdinalAt(index) + 1);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] TypedSwitchTopLevelColonToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Colon)
+        {
+            return scan;
+        }
+
+        if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] TypedSwitchTopLevelRangeToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Range)
+        {
+            return scan;
+        }
+
+        if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law TypedSwitchPatternKind TypedSwitchPatternKindFromSpan(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    if (start >= endExclusive)
+    {
+        return TypedSwitchPatternKind.Unknown;
+    }
+
+    stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])start);
+    if (startKind == TokenKind.Discard)
+    {
+        return TypedSwitchPatternKind.Discard;
+    }
+
+    if (startKind == TokenKind.Var
+        && (u32[0 max])(start + 1) < endExclusive
+        && stream.KindAt((u64[0 2 ** 63 - 1])(start + 1)) == TokenKind.Identifier)
+    {
+        return TypedSwitchPatternKind.Capture;
+    }
+
+    if (TypedSwitchTopLevelRangeToken(stream, start, endExclusive) != 0)
+    {
+        return TypedSwitchPatternKind.Range;
+    }
+
+    if (TypedSwitchTopLevelAggregateOpenToken(stream, start, endExclusive) != 0)
+    {
+        return TypedSwitchPatternKind.Aggregate;
+    }
+
+    if (startKind == TokenKind.LBrack)
+    {
+        return TypedSwitchPatternKind.List;
+    }
+
+    if (startKind == TokenKind.IntegerLiteral
+        || startKind == TokenKind.FloatLiteral
+        || startKind == TokenKind.CharacterLiteral
+        || startKind == TokenKind.StringLiteral
+        || startKind == TokenKind.True
+        || startKind == TokenKind.False
+        || startKind == TokenKind.Null)
+    {
+        return TypedSwitchPatternKind.Literal;
+    }
+
+    return TypedSwitchPatternKind.Unknown;
+}
+
+internal fn u32[0 max] TypedSwitchFieldRowByNamePlusOne(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] ownerDeclarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, ownerTypeHeadToken);
+    if (ownerDeclarationIndexPlusOne == 0 || fieldNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] ownerDeclarationIndex = (u32[0 max])(ownerDeclarationIndexPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < fieldCount; index += 1)
+    {
+        if (fields.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && TypedSignatureTokenTextEqualsToken(source, stream, fields.NameTokenAt(index), fieldNameToken))
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedSwitchFieldRowByOrdinalPlusOne(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] fieldOrdinal)
+{
+    stack u32[0 max] ownerDeclarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, ownerTypeHeadToken);
+    if (ownerDeclarationIndexPlusOne == 0)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] ownerDeclarationIndex = (u32[0 max])(ownerDeclarationIndexPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < fieldCount; index += 1)
+    {
+        if (fields.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && fields.FieldOrdinalAt(index) == fieldOrdinal)
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchResolvedPatternMemberSegment(
+    mut borrow TypedSwitchPatternMemberTable members,
+    borrow TokenStream stream,
+    u32[0 max] memberOrdinal,
+    u32[0 max] patternStart,
+    u32[0 max] segmentEnd,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken)
+{
+    if (patternStart >= segmentEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut TypedSwitchPatternKind kind = TypedSwitchPatternKindFromSpan(stream, patternStart, segmentEnd);
+    stack mut u32[0 max] literalToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] captureNameToken = 0;
+    if (kind == TypedSwitchPatternKind.Literal)
+    {
+        literalToken = patternStart;
+    }
+    else if (kind == TypedSwitchPatternKind.Range)
+    {
+        stack u32[0 max] rangeToken = TypedSwitchTopLevelRangeToken(stream, patternStart, segmentEnd);
+        rangeStartToken = patternStart;
+        if (rangeToken != 0 && (u32[0 max])(rangeToken + 1) < segmentEnd)
+        {
+            rangeEndToken = (u32[0 max])(rangeToken + 1);
+        }
+    }
+    else if (kind == TypedSwitchPatternKind.Capture)
+    {
+        captureNameToken = (u32[0 max])(patternStart + 1);
+    }
+
+    stack mut u32[0 max] memberRow = 0;
+    return members.Append(
+        memberOrdinal,
+        kind,
+        patternStart,
+        segmentEnd,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        literalToken,
+        rangeStartToken,
+        rangeEndToken,
+        captureNameToken,
+        0,
+        0,
+        memberRow);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchPatternMemberSegment(
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] memberOrdinal,
+    TokenKind aggregateOpenKind,
+    u32[0 max] segmentStart,
+    u32[0 max] segmentEnd)
+{
+    if (segmentStart >= segmentEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] patternStart = segmentStart;
+    stack mut u32[0 max] fieldRowPlusOne = 0;
+    if (aggregateOpenKind == TokenKind.LBrace)
+    {
+        stack u32[0 max] colon = TypedSwitchTopLevelColonToken(stream, segmentStart, segmentEnd);
+        if (colon != 0)
+        {
+            stack u32[0 max] fieldNameToken = TypedSwitchLastDepthZeroIdentifierBefore(stream, segmentStart, colon);
+            fieldRowPlusOne = TypedSwitchFieldRowByNamePlusOne(source, stream, declarations, fields, ownerTypeHeadToken, fieldNameToken);
+            patternStart = (u32[0 max])(colon + 1);
+        }
+    }
+    else if (aggregateOpenKind == TokenKind.LParen)
+    {
+        fieldRowPlusOne = TypedSwitchFieldRowByOrdinalPlusOne(source, stream, declarations, fields, ownerTypeHeadToken, memberOrdinal);
+    }
+
+    if (patternStart >= segmentEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] effectiveMemberOrdinal = memberOrdinal;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    if (fieldRowPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] fieldIndex = (u64[0 2 ** 63 - 1])(fieldRowPlusOne - 1);
+        effectiveMemberOrdinal = fields.FieldOrdinalAt(fieldIndex);
+        typeHeadToken = fields.TypeHeadTokenAt(fieldIndex);
+        typePrimaryToken = fields.TypePrimaryTokenAt(fieldIndex);
+        typeStartToken = fields.TypeStartTokenAt(fieldIndex);
+        typeEndToken = fields.TypeEndTokenAt(fieldIndex);
+    }
+
+    return AppendTypedSwitchResolvedPatternMemberSegment(
+        members,
+        stream,
+        effectiveMemberOrdinal,
+        patternStart,
+        segmentEnd,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken);
+}
+
+internal fn void TypedSwitchElementTypeSpanForListType(
+    borrow TokenStream stream,
+    u32[0 max] listTypeStartToken,
+    u32[0 max] listTypeEndToken,
+    out u32[0 max] elementTypeStartToken,
+    out u32[0 max] elementTypeEndToken)
+{
+    elementTypeStartToken = listTypeStartToken;
+    elementTypeEndToken = listTypeEndToken;
+    if (listTypeStartToken == 0 || listTypeEndToken <= listTypeStartToken)
+    {
+        return;
+    }
+
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        listTypeStartToken,
+        listTypeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    if ((arrayKind == TypedSignatureTypeKind.FixedArray || arrayKind == TypedSignatureTypeKind.Slice)
+        && elementCountStartToken > listTypeStartToken)
+    {
+        elementTypeEndToken = elementCountStartToken;
+    }
+
+    return;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchListElementRows(
+    mut borrow TypedSwitchPatternMemberTable members,
+    borrow TokenStream stream,
+    u32[0 max] listOpenToken,
+    u32[0 max] listPatternEnd,
+    u32[0 max] elementTypeHeadToken,
+    u32[0 max] elementTypePrimaryToken,
+    u32[0 max] elementTypeStartToken,
+    u32[0 max] elementTypeEndToken,
+    out u32[0 max] firstElementRow,
+    out u32[0 max] elementPatternCount)
+{
+    firstElementRow = 0;
+    elementPatternCount = 0;
+    if (listOpenToken >= listPatternEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] listCloseToken = TypedSignatureMatchingCloseToken(stream, listOpenToken);
+    if (listCloseToken == listOpenToken || listCloseToken >= listPatternEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstMemberIndex = members.Count();
+    stack mut u32[0 max] elementOrdinal = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(listOpenToken + 1);
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan < listCloseToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Comma)
+        {
+            switch (AppendTypedSwitchResolvedPatternMemberSegment(
+                members,
+                stream,
+                elementOrdinal,
+                segmentStart,
+                scan,
+                elementTypeHeadToken,
+                elementTypePrimaryToken,
+                elementTypeStartToken,
+                elementTypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var elementError):
+                    return System.Memory.MemoryStatus.Err(elementError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            elementOrdinal = (u32[0 max])(elementOrdinal + 1);
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+        else if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    switch (AppendTypedSwitchResolvedPatternMemberSegment(
+        members,
+        stream,
+        elementOrdinal,
+        segmentStart,
+        listCloseToken,
+        elementTypeHeadToken,
+        elementTypePrimaryToken,
+        elementTypeStartToken,
+        elementTypeEndToken))
+    {
+        case System.Memory.MemoryStatus.Err(var finalElementError):
+            return System.Memory.MemoryStatus.Err(finalElementError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count() - firstMemberIndex;
+    if (memberCount != 0)
+    {
+        firstElementRow = (u32[0 max])(firstMemberIndex + 1);
+        elementPatternCount = (u32[0 max])memberCount;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchListPatternSegment(
+    mut borrow TypedSwitchListPatternTable table,
+    mut borrow TypedSwitchPatternMemberTable members,
+    borrow TokenStream stream,
+    u32[0 max] segmentStart,
+    u32[0 max] segmentEnd,
+    u32[0 max] listTypeHeadToken,
+    u32[0 max] listTypePrimaryToken,
+    u32[0 max] listTypeStartToken,
+    u32[0 max] listTypeEndToken,
+    out u32[0 max] appendedRow)
+{
+    appendedRow = 0;
+    if (segmentStart >= segmentEnd
+        || listTypeHeadToken == 0
+        || listTypePrimaryToken == 0
+        || listTypeStartToken == 0
+        || listTypeEndToken <= listTypeStartToken
+        || stream.KindAt((u64[0 2 ** 63 - 1])segmentStart) != TokenKind.LBrack)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] listCloseToken = TypedSignatureMatchingCloseToken(stream, segmentStart);
+    if (listCloseToken == segmentStart || listCloseToken >= segmentEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] elementTypeStartToken = 0;
+    stack mut u32[0 max] elementTypeEndToken = 0;
+    TypedSwitchElementTypeSpanForListType(
+        stream,
+        listTypeStartToken,
+        listTypeEndToken,
+        elementTypeStartToken,
+        elementTypeEndToken);
+
+    stack mut u32[0 max] firstElementRow = 0;
+    stack mut u32[0 max] elementPatternCount = 0;
+    switch (AppendTypedSwitchListElementRows(
+        members,
+        stream,
+        segmentStart,
+        segmentEnd,
+        listTypeHeadToken,
+        listTypePrimaryToken,
+        elementTypeStartToken,
+        elementTypeEndToken,
+        firstElementRow,
+        elementPatternCount))
+    {
+        case System.Memory.MemoryStatus.Err(var elementError):
+            return System.Memory.MemoryStatus.Err(elementError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut u32[0 max] row = 0;
+    switch (table.Append(
+        segmentStart,
+        segmentEnd,
+        listTypeHeadToken,
+        listTypePrimaryToken,
+        listTypeStartToken,
+        listTypeEndToken,
+        listTypeHeadToken,
+        listTypePrimaryToken,
+        elementTypeStartToken,
+        elementTypeEndToken,
+        true,
+        elementPatternCount,
+        firstElementRow,
+        elementPatternCount,
+        row))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    appendedRow = row;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchNestedPatternRowsForMember(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] memberRow)
+{
+    if (!members.ContainsRow(memberRow))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+    stack TypedSwitchPatternKind kind = members.KindAt(memberIndex);
+    stack u32[0 max] typeHeadToken = members.TypeHeadTokenAt(memberIndex);
+    if (typeHeadToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (kind == TypedSwitchPatternKind.Aggregate)
+    {
+        if (members.NestedAggregatePatternRowAt(memberIndex) != 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] nestedAggregatePatternRow = 0;
+        switch (AppendTypedSwitchAggregatePatternSegment(
+            table,
+            members,
+            source,
+            stream,
+            declarations,
+            layouts,
+            fields,
+            members.PatternStartTokenAt(memberIndex),
+            members.PatternEndTokenAt(memberIndex),
+            typeHeadToken,
+            members.TypePrimaryTokenAt(memberIndex),
+            members.TypeStartTokenAt(memberIndex),
+            members.TypeEndTokenAt(memberIndex),
+            nestedAggregatePatternRow))
+        {
+            case System.Memory.MemoryStatus.Err(var nestedError):
+                return System.Memory.MemoryStatus.Err(nestedError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (nestedAggregatePatternRow != 0)
+        {
+            members.SetNestedAggregatePatternRowAt(memberRow, nestedAggregatePatternRow);
+            if (table.HasEnumVariantAt((u64[0 2 ** 63 - 1])(nestedAggregatePatternRow - 1)))
+            {
+                members.SetKindAt(memberRow, TypedSwitchPatternKind.EnumAggregate);
+            }
+        }
+    }
+    else if (kind == TypedSwitchPatternKind.List)
+    {
+        if (members.NestedListPatternRowAt(memberIndex) != 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] nestedListPatternRow = 0;
+        switch (AppendTypedSwitchListPatternSegment(
+            listTable,
+            members,
+            stream,
+            members.PatternStartTokenAt(memberIndex),
+            members.PatternEndTokenAt(memberIndex),
+            typeHeadToken,
+            members.TypePrimaryTokenAt(memberIndex),
+            members.TypeStartTokenAt(memberIndex),
+            members.TypeEndTokenAt(memberIndex),
+            nestedListPatternRow))
+        {
+            case System.Memory.MemoryStatus.Err(var nestedListError):
+                return System.Memory.MemoryStatus.Err(nestedListError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (nestedListPatternRow != 0)
+        {
+            members.SetNestedListPatternRowAt(memberRow, nestedListPatternRow);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregateMemberRows(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] aggregateRow,
+    u32[0 max] aggregateOpenToken,
+    u32[0 max] aggregatePatternEnd)
+{
+    stack u32[0 max] aggregateCloseToken = TypedSignatureMatchingCloseToken(stream, aggregateOpenToken);
+    if (aggregateCloseToken == aggregateOpenToken || aggregateCloseToken >= aggregatePatternEnd)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstMemberIndex = members.Count();
+    stack TokenKind aggregateOpenKind = stream.KindAt((u64[0 2 ** 63 - 1])aggregateOpenToken);
+    stack u32[0 max] ownerTypeHeadToken = table.OwnerTypeHeadTokenAt((u64[0 2 ** 63 - 1])(aggregateRow - 1));
+    stack mut u32[0 max] memberOrdinal = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(aggregateOpenToken + 1);
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan < aggregateCloseToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Comma)
+        {
+            switch (AppendTypedSwitchPatternMemberSegment(
+                members,
+                source,
+                stream,
+                declarations,
+                fields,
+                ownerTypeHeadToken,
+                memberOrdinal,
+                aggregateOpenKind,
+                segmentStart,
+                scan))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return System.Memory.MemoryStatus.Err(memberError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            memberOrdinal = (u32[0 max])(memberOrdinal + 1);
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+        else if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    switch (AppendTypedSwitchPatternMemberSegment(
+        members,
+        source,
+        stream,
+        declarations,
+        fields,
+        ownerTypeHeadToken,
+        memberOrdinal,
+        aggregateOpenKind,
+        segmentStart,
+        aggregateCloseToken))
+    {
+        case System.Memory.MemoryStatus.Err(var finalMemberError):
+            return System.Memory.MemoryStatus.Err(finalMemberError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count() - firstMemberIndex;
+    if (memberCount != 0)
+    {
+        stack u32[0 max] firstMemberRow = (u32[0 max])(firstMemberIndex + 1);
+        table.SetMemberPatternSpanAt(aggregateRow, firstMemberRow, (u32[0 max])memberCount);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchNestedPatternRowsFromMembers(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields)
+{
+    stack mut u32[0 max] nextMemberRow = 1;
+    while willexit ((u64[0 2 ** 63 - 1])nextMemberRow <= members.Count())
+    {
+        switch (AppendTypedSwitchNestedPatternRowsForMember(
+            table,
+            listTable,
+            members,
+            source,
+            stream,
+            declarations,
+            layouts,
+            fields,
+            nextMemberRow))
+        {
+            case System.Memory.MemoryStatus.Err(var nestedMemberError):
+                return System.Memory.MemoryStatus.Err(nestedMemberError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        nextMemberRow = (u32[0 max])(nextMemberRow + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregatePatternSegment(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] segmentStart,
+    u32[0 max] segmentEnd,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] ownerTypePrimaryToken,
+    u32[0 max] ownerTypeStartToken,
+    u32[0 max] ownerTypeEndToken,
+    out u32[0 max] appendedRow)
+{
+    appendedRow = 0;
+    if (segmentStart >= segmentEnd
+        || ownerTypeHeadToken == 0
+        || ownerTypePrimaryToken == 0
+        || ownerTypeStartToken == 0
+        || ownerTypeEndToken <= ownerTypeStartToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] openToken = TypedSwitchTopLevelAggregateOpenToken(stream, segmentStart, segmentEnd);
+    if (openToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] patternNameToken = TypedSwitchLastDepthZeroIdentifierBefore(stream, segmentStart, openToken);
+    if (patternNameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] enumVariantOrdinalPlusOne = 0;
+    TypedSwitchTryResolveEnumVariantOrdinalPlusOne(
+        source,
+        stream,
+        declarations,
+        layouts,
+        ownerTypeHeadToken,
+        patternNameToken,
+        enumVariantOrdinalPlusOne);
+
+    stack mut u32[0 max] row = 0;
+    switch (table.Append(
+        segmentStart,
+        segmentEnd,
+        ownerTypeHeadToken,
+        ownerTypePrimaryToken,
+        ownerTypeStartToken,
+        ownerTypeEndToken,
+        enumVariantOrdinalPlusOne,
+        0,
+        0,
+        0,
+        row))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    appendedRow = row;
+    return AppendTypedSwitchAggregateMemberRows(
+        table,
+        members,
+        source,
+        stream,
+        declarations,
+        fields,
+        row,
+        openToken,
+        segmentEnd);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregatePatternsFromCaseAlternatives(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] patternStart,
+    u32[0 max] patternEnd,
+    u32[0 max] ownerTypeHeadToken,
+    u32[0 max] ownerTypePrimaryToken,
+    u32[0 max] ownerTypeStartToken,
+    u32[0 max] ownerTypeEndToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] segmentStart = patternStart;
+    stack mut u32[0 max] scan = patternStart;
+    while willexit (scan < patternEnd)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Or)
+        {
+            stack mut u32[0 max] ignoredRow = 0;
+            switch (AppendTypedSwitchAggregatePatternSegment(
+                table,
+                members,
+                source,
+                stream,
+                declarations,
+                layouts,
+                fields,
+                segmentStart,
+                scan,
+                ownerTypeHeadToken,
+                ownerTypePrimaryToken,
+                ownerTypeStartToken,
+                ownerTypeEndToken,
+                ignoredRow))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+        else if (TypedSwitchPatternOpenToken(kind))
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (TypedSwitchPatternCloseToken(kind))
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    stack mut u32[0 max] finalRow = 0;
+    return AppendTypedSwitchAggregatePatternSegment(
+        table,
+        members,
+        source,
+        stream,
+        declarations,
+        layouts,
+        fields,
+        segmentStart,
+        patternEnd,
+        ownerTypeHeadToken,
+        ownerTypePrimaryToken,
+        ownerTypeStartToken,
+        ownerTypeEndToken,
+        finalRow);
+}
+
+internal fn u32[0 max] TypedSwitchEnclosingSwitchStatementIndexPlusOne(borrow StatementList body, u64[0 2 ** 63 - 1] caseIndex)
+{
+    stack StatementItem caseItem = body.ItemAt(caseIndex);
+    stack u32[0 max] caseDepth = body.DepthAt(caseIndex);
+    if (caseDepth == 0)
+    {
+        return 0;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] scan = caseIndex;
+    while willexit (scan > 0)
+    {
+        scan = (u64[0 2 ** 63 - 1])(scan - 1);
+        stack StatementItem item = body.ItemAt(scan);
+        stack u32[0 max] depth = body.DepthAt(scan);
+        if (item.Kind == StatementKind.Switch
+            && (u32[0 max])(depth + 1) == caseDepth
+            && item.StartToken <= caseItem.StartToken
+            && item.EndToken >= caseItem.EndToken)
+        {
+            return (u32[0 max])(scan + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedSwitchSubjectIdentifierRowIndexPlusOne(
+    borrow TypedIdentifierExpressionTable identifiers,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] switchStatementIndexPlusOne,
+    u32[0 max] subjectNode)
+{
+    if (switchStatementIndexPlusOne == 0 || subjectNode == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = identifiers.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (identifiers.ContextAt(index) == TypedIdentifierContext.FunctionBody
+            && identifiers.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && identifiers.OwnerNameTokenAt(index) == ownerNameToken
+            && identifiers.FunctionNameTokenAt(index) == functionNameToken
+            && identifiers.StatementIndexPlusOneAt(index) == switchStatementIndexPlusOne
+            && identifiers.ExprNodeAt(index) == subjectNode
+            && identifiers.IsResolvedAt(index))
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregatePatternsFromBody(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind != StatementKind.Case
+            || stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken) != TokenKind.Case)
+        {
+            continue;
+        }
+
+        stack u32[0 max] switchIndexPlusOne = TypedSwitchEnclosingSwitchStatementIndexPlusOne(body, index);
+        if (switchIndexPlusOne == 0)
+        {
+            continue;
+        }
+
+        stack u64[0 2 ** 63 - 1] switchIndex = (u64[0 2 ** 63 - 1])(switchIndexPlusOne - 1);
+        stack u32[0 max] subjectNode = body.ExprRootAt(switchIndex);
+        stack u32[0 max] identifierRowPlusOne = TypedSwitchSubjectIdentifierRowIndexPlusOne(
+            identifiers,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            switchIndexPlusOne,
+            subjectNode);
+        if (identifierRowPlusOne == 0)
+        {
+            continue;
+        }
+
+        stack u64[0 2 ** 63 - 1] identifierIndex = (u64[0 2 ** 63 - 1])(identifierRowPlusOne - 1);
+        stack u32[0 max] patternStart = (u32[0 max])(item.StartToken + 1);
+        stack u32[0 max] patternEnd = TypedSwitchPatternEndBeforeGuard(stream, patternStart, item.EndToken);
+        switch (AppendTypedSwitchAggregatePatternsFromCaseAlternatives(
+            table,
+            members,
+            source,
+            stream,
+            declarations,
+            layouts,
+            fields,
+            patternStart,
+            patternEnd,
+            identifiers.TypeHeadTokenAt(identifierIndex),
+            identifiers.TypePrimaryTokenAt(identifierIndex),
+            identifiers.TypeStartTokenAt(identifierIndex),
+            identifiers.TypeEndTokenAt(identifierIndex)))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return AppendTypedSwitchNestedPatternRowsFromMembers(table, listTable, members, source, stream, declarations, layouts, fields);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregatePatternsForFunction(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    return AppendTypedSwitchAggregatePatternsFromBody(
+        table,
+        listTable,
+        members,
+        source,
+        stream,
+        declarations,
+        identifiers,
+        layouts,
+        fields,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchAggregatePatternsForMemberFunctions(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedSwitchAggregatePatternsForFunction(
+                table,
+                listTable,
+                members,
+                source,
+                stream,
+                declarations,
+                identifiers,
+                layouts,
+                fields,
+                ownerDeclarationIndex,
+                item.NameToken,
+                scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedSwitchPatternTablesFromDeclarations(
+    mut borrow TypedSwitchAggregatePatternTable table,
+    mut borrow TypedSwitchListPatternTable listTable,
+    mut borrow TypedSwitchPatternMemberTable members,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields)
+{
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedSwitchAggregatePatternsForFunction(
+                table,
+                listTable,
+                members,
+                source,
+                stream,
+                declarations,
+                identifiers,
+                layouts,
+                fields,
+                (u32[0 max])index,
+                0,
+                item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return System.Memory.MemoryStatus.Err(functionError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedSwitchAggregatePatternsForMemberFunctions(
+                table,
+                listTable,
+                members,
+                source,
+                stream,
+                declarations,
+                identifiers,
+                layouts,
+                fields,
+                item,
+                (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberError):
+                    return System.Memory.MemoryStatus.Err(memberError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn ParseResult<TypedSwitchAggregatePatternTable> BuildTypedSwitchAggregatePatternsFromDependenciesWithFields(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields)
+{
+    stack mut TypedSwitchAggregatePatternTable table = new();
+    stack mut TypedSwitchListPatternTable listTable = new();
+    stack mut TypedSwitchPatternMemberTable members = new();
+    switch (AppendTypedSwitchPatternTablesFromDeclarations(table, listTable, members, source, stream, declarations, identifiers, layouts, fields))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return ParseResult<TypedSwitchAggregatePatternTable>.Ok(table);
+}
+
+public fn ParseResult<TypedSwitchPatternTables> BuildTypedSwitchPatternTablesFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts,
+    borrow TypedFieldDeclarationTable fields)
+{
+    stack mut TypedSwitchPatternTables tables = new();
+    switch (AppendTypedSwitchPatternTablesFromDeclarations(tables.AggregatePatterns, tables.ListPatterns, tables.Members, source, stream, declarations, identifiers, layouts, fields))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return ParseResult<TypedSwitchPatternTables>.Ok(tables);
+}
+
+public fn ParseResult<TypedSwitchAggregatePatternTable> BuildTypedSwitchAggregatePatternsFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedEnumLayoutTable layouts)
+{
+    stack TypedFieldDeclarationTable fields = new();
+    return BuildTypedSwitchAggregatePatternsFromDependenciesWithFields(source, stream, declarations, identifiers, layouts, fields);
+}

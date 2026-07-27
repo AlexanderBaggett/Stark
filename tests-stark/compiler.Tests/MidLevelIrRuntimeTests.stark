@@ -1,0 +1,1818 @@
+import CompilerTestSupport
+import System.Testing
+module MidLevelIrRuntimeTests
+
+// Ported slice of tests/compiler.IntegrationTests/MidLevelIrRuntimeTests.cs.
+// Every original test calls CompileAndRunExitCodeAsync: it writes the embedded
+// program to App.stark, runs the CLI with --emit-exe, asserts the CLI exit is 0
+// with "Emitted executable:" stdout and empty stderr, then launches the linked
+// executable and asserts a specific process exit code (with empty stdout/stderr).
+// The Stark compile helpers cannot link, run, or observe a runtime exit code, so
+// each Impl reduces to driving the embedded program through the full pipeline and
+// returning Succeeds. The embedded programs are copied verbatim from the C# raw
+// strings. See per-method `// PORT-NOTE:` comments for the exact reductions.
+
+// Ported from MidLevelIrRuntimeTests.NonAsciiTextLiteralsPreferAsciiOverloadsAtRuntime.
+internal fn bool NonAsciiTextLiteralsPreferAsciiOverloadsAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 1 (the ascii
+    // overload is picked). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-nonascii-prefers-ascii-overload",
+        raw"""
+module Demo
+
+fn i32[min max] Pick(ascii text)
+{
+    return 1;
+}
+
+fn i32[min max] Pick(unicode text)
+{
+    return 2;
+}
+
+export fn i32[min max] main()
+{
+    return Pick("café");
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.CompileTimeTextConcatenationMatchesSingleLiteralAtRuntime.
+internal fn bool CompileTimeTextConcatenationMatchesSingleLiteralAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0 (the
+    // concatenation equals the single literal). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-comptime-concat-matches-literal",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    if ("Score: " + "100" == "Score: 100")
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FixedCapacityTextConcatenationCopiesIntoStackStorageAtRuntime.
+internal fn bool FixedCapacityTextConcatenationCopiesIntoStackStorageAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0 (concat
+    // copies into fixed stack storage for both ascii and unicode). Reduced to a
+    // full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-fixed-capacity-concat-stack",
+        raw"""
+module System.Text
+
+public finite law ascii AsciiView(Ascii source);
+public finite law i64[min max] AsciiLength(ascii source);
+public finite law unicode UnicodeView(Unicode source);
+public finite law i64[min max] UnicodeLength(unicode source);
+public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i8[min max][2] leftStorage =
+    {
+        65, 0
+    };
+    stack mut Ascii left = new Ascii()
+    {
+        Data = &leftStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack mut i8[min max][2] rightStorage =
+    {
+        66, 0
+    };
+    stack mut Ascii right = new Ascii()
+    {
+        Data = &rightStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack Ascii combined[4] = left + right;
+
+    stack mut i32[min max][2] wideLeftStorage =
+    {
+        65, 0
+    };
+    stack mut Unicode wideLeft = new Unicode()
+    {
+        Data = &wideLeftStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack mut i32[min max][2] wideRightStorage =
+    {
+        66, 0
+    };
+    stack mut Unicode wideRight = new Unicode()
+    {
+        Data = &wideRightStorage[0],
+        Length = 1,
+        Capacity = 2
+    };
+    stack Unicode wideCombined[4] = wideLeft + wideRight;
+
+    if (AsciiLength(AsciiView(combined)) == 2 && UnicodeLength(UnicodeView(wideCombined)) == 2)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.TextConcatenationRejectsNegativeDestinationCapacityAtRuntime.
+internal fn bool TextConcatenationRejectsNegativeDestinationCapacityAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0 (both
+    // negative-capacity concats are rejected at runtime). Reduced to a
+    // full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-concat-rejects-negative-capacity",
+        raw"""
+module System.Text
+
+public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+unsafe fn bool RejectsAsciiNegativeCapacity()
+{
+    stack mut i8[min max][4] storage =
+    {
+        0, 0, 0, 0
+    };
+    stack mut Ascii destination = new Ascii()
+    {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = -1
+    };
+
+    return !TryConcatAscii(&destination, "A", "B");
+}
+
+unsafe fn bool RejectsUnicodeNegativeCapacity()
+{
+    stack mut i32[min max][4] storage =
+    {
+        0, 0, 0, 0
+    };
+    stack mut Unicode destination = new Unicode()
+    {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = -1
+    };
+
+    return !TryConcatUnicode(&destination, (unicode)"A", (unicode)"B");
+}
+
+export unsafe fn i32[min max] main()
+{
+    if (RejectsAsciiNegativeCapacity() && RejectsUnicodeNegativeCapacity())
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FixedCapacityInterpolatedTextFormatsIntoStackStorageAtRuntime.
+internal fn bool FixedCapacityInterpolatedTextFormatsIntoStackStorageAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0
+    // (interpolated ascii text formats into fixed stack storage, length 9).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-fixed-capacity-interpolated-ascii",
+        raw"""
+module System.Text
+
+public finite law ascii AsciiView(Ascii source);
+public finite law i64[min max] AsciiLength(ascii source);
+public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value)
+{
+    if (value == 42)
+    {
+        return TryConcatAscii(destination, "", "42");
+    }
+
+    return false;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max] score = 42;
+    stack Ascii label[32] = $"Score: {score}";
+    if (AsciiLength(AsciiView(label)) == 9)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FixedCapacityUnicodeInterpolatedTextFormatsIntoStackStorageAtRuntime.
+internal fn bool FixedCapacityUnicodeInterpolatedTextFormatsIntoStackStorageAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0
+    // (interpolated unicode text formats into fixed stack storage, length 9).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-fixed-capacity-interpolated-unicode",
+        raw"""
+module System.Text
+
+public finite law unicode UnicodeView(Unicode source);
+public finite law i64[min max] UnicodeLength(unicode source);
+public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+public unsafe fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[min max] value)
+{
+    if (value == 42)
+    {
+        return TryConcatUnicode(destination, (unicode)"", (unicode)"42");
+    }
+
+    return false;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max] score = 42;
+    stack Unicode label[32] = $"Score: {score}";
+    if (UnicodeLength(UnicodeView(label)) == 9)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.CompileTimeInterpolatedTextMatchesSingleLiteralAtRuntime.
+internal fn bool CompileTimeInterpolatedTextMatchesSingleLiteralAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 0 (the
+    // comptime-folded interpolation equals the single literal). Reduced to a
+    // full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-comptime-interpolated-matches-literal",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    const score = 100;
+    if ($"Score: {score}" == "Score: 100")
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.StrictFpFunctionsCompileAndRunAtRuntime.
+internal fn bool StrictFpFunctionsCompileAndRunAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 3 (strictfp f32 add). Reduced to a
+    // full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-strictfp-functions",
+        raw"""
+module Demo
+
+strictfp fn f32 Add(f32 left, f32 right)
+{
+    return left + right;
+}
+
+export fn i32[min max] main()
+{
+    return (i32[min max])Add(1.0, 2.0);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FloatingPointArithmeticChainsCompileAndRunAtRuntime.
+internal fn bool FloatingPointArithmeticChainsCompileAndRunAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 12 (mixed f32/i32/f64 arithmetic chain).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-floating-point-arithmetic-chains",
+        raw"""
+module Demo
+
+strictfp fn f64 Compute(f32 left, i32[min max] middle, f64 right, f32 divisor)
+{
+    return left + middle * right / divisor - 1.0;
+}
+
+export fn i32[min max] main()
+{
+    return (i32[min max])Compute(1.5, 2, 3.0, 0.5);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.HeapStorageUsesAllocatorLoweringAtRuntime.
+internal fn bool HeapStorageUsesAllocatorLoweringAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (heap Box round-trips its value through
+    // allocator lowering). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-heap-storage-allocator-lowering",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+export fn i32[min max] main()
+{
+    heap Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.SystemMemoryReallocatePreservesAllocatorProvenanceAtRuntime.
+internal fn bool SystemMemoryReallocatePreservesAllocatorProvenanceAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 0 (reallocation preserves the allocator kind
+    // 42). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-reallocate-preserves-allocator-provenance",
+        raw"""
+module System.Memory
+
+public struct Allocator
+{
+    u8[0 127] Kind;
+
+    static finite law Allocator Default()
+    {
+        return new Allocator()
+        {
+            Kind = 0
+        };
+    }
+
+    finite law bool IsDefault(borrow Allocator self)
+    {
+        return self.Kind == 0;
+    }
+}
+
+internal struct Allocation
+{
+    rawmutptr<i8[min max]> Pointer;
+    u64[0 max] ByteLength;
+    u64[1 max] Alignment;
+    Allocator Allocator;
+}
+
+internal fn Allocation Allocate(Allocator allocator, u64[0 max] byteLength, u64[1 max] alignment);
+internal fn Allocation Reallocate(Allocation allocation, u64[0 max] byteLength, u64[1 max] alignment);
+internal fn void Free(Allocation allocation);
+
+export unsafe fn i32[min max] main()
+{
+    stack Allocator allocator = new Allocator()
+    {
+        Kind = 42
+    };
+    stack Allocation allocation = Allocate(allocator, 16, 8);
+    stack Allocation grown = Reallocate(allocation, 32, 8);
+    stack u8[0 127] kind = grown.Allocator.Kind;
+    Free(grown);
+
+    if (kind == 42)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FixedArrayParameterDynamicIndexReadsAtRuntime.
+internal fn bool FixedArrayParameterDynamicIndexReadsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (dynamic index read of a fixed-array
+    // parameter). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-fixed-array-param-dynamic-index",
+        raw"""
+module Demo
+
+fn i32[min max] Read(i32[min max][3] values, i32[min max] index)
+{
+    return values[index];
+}
+
+export fn i32[min max] main()
+{
+    stack i32[min max][3] values =
+    {
+        4, 7, 9
+    };
+    return Read(values, 1);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.PartialFixedArrayInitializersInsideObjectInitializersZeroFillTrailingElementsAtRuntime.
+internal fn bool PartialFixedArrayInitializersInsideObjectInitializersZeroFillTrailingElementsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 11 (partial fixed-array initializer
+    // zero-fills the trailing element: 4 + 7 + 0). Reduced to a full-pipeline
+    // compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-partial-fixed-array-zero-fill",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max][3] Values;
+}
+
+export fn i32[min max] main()
+{
+    stack Box box = new Box()
+    {
+        Values =
+        {
+            4, 7
+        }
+    };
+    return box.Values[0] + box.Values[1] + box.Values[2];
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.SingleElementAsciiTextIndexReadsAtRuntime.
+internal fn bool SingleElementAsciiTextIndexReadsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (ascii text index reads 'b' at position 1).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-single-element-ascii-index",
+        raw"""
+module Demo
+
+fn i32[min max] Pick(ascii text, i32[min max] index)
+{
+    switch (text[index])
+    {
+        case 'b':
+            return 7;
+        default:
+            return 0;
+    }
+}
+
+export fn i32[min max] main()
+{
+    return Pick("abc", 1);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.EmptyTextSlicesPreserveFullViewAtRuntime.
+internal fn bool EmptyTextSlicesPreserveFullViewAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (empty-bracket slice preserves the full
+    // view, so index 1 is still 'b'). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-empty-text-slice-full-view",
+        raw"""
+module Demo
+
+fn ascii Whole(ascii text)
+{
+    return text[];
+}
+
+export fn i32[min max] main()
+{
+    switch (Whole("abc")[1])
+    {
+        case 'b':
+            return 7;
+        default:
+            return 0;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.RecordEqualityAndInequalityCompareScalarFieldsAtRuntime.
+internal fn bool RecordEqualityAndInequalityCompareScalarFieldsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (record ==/!= compare scalar fields).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-record-equality-scalar-fields",
+        raw"""
+module Demo
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+
+fn bool Same(Pair left, Pair right)
+{
+    return left == right;
+}
+
+fn bool Different(Pair left, Pair right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Pair sameLeft = new Pair(1, 2);
+    stack Pair sameRight = new Pair(1, 2);
+    stack Pair differentLeft = new Pair(1, 2);
+    stack Pair differentRight = new Pair(2, 1);
+
+    if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight))
+    {
+        return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.RecordOrderedComparisonsAreLexicographicAtRuntime.
+internal fn bool RecordOrderedComparisonsAreLexicographicAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (record </<=/>/>= are lexicographic over
+    // fields). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-record-ordered-lexicographic",
+        raw"""
+module Demo
+
+record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+{
+}
+
+fn bool Less(Many left, Many right)
+{
+    return left < right;
+}
+
+fn bool LessOrEqual(Many left, Many right)
+{
+    return left <= right;
+}
+
+fn bool Greater(Many left, Many right)
+{
+    return left > right;
+}
+
+fn bool GreaterOrEqual(Many left, Many right)
+{
+    return left >= right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Many lessLeft = new Many(1, 2, 3, 4, 5);
+    stack Many lessRight = new Many(1, 2, 3, 4, 6);
+    stack Many lessOrEqualLeft = new Many(1, 2, 3, 4, 5);
+    stack Many lessOrEqualRight = new Many(1, 2, 3, 4, 5);
+    stack Many greaterLeft = new Many(1, 2, 3, 4, 6);
+    stack Many greaterRight = new Many(1, 2, 3, 4, 5);
+    stack Many greaterOrEqualLeft = new Many(1, 2, 3, 4, 5);
+    stack Many greaterOrEqualRight = new Many(1, 2, 3, 4, 5);
+    stack Many topLeft = new Many(2, 0, 0, 0, 0);
+    stack Many topRight = new Many(1, 9, 9, 9, 9);
+
+    if (Less(lessLeft, lessRight)
+        && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
+        && Greater(greaterLeft, greaterRight)
+        && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)
+        && GreaterOrEqual(topLeft, topRight))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntime.
+internal fn bool FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (fixed-array ==/!= compare scalar
+    // elements). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-fixed-array-equality-scalar-elements",
+        raw"""
+module Demo
+
+fn bool Same(i32[min max][2] left, i32[min max][2] right)
+{
+    return left == right;
+}
+
+fn bool Different(i32[min max][2] left, i32[min max][2] right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max][2] sameLeft =
+    {
+        1, 2
+    };
+    stack i32[min max][2] sameRight =
+    {
+        1, 2
+    };
+    stack i32[min max][2] differentLeft =
+    {
+        1, 2
+    };
+    stack i32[min max][2] differentRight =
+    {
+        2, 1
+    };
+
+    if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight))
+    {
+        return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.VoidConditionalMemberCallStatementsExecuteAtRuntime.
+internal fn bool VoidConditionalMemberCallStatementsExecuteAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (the chosen branch of a void conditional
+    // member-call statement executes). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-void-conditional-member-call",
+        raw"""
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+
+    fn void Set(borrow mut Counter self, i32[min max] next)
+    {
+        self.Value = next;
+        return;
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut Counter left = new Counter()
+    {
+        Value = 0
+    };
+    stack mut Counter right = new Counter()
+    {
+        Value = 0
+    };
+    true ? left.Set(7) : right.Set(9);
+    return left.Value + right.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.EnumEqualityAndInequalityCompareTagAndPayloadAtRuntime.
+internal fn bool EnumEqualityAndInequalityCompareTagAndPayloadAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (enum ==/!= compare both tag and payload).
+    // Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-enum-equality-tag-and-payload",
+        raw"""
+module Demo
+
+enum Token
+{
+    None,
+    Number(i32[min max]),
+}
+
+fn bool Same(Token left, Token right)
+{
+    return left == right;
+}
+
+fn bool Different(Token left, Token right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Token sameLeft = Token.Number(7);
+    stack Token sameRight = Token.Number(7);
+    stack Token differentPayloadLeft = Token.Number(7);
+    stack Token differentPayloadRight = Token.Number(9);
+    stack Token differentVariantLeft = Token.Number(7);
+    stack Token differentVariantRight = Token.None;
+
+    if (Same(sameLeft, sameRight)
+        && Different(differentPayloadLeft, differentPayloadRight)
+        && Different(differentVariantLeft, differentVariantRight))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.EnumOrderedComparisonsAreLexicographicAtRuntime.
+internal fn bool EnumOrderedComparisonsAreLexicographicAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (enum </<=/>/>= are lexicographic over
+    // variant tag then payload). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-enum-ordered-lexicographic",
+        raw"""
+module Demo
+
+enum Token
+{
+    None,
+    Number(i32[min max]),
+    Pair(i32[min max], i32[min max]),
+}
+
+fn bool Less(Token left, Token right)
+{
+    return left < right;
+}
+
+fn bool LessOrEqual(Token left, Token right)
+{
+    return left <= right;
+}
+
+fn bool Greater(Token left, Token right)
+{
+    return left > right;
+}
+
+fn bool GreaterOrEqual(Token left, Token right)
+{
+    return left >= right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Token lessPayloadLeft = Token.Number(7);
+    stack Token lessPayloadRight = Token.Number(9);
+    stack Token lessVariantLeft = Token.None;
+    stack Token lessVariantRight = Token.Number(0);
+    stack Token greaterPayloadLeft = Token.Pair(1, 9);
+    stack Token greaterPayloadRight = Token.Pair(1, 7);
+    stack Token greaterVariantLeft = Token.Pair(0, 0);
+    stack Token greaterVariantRight = Token.Number(99);
+    stack Token lessOrEqualLeft = Token.Number(5);
+    stack Token lessOrEqualRight = Token.Number(5);
+    stack Token greaterOrEqualLeft = Token.Pair(2, 0);
+    stack Token greaterOrEqualRight = Token.Pair(2, 0);
+
+    if (Less(lessPayloadLeft, lessPayloadRight)
+        && Less(lessVariantLeft, lessVariantRight)
+        && Greater(greaterPayloadLeft, greaterPayloadRight)
+        && Greater(greaterVariantLeft, greaterVariantRight)
+        && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
+        && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.LargerScalarizableAggregatesCompareAtRuntime.
+internal fn bool LargerScalarizableAggregatesCompareAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (larger scalarizable records, fixed arrays,
+    // and enum payloads all compare). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-larger-scalarizable-aggregates-compare",
+        raw"""
+module Demo
+
+record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+{
+}
+
+enum Token
+{
+    None,
+    Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
+}
+
+fn bool SameRecord(Many left, Many right)
+{
+    return left == right;
+}
+
+fn bool DifferentRecord(Many left, Many right)
+{
+    return left != right;
+}
+
+fn bool SameArray(i32[min max][5] left, i32[min max][5] right)
+{
+    return left == right;
+}
+
+fn bool DifferentArray(i32[min max][5] left, i32[min max][5] right)
+{
+    return left != right;
+}
+
+fn bool SameToken(Token left, Token right)
+{
+    return left == right;
+}
+
+fn bool DifferentToken(Token left, Token right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Many sameRecordLeft = new Many(1, 2, 3, 4, 5);
+    stack Many sameRecordRight = new Many(1, 2, 3, 4, 5);
+    stack Many differentRecordLeft = new Many(1, 2, 3, 4, 5);
+    stack Many differentRecordRight = new Many(1, 2, 3, 4, 6);
+
+    stack i32[min max][5] sameArrayLeft =
+    {
+        1, 2, 3, 4, 5
+    };
+    stack i32[min max][5] sameArrayRight =
+    {
+        1, 2, 3, 4, 5
+    };
+    stack i32[min max][5] differentArrayLeft =
+    {
+        1, 2, 3, 4, 5
+    };
+    stack i32[min max][5] differentArrayRight =
+    {
+        1, 2, 3, 4, 6
+    };
+
+    stack Token sameTokenLeft = Token.Many(1, 2, 3, 4, 5);
+    stack Token sameTokenRight = Token.Many(1, 2, 3, 4, 5);
+    stack Token differentTokenLeft = Token.Many(1, 2, 3, 4, 5);
+    stack Token differentTokenRight = Token.Many(1, 2, 3, 4, 6);
+
+    if (SameRecord(sameRecordLeft, sameRecordRight)
+        && DifferentRecord(differentRecordLeft, differentRecordRight)
+        && SameArray(sameArrayLeft, sameArrayRight)
+        && DifferentArray(differentArrayLeft, differentArrayRight)
+        && SameToken(sameTokenLeft, sameTokenRight)
+        && DifferentToken(differentTokenLeft, differentTokenRight))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.TextAndAggregateTextEqualityCompareContentsAtRuntime.
+internal fn bool TextAndAggregateTextEqualityCompareContentsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (ascii/unicode text and record-of-text
+    // equality compare contents). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-text-and-aggregate-text-equality",
+        raw"""
+module Demo
+
+record Label(ascii Tag, unicode Word)
+{
+}
+
+fn bool SameAscii(ascii left, ascii right)
+{
+    return left == right;
+}
+
+fn bool DifferentUnicode(unicode left, unicode right)
+{
+    return left != right;
+}
+
+fn bool SameLabel(Label left, Label right)
+{
+    return left == right;
+}
+
+fn bool DifferentLabel(Label left, Label right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
+        && DifferentUnicode(((unicode)"café!")[0, 4], ((unicode)"cafe?")[0, 4])
+        && SameLabel(
+            new Label("cab!"[1, 2], ((unicode)"café!")[0, 4]),
+            new Label("zab?"[1, 2], ((unicode)"café?")[0, 4]))
+        && DifferentLabel(
+            new Label("cab!"[1, 2], ((unicode)"café!")[0, 4]),
+            new Label("zbx?"[1, 2], ((unicode)"cafe?")[0, 4])))
+            {
+                return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.SliceAndAggregateSliceEqualityCompareViewIdentityAtRuntime.
+internal fn bool SliceAndAggregateSliceEqualityCompareViewIdentityAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (slice and record-of-slice equality compare
+    // view identity, not contents). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-slice-and-aggregate-slice-equality",
+        raw"""
+module Demo
+
+record Window(i32[min max][] Items, i32[min max] Count)
+{
+}
+
+fn bool SameSliceSelf(i32[min max][] value)
+{
+    return value == value;
+}
+
+fn bool DifferentSlice(i32[min max][] left, i32[min max][] right)
+{
+    return left != right;
+}
+
+fn bool SameWindowSelf(Window value)
+{
+    return value == value;
+}
+
+fn bool DifferentWindow(Window left, Window right)
+{
+    return left != right;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max][3] selfValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][] selfView = selfValues;
+
+    stack i32[min max][3] leftValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] rightValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][] leftView = leftValues;
+    stack i32[min max][] rightView = rightValues;
+
+    stack i32[min max][3] selfWindowValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] leftWindowValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] rightWindowValues =
+    {
+        1, 2, 3
+    };
+
+    if (SameSliceSelf(selfView)
+        && DifferentSlice(leftView, rightView)
+        && SameWindowSelf(new Window(selfWindowValues, 3))
+        && DifferentWindow(
+            new Window(leftWindowValues, 3),
+            new Window(rightWindowValues, 3)))
+            {
+                return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntime.
+internal fn bool ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 1 (reassigning the enum drops only the
+    // previously active payload once). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-reassign-enum-drops-previous-payload",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+fn void Bump(i32[min max] value)
+{
+    Counter = Counter + value;
+    return;
+}
+
+struct Resource
+{
+    i32[min max] Value;
+
+    drop
+    {
+        Bump(self.Value);
+    }
+}
+
+enum Token
+{
+    End,
+    Text(Resource),
+}
+
+export fn i32[min max] main()
+{
+    stack mut Token token = Token.Text(new Resource()
+    {
+        Value = 1
+    });
+    token = Token.End;
+    return Counter;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.NestedAggregateDropsCascadeThroughStructFieldsAndEnumPayloadsAtRuntime.
+internal fn bool NestedAggregateDropsCascadeThroughStructFieldsAndEnumPayloadsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (nested drops cascade through struct fields
+    // and enum payloads: 3 + 4). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-nested-aggregate-drops-cascade",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+fn void Bump(i32[min max] value)
+{
+    Counter = Counter + value;
+    return;
+}
+
+struct Resource
+{
+    i32[min max] Value;
+
+    drop
+    {
+        Bump(self.Value);
+    }
+}
+
+enum Token
+{
+    End,
+    Text(Resource),
+}
+
+struct Holder
+{
+    Token Token;
+    Resource Backup;
+}
+
+export fn i32[min max] main()
+{
+    {
+        stack Holder holder = new Holder()
+        {
+            Token = Token.Text(new Resource()
+            {
+                Value = 3
+            }),
+            Backup = new Resource()
+            {
+                Value = 4
+            }
+        };
+    }
+
+    return Counter;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.SwitchPatternCaptureDropsMovedEnumPayloadAtRuntime.
+internal fn bool SwitchPatternCaptureDropsMovedEnumPayloadAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 3 (the captured enum payload is moved out and
+    // dropped after the switch block). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-switch-capture-drops-moved-payload",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+fn void Bump(i32[min max] value)
+{
+    Counter = Counter + value;
+    return;
+}
+
+struct Resource
+{
+    i32[min max] Value;
+
+    drop
+    {
+        Bump(self.Value);
+    }
+}
+
+enum Result<T>
+{
+    Missing,
+    Removed(T),
+}
+
+fn Result<Resource> Make()
+{
+    return Result<Resource>.Removed(new Resource()
+    {
+        Value = 3
+    });
+}
+
+export fn i32[min max] main()
+{
+    {
+        stack Result<Resource> result = Make();
+        switch (result)
+        {
+            case Result<Resource>.Missing:
+                return 1;
+            case Result<Resource>.Removed(var removed):
+                if (Counter != 0 || removed.Value != 3)
+                {
+                    return 2;
+                }
+        }
+    }
+
+    return Counter;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.MutableBorrowReceiverCallsObserveSharedStateAtRuntime.
+internal fn bool MutableBorrowReceiverCallsObserveSharedStateAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (mutable borrow receiver calls observe and
+    // mutate shared state). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-mutable-borrow-receiver-shared-state",
+        raw"""
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+
+    fn void Reset(borrow mut Counter self)
+    {
+        self.Value = 0;
+        return;
+    }
+
+    fn void ResetThenAdd(borrow mut Counter self, i32[min max] value)
+    {
+        self.Reset();
+        self.Value += value;
+        return;
+    }
+
+    fn i32[min max] Current(borrow Counter self)
+    {
+        return self.Value;
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut Counter counter = new Counter()
+    {
+        Value = 9
+    };
+    counter.ResetThenAdd(7);
+    return counter.Current();
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.NestedMutableBorrowReceiverCallsMutateStoredFieldAtRuntime.
+internal fn bool NestedMutableBorrowReceiverCallsMutateStoredFieldAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 2 (nested mutable borrow receiver calls
+    // mutate a stored field across two bumps). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-nested-mutable-borrow-receiver-field",
+        raw"""
+module Demo
+
+struct Counter
+{
+    u32[0 max] Value;
+
+    fn void Increment(mut borrow Counter self)
+    {
+        self.Value += 1;
+    }
+}
+
+struct Holder
+{
+    Counter Inner;
+
+    fn void Bump(mut borrow Holder self)
+    {
+        self.Inner.Increment();
+    }
+
+    finite law u32[0 max] Get(borrow Holder self)
+    {
+        return self.Inner.Value;
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut Holder holder = new Holder()
+    {
+        Inner = new Counter()
+        {
+            Value = 0
+        }
+    };
+
+    holder.Bump();
+    holder.Bump();
+    return (i32[min max])holder.Get();
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.StoreBorrowFieldsMutateOriginalOwnerAtRuntime.
+internal fn bool StoreBorrowFieldsMutateOriginalOwnerAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 0 (a storeborrow field mutates the original
+    // owner: 41 + 1 == 42). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-storeborrow-fields-mutate-owner",
+        raw"""
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+
+    fn Holder Hold(storeborrow mut Counter self)
+    {
+        return new Holder(self);
+    }
+}
+
+struct Holder
+{
+    storeborrow mut Counter Owner;
+
+    Holder(storeborrow mut Counter owner)
+    {
+        self.Owner = owner;
+    }
+
+    fn void Bump(mut borrow Holder self)
+    {
+        self.Owner.Value += 1;
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut Counter counter = new Counter()
+    {
+        Value = 41
+    };
+    stack mut Holder holder = counter.Hold();
+    holder.Bump();
+    return counter.Value == 42 ? 0 : 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.OutArgumentsWriteBackToCallerLocalsAtRuntime.
+internal fn bool OutArgumentsWriteBackToCallerLocalsAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (an out argument writes back to the caller
+    // local). Reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-out-arguments-write-back",
+        raw"""
+module Demo
+
+fn bool WriteValue(out u32[0 max] value)
+{
+    value = 7;
+    return true;
+}
+
+export fn i32[min max] main()
+{
+    stack mut u32[0 max] value = 1;
+    if (!WriteValue(value))
+    {
+        return 99;
+    }
+
+    return (i32[min max])value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntime.
+internal fn bool SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 1 (the enum-producing call in the switch
+    // scrutinee is evaluated exactly once). Reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-switch-call-on-enum-evaluated-once",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+fn Status Next()
+{
+    Counter += 1;
+    return Status.Ok;
+}
+
+export fn i32[min max] main()
+{
+    switch (Next())
+    {
+        case Status.Ok:
+            return Counter;
+        case Status.Err(var error):
+            return error;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.AggregateAndEnumSwitchPatternsMatchTextLeavesAtRuntime.
+internal fn bool AggregateAndEnumSwitchPatternsMatchTextLeavesAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 7 (record and enum switch patterns match
+    // ascii/unicode text leaves). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-aggregate-enum-switch-text-leaves",
+        raw"""
+module Demo
+
+record Label(ascii Tag, unicode Word)
+{
+}
+
+enum Token
+{
+    Empty,
+    Text
+    {
+        Tag: ascii, Word: unicode
+    },
+}
+
+fn bool MatchLabel(Label value)
+{
+    switch (value)
+    {
+        case Label("ab", var word):
+            return word == (unicode)"cat";
+        default:
+            return false;
+    }
+}
+
+fn bool MatchToken(Token value)
+{
+    switch (value)
+    {
+        case Token.Text
+        {
+            Tag: "ab", Word: var word
+        }:
+            return word == (unicode)"cat";
+        case Token.Empty:
+            return false;
+        default:
+            return false;
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    if (MatchLabel(new Label("ab", (unicode)"cat"))
+        && MatchToken(Token.Text
+        {
+            Tag: "ab", Word: (unicode)"cat"
+        }
+        )
+        && !MatchLabel(new Label("zz", (unicode)"cat"))
+        && !MatchToken(Token.Text
+        {
+            Tag: "zz", Word: (unicode)"cat"
+        }
+        ))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.RawPointerIndexedFieldAddressesObserveSharedStateAtRuntime.
+internal fn bool RawPointerIndexedFieldAddressesObserveSharedStateAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 90 (raw-pointer indexed field addresses write
+    // and read shared buffer state). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-raw-pointer-indexed-field-addresses",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i8[min max][16] Storage;
+    i64[min max] WritePos;
+}
+
+unsafe fn void Put(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+{
+    *(&(*buffer).Storage[index]) = value;
+    return;
+}
+
+unsafe fn i32[min max] Read(rawmutptr<Buffer> buffer, i64[min max] index)
+{
+    return (i32[min max])*(&(*buffer).Storage[index]);
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut Buffer buffer = new Buffer();
+    Put(&buffer, 3, (i8[min max])90);
+    return Read(&buffer, 3);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.RawPointerIndexedElementsObserveSharedStateAtRuntime.
+internal fn bool RawPointerIndexedElementsObserveSharedStateAtRuntimeImpl()
+{
+    // PORT-NOTE: original gates on a detectable native toolchain, then asserts the
+    // linked program exits with code 77 (raw-pointer indexed elements write and
+    // read shared buffer state). Reduced to a full-pipeline compile returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-raw-pointer-indexed-elements",
+        raw"""
+module Demo
+
+unsafe fn void Put(rawmutptr<i8[min max]> data, i64[min max] index, i8[min max] value)
+{
+    *(&data[index]) = value;
+    return;
+}
+
+unsafe fn i32[min max] Read(rawmutptr<i8[min max]> data, i64[min max] index)
+{
+    return (i32[min max])*(&data[index]);
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i8[min max][16] buffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    Put(&buffer[0], 4, (i8[min max])77);
+    return Read(&buffer[0], 4);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported slice of tests/compiler.IntegrationTests/MidLevelIrRuntimeTests.cs. Each
+// original test compiles the embedded program with the native toolchain, runs the
+// linked executable, and asserts a specific process exit code. The Stark compile
+// helpers cannot link or observe a runtime exit code, so each Impl reduces to
+// driving the embedded program through the full pipeline and returning the nearest
+// available success signal. See per-method `// PORT-NOTE:` comments.
+
+// Ported from MidLevelIrRuntimeTests.BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntime.
+internal fn bool BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 65 (the value written through a borrow-receiver indexed field
+    // address and read back). The compile helpers cannot observe a runtime exit
+    // code; reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-borrow-receiver-indexed-field-addresses",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i8[min max][16] Storage;
+
+    unsafe fn void Put(borrow mut Buffer self, u8[0 15] index, i8[min max] value)
+    {
+        *(&self.Storage[index]) = value;
+        return;
+    }
+
+    unsafe fn i32[min max] Read(borrow Buffer self, u8[0 15] index)
+    {
+        return (i32[min max])*(&self.Storage[index]);
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut Buffer buffer = new Buffer();
+    buffer.Put(5, (i8[min max])65);
+    return buffer.Read(5);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.LargeAggregateByValueCallsAndReturnsWorkAtRuntime.
+internal fn bool LargeAggregateByValueCallsAndReturnsWorkAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 42 (a large by-value aggregate passed and returned across
+    // calls). The compile helpers cannot observe a runtime exit code; reduced to
+    // a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-large-aggregate-by-value-calls-returns",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+fn Big Make(i64[min max] seed)
+{
+    return new Big()
+    {
+        A = seed, B = seed + 1, C = seed + 2
+    };
+}
+
+fn i32[min max] Read(Big value)
+{
+    return (i32[min max])(value.A + value.C);
+}
+
+export fn i32[min max] main()
+{
+    return Read(Make(20));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.LabeledBreakAndContinueTargetOuterLoopsAtRuntime.
+internal fn bool LabeledBreakAndContinueTargetOuterLoopsAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 138 (the accumulated total produced by labeled break/continue
+    // targeting the outer loop and a labeled switch break). The compile helpers
+    // cannot observe a runtime exit code; reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-labeled-break-continue-outer-loops",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] total = 0;
+    stack mut i32[min max] outer = 0;
+    outerLoop: while willexit (outer < 4)
+    {
+        outer += 1;
+        stack mut i32[min max] inner = 0;
+        while willexit (inner < 4)
+        {
+            inner += 1;
+            if (inner == 1)
+            {
+                continue;
+            }
+
+            gate: switch (inner)
+            {
+                default:
+                    if (inner == 2)
+                    {
+                        break gate;
+                    }
+
+                    total += 0;
+            }
+
+            if (outer == 2)
+            {
+                if (inner == 2)
+                {
+                    continue outerLoop;
+                }
+            }
+
+            if (outer == 4)
+            {
+                break outerLoop;
+            }
+
+            total += outer * 10 + inner;
+        }
+    }
+
+    return total;
+}
+""");
+    return Succeeds(compiled);
+}

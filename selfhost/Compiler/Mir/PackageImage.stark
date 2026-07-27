@@ -1,0 +1,30 @@
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+export import Compiler.Mir.PackageImage.Shared.TypeCodec
+export import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+export import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+export import Compiler.Mir.PackageImage.Loader.CompilerFactsSectionLoader
+export import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
+export import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+export import Compiler.Mir.PackageImage.Builder.OwnedModuleSelection
+export import Compiler.Mir.PackageImage.Builder.PackageImageBuilder
+export import Compiler.Mir.PackageImage.Builder.LegacyMirSectionWriter
+export import Compiler.Mir.PackageImage.Inspection.PackageImageInspection
+export import Compiler.Mir.PackageImage.Inspection.PackageImageFiles
+export import Compiler.Mir.PackageImage.Loader.LegacyMirSectionLoader
+export import Compiler.Mir.PackageImage.Loader.PackageImageLoader
+export import Compiler.Mir.PackageImage.Bridge.PackageImageSourceBridge
+export import Compiler.Mir.PackageImage.Models
+module Compiler.Mir.PackageImage
+
+// === Combined package image (#32) ===
+// A package image concatenates the four section streams behind a fixed 20-byte
+// header: a magic u32 then the 1-based byte offset of each section
+// (instructions, blocks, functions, globals). Sections therefore start at byte 21.
+// `InspectPackageImage` reads only the header + per-section counts (an `inspect-pkg`
+// summary) without materializing the IR.
+
+
+public inline finite law u32[0 max] SupportedPackageImageVersion()
+{
+    return SectionedPackageImageVersion();
+}

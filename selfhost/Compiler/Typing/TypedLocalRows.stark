@@ -1,0 +1,142 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedLocalHelpers
+import Compiler.Typing.TypedLocalModel
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedLocalRows
+
+internal fn System.Memory.MemoryStatus AppendTypedLocalDeclaration(
+    mut borrow TypedLocalDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    TypedLocalDeclarationOwnerKind ownerKind,
+    u32[0 max] functionGenericOpenToken,
+    u32[0 max] ownerGenericOpenToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex,
+    StatementItem item)
+{
+    if (item.Kind != StatementKind.Local || item.NameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut TypedSignatureTypeKind typeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] typeFlags = 0;
+
+    if (item.TypeStartToken != 0 && item.TypeEndToken > item.TypeStartToken)
+    {
+        stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+        TypedSignatureScanTopLevelTypeFacts(
+            stream,
+            item.TypeStartToken,
+            item.TypeEndToken,
+            rangeStartToken,
+            rangeEndToken,
+            elementCountStartToken,
+            elementCountEndToken,
+            arrayKind);
+
+        typeHeadToken = TypedFieldLastIdentifierInSpan(stream, item.TypeStartToken, item.TypeEndToken);
+        typePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, item.TypeStartToken, item.TypeEndToken, typeHeadToken);
+        if (typePrimaryToken != 0)
+        {
+            typeStartToken = item.TypeStartToken;
+            typeEndToken = item.TypeEndToken;
+            typeKind = TypedSignatureKindForType(source, stream, typePrimaryToken, typeHeadToken, functionGenericOpenToken, ownerGenericOpenToken, arrayKind);
+
+            stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+            if (primaryKind == TokenKind.IntegerType)
+            {
+                bitWidth = TypedSignatureIntegerBitWidth(source, stream, typePrimaryToken);
+            }
+            else if (primaryKind == TokenKind.FloatType)
+            {
+                bitWidth = TypedSignatureFloatBitWidth(source, stream, typePrimaryToken);
+            }
+
+            if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+            {
+                TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+            }
+
+            stack mut u32[0 max] deadOnReturnCount = 0;
+            if (TypedSignatureTypeSpanContainsDeadOnReturnContract(stream, typeStartToken, typeEndToken))
+            {
+                deadOnReturnCount = 1;
+            }
+
+            typeFlags = TypedSignatureFlagsForType(
+                source,
+                stream,
+                typePrimaryToken,
+                typeHeadToken,
+                typeStartToken,
+                typeEndToken,
+                functionGenericOpenToken,
+                ownerGenericOpenToken,
+                rangeStartToken,
+                rangeEndToken,
+                elementCountStartToken,
+                TypedSignatureTypeSpanContainsTailCallableSignature(stream, typeStartToken, typeEndToken),
+                deadOnReturnCount,
+                false);
+        }
+    }
+
+    stack mut u32[0 max] initializerStartToken = 0;
+    stack mut u32[0 max] initializerEndToken = 0;
+    stack u32[0 max] assignToken = TypedLocalDeclarationAssignToken(stream, item);
+    if (assignToken != 0)
+    {
+        initializerStartToken = (u32[0 max])(assignToken + 1);
+        initializerEndToken = TypedLocalDeclarationInitializerEndExclusive(stream, item);
+    }
+
+    return table.Append(
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        ownerKind,
+        (u32[0 max])(statementIndex + 1),
+        item.NameToken,
+        item.StartToken,
+        item.EndToken,
+        TypedLocalDeclarationStorageKind(stream, item.StartToken),
+        body.ExprRootAt(statementIndex),
+        initializerStartToken,
+        initializerEndToken,
+        body.DepthAt(statementIndex),
+        body.ScopeIdAt(statementIndex),
+        typeKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        typeFlags);
+}

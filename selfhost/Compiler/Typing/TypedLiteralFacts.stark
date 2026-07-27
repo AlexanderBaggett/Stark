@@ -1,0 +1,204 @@
+import Compiler.Parsing
+import Compiler.Typing.TypedLiteralModel
+import Compiler.Typing.TypedSignatures
+import System.Text
+module Compiler.Typing.TypedLiteralFacts
+
+internal inline finite law bool TypedLiteralIntegerFitsSignedBitWidth(u1024[0 max] value, u64[0 max] bitWidth)
+{
+    return value <= (((u1024[0 max])1 << (bitWidth - 1)) - (u1024[0 max])1);
+}
+
+internal finite law u32[0 max] TypedLiteralIntegerSignedBitWidth(u1024[0 max] value)
+{
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 8))
+    {
+        return 8;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 16))
+    {
+        return 16;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 24))
+    {
+        return 24;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 32))
+    {
+        return 32;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 48))
+    {
+        return 48;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 64))
+    {
+        return 64;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 96))
+    {
+        return 96;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 128))
+    {
+        return 128;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 192))
+    {
+        return 192;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 256))
+    {
+        return 256;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 384))
+    {
+        return 384;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 512))
+    {
+        return 512;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 768))
+    {
+        return 768;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 1024))
+    {
+        return 1024;
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] TypedLiteralFloatBitWidth(ascii literal)
+{
+    if (System.Text.EndsWith(literal, "f") || System.Text.EndsWith(literal, "F"))
+    {
+        return 32;
+    }
+
+    return 64;
+}
+
+internal finite law ascii TypedLiteralFloatParseText(ascii literal)
+{
+    if (System.Text.EndsWith(literal, "f") || System.Text.EndsWith(literal, "F"))
+    {
+        stack i64[min max] length = System.Text.AsciiLength(literal);
+        if (length > 0)
+        {
+            return literal[0, length - 1];
+        }
+    }
+
+    return literal;
+}
+
+internal finite law u64[0 2 ** 63 - 1] TypedLiteralCodePointUtf8ByteLength(i32[min max] codePoint)
+{
+    if (codePoint < 0)
+    {
+        return 0;
+    }
+
+    if (codePoint <= 127)
+    {
+        return 1;
+    }
+
+    if (codePoint <= 2047)
+    {
+        return 2;
+    }
+
+    if (codePoint <= 65535)
+    {
+        return 3;
+    }
+
+    if (codePoint <= 1114111)
+    {
+        return 4;
+    }
+
+    return 0;
+}
+
+internal finite law bool TypedLiteralExprKindIsLiteral(ExprKind kind)
+{
+    return kind == Compiler.Parsing.ExprKind.IntLiteral
+        || kind == Compiler.Parsing.ExprKind.FloatLiteral
+        || kind == Compiler.Parsing.ExprKind.StringLiteral
+        || kind == Compiler.Parsing.ExprKind.CharacterLiteral
+        || kind == Compiler.Parsing.ExprKind.BoolLiteral
+        || kind == Compiler.Parsing.ExprKind.NullLiteral;
+}
+
+internal finite law TypedLiteralKind TypedLiteralKindForExprKind(ExprKind kind)
+{
+    if (kind == Compiler.Parsing.ExprKind.IntLiteral)
+    {
+        return TypedLiteralKind.Integer;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.FloatLiteral)
+    {
+        return TypedLiteralKind.Float;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.StringLiteral || kind == Compiler.Parsing.ExprKind.CharacterLiteral)
+    {
+        return TypedLiteralKind.Text;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.BoolLiteral)
+    {
+        return TypedLiteralKind.Bool;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.NullLiteral)
+    {
+        return TypedLiteralKind.Null;
+    }
+
+    return TypedLiteralKind.Unknown;
+}
+
+internal finite law TypedSignatureTypeKind TypedLiteralTypeKindForLiteralKind(TypedLiteralKind kind)
+{
+    if (kind == TypedLiteralKind.Integer)
+    {
+        return TypedSignatureTypeKind.Integer;
+    }
+
+    if (kind == TypedLiteralKind.Float)
+    {
+        return TypedSignatureTypeKind.Float;
+    }
+
+    if (kind == TypedLiteralKind.Bool)
+    {
+        return TypedSignatureTypeKind.Bool;
+    }
+
+    if (kind == TypedLiteralKind.Text)
+    {
+        return TypedSignatureTypeKind.Text;
+    }
+
+    return TypedSignatureTypeKind.Unknown;
+}

@@ -22,7 +22,10 @@ internal static class SsaAddressTakenFunctionPruner
         }
 
         var prunedFunctions = module.AddressTakenFunctions
-            .Where(referencedFunctions.Contains)
+            // Dyn trait-object drop thunks are referenced only by the synthesized
+            // vtable globals (emitted in the module surface, not present in SSA), so
+            // they are roots that this SSA-reference scan cannot see -- keep them.
+            .Where(name => referencedFunctions.Contains(name) || DynTraitFacts.IsVtableReferencedRoot(name))
             .ToArray();
 
         return prunedFunctions.Length == module.AddressTakenFunctions.Count
@@ -217,6 +220,39 @@ internal static class SsaAddressTakenFunctionPruner
         if (terminator.Value is not null)
         {
             AddReferencedFunctionAddress(terminator.Value, referencedFunctions);
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                AddReferencedFunctionAddress(argument, referencedFunctions);
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddReferencedFunctionAddress(terminator.TailIndirectCall.Target, referencedFunctions);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                AddReferencedFunctionAddress(argument, referencedFunctions);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+            }
         }
 
         if (terminator.SwitchCases is null)

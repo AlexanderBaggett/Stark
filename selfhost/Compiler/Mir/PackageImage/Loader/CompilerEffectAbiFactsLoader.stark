@@ -1,0 +1,1230 @@
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Loader.CompilerEffectAbiFactsLoader
+
+// Function-effect and callable-ABI MANF materialization. Purity, memory,
+// progress, unwind, calling-convention, and ABI carrier facts retain exact rows.
+
+
+internal fn MemoryStatus LogicalPackageFunctionEffectFactGraphAppendText(
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageFunctionEffectFactGraphAddTextRow(
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    LogicalPackageFunctionEffectFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageFunctionEffectFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageFunctionEffectFactTextRow row =
+                new LogicalPackageFunctionEffectFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+internal fn bool LogicalPackageFunctionEffectFactGraphAddFunctionEffectRow(
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionEffectOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    u32[0 max] kindTextRow,
+    u32[0 max] inlinePreferenceTextRow,
+    bool hasFfiAbi,
+    u32[0 max] ffiAbiTextRow,
+    bool hasBackendOptimizationMode,
+    u32[0 max] backendOptimizationModeTextRow,
+    bool readsArgumentMemory,
+    bool isPure,
+    bool noSync,
+    bool noFree,
+    bool noUnwind,
+    bool willReturn,
+    bool mustProgress,
+    bool usesFastCallingConvention,
+    bool isFfi,
+    bool isHot,
+    bool isCold,
+    bool isStrictFp,
+    bool isVarargs,
+    bool isTailCallable,
+    bool noRecurse,
+    out u32[0 max] functionEffectRow)
+{
+    functionEffectRow = 0;
+    if (!graph.TextRows.Contains(qualifiedResolvedNameTextRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TextRows.Contains(inlinePreferenceTextRow)
+        || (hasFfiAbi && !graph.TextRows.Contains(ffiAbiTextRow))
+        || (!hasFfiAbi && ffiAbiTextRow != 0)
+        || (hasBackendOptimizationMode && !graph.TextRows.Contains(backendOptimizationModeTextRow))
+        || (!hasBackendOptimizationMode && backendOptimizationModeTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionEffectRow row = new LogicalPackageFunctionEffectRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionEffectOrdinalValue = functionEffectOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        KindTextRowValue = kindTextRow,
+        InlinePreferenceTextRowValue = inlinePreferenceTextRow,
+        FfiAbiTextRowValue = ffiAbiTextRow,
+        BackendOptimizationModeTextRowValue = backendOptimizationModeTextRow,
+        ReadsArgumentMemoryValue = readsArgumentMemory,
+        IsPureValue = isPure,
+        NoSyncValue = noSync,
+        NoFreeValue = noFree,
+        NoUnwindValue = noUnwind,
+        WillReturnValue = willReturn,
+        MustProgressValue = mustProgress,
+        UsesFastCallingConventionValue = usesFastCallingConvention,
+        IsFfiValue = isFfi,
+        IsHotValue = isHot,
+        IsColdValue = isCold,
+        IsStrictFpValue = isStrictFp,
+        IsVarargsValue = isVarargs,
+        IsTailCallableValue = isTailCallable,
+        HasFfiAbiValue = hasFfiAbi,
+        HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+        NoRecurseValue = noRecurse
+    };
+    functionEffectRow = graph.FunctionEffectRows.Add(row);
+    return functionEffectRow != 0;
+}
+
+internal fn MemoryStatus LogicalPackageAbiFactGraphAppendText(
+    mut borrow LogicalPackageAbiFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageAbiFactGraphAddTextRow(
+    mut borrow LogicalPackageAbiFactGraph graph,
+    LogicalPackageAbiFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageAbiFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageAbiFactTextRow row = new LogicalPackageAbiFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageAbiFactGraphAddAbiFunctionRow(
+    mut borrow LogicalPackageAbiFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] abiFunctionOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    u32[0 max] symbolNameTextRow,
+    u32[0 max] sourceReturnTypeReferenceRow,
+    u32[0 max] llvmReturnTypeReferenceRow,
+    bool hasSourceName,
+    u32[0 max] sourceNameTextRow,
+    bool hasFfiAbi,
+    u32[0 max] ffiAbiTextRow,
+    bool hasLinkName,
+    u32[0 max] linkNameTextRow,
+    bool isFfi,
+    bool usesFastCallingConvention,
+    bool isVarargs,
+    bool usesTailCallingConvention,
+    out u32[0 max] abiFunctionRow)
+{
+    abiFunctionRow = 0;
+    if (!graph.TextRows.Contains(qualifiedResolvedNameTextRow)
+        || !graph.TextRows.Contains(symbolNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(sourceReturnTypeReferenceRow)
+        || !graph.TypeReferences.ContainsTypeReference(llvmReturnTypeReferenceRow)
+        || (hasSourceName && !graph.TextRows.Contains(sourceNameTextRow))
+        || (!hasSourceName && sourceNameTextRow != 0)
+        || (hasFfiAbi && !graph.TextRows.Contains(ffiAbiTextRow))
+        || (!hasFfiAbi && ffiAbiTextRow != 0)
+        || (hasLinkName && !graph.TextRows.Contains(linkNameTextRow))
+        || (!hasLinkName && linkNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageAbiFunctionRow row = new LogicalPackageAbiFunctionRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        AbiFunctionOrdinalValue = abiFunctionOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        SymbolNameTextRowValue = symbolNameTextRow,
+        SourceReturnTypeReferenceRowValue = sourceReturnTypeReferenceRow,
+        LlvmReturnTypeReferenceRowValue = llvmReturnTypeReferenceRow,
+        SourceNameTextRowValue = sourceNameTextRow,
+        FfiAbiTextRowValue = ffiAbiTextRow,
+        LinkNameTextRowValue = linkNameTextRow,
+        IsFfiValue = isFfi,
+        UsesFastCallingConventionValue = usesFastCallingConvention,
+        IsVarargsValue = isVarargs,
+        UsesTailCallingConventionValue = usesTailCallingConvention,
+        HasSourceNameValue = hasSourceName,
+        HasFfiAbiValue = hasFfiAbi,
+        HasLinkNameValue = hasLinkName
+    };
+    abiFunctionRow = graph.AbiFunctionRows.Add(row);
+    return abiFunctionRow != 0;
+}
+
+internal fn bool LogicalPackageAbiFactGraphAddParameterRow(
+    mut borrow LogicalPackageAbiFactGraph graph,
+    u32[0 max] abiFunctionRow,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] sourceNameTextRow,
+    u32[0 max] llvmNameTextRow,
+    u32[0 max] sourceTypeReferenceRow,
+    u32[0 max] llvmTypeReferenceRow,
+    LogicalPackageAbiParameterKind kind,
+    bool hasRawPointerElementCountExpression,
+    u32[0 max] rawPointerElementCountExpressionTextRow,
+    out u32[0 max] parameterRow)
+{
+    parameterRow = 0;
+    if (!graph.AbiFunctionRows.Contains(abiFunctionRow)
+        || !graph.TextRows.Contains(sourceNameTextRow)
+        || !graph.TextRows.Contains(llvmNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(sourceTypeReferenceRow)
+        || !graph.TypeReferences.ContainsTypeReference(llvmTypeReferenceRow)
+        || (hasRawPointerElementCountExpression
+            && !graph.TextRows.Contains(rawPointerElementCountExpressionTextRow))
+        || (!hasRawPointerElementCountExpression && rawPointerElementCountExpressionTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageAbiParameterRow row = new LogicalPackageAbiParameterRow()
+    {
+        AbiFunctionRowValue = abiFunctionRow,
+        ParameterOrdinalValue = parameterOrdinal,
+        SourceNameTextRowValue = sourceNameTextRow,
+        LlvmNameTextRowValue = llvmNameTextRow,
+        SourceTypeReferenceRowValue = sourceTypeReferenceRow,
+        LlvmTypeReferenceRowValue = llvmTypeReferenceRow,
+        KindValue = kind,
+        RawPointerElementCountExpressionTextRowValue = rawPointerElementCountExpressionTextRow,
+        HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+    };
+    stack u32[0 max] addedParameterRow = graph.ParameterRows.Add(row);
+    if (addedParameterRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageAbiFunctionRow functionRow = graph.AbiFunctionRows.Get(abiFunctionRow);
+    if (functionRow.ParameterRowCountValue == 0)
+    {
+        functionRow.FirstParameterRowValue = addedParameterRow;
+    }
+    else if (addedParameterRow != functionRow.FirstParameterRowValue + functionRow.ParameterRowCountValue)
+    {
+        return false;
+    }
+
+    functionRow.ParameterRowCountValue = functionRow.ParameterRowCountValue + 1;
+    if (!graph.AbiFunctionRows.Replace(abiFunctionRow, functionRow))
+    {
+        return false;
+    }
+
+    parameterRow = addedParameterRow;
+    return true;
+}
+
+internal fn bool LogicalPackageAbiFactGraphAddParameterLlvmTypeRow(
+    mut borrow LogicalPackageAbiFactGraph graph,
+    u32[0 max] parameterRow,
+    u32[0 max] typeOrdinal,
+    u32[0 max] typeReferenceRow,
+    out u32[0 max] llvmTypeRow)
+{
+    llvmTypeRow = 0;
+    if (!graph.ParameterRows.Contains(parameterRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageAbiParameterLlvmTypeRow row =
+        new LogicalPackageAbiParameterLlvmTypeRow()
+    {
+        AbiParameterRowValue = parameterRow,
+        TypeOrdinalValue = typeOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    stack u32[0 max] addedTypeRow = graph.LlvmParameterTypeRows.Add(row);
+    if (addedTypeRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageAbiParameterRow parameter = graph.ParameterRows.Get(parameterRow);
+    if (parameter.LlvmParameterTypeRowCountValue == 0)
+    {
+        parameter.FirstLlvmParameterTypeRowValue = addedTypeRow;
+    }
+    else if (addedTypeRow != parameter.FirstLlvmParameterTypeRowValue + parameter.LlvmParameterTypeRowCountValue)
+    {
+        return false;
+    }
+
+    parameter.LlvmParameterTypeRowCountValue = parameter.LlvmParameterTypeRowCountValue + 1;
+    if (!graph.ParameterRows.Replace(parameterRow, parameter))
+    {
+        return false;
+    }
+
+    llvmTypeRow = addedTypeRow;
+    return true;
+}
+
+public fn MemoryStatus AppendLogicalPackageFunctionEffectFactText(
+    borrow LogicalPackageFunctionEffectFactGraph graph,
+    LogicalPackageFunctionEffectFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageAbiFactText(
+    borrow LogicalPackageAbiFactGraph graph,
+    LogicalPackageAbiFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageJsonEffectiveCompilerFactsNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] compilerFactsNode,
+    out bool usesCompilerSections)
+{
+    compilerFactsNode = 0;
+    usesCompilerSections = false;
+    stack mut u64[0 2 ** 63 - 1] directCompilerFactsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsCompilerFactsNode = 0;
+    stack mut bool hasDirectCompilerFacts = false;
+    stack mut bool hasCompilerSections = false;
+    stack mut bool hasCompilerSectionsCompilerFacts = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "CompilerFacts", directCompilerFactsNode, hasDirectCompilerFacts)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "CompilerSections", compilerSectionsNode, hasCompilerSections))
+    {
+        return false;
+    }
+
+    if (hasCompilerSections)
+    {
+        if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            compilerSectionsNode,
+            "CompilerFacts",
+            compilerSectionsCompilerFactsNode,
+            hasCompilerSectionsCompilerFacts))
+        {
+            return false;
+        }
+    }
+
+    if (hasCompilerSectionsCompilerFacts)
+    {
+        compilerFactsNode = compilerSectionsCompilerFactsNode;
+        usesCompilerSections = true;
+        return true;
+    }
+
+    if (hasDirectCompilerFacts)
+    {
+        compilerFactsNode = directCompilerFactsNode;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionEffectFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionEffectFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageFunctionEffectFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalFunctionEffectFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionEffectFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageFunctionEffectFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionEffectFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionEffectFactGraph graph,
+    out u32[0 max] functionEffectCount)
+{
+    functionEffectCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        compilerFactsNode,
+        "FunctionEffects",
+        arrayNode,
+        functionEffectCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < functionEffectCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] effectNode = 0;
+        stack mut u32[0 max] qualifiedResolvedNameTextRow = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] inlinePreferenceTextRow = 0;
+        stack mut u32[0 max] ffiAbiTextRow = 0;
+        stack mut u32[0 max] backendOptimizationModeTextRow = 0;
+        stack mut bool readsArgumentMemory = false;
+        stack mut bool isPure = false;
+        stack mut bool noSync = false;
+        stack mut bool noFree = false;
+        stack mut bool noUnwind = false;
+        stack mut bool willReturn = false;
+        stack mut bool mustProgress = false;
+        stack mut bool usesFastCallingConvention = false;
+        stack mut bool isFfi = false;
+        stack mut bool isHot = false;
+        stack mut bool isCold = false;
+        stack mut bool isStrictFp = false;
+        stack mut bool isVarargs = false;
+        stack mut bool isTailCallable = false;
+        stack mut bool hasFfiAbi = false;
+        stack mut bool hasBackendOptimizationMode = false;
+        stack mut bool noRecurse = false;
+        stack mut u32[0 max] functionEffectRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, effectNode)
+            || document.KindAt(effectNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionEffectFactTextMemberRow(
+                document,
+                effectNode,
+                "QualifiedResolvedName",
+                LogicalPackageFunctionEffectFactTextKind.QualifiedResolvedName,
+                index,
+                graph,
+                qualifiedResolvedNameTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionEffectFactTextMemberRow(
+                document,
+                effectNode,
+                "Kind",
+                LogicalPackageFunctionEffectFactTextKind.Kind,
+                index,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionEffectFactTextMemberRow(
+                document,
+                effectNode,
+                "InlinePreference",
+                LogicalPackageFunctionEffectFactTextKind.InlinePreference,
+                index,
+                graph,
+                inlinePreferenceTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalFunctionEffectFactTextMemberRow(
+                document,
+                effectNode,
+                "FfiAbi",
+                LogicalPackageFunctionEffectFactTextKind.FfiAbi,
+                index,
+                graph,
+                hasFfiAbi,
+                ffiAbiTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalFunctionEffectFactTextMemberRow(
+                document,
+                effectNode,
+                "BackendOptimizationMode",
+                LogicalPackageFunctionEffectFactTextKind.BackendOptimizationMode,
+                index,
+                graph,
+                hasBackendOptimizationMode,
+                backendOptimizationModeTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                effectNode,
+                "ReadsArgumentMemory",
+                readsArgumentMemory)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "IsPure", isPure)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "NoSync", noSync)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "NoFree", noFree)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "NoUnwind", noUnwind)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "WillReturn", willReturn)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "MustProgress", mustProgress)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                effectNode,
+                "UseFastCallingConvention",
+                usesFastCallingConvention)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "IsFfi", isFfi)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "IsHot", isHot)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "IsCold", isCold)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, effectNode, "IsStrictFp", isStrictFp)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, effectNode, "IsVarargs", isVarargs)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                effectNode,
+                "IsTailCallable",
+                isTailCallable)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, effectNode, "NoRecurse", noRecurse)
+            || !LogicalPackageFunctionEffectFactGraphAddFunctionEffectRow(
+                graph,
+                moduleOrdinal,
+                index,
+                qualifiedResolvedNameTextRow,
+                kindTextRow,
+                inlinePreferenceTextRow,
+                hasFfiAbi,
+                ffiAbiTextRow,
+                hasBackendOptimizationMode,
+                backendOptimizationModeTextRow,
+                readsArgumentMemory,
+                isPure,
+                noSync,
+                noFree,
+                noUnwind,
+                willReturn,
+                mustProgress,
+                usesFastCallingConvention,
+                isFfi,
+                isHot,
+                isCold,
+                isStrictFp,
+                isVarargs,
+                isTailCallable,
+                noRecurse,
+                functionEffectRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeAbiFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageAbiFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageAbiFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageAbiFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalAbiFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageAbiFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageAbiFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageAbiFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonParseAbiParameterKind(
+    ascii kindText,
+    out LogicalPackageAbiParameterKind kind)
+    where overlap(kindText, kind)
+{
+    if (kindText == "direct")
+    {
+        kind = LogicalPackageAbiParameterKind.Direct;
+        return true;
+    }
+
+    if (kindText == "indirectin")
+    {
+        kind = LogicalPackageAbiParameterKind.IndirectIn;
+        return true;
+    }
+
+    if (kindText == "sret")
+    {
+        kind = LogicalPackageAbiParameterKind.SRet;
+        return true;
+    }
+
+    kind = LogicalPackageAbiParameterKind.Direct;
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeAbiParameterLlvmTypeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] abiFunctionOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] parameterRow,
+    mut borrow LogicalPackageAbiFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] typeCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        parameterNode,
+        "LlvmParameterTypes",
+        arrayNode,
+        typeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeIndex = 0;
+    while willexit (typeIndex < typeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut u32[0 max] llvmTypeRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])typeIndex, typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Function,
+                abiFunctionOrdinal,
+                parameterOrdinal,
+                0,
+                LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmCarrierType,
+                typeIndex,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageAbiFactGraphAddParameterLlvmTypeRow(
+                graph,
+                parameterRow,
+                typeIndex,
+                typeReferenceRow,
+                llvmTypeRow))
+        {
+            return false;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeAbiParameterRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] abiFunctionOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] abiFunctionRow,
+    mut borrow LogicalPackageAbiFactGraph graph)
+{
+    stack mut u32[0 max] sourceNameTextRow = 0;
+    stack mut u32[0 max] llvmNameTextRow = 0;
+    stack mut u32[0 max] rawPointerElementCountExpressionTextRow = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] llvmTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+    stack mut u32[0 max] sourceTypeReferenceRow = 0;
+    stack mut u32[0 max] llvmTypeReferenceRow = 0;
+    stack mut bool hasRawPointerElementCountExpression = false;
+    stack mut LogicalPackageAbiParameterKind kind = LogicalPackageAbiParameterKind.Direct;
+    stack mut u32[0 max] parameterRow = 0;
+    if (!LogicalPackageImageJsonMaterializeAbiFactTextMemberRow(
+            document,
+            parameterNode,
+            "SourceName",
+            LogicalPackageAbiFactTextKind.ParameterSourceName,
+            parameterOrdinal,
+            graph,
+            sourceNameTextRow)
+        || !LogicalPackageImageJsonMaterializeAbiFactTextMemberRow(
+            document,
+            parameterNode,
+            "LlvmName",
+            LogicalPackageAbiFactTextKind.ParameterLlvmName,
+            parameterOrdinal,
+            graph,
+            llvmNameTextRow)
+        || !document.TryFindMember(parameterNode, "SourceType", sourceTypeNode)
+        || document.KindAt(sourceTypeNode) != JsonKind.Object
+        || !document.TryFindMember(parameterNode, "LlvmType", llvmTypeNode)
+        || document.KindAt(llvmTypeNode) != JsonKind.Object
+        || !document.TryFindMember(parameterNode, "Kind", kindNode)
+        || document.KindAt(kindNode) != JsonKind.Text
+        || !LogicalPackageImageJsonParseAbiParameterKind(document.TextAt(kindNode), kind)
+        || !LogicalPackageImageJsonMaterializeOptionalAbiFactTextMemberRow(
+            document,
+            parameterNode,
+            "RawPointerElementCountExpression",
+            LogicalPackageAbiFactTextKind.ParameterRawPointerElementCountExpression,
+            parameterOrdinal,
+            graph,
+            hasRawPointerElementCountExpression,
+            rawPointerElementCountExpressionTextRow)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+            document,
+            sourceTypeNode,
+            moduleOrdinal,
+            LogicalPackageTypedDeclarationKind.Function,
+            abiFunctionOrdinal,
+            0,
+            0,
+            LogicalPackageTypedTypeReferenceSource.AbiParameterSourceType,
+            parameterOrdinal,
+            graph.TypeReferences,
+            sourceTypeReferenceRow)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+            document,
+            llvmTypeNode,
+            moduleOrdinal,
+            LogicalPackageTypedDeclarationKind.Function,
+            abiFunctionOrdinal,
+            0,
+            0,
+            LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmType,
+            parameterOrdinal,
+            graph.TypeReferences,
+            llvmTypeReferenceRow)
+        || !LogicalPackageAbiFactGraphAddParameterRow(
+            graph,
+            abiFunctionRow,
+            parameterOrdinal,
+            sourceNameTextRow,
+            llvmNameTextRow,
+            sourceTypeReferenceRow,
+            llvmTypeReferenceRow,
+            kind,
+            hasRawPointerElementCountExpression,
+            rawPointerElementCountExpressionTextRow,
+            parameterRow)
+        || !LogicalPackageImageJsonMaterializeAbiParameterLlvmTypeRows(
+            document,
+            parameterNode,
+            moduleOrdinal,
+            abiFunctionOrdinal,
+            parameterOrdinal,
+            parameterRow,
+            graph))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeAbiParameters(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] abiFunctionNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] abiFunctionOrdinal,
+    u32[0 max] abiFunctionRow,
+    mut borrow LogicalPackageAbiFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        abiFunctionNode,
+        "Parameters",
+        arrayNode,
+        parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])parameterIndex, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeAbiParameterRow(
+                document,
+                parameterNode,
+                moduleOrdinal,
+                abiFunctionOrdinal,
+                parameterIndex,
+                abiFunctionRow,
+                graph))
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeAbiFunctionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageAbiFactGraph graph,
+    out u32[0 max] abiFunctionCount)
+{
+    abiFunctionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        compilerFactsNode,
+        "AbiFunctions",
+        arrayNode,
+        abiFunctionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < abiFunctionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] abiFunctionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] sourceReturnTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] llvmReturnTypeNode = 0;
+        stack mut u32[0 max] qualifiedResolvedNameTextRow = 0;
+        stack mut u32[0 max] symbolNameTextRow = 0;
+        stack mut u32[0 max] sourceNameTextRow = 0;
+        stack mut u32[0 max] ffiAbiTextRow = 0;
+        stack mut u32[0 max] linkNameTextRow = 0;
+        stack mut u32[0 max] sourceReturnTypeReferenceRow = 0;
+        stack mut u32[0 max] llvmReturnTypeReferenceRow = 0;
+        stack mut bool hasSourceName = false;
+        stack mut bool hasFfiAbi = false;
+        stack mut bool hasLinkName = false;
+        stack mut bool isFfi = false;
+        stack mut bool usesFastCallingConvention = false;
+        stack mut bool isVarargs = false;
+        stack mut bool usesTailCallingConvention = false;
+        stack mut u32[0 max] abiFunctionRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, abiFunctionNode)
+            || document.KindAt(abiFunctionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeAbiFactTextMemberRow(
+                document,
+                abiFunctionNode,
+                "QualifiedResolvedName",
+                LogicalPackageAbiFactTextKind.QualifiedResolvedName,
+                index,
+                graph,
+                qualifiedResolvedNameTextRow)
+            || !LogicalPackageImageJsonMaterializeAbiFactTextMemberRow(
+                document,
+                abiFunctionNode,
+                "SymbolName",
+                LogicalPackageAbiFactTextKind.SymbolName,
+                index,
+                graph,
+                symbolNameTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalAbiFactTextMemberRow(
+                document,
+                abiFunctionNode,
+                "SourceName",
+                LogicalPackageAbiFactTextKind.SourceName,
+                index,
+                graph,
+                hasSourceName,
+                sourceNameTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalAbiFactTextMemberRow(
+                document,
+                abiFunctionNode,
+                "FfiAbi",
+                LogicalPackageAbiFactTextKind.FfiAbi,
+                index,
+                graph,
+                hasFfiAbi,
+                ffiAbiTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalAbiFactTextMemberRow(
+                document,
+                abiFunctionNode,
+                "LinkName",
+                LogicalPackageAbiFactTextKind.LinkName,
+                index,
+                graph,
+                hasLinkName,
+                linkNameTextRow)
+            || !document.TryFindMember(abiFunctionNode, "SourceReturnType", sourceReturnTypeNode)
+            || document.KindAt(sourceReturnTypeNode) != JsonKind.Object
+            || !document.TryFindMember(abiFunctionNode, "LlvmReturnType", llvmReturnTypeNode)
+            || document.KindAt(llvmReturnTypeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, abiFunctionNode, "IsFfi", isFfi)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                abiFunctionNode,
+                "UsesFastCallingConvention",
+                usesFastCallingConvention)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, abiFunctionNode, "IsVarargs", isVarargs)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                abiFunctionNode,
+                "UsesTailCallingConvention",
+                usesTailCallingConvention)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                sourceReturnTypeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Function,
+                index,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.AbiFunctionSourceReturn,
+                0,
+                graph.TypeReferences,
+                sourceReturnTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                llvmReturnTypeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Function,
+                index,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.AbiFunctionLlvmReturn,
+                0,
+                graph.TypeReferences,
+                llvmReturnTypeReferenceRow)
+            || !LogicalPackageAbiFactGraphAddAbiFunctionRow(
+                graph,
+                moduleOrdinal,
+                index,
+                qualifiedResolvedNameTextRow,
+                symbolNameTextRow,
+                sourceReturnTypeReferenceRow,
+                llvmReturnTypeReferenceRow,
+                hasSourceName,
+                sourceNameTextRow,
+                hasFfiAbi,
+                ffiAbiTextRow,
+                hasLinkName,
+                linkNameTextRow,
+                isFfi,
+                usesFastCallingConvention,
+                isVarargs,
+                usesTailCallingConvention,
+                abiFunctionRow)
+            || !LogicalPackageImageJsonMaterializeAbiParameters(
+                document,
+                abiFunctionNode,
+                moduleOrdinal,
+                index,
+                abiFunctionRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageFunctionEffectFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionEffectFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] functionEffectCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeFunctionEffectFactRows(
+                document,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                functionEffectCount);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageAbiFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageAbiFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] abiFunctionCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeAbiFunctionRows(
+                document,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                abiFunctionCount);
+    }
+}

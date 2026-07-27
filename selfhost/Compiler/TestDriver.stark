@@ -1,0 +1,371 @@
+import System.Memory
+import System.Process
+import System.Text
+module Compiler.TestDriver
+
+// Stage1 port of the `stark test` driver's runner-execution half
+// (docs/Internals/TestProgressProtocol.md §3.4/§5.2).
+// Runs a generated test runner, forwarding its stdout/stderr transcripts
+// line-by-line as they arrive: with progress enabled it passes `--progress`
+// in the runner argv and stamps every forwarded line with a driver-side
+// `[<seconds>.<tenths>s] ` monotonic prefix; with a deadline it kills the
+// child's whole process group and appends the stage0-identical timeout
+// report. Multiplexing is a single-threaded pipe poll (the stdlib's
+// established PollChildPipes/RunCapture pattern) rather than the
+// thread-per-pipe sketch in §5.2 — same observable contract, no shared
+// state to gate. Pending-buffer lengths are tracked with local counters
+// instead of re-reading `.Length` after mutating calls (TASKS.md §6
+// stale-length host bug).
+
+public struct TestRunTranscript
+{
+    internal System.Text.OwnedAscii StdoutText;
+    internal System.Text.OwnedAscii StderrText;
+    internal i32[min max] ExitCodeValue;
+    internal bool TimedOutValue;
+
+    TestRunTranscript()
+    {
+        self.StdoutText = new();
+        self.StderrText = new();
+        self.ExitCodeValue = -1;
+        self.TimedOutValue = false;
+    }
+
+    public inline finite ascii StdoutView(borrow TestRunTranscript self)
+    {
+        return self.StdoutText.View();
+    }
+
+    public inline finite ascii StderrView(borrow TestRunTranscript self)
+    {
+        return self.StderrText.View();
+    }
+
+    public inline finite law i32[min max] ExitCode(borrow TestRunTranscript self)
+    {
+        return self.ExitCodeValue;
+    }
+
+    public inline finite law bool TimedOut(borrow TestRunTranscript self)
+    {
+        return self.TimedOutValue;
+    }
+}
+
+fn MemoryStatus AppendElapsedPrefix(
+    mut borrow OwnedAscii sink,
+    i64[min max] startMilliseconds,
+    i64[min max] nowMilliseconds)
+{
+    stack mut i64[min max] elapsed = nowMilliseconds - startMilliseconds;
+    if (elapsed < 0)
+    {
+        elapsed = 0;
+    }
+
+    try sink.AppendConstAscii("[");
+    try sink.AppendI64(elapsed / 1000);
+    try sink.AppendConstAscii(".");
+    try sink.AppendI64((elapsed % 1000) / 100);
+    try sink.AppendConstAscii("s] ");
+    return MemoryStatus.Ok;
+}
+
+// Moves every complete line currently in `pending[0, pendingLength)` into the
+// sink (prefixed when progress is on) and compacts the unconsumed tail to the
+// front. Returns the new pending length through `remainingLength`.
+unsafe fn MemoryStatus DrainCompleteLines(
+    mut borrow dynamic i8[min max] pending,
+    u64[0 2 ** 63 - 1] pendingLength,
+    mut borrow OwnedAscii sink,
+    bool progress,
+    i64[min max] startMilliseconds,
+    out u64[0 2 ** 63 - 1] remainingLength)
+{
+    remainingLength = pendingLength;
+
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < pendingLength)
+    {
+        if (pending[scan] != 10)
+        {
+            scan += 1;
+            continue;
+        }
+
+        if (progress)
+        {
+            try AppendElapsedPrefix(sink, startMilliseconds, MonotonicMilliseconds());
+        }
+
+        stack mut u64[0 2 ** 63 - 1] copy = lineStart;
+        while willexit (copy < scan)
+        {
+            try sink.AppendByte(pending[copy]);
+            copy += 1;
+        }
+
+        try sink.AppendConstAscii("\n");
+        scan += 1;
+        lineStart = scan;
+    }
+
+    if (lineStart == 0)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] tail = 0;
+    while willexit (lineStart + tail < pendingLength)
+    {
+        pending[tail] = pending[lineStart + tail];
+        tail += 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] popCount = pendingLength - tail;
+    while willexit (popCount > 0)
+    {
+        stack i8[min max] poppedByte = pending.MoveLast();
+        popCount -= 1;
+    }
+
+    remainingLength = tail;
+    return MemoryStatus.Ok;
+}
+
+// Flushes a trailing unterminated line (a killed child can leave one).
+unsafe fn MemoryStatus FlushPartialLine(
+    mut borrow dynamic i8[min max] pending,
+    u64[0 2 ** 63 - 1] pendingLength,
+    mut borrow OwnedAscii sink,
+    bool progress,
+    i64[min max] startMilliseconds)
+{
+    if (pendingLength == 0)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (progress)
+    {
+        try AppendElapsedPrefix(sink, startMilliseconds, MonotonicMilliseconds());
+    }
+
+    stack mut u64[0 2 ** 63 - 1] copy = 0;
+    while willexit (copy < pendingLength)
+    {
+        try sink.AppendByte(pending[copy]);
+        copy += 1;
+    }
+
+    try sink.AppendConstAscii("\n");
+    stack mut u64[0 2 ** 63 - 1] popCount = pendingLength;
+    while willexit (popCount > 0)
+    {
+        stack i8[min max] poppedByte = pending.MoveLast();
+        popCount -= 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Runs the generated runner at `executablePath`, per the §3.4 driver
+// contract. `timeoutSeconds` of zero disables the deadline. Returns false
+// only on infrastructure failures (spawn/poll/read/memory); test failures
+// and timeouts report through the transcript's exit code and TimedOut flag.
+public unsafe fn bool RunTestRunner(
+    ascii executablePath,
+    bool progress,
+    u32[0 2 ** 31 - 1] timeoutSeconds,
+    out TestRunTranscript transcript)
+{
+    transcript = new();
+
+    stack mut ProcessCommand command = new();
+    switch (Command(executablePath))
+    {
+        case ProcessResult<ProcessCommand>.Err(var commandError):
+            return false;
+        case ProcessResult<ProcessCommand>.Ok(var builtCommand):
+            command = builtCommand;
+    }
+
+    if (progress)
+    {
+        switch (command.AddArgument("--progress"))
+        {
+            case ProcessStatus.Err(var argumentError):
+                return false;
+            case ProcessStatus.Ok:
+        }
+    }
+
+    stack mut ChildProcess child = new();
+    switch (Spawn(command))
+    {
+        case ProcessResult<ChildProcess>.Err(var spawnError):
+            return false;
+        case ProcessResult<ChildProcess>.Ok(var spawnedChild):
+            child = spawnedChild;
+    }
+
+    stack i64[min max] startMilliseconds = MonotonicMilliseconds();
+    stack mut i64[min max] deadlineMilliseconds = 0;
+    if (timeoutSeconds > 0)
+    {
+        deadlineMilliseconds = startMilliseconds + ((i64[min max])timeoutSeconds * 1000);
+    }
+
+    stack mut TestRunTranscript running = new();
+    stack mut dynamic i8[min max] stdoutPending = new();
+    stack mut dynamic i8[min max] stderrPending = new();
+    stack mut u64[0 2 ** 63 - 1] stdoutPendingLength = 0;
+    stack mut u64[0 2 ** 63 - 1] stderrPendingLength = 0;
+    stack mut bool stdoutOpen = true;
+    stack mut bool stderrOpen = true;
+
+    while willexit (stdoutOpen || stderrOpen)
+    {
+        stack mut i32[min max] pollTimeout = -1;
+        if (deadlineMilliseconds > 0 && !running.TimedOutValue)
+        {
+            stack i64[min max] remaining = deadlineMilliseconds - MonotonicMilliseconds();
+            if (remaining <= 0)
+            {
+                stack ProcessStatus killStatus = KillTree(child);
+                running.TimedOutValue = true;
+                stack MemoryStatus reportStatus = AppendTimeoutReport(running.StderrText, timeoutSeconds);
+                switch (reportStatus)
+                {
+                    case MemoryStatus.Err(var reportError):
+                        return false;
+                    case MemoryStatus.Ok:
+                }
+            }
+            else if (remaining > 2000000000)
+            {
+                pollTimeout = 2000000000;
+            }
+            else
+            {
+                pollTimeout = (i32[min max])remaining;
+            }
+        }
+
+        stack mut u8[0 3] readyMask = 0;
+        switch (PollChildPipes(child, pollTimeout))
+        {
+            case ProcessResult<u8[0 3]>.Err(var pollError):
+                return false;
+            case ProcessResult<u8[0 3]>.Ok(var mask):
+                readyMask = mask;
+        }
+
+        if (readyMask == 0)
+        {
+            continue;
+        }
+
+        if (stdoutOpen && (readyMask == 1 || readyMask == 3))
+        {
+            stack mut u64[0 2 ** 63 - 1] readCount = 0;
+            switch (ReadStdoutChunk(child, stdoutPending))
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var readError):
+                    return false;
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    readCount = count;
+            }
+
+            if (readCount == 0)
+            {
+                stdoutOpen = false;
+                stack MemoryStatus flushStatus = FlushPartialLine(stdoutPending, stdoutPendingLength, running.StdoutText, progress, startMilliseconds);
+                switch (flushStatus)
+                {
+                    case MemoryStatus.Err(var flushError):
+                        return false;
+                    case MemoryStatus.Ok:
+                }
+
+                stdoutPendingLength = 0;
+            }
+            else
+            {
+                stdoutPendingLength += readCount;
+                stack mut u64[0 2 ** 63 - 1] remainingBytes = 0;
+                stack MemoryStatus drainStatus = DrainCompleteLines(stdoutPending, stdoutPendingLength, running.StdoutText, progress, startMilliseconds, remainingBytes);
+                switch (drainStatus)
+                {
+                    case MemoryStatus.Err(var drainError):
+                        return false;
+                    case MemoryStatus.Ok:
+                }
+
+                stdoutPendingLength = remainingBytes;
+            }
+        }
+
+        if (stderrOpen && readyMask >= 2)
+        {
+            stack mut u64[0 2 ** 63 - 1] readCount = 0;
+            switch (ReadStderrChunk(child, stderrPending))
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var readError):
+                    return false;
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    readCount = count;
+            }
+
+            if (readCount == 0)
+            {
+                stderrOpen = false;
+                stack MemoryStatus flushStatus = FlushPartialLine(stderrPending, stderrPendingLength, running.StderrText, progress, startMilliseconds);
+                switch (flushStatus)
+                {
+                    case MemoryStatus.Err(var flushError):
+                        return false;
+                    case MemoryStatus.Ok:
+                }
+
+                stderrPendingLength = 0;
+            }
+            else
+            {
+                stderrPendingLength += readCount;
+                stack mut u64[0 2 ** 63 - 1] remainingBytes = 0;
+                stack MemoryStatus drainStatus = DrainCompleteLines(stderrPending, stderrPendingLength, running.StderrText, progress, startMilliseconds, remainingBytes);
+                switch (drainStatus)
+                {
+                    case MemoryStatus.Err(var drainError):
+                        return false;
+                    case MemoryStatus.Ok:
+                }
+
+                stderrPendingLength = remainingBytes;
+            }
+        }
+    }
+
+    switch (WaitExit(child))
+    {
+        case ProcessResult<i32[min max]>.Err(var waitError):
+            return false;
+        case ProcessResult<i32[min max]>.Ok(var code):
+            running.ExitCodeValue = code;
+    }
+
+    stack ProcessStatus closeStatus = Close(child);
+    transcript = running;
+    return true;
+}
+
+fn MemoryStatus AppendTimeoutReport(mut borrow OwnedAscii sink, u32[0 2 ** 31 - 1] timeoutSeconds)
+{
+    try sink.AppendConstAscii("Test run timed out after ");
+    try sink.AppendI64((i64[min max])timeoutSeconds);
+    try sink.AppendConstAscii("s; the last `run <name>` line above names the fact that was in flight.\n");
+    return MemoryStatus.Ok;
+}

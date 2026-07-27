@@ -1,3 +1,5 @@
+import System.C
+import System.Memory
 import System.Runtime.Buffer
 module System.Runtime.Platform.Linux
 
@@ -7,6 +9,38 @@ internal unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
 internal finite law i64[min max] UnicodeLength(unicode source);
 internal unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)
     where overlap(left, right);
+
+[StructLayout(C)]
+internal struct LinuxPollFd
+{
+    i32[min max] Fd;
+    i16[min max] Events;
+    i16[min max] Revents;
+}
+
+[StructLayout(C)]
+internal struct LinuxTimespec
+{
+    i64[min max] Seconds;
+    i64[min max] Nanoseconds;
+}
+
+internal unsafe ffi(c) fn i32[min max] chdir(rawptr<System.C.c_char> path);
+internal unsafe ffi(c) fn i32[min max] clock_gettime(i32[min max] clockId, rawmutptr<LinuxTimespec> time);
+internal unsafe ffi(c) fn i32[min max] close(i32[min max] fileDescriptor);
+internal unsafe ffi(c) fn i32[min max] dup2(i32[min max] oldFileDescriptor, i32[min max] newFileDescriptor);
+internal unsafe ffi(c) fn i32[min max] execvp(rawptr<System.C.c_char> file, rawptr<rawptr<System.C.c_char>> argv)
+    where overlap(file, argv);
+internal unsafe ffi(c) fn i32[min max] fork();
+internal unsafe ffi(c) fn i32[min max] setpgid(i32[min max] processId, i32[min max] processGroupId);
+internal unsafe ffi(c) fn rawptr<System.C.c_char> getenv(rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn i32[min max] kill(i32[min max] processId, i32[min max] signal);
+internal unsafe ffi(c) fn i32[min max] pipe(rawmutptr<i32[min max]> fileDescriptors);
+internal unsafe ffi(c) fn i32[min max] poll(rawmutptr<LinuxPollFd> fileDescriptors, u64[0 2 ** 63 - 1] count, i32[min max] timeoutMilliseconds);
+internal unsafe ffi(c) fn i64[min max] read(i32[min max] fileDescriptor, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] count);
+internal unsafe ffi(c) fn i32[min max] setenv(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value, i32[min max] overwrite);
+internal unsafe ffi(c) fn i32[min max] unsetenv(rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn i32[min max] waitpid(i32[min max] processId, rawmutptr<i32[min max]> status, i32[min max] options);
 
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
     in("rax") number,
@@ -39,7 +73,7 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxCloneThread(i64[min max] fl
     out("rax") return,
     clobber("rdx", "r10", "r8", "r9", "r13", "r14", "r15", "rbx", "rcx", "r11")
 {
-    "movq $$56, %rax\nxorq %rdx, %rdx\nxorq %r10, %r10\nxorq %r8, %r8\nsyscall\ntestq %rax, %rax\njnz 2f\nmovq (%r12), %r13\ncallq *%r13\nmovl %eax, 24(%r12)\nmovl $$1, 28(%r12)\nmovq 8(%r12), %r14\nmovq 16(%r12), %r15\nmovl $$-1, %eax\nlock xaddl %eax, 32(%r12)\ncmpl $$1, %eax\njne 1f\nmovq $$11, %rax\nmovq %r14, %rdi\nmovq %r15, %rsi\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n1:\nmovq $$202, %rax\nleaq 28(%r12), %rdi\nmovq $$129, %rsi\nmovq $$1, %rdx\nxorq %r10, %r10\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n2:"
+    "movq $$56, %rax\nxorq %rdx, %rdx\nxorq %r10, %r10\nxorq %r8, %r8\nsyscall\ntestq %rax, %rax\njnz 2f\nmovq 40(%r12), %r13\nmovq 48(%r12), %rdi\ncallq *%r13\nmovl %eax, 24(%r12)\nmovl $$1, 28(%r12)\nmovq 8(%r12), %r14\nmovq 16(%r12), %r15\nmovl $$-1, %eax\nlock xaddl %eax, 32(%r12)\ncmpl $$1, %eax\njne 1f\nmovq $$11, %rax\nmovq %r14, %rdi\nmovq %r15, %rsi\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n1:\nmovq $$202, %rax\nleaq 28(%r12), %rdi\nmovq $$129, %rsi\nmovq $$1, %rdx\nxorq %r10, %r10\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n2:"
 }
 
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
@@ -832,6 +866,7 @@ const LinuxReadvSyscallNumber = 19;
 const LinuxWritevSyscallNumber = 20;
 const LinuxCloseSyscallNumber = 3;
 const LinuxLseekSyscallNumber = 8;
+const LinuxFsyncSyscallNumber = 74;
 const LinuxGetPidSyscallNumber = 39;
 const LinuxSocketSyscallNumber = 41;
 const LinuxConnectSyscallNumber = 42;
@@ -840,8 +875,12 @@ const LinuxListenSyscallNumber = 50;
 const LinuxAccept4SyscallNumber = 288;
 const LinuxShutdownSyscallNumber = 48;
 const LinuxStatAtSyscallNumber = 262;
+const LinuxReadLinkAtSyscallNumber = 267;
+const LinuxSymlinkAtSyscallNumber = 266;
+const LinuxAtSymlinkNoFollowFlag = 256;
 const LinuxOpenAtSyscallNumber = 257;
 const LinuxMkdirAtSyscallNumber = 258;
+const LinuxFchmodatSyscallNumber = 268;
 const LinuxRenameAtSyscallNumber = 264;
 const LinuxUnlinkAtSyscallNumber = 263;
 const LinuxGetDents64SyscallNumber = 217;
@@ -859,6 +898,7 @@ const LinuxOpenReadOnlyFlag = 0;
 const LinuxOpenWriteOnlyFlag = 1;
 const LinuxOpenReadWriteFlag = 2;
 const LinuxOpenCreateFlag = 64;
+const LinuxOpenExclusiveFlag = 128;
 const LinuxOpenTruncateFlag = 512;
 const LinuxOpenAppendFlag = 1024;
 const LinuxOpenDirectoryFlag = 2 ** 16;
@@ -875,9 +915,18 @@ const LinuxDirent64HeaderLength = 19;
 const LinuxDirent64RecordLengthOffset = 16;
 const LinuxDirent64TypeOffset = 18;
 const LinuxStatModeOffset = 24;
+const LinuxStatSizeOffset = 48;
+const LinuxStatModifiedSecondsOffset = 88;
+const LinuxStatModifiedNanosecondsOffset = 96;
 const LinuxStatTypeMask = 61440;
 const LinuxStatRegularType = 32768;
 const LinuxStatDirectoryType = 16384;
+const LinuxStatSymlinkType = 40960;
+const LinuxPathMetadataKindOffset = 0;
+const LinuxPathMetadataPermissionsOffset = 4;
+const LinuxPathMetadataSizeOffset = 8;
+const LinuxPathMetadataModifiedSecondsOffset = 16;
+const LinuxPathMetadataModifiedNanosecondsOffset = 24;
 const LinuxDirectoryEntryFileType = 8;
 const LinuxDirectoryEntryDirectoryType = 4;
 const LinuxDirectoryEntrySymlinkType = 10;
@@ -895,11 +944,21 @@ const LinuxThreadCloneFlags = 331520;
 const LinuxThreadStateRunning = 0;
 const LinuxThreadStateExited = 1;
 const LinuxThreadInitialReferences = 2;
+const LinuxStandardInputDescriptor = 0;
+const LinuxStandardOutputDescriptor = 1;
+const LinuxStandardErrorDescriptor = 2;
+const LinuxClockMonotonic = 1;
+const LinuxWaitNoHangOption = 1;
+const LinuxSignalKill = 9;
+const LinuxPollReadableEvent = 1;
+const LinuxPollWritableEvent = 4;
+const LinuxPollErrorEvent = 8;
+const LinuxPollHangupEvent = 16;
 
-internal struct LinuxTimespec
+internal enum FileOpenResult
 {
-    i64[min max] Seconds;
-    i64[min max] Nanoseconds;
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
 }
 
 internal struct LinuxIovec
@@ -916,6 +975,8 @@ internal struct LinuxThreadControl
     i32[min max] ExitCode;
     i32[min max] State;
     i32[min max] References;
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> ContextEntry;
+    rawmutptr<i8[min max]> Context;
 }
 
 internal fn void ExitProcess(i32[min max] code)
@@ -935,6 +996,491 @@ internal fn i32[min max] ProcessId()
     {
         return (i32[min max])LinuxSyscall1Integer(LinuxGetPidSyscallNumber, 0);
     }
+}
+
+internal unsafe fn void ExitProcessNoCleanup(i32[min max] code)
+{
+    LinuxSyscall1Integer(
+        LinuxExitGroupSyscallNumber,
+        (i64[min max])code);
+    return;
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    if (name == null || value == null)
+    {
+        return -1;
+    }
+
+    return setenv(name, value, 1);
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return -1;
+    }
+
+    return unsetenv(name);
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return null;
+    }
+
+    return getenv(name);
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    if (path == null)
+    {
+        return -1;
+    }
+
+    return chdir(path);
+}
+
+internal unsafe fn i32[min max] CreateProcessPipe(rawmutptr<i32[min max]> fileDescriptors)
+{
+    if (fileDescriptors == null)
+    {
+        return -1;
+    }
+
+    return pipe(fileDescriptors);
+}
+
+internal unsafe fn i32[min max] ForkProcess()
+{
+    return fork();
+}
+
+internal unsafe fn i32[min max] DuplicateProcessDescriptor(i32[min max] oldFileDescriptor, i32[min max] newFileDescriptor)
+{
+    return dup2(oldFileDescriptor, newFileDescriptor);
+}
+
+internal unsafe fn void CloseProcessDescriptorIfOpen(i32[min max] descriptor)
+{
+    if (descriptor >= 0)
+    {
+        stack i32[min max] ignoredClose = CloseRawDescriptor(descriptor);
+    }
+
+    return;
+}
+
+// Spawns the executable with stdout/stderr (and optionally stdin) routed
+// through fresh pipes. Returns 0 with the child id and parent-side pipe
+// descriptors on success and a negative value when the pipes or the process
+// itself cannot be created. The child reports descriptor/directory setup
+// failures as exit code 126 and exec failures as exit code 127, matching
+// shell conventions; platforms without a fork/exec split return those codes
+// directly from this call instead.
+internal unsafe fn i32[min max] StartProcessCaptureCore(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    bool newProcessGroup,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    if (executable == null
+        || argv.Length == 0
+        || processId == null
+        || stdinDescriptor == null
+        || stdoutDescriptor == null
+        || stderrDescriptor == null)
+    {
+        return -1;
+    }
+
+    stack mut i32[min max][2] stdinPipe;
+    stack mut i32[min max][2] stdoutPipe;
+    stack mut i32[min max][2] stderrPipe;
+    stdinPipe[0] = -1;
+    stdinPipe[1] = -1;
+    stdoutPipe[0] = -1;
+    stdoutPipe[1] = -1;
+    stderrPipe[0] = -1;
+    stderrPipe[1] = -1;
+
+    if (captureStdin && CreateProcessPipe(&stdinPipe[0]) != 0)
+    {
+        return -1;
+    }
+
+    if (CreateProcessPipe(&stdoutPipe[0]) != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        return -1;
+    }
+
+    if (CreateProcessPipe(&stderrPipe[0]) != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        return -1;
+    }
+
+    stack i32[min max] forkResult = ForkProcess();
+    if (forkResult < 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return forkResult;
+    }
+
+    if (forkResult == 0)
+    {
+        if (newProcessGroup)
+        {
+            stack i32[min max] ignoredGroup = setpgid(0, 0);
+        }
+
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+
+        if (captureStdin && DuplicateProcessDescriptor(stdinPipe[0], 0) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        if (DuplicateProcessDescriptor(stdoutPipe[1], 1) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        if (DuplicateProcessDescriptor(stderrPipe[1], 2) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+
+        if (workingDirectory != null)
+        {
+            if (chdir(workingDirectory) != 0)
+            {
+                ExitProcessNoCleanup(126);
+            }
+        }
+
+        stack i32[min max] ignoredExec = execvp(executable, &argv[0]);
+        ExitProcessNoCleanup(127);
+    }
+
+    CloseProcessDescriptorIfOpen(stdinPipe[0]);
+    CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+    CloseProcessDescriptorIfOpen(stderrPipe[1]);
+
+    *processId = forkResult;
+    if (captureStdin)
+    {
+        *stdinDescriptor = stdinPipe[1];
+    }
+    else
+    {
+        *stdinDescriptor = -1;
+    }
+
+    *stdoutDescriptor = stdoutPipe[0];
+    *stderrDescriptor = stderrPipe[0];
+    return 0;
+}
+
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        false,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+// Spawns like StartProcessCapture but places the child in its own process
+// group (setpgid in the child), so KillProcessGroup can end the whole tree.
+internal unsafe fn i32[min max] StartProcessCaptureGrouped(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        true,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    return waitpid(processId, status, 0);
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    return waitpid(processId, status, LinuxWaitNoHangOption);
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    return kill(processId, LinuxSignalKill);
+}
+
+// Kills every process in the child's process group (kill(-pgid)); pair with
+// StartProcessCaptureGrouped, whose child is its own group leader.
+internal unsafe fn i32[min max] KillProcessGroup(i32[min max] processId)
+{
+    if (processId <= 0)
+    {
+        return -1;
+    }
+
+    return kill(-processId, LinuxSignalKill);
+}
+
+// Appends the current process argument vector to the destination as
+// NUL-terminated entries, one per argument, in /proc/self/cmdline byte format.
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    switch (OpenFileReadResult("/proc/self/cmdline"))
+    {
+        case FileOpenResult.Err(var openError):
+            return openError;
+        case FileOpenResult.Ok(var handle):
+            stack mut i8[min max][4096] storage;
+            while willexit (true)
+            {
+                stack i64[min max] readCount = ReadFileBytes(&storage[0], 4096, handle);
+                if (readCount < 0)
+                {
+                    stack i32[min max] ignoredCloseReadError = CloseFile(handle);
+                    return (i32[min max])readCount;
+                }
+
+                if (readCount == 0)
+                {
+                    stack i32[min max] ignoredCloseDone = CloseFile(handle);
+                    return 0;
+                }
+
+                stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])readCount;
+                stack i8[min max][] chunk = slice(&storage[0], count);
+                switch (System.Memory.AppendBytes(destination, chunk, count))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        stack i32[min max] ignoredCloseAppendError = CloseFile(handle);
+                        return -12;
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+    }
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    stack mut LinuxTimespec time = new LinuxTimespec()
+    {
+        Seconds = 0,
+        Nanoseconds = 0
+    };
+    stack i32[min max] result = clock_gettime(LinuxClockMonotonic, &time);
+    if (result != 0)
+    {
+        return (i64[min max])result;
+    }
+
+    return (time.Seconds * 1000) + (time.Nanoseconds / 1000000);
+}
+
+internal unsafe fn i32[min max] PollProcessPipes(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents)
+{
+    return PollProcessPipesTimed(stdoutDescriptor, stderrDescriptor, stdoutEvents, stderrEvents, -1);
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack mut LinuxPollFd[2] descriptors;
+    descriptors[0] = new LinuxPollFd()
+    {
+        Fd = stdoutDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+    descriptors[1] = new LinuxPollFd()
+    {
+        Fd = stderrDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 2, timeoutMilliseconds);
+    *stdoutEvents = descriptors[0].Revents;
+    *stderrEvents = descriptors[1].Revents;
+    return result;
+}
+
+internal unsafe fn i32[min max] PollProcessIo(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents)
+{
+    return PollProcessIoTimed(
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdinEvents,
+        stdoutEvents,
+        stderrEvents,
+        -1);
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdinEvents == null || stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack mut LinuxPollFd[3] descriptors;
+    descriptors[0] = new LinuxPollFd()
+    {
+        Fd = stdinDescriptor,
+        Events = (i16[min max])LinuxPollWritableEvent,
+        Revents = 0
+    };
+    descriptors[1] = new LinuxPollFd()
+    {
+        Fd = stdoutDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+    descriptors[2] = new LinuxPollFd()
+    {
+        Fd = stderrDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 3, timeoutMilliseconds);
+    *stdinEvents = descriptors[0].Revents;
+    *stdoutEvents = descriptors[1].Revents;
+    *stderrEvents = descriptors[2].Revents;
+    return result;
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return ((i32[min max])events & LinuxPollReadableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return ((i32[min max])events & LinuxPollWritableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    stack i32[min max] widened = (i32[min max])events;
+    return (widened & LinuxPollHangupEvent) != 0 || (widened & LinuxPollErrorEvent) != 0;
 }
 
 internal unsafe fn i32[min max] UnmapThreadRegion(rawptr<i8[min max]> region, i64[min max] length)
@@ -960,6 +1506,22 @@ internal unsafe fn i32[min max] ReleaseThreadReference(rawmutptr<LinuxThreadCont
     return LinuxReleaseThreadReference((rawmutptr<i8[min max]>)control);
 }
 
+internal fn i32[min max] LinuxNullThreadEntry()
+{
+    return -1;
+}
+
+internal unsafe fn i32[min max] LinuxThreadEntryThunk(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<LinuxThreadControl> control = (rawmutptr<LinuxThreadControl>)context;
+    return (*control).Entry();
+}
+
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
     stack i64[min max] regionResult = LinuxMapThreadRegion(LinuxThreadRegionBytes);
@@ -977,7 +1539,47 @@ internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> e
         RegionLength = LinuxThreadRegionBytes,
         ExitCode = 0,
         State = LinuxThreadStateRunning,
-        References = LinuxThreadInitialReferences
+        References = LinuxThreadInitialReferences,
+        ContextEntry = LinuxThreadEntryThunk,
+        Context = (rawmutptr<i8[min max]>)control
+    };
+
+    stack rawptr<i8[min max]> childStack = (rawptr<i8[min max]>)(&region[LinuxThreadStackTopOffset]);
+    stack i64[min max] cloneResult = LinuxCloneThread(
+        LinuxThreadCloneFlags,
+        childStack,
+        (rawmutptr<i8[min max]>)control);
+    if (cloneResult < 0)
+    {
+        UnmapThreadRegion((rawptr<i8[min max]>)region, LinuxThreadRegionBytes);
+        return null;
+    }
+
+    return (rawmutptr<i8[min max]>)control;
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    stack i64[min max] regionResult = LinuxMapThreadRegion(LinuxThreadRegionBytes);
+    if (regionResult < 0)
+    {
+        return null;
+    }
+
+    stack rawmutptr<i8[min max]> region = (rawmutptr<i8[min max]>)regionResult;
+    stack rawmutptr<LinuxThreadControl> control = (rawmutptr<LinuxThreadControl>)region;
+    *control = new LinuxThreadControl()
+    {
+        Entry = LinuxNullThreadEntry,
+        Region = region,
+        RegionLength = LinuxThreadRegionBytes,
+        ExitCode = 0,
+        State = LinuxThreadStateRunning,
+        References = LinuxThreadInitialReferences,
+        ContextEntry = entry,
+        Context = context
     };
 
     stack rawptr<i8[min max]> childStack = (rawptr<i8[min max]>)(&region[LinuxThreadStackTopOffset]);
@@ -1178,7 +1780,7 @@ internal unsafe fn bool TryBuildLinuxPath(rawmutptr<Ascii> destination, ascii pa
     return TryConcatAscii(destination, path, "\0");
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i64[min max] flags, i64[min max] mode)
+internal unsafe fn FileOpenResult OpenFileWithFlagsResult(ascii path, i64[min max] flags, i64[min max] mode)
 {
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
     stack mut Ascii preparedPath = new Ascii();
@@ -1188,7 +1790,7 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i64[min max
 
     if (!TryBuildLinuxPath(&preparedPath, path))
     {
-        return null;
+        return FileOpenResult.Err(-36);
     }
 
     stack i64[min max] syscallResult = LinuxSyscall4OpenAt(
@@ -1200,10 +1802,21 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i64[min max
 
     if (syscallResult < 0)
     {
-        return null;
+        return FileOpenResult.Err((i32[min max])syscallResult);
     }
 
-    return (rawptr<i8[min max]>)syscallResult;
+    return FileOpenResult.Ok((rawptr<i8[min max]>)syscallResult);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i64[min max] flags, i64[min max] mode)
+{
+    switch (OpenFileWithFlagsResult(path, flags, mode))
+    {
+        case FileOpenResult.Ok(var handle):
+            return handle;
+        case FileOpenResult.Err(var error):
+            return null;
+    }
 }
 
 internal unsafe fn i32[min max] FlushEncodedWriteBuffer(
@@ -1772,11 +2385,40 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag, 0);
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    return OpenFileWithFlagsResult(path, LinuxOpenReadOnlyFlag, 0);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     return OpenFileWithFlags(
         path,
         LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenTruncateFlag,
+        LinuxDefaultCreateMode);
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenTruncateFlag,
+        LinuxDefaultCreateMode);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    return OpenFileWithFlags(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenExclusiveFlag | LinuxOpenCloseOnExecFlag,
+        LinuxDefaultCreateMode);
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenExclusiveFlag | LinuxOpenCloseOnExecFlag,
         LinuxDefaultCreateMode);
 }
 
@@ -1788,9 +2430,22 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
         LinuxDefaultCreateMode);
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        LinuxOpenWriteOnlyFlag | LinuxOpenCreateFlag | LinuxOpenAppendFlag,
+        LinuxDefaultCreateMode);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     return OpenFileWithFlags(path, LinuxOpenReadWriteFlag, 0);
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    return OpenFileWithFlagsResult(path, LinuxOpenReadWriteFlag, 0);
 }
 
 internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
@@ -1803,9 +2458,46 @@ internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
     return (i32[min max])LinuxSyscall1Handle(LinuxCloseSyscallNumber, handle);
 }
 
+// Raw numeric descriptors (process pipes) share the Linux fd-in-pointer handle
+// contract, so they reuse the handle-based calls directly.
+internal unsafe inline fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return CloseFile((rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
+internal unsafe inline fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return ReadFileBytes(buffer, length, (rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
+internal unsafe inline fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return WriteFileBytes(buffer, length, (rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
 internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
 {
-    return 0;
+    if (handle == null)
+    {
+        return -1;
+    }
+
+    return (i32[min max])LinuxSyscall1Handle(LinuxFsyncSyscallNumber, handle);
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
@@ -1952,15 +2644,14 @@ internal fn bool FileExists(ascii path)
     return PathExists(path);
 }
 
-internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode)
+internal unsafe fn i32[min max] StatPathInto(ascii path, rawmutptr<i8[min max]> statData)
 {
-    if (mode == null)
+    if (statData == null)
     {
-        return false;
+        return -1;
     }
 
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
-    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
     stack mut Ascii preparedPath = new Ascii();
     preparedPath.Data = pathBuffer.WritePointer();
     preparedPath.Length = 0;
@@ -1968,28 +2659,61 @@ internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode
 
     if (!TryBuildLinuxPath(&preparedPath, path))
     {
-        return false;
+        return -1;
     }
 
-    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
-    if (statData == null)
-    {
-        return false;
-    }
-
-    if (LinuxSyscall4StatAt(
+    stack i64[min max] syscallResult = LinuxSyscall4StatAt(
         LinuxStatAtSyscallNumber,
         LinuxAtFdcwd,
         preparedPath.Data,
         statData,
-        0) != 0)
-        {
+        0);
+    if (syscallResult != 0)
+    {
+        return (i32[min max])syscallResult;
+    }
+
+    return 0;
+}
+
+internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode)
+{
+    if (mode == null)
+    {
+        return false;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (StatPathInto(path, statData) != 0)
+    {
         return false;
     }
 
     stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
     *mode = *modePointer;
     return true;
+}
+
+internal inline finite law i32[min max] DirectoryEntryKindFromLinuxMode(i32[min max] mode)
+{
+    stack i32[min max] fileType = mode & LinuxStatTypeMask;
+    if (fileType == LinuxStatRegularType)
+    {
+        return 1;
+    }
+
+    if (fileType == LinuxStatDirectoryType)
+    {
+        return 2;
+    }
+
+    if (fileType == LinuxStatSymlinkType)
+    {
+        return 3;
+    }
+
+    return 0;
 }
 
 internal fn bool PathExists(ascii path)
@@ -2026,6 +2750,228 @@ internal fn bool IsDirectory(ascii path)
         }
 
         return (mode & LinuxStatTypeMask) == LinuxStatDirectoryType;
+    }
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] statStatus = StatPathInto(path, statData);
+    if (statStatus != 0)
+    {
+        return statStatus;
+    }
+
+    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[LinuxStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = *modePointer;
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromLinuxMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i32[min max] LstatPathInto(ascii path, rawmutptr<i8[min max]> statData)
+{
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildLinuxPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack i64[min max] syscallResult = LinuxSyscall4StatAt(
+        LinuxStatAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        statData,
+        LinuxAtSymlinkNoFollowFlag);
+    if (syscallResult != 0)
+    {
+        return (i32[min max])syscallResult;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] statStatus = LstatPathInto(path, statData);
+    if (statStatus != 0)
+    {
+        return statStatus;
+    }
+
+    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[LinuxStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = *modePointer;
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromLinuxMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    if (buffer == null || capacity == 0)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildLinuxPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    return LinuxSyscall4StatAt(
+        LinuxReadLinkAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        (rawmutptr<i8[min max]>)buffer,
+        (i64[min max])capacity);
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 targetBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 linkBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedTarget = new Ascii();
+        preparedTarget.Data = targetBuffer.WritePointer();
+        preparedTarget.Length = 0;
+        preparedTarget.Capacity = targetBuffer.Writable();
+        stack mut Ascii preparedLink = new Ascii();
+        preparedLink.Data = linkBuffer.WritePointer();
+        preparedLink.Length = 0;
+        preparedLink.Capacity = linkBuffer.Writable();
+
+        if (!TryBuildLinuxPath(&preparedTarget, target)
+            || !TryBuildLinuxPath(&preparedLink, linkPath))
+            {
+            return -1;
+        }
+
+        return (i32[min max])LinuxSyscall3HandleRequestPointer(
+            LinuxSymlinkAtSyscallNumber,
+            preparedTarget.Data,
+            LinuxAtFdcwd,
+            preparedLink.Data);
+    }
+}
+
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildLinuxPath(&preparedPath, path))
+        {
+            return -1;
+        }
+
+        // fchmodat(AT_FDCWD, path, mode, 0). The (dirfd, path, int, int)
+        // register layout matches openat, so it routes through the same wrapper.
+        return (i32[min max])LinuxSyscall4OpenAt(
+            LinuxFchmodatSyscallNumber,
+            LinuxAtFdcwd,
+            preparedPath.Data,
+            (i64[min max])mode,
+            0);
     }
 }
 
@@ -2870,6 +3816,40 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     {
         Data = data,
         Length = syscallResult - 1,
+        Capacity = capacity
+    };
+    return true;
+}
+
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
+{
+    if (destination == null)
+    {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
+    if (data == null || capacity < 4)
+    {
+        *destination = new Ascii()
+        {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    *(&data[0]) = (i8[min max])47;
+    *(&data[1]) = (i8[min max])116;
+    *(&data[2]) = (i8[min max])109;
+    *(&data[3]) = (i8[min max])112;
+
+    *destination = new Ascii()
+    {
+        Data = data,
+        Length = 4,
         Capacity = capacity
     };
     return true;

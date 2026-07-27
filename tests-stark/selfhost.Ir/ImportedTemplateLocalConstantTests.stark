@@ -1,0 +1,854 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+module ImportedTemplateLocalConstantTests
+
+public fn bool ImportedTemplateLocalConstantsFoldDirectlyWithExactLlvmFacts()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.LocalConstants#0",
+                      "QualifiedName": "Demo.LocalConstants",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 4,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "const",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "1000"
+                          }
+                        },
+                        {
+                          "Kind": "const",
+                          "Line": 2,
+                          "Column": 1,
+                          "Type": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "1000"
+                          }
+                        },
+                        {
+                          "Kind": "const",
+                          "Line": 3,
+                          "Column": 1,
+                          "Type": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "1000"
+                          }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "base",
+                            "StorageClass": "local",
+                            "IsMutable": false,
+                            "IsConstant": true,
+                            "ConstProvenance": "immutable-binding",
+                            "Type": {
+                              "Kind": "integer",
+                              "BitWidth": 16,
+                              "RangeMin": "0",
+                              "RangeMax": "1000"
+                            },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "40",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "1000"
+                              }
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "doubled",
+                            "StorageClass": "local",
+                            "IsMutable": false,
+                            "IsConstant": true,
+                            "ConstProvenance": "immutable-binding",
+                            "Type": {
+                              "Kind": "integer",
+                              "BitWidth": 16,
+                              "RangeMin": "0",
+                              "RangeMax": "1000"
+                            },
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "*",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "1000"
+                              },
+                              "Arguments": [
+                                { "Kind": "name", "Name": "base" },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "1000"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "answer",
+                            "StorageClass": "local",
+                            "IsMutable": false,
+                            "IsConstant": true,
+                            "ConstProvenance": "immutable-binding",
+                            "Type": {
+                              "Kind": "integer",
+                              "BitWidth": 16,
+                              "RangeMin": "0",
+                              "RangeMax": "1000"
+                            },
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "1000"
+                              },
+                              "Arguments": [
+                                { "Kind": "name", "Name": "doubled" },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "1000"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "answer" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.UnresolvedLocal#0",
+                      "QualifiedName": "Demo.UnresolvedLocal",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "missing" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.DuplicateLocal#0",
+                      "QualifiedName": "Demo.DuplicateLocal",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 3,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "const",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 16 }
+                        },
+                        {
+                          "Kind": "const",
+                          "Line": 2,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 16 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "same",
+                            "StorageClass": "local",
+                            "IsConstant": true,
+                            "ConstProvenance": "immutable-binding",
+                            "Type": { "Kind": "integer", "BitWidth": 16 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "same",
+                            "StorageClass": "local",
+                            "IsConstant": true,
+                            "ConstProvenance": "immutable-binding",
+                            "Type": { "Kind": "integer", "BitWidth": 16 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "2",
+                              "Type": { "Kind": "integer", "BitWidth": 16 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "same" }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+                manifestJson,
+                0,
+                graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(0, 1001);
+    stack mut MirFuncId function = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            function) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut u32[0 max] invalidTemplateRow = 2;
+    while willexit (invalidTemplateRow <= 3)
+    {
+        stack mut MirFuncId invalidFunction = MirFuncIdOf(0);
+        if (LowerImportedTemplateScalarReturnToMir(
+                graph,
+                invalidTemplateRow,
+                MirType.I16,
+                false,
+                expectedReturnFacts,
+                instructions,
+                blocks,
+                functions,
+                valueFacts,
+                functionReturnFacts,
+                invalidFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+            || invalidFunction.IsValid()
+            || instructions.Count() != instructionCount
+            || blocks.Count() != blockCount
+            || functions.Count() != functionCount
+            || valueFacts.Count() != instructionCount
+            || functionReturnFacts.Count() != functionCount)
+        {
+            return false;
+        }
+
+        invalidTemplateRow = invalidTemplateRow + 1;
+    }
+
+    stack MirInstruction literal = instructions.Get(1);
+    stack ValueFacts literalFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(1));
+    stack ValueFacts returnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        function.Index());
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_local_constants",
+            returnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            lowered.EntryIndex(),
+            lowered.FirstInstrIndex(),
+            lowered.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return function.Index() == 1
+        && instructionCount == 1
+        && blockCount == 1
+        && functionCount == 1
+        && literal.Opcode() == MirOp.ConstInt
+        && literal.ResultType() == MirType.I16
+        && literal.Immediate() == 82
+        && literalFacts.HasIntegerRange()
+        && literalFacts.IntegerRangeLower() == 82
+        && literalFacts.IntegerRangeUpperExclusive() == 83
+        && returnFacts.HasIntegerRange()
+        && returnFacts.IntegerRangeLower() == 82
+        && returnFacts.IntegerRangeUpperExclusive() == 83
+        && System.Text.OwnedAsciiEqualsAscii(
+            llvm,
+            "define range(i16 82, 83) i16 @imported_local_constants() {\nb1:\n  %v1 = add i16 0, 82\n  ret i16 %v1\n}\n");
+}
+
+public fn bool ImportedTemplateScalarVariablesFoldDirectlyWithExactLlvmFacts()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.ScalarVariables#0",
+                      "QualifiedName": "Demo.ScalarVariables",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 18,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        },
+                        {
+                          "Kind": "var",
+                          "Line": 2,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "seed",
+                            "StorageClass": "stack",
+                            "IsMutable": false,
+                            "ConstProvenance": "permanent-const",
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "100",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "acc",
+                            "StorageClass": "register",
+                            "IsMutable": true,
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": { "Kind": "name", "Name": "seed" }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "+=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "20",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "+|=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "20",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "*%=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "2",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "&=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "15",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+",
+                              "Type": { "Kind": "integer", "BitWidth": 8 },
+                              "Arguments": [
+                                { "Kind": "name", "Name": "acc" },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "1",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "-=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "5",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "*=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "3",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "/=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "4",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "%=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "5",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "-%=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "5",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "-|=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "126",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "*|=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "2",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "|=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "8",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "^=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "7",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "acc",
+                            "AssignmentOperator": "+%=",
+                            "TargetExpression": { "Kind": "name", "Name": "acc" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "120",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "acc" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.ImmutableAssignment#0",
+                      "QualifiedName": "Demo.ImmutableAssignment",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 3,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "fixed",
+                            "StorageClass": "stack",
+                            "ConstProvenance": "immutable-binding",
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "fixed",
+                            "AssignmentOperator": "=",
+                            "TargetExpression": { "Kind": "name", "Name": "fixed" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "2",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "fixed" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.MismatchedAssignmentTarget#0",
+                      "QualifiedName": "Demo.MismatchedAssignmentTarget",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 4,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        },
+                        {
+                          "Kind": "var",
+                          "Line": 2,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "left",
+                            "StorageClass": "register",
+                            "IsMutable": true,
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "1",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "right",
+                            "StorageClass": "register",
+                            "IsMutable": true,
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "2",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "left",
+                            "AssignmentOperator": "=",
+                            "TargetExpression": { "Kind": "name", "Name": "right" },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "3",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "left" }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.HeapScalar#0",
+                      "QualifiedName": "Demo.HeapScalar",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 2,
+                      "LocalDeclarations": [
+                        {
+                          "Kind": "var",
+                          "Line": 1,
+                          "Column": 1,
+                          "Type": { "Kind": "integer", "BitWidth": 8 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "owned",
+                            "StorageClass": "heap",
+                            "ConstProvenance": "immutable-binding",
+                            "Type": { "Kind": "integer", "BitWidth": 8 },
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "7",
+                              "Type": { "Kind": "integer", "BitWidth": 8 }
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": { "Kind": "name", "Name": "owned" }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+                manifestJson,
+                0,
+                graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(-128, 128);
+    stack mut MirFuncId function = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I8,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            function) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut u32[0 max] invalidTemplateRow = 2;
+    while willexit (invalidTemplateRow <= 4)
+    {
+        stack mut MirFuncId invalidFunction = MirFuncIdOf(0);
+        if (LowerImportedTemplateScalarReturnToMir(
+                graph,
+                invalidTemplateRow,
+                MirType.I8,
+                false,
+                expectedReturnFacts,
+                instructions,
+                blocks,
+                functions,
+                valueFacts,
+                functionReturnFacts,
+                invalidFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+            || invalidFunction.IsValid()
+            || instructions.Count() != instructionCount
+            || blocks.Count() != blockCount
+            || functions.Count() != functionCount
+            || valueFacts.Count() != instructionCount
+            || functionReturnFacts.Count() != functionCount)
+        {
+            return false;
+        }
+
+        invalidTemplateRow = invalidTemplateRow + 1;
+    }
+
+    stack MirInstruction literal = instructions.Get(1);
+    stack ValueFacts literalFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(1));
+    stack ValueFacts returnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        function.Index());
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_scalar_variables",
+            returnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            lowered.EntryIndex(),
+            lowered.FirstInstrIndex(),
+            lowered.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return function.Index() == 1
+        && instructionCount == 1
+        && blockCount == 1
+        && functionCount == 1
+        && literal.Opcode() == MirOp.ConstInt
+        && literal.ResultType() == MirType.I8
+        && literal.Immediate() == 7
+        && literalFacts.HasIntegerRange()
+        && literalFacts.IntegerRangeLower() == 7
+        && literalFacts.IntegerRangeUpperExclusive() == 8
+        && returnFacts.HasIntegerRange()
+        && returnFacts.IntegerRangeLower() == 7
+        && returnFacts.IntegerRangeUpperExclusive() == 8
+        && System.Text.OwnedAsciiEqualsAscii(
+            llvm,
+            "define range(i8 7, 8) i8 @imported_scalar_variables() {\nb1:\n  %v1 = add i8 0, 7\n  ret i8 %v1\n}\n");
+}

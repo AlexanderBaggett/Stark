@@ -1,0 +1,327 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.CallableCandidates
+import Compiler.Binding.ReceiverCandidates
+import Compiler.Binding.FunctionEffects
+import System.Memory
+module Compiler.Binding.FunctionKindValidation
+
+internal fn System.Memory.MemoryStatus AppendFunctionKindObligationDiagnostics(
+    borrow FunctionSignature caller,
+    bool hasCandidate,
+    bool hasLawCandidate,
+    bool hasFiniteCandidate,
+    u32[0 max] token,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!hasCandidate)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (caller.LawKind() && !hasLawCandidate)
+    {
+        switch (diags.Append(BindDiagnosticCode.LawCallRequiresLaw, token))
+        {
+            case System.Memory.MemoryStatus.Err(var lawError):
+                return System.Memory.MemoryStatus.Err(lawError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (caller.FiniteKind() && !hasFiniteCandidate)
+    {
+        switch (diags.Append(BindDiagnosticCode.FiniteCallRequiresFinite, token))
+        {
+            case System.Memory.MemoryStatus.Err(var finiteError):
+                return System.Memory.MemoryStatus.Err(finiteError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBecomeRootCallNodes(borrow StatementList body, mut borrow dynamic u32[0 max] skipCallNodes)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (body.ItemAt(index).Kind == StatementKind.Become)
+        {
+            switch (AppendNodeIfPresent(skipCallNodes, body.ExprRootAt(index)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectCallableFunctionKindObligationDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    borrow dynamic u32[0 max] skipCallNodes,
+    mut borrow BindDiagnosticList diags)
+{
+    switch (BuildCallableCandidateSets(table, source, stream, refs, scope, body))
+    {
+        case BindResult<CallableCandidateSetTable>.Err(var callableError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<CallableCandidateSetTable>.Ok(var candidates):
+            stack u64[0 2 ** 63 - 1] siteCount = candidates.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < siteCount; site += 1)
+            {
+                stack u32[0 max] callNode = candidates.CallNodeAt(site);
+                if (callNode != 0 && !U32ListContains(skipCallNodes, callNode))
+                {
+                    stack mut bool hasCandidate = false;
+                    stack mut bool hasLawCandidate = false;
+                    stack mut bool hasFiniteCandidate = false;
+                    stack u32[0 max] candidateCount = candidates.CandidateCountAt(site);
+                    for willexit (stack mut u32[0 max] candidate = 0; candidate < candidateCount; candidate += 1)
+                    {
+                        stack mut TypedDeclarationFunctionKind functionKind = TypedDeclarationFunctionKind.Fn;
+                        stack mut bool hasFunctionKind = false;
+                        stack u32[0 max] targetPlusOne = candidates.CandidateTargetAt(site, candidate);
+                        if (candidates.CandidateKindAt(site, candidate) == CallableCandidateKind.Declaration)
+                        {
+                            stack mut FunctionSignature callee = new();
+                            if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+                            {
+                                functionKind = DeclarationFunctionKind(callee);
+                                hasFunctionKind = true;
+                            }
+                        }
+                        else if (candidates.CandidateKindAt(site, candidate) == CallableCandidateKind.ScopeSymbol)
+                        {
+                            if (TryReadFunctionScopeCallableKind(stream, scope, targetPlusOne, functionKind))
+                            {
+                                hasFunctionKind = true;
+                            }
+                        }
+
+                        if (hasFunctionKind)
+                        {
+                            hasCandidate = true;
+                            if (TypedFunctionKindIsLaw(functionKind))
+                            {
+                                hasLawCandidate = true;
+                            }
+
+                            if (TypedFunctionKindIsFinite(functionKind))
+                            {
+                                hasFiniteCandidate = true;
+                            }
+                        }
+                    }
+
+                    switch (AppendFunctionKindObligationDiagnostics(
+                        signature,
+                        hasCandidate,
+                        hasLawCandidate,
+                        hasFiniteCandidate,
+                        candidates.NameTokenAt(site),
+                        diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var appendError):
+                            return System.Memory.MemoryStatus.Err(appendError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool TryReadReceiverMethodFunctionKind(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerNameToken,
+    u32[0 max] methodNameToken,
+    bool wantStatic,
+    out TypedDeclarationFunctionKind functionKind)
+{
+    functionKind = TypedDeclarationFunctionKind.Fn;
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, ownerNameToken);
+    if (bodyOpen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] memberStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])memberStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberEnd = ReceiverMemberEndToken(stream, memberStart);
+        if (memberEnd < memberStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] fnKeyword = ReceiverMemberFunctionToken(stream, memberStart, memberEnd);
+        if (fnKeyword != 0 && ReceiverMemberHasStaticBefore(stream, memberStart, fnKeyword) == wantStatic)
+        {
+            switch (ParseFunctionSignature(stream, fnKeyword))
+            {
+                case ParseResult<FunctionSignature>.Err(var sigError):
+                {
+                }
+                case ParseResult<FunctionSignature>.Ok(var signature):
+                    if (BindingTokenTextEqualsToken(source, stream, signature.Name(), methodNameToken))
+                    {
+                        functionKind = MemberFunctionKind(stream, memberStart, fnKeyword, signature);
+                        return true;
+                    }
+            }
+        }
+
+        memberStart = (u32[0 max])(memberEnd + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectReceiverFunctionKindObligationDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    borrow dynamic u32[0 max] skipCallNodes,
+    mut borrow BindDiagnosticList diags)
+{
+    switch (BuildReceiverCandidateSets(table, source, stream, refs, scope, body))
+    {
+        case BindResult<ReceiverCandidateSetTable>.Err(var receiverError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReceiverCandidateSetTable>.Ok(var candidates):
+            stack u64[0 2 ** 63 - 1] siteCount = candidates.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < siteCount; site += 1)
+            {
+                stack u32[0 max] callNode = candidates.CallNodeAt(site);
+                if (callNode != 0 && !U32ListContains(skipCallNodes, callNode))
+                {
+                    stack mut bool hasCandidate = false;
+                    stack mut bool hasLawCandidate = false;
+                    stack mut bool hasFiniteCandidate = false;
+                    stack u32[0 max] candidateCount = candidates.CandidateCountAt(site);
+                    for willexit (stack mut u32[0 max] candidate = 0; candidate < candidateCount; candidate += 1)
+                    {
+                        stack ReceiverCandidateKind candidateKind = candidates.CandidateKindAt(site, candidate);
+                        if (candidateKind == ReceiverCandidateKind.InstanceMethod || candidateKind == ReceiverCandidateKind.StaticMethod)
+                        {
+                            stack mut TypedDeclarationFunctionKind functionKind = TypedDeclarationFunctionKind.Fn;
+                            stack mut u32[0 max] ownerNameToken = candidates.ReceiverTypeTokenAt(site);
+                            stack u32[0 max] dataNameToken = FindDataDeclarationName(table, source, stream, ownerNameToken);
+                            if (dataNameToken != 0)
+                            {
+                                ownerNameToken = dataNameToken;
+                            }
+
+                            if (TryReadReceiverMethodFunctionKind(
+                                source,
+                                stream,
+                                ownerNameToken,
+                                candidates.CandidateTokenAt(site, candidate),
+                                candidateKind == ReceiverCandidateKind.StaticMethod,
+                                functionKind))
+                            {
+                                hasCandidate = true;
+                                if (TypedFunctionKindIsLaw(functionKind))
+                                {
+                                    hasLawCandidate = true;
+                                }
+
+                                if (TypedFunctionKindIsFinite(functionKind))
+                                {
+                                    hasFiniteCandidate = true;
+                                }
+                            }
+                        }
+                    }
+
+                    switch (AppendFunctionKindObligationDiagnostics(
+                        signature,
+                        hasCandidate,
+                        hasLawCandidate,
+                        hasFiniteCandidate,
+                        candidates.NameTokenAt(site),
+                        diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var appendError):
+                            return System.Memory.MemoryStatus.Err(appendError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectFunctionKindObligationDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!signature.LawKind() && !signature.FiniteKind())
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic u32[0 max] skipCallNodes = new();
+    switch (CollectBecomeRootCallNodes(body, skipCallNodes))
+    {
+        case System.Memory.MemoryStatus.Err(var skipError):
+            return System.Memory.MemoryStatus.Err(skipError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectCallableFunctionKindObligationDiagnostics(signature, table, source, refs, scope, stream, body, skipCallNodes, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var callableError):
+            return System.Memory.MemoryStatus.Err(callableError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectReceiverFunctionKindObligationDiagnostics(signature, table, source, refs, scope, stream, body, skipCallNodes, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var receiverError):
+            return System.Memory.MemoryStatus.Err(receiverError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

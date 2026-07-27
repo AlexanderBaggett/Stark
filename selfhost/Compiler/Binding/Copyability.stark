@@ -1,0 +1,420 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.ExpressionTypeHelpers
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.CallableCandidates
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.LayoutHelpers
+import Compiler.Binding.ThreadSafety
+export import Compiler.Binding.CopyabilityModel
+export import Compiler.Binding.CopyabilityTypeFacts
+import System.Text
+import System.Memory
+module Compiler.Binding.Copyability
+
+internal fn System.Memory.MemoryStatus AppendCopyableAssertionInvalid(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    return diags.Append(BindDiagnosticCode.CopyableAssertionInvalid, token);
+}
+
+public fn BindResult<CopyabilityFactTable> BuildCopyabilityFacts(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream)
+{
+    stack mut CopyabilityFactTable facts = new();
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.NameToken != 0
+            && (item.Kind == DeclarationKind.Struct
+                || item.Kind == DeclarationKind.Record
+                || item.Kind == DeclarationKind.Enum
+                || item.Kind == DeclarationKind.Alias))
+        {
+            switch (facts.AppendPending(item.NameToken))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<CopyabilityFactTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] factCount = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] fact = 0; fact < factCount; fact += 1)
+    {
+        stack u32[0 max] nameToken = facts.NameTokenAt(fact);
+        CopyabilityNamedTypeIsCopyableCached(decls, table, source, stream, facts, nameToken, 0);
+    }
+
+    return BindResult<CopyabilityFactTable>.Ok(facts);
+}
+
+internal fn System.Memory.MemoryStatus CollectCopyableAssertionDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        stack mut u64[0 2 ** 63 - 1] factIndex = 0;
+        if ((item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record || item.Kind == DeclarationKind.Enum)
+            && DeclarationHasCopyableAttribute(item, source, stream)
+            && (!CopyabilityTryFindFactIndex(source, stream, facts, item.NameToken, factIndex) || !facts.IsCopyableAt(factIndex)))
+        {
+            switch (AppendCopyableAssertionInvalid(diags, TokenOrFallback(item.NameToken, item.KeywordToken)))
+            {
+                case System.Memory.MemoryStatus.Err(var copyableError):
+                    return System.Memory.MemoryStatus.Err(copyableError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool ReferenceTypeSpanForNode(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    u32[0 max] node,
+    out u32[0 max] typeStart,
+    out u32[0 max] typeEnd)
+{
+    typeStart = 0;
+    typeEnd = 0;
+    stack u64[0 2 ** 63 - 1] count = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (refs.NodeAt(index) == node)
+        {
+            stack ReferenceKind kind = refs.KindAt(index);
+            if (kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+            {
+                stack u32[0 max] target = refs.TargetAt(index);
+                if (target != 0)
+                {
+                    stack u64[0 2 ** 63 - 1] scopeIndex = (u64[0 2 ** 63 - 1])(target - 1);
+                    typeStart = scope.TypeStartTokenAt(scopeIndex);
+                    typeEnd = scope.TypeEndTokenAt(scopeIndex);
+                    return typeStart < typeEnd;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+internal fn bool StructFieldTypeSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] structNameToken,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] typeStart,
+    out u32[0 max] typeEnd)
+{
+    typeStart = 0;
+    typeEnd = 0;
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return false;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(field));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    typeStart = fields.TypeStartAt(field);
+                    typeEnd = fields.TypeEndAt(field);
+                    return typeStart < typeEnd;
+                }
+            }
+    }
+
+    return false;
+}
+
+internal fn bool ExpressionTypeSpanForCopyableArgument(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] node,
+    out u32[0 max] typeStart,
+    out u32[0 max] typeEnd)
+{
+    typeStart = 0;
+    typeEnd = 0;
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        return ReferenceTypeSpanForNode(refs, scope, node, typeStart, typeEnd);
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+        return StructFieldTypeSpan(table, source, stream, receiverStruct, body.ExprTokenAt(node), typeStart, typeEnd);
+    }
+
+    return false;
+}
+
+internal fn bool ExpressionIsIntrinsicCopyableValue(borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack ExprType exprType = ClassifyExprType(stream, body, node);
+    return exprType == ExprType.Bool
+        || exprType == ExprType.Int
+        || exprType == ExprType.Float;
+}
+
+internal fn bool TrySingleDeclarationCandidate(borrow CallableCandidateSetTable candidates, u64[0 2 ** 63 - 1] site, out u32[0 max] targetPlusOne)
+{
+    targetPlusOne = 0;
+    if (candidates.DeclarationCandidateCountAt(site) != 1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] candidateCount = candidates.CandidateCountAt(site);
+    for willexit (stack mut u32[0 max] candidate = 0; candidate < candidateCount; candidate += 1)
+    {
+        if (candidates.CandidateKindAt(site, candidate) == CallableCandidateKind.Declaration)
+        {
+            targetPlusOne = candidates.CandidateTargetAt(site, candidate);
+            return targetPlusOne != 0;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TryMapCopyablePredicateToCallArgument(
+    borrow FunctionSignature callee,
+    ascii source,
+    borrow DeclarationTable table,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] predicateStart,
+    u32[0 max] predicateEnd,
+    out u32[0 max] typeStart,
+    out u32[0 max] typeEnd,
+    out bool intrinsicCopyable)
+{
+    typeStart = predicateStart;
+    typeEnd = predicateEnd;
+    intrinsicCopyable = false;
+
+    stack mut u32[0 max] predicateIdentifier = 0;
+    stack u32[0 max] calleeGenericList = (u32[0 max])(callee.Name() + 1);
+    if (!ThreadSafetyTypeSpanIsSingleIdentifier(stream, predicateStart, predicateEnd, predicateIdentifier)
+        || !GenericParamListMatches(source, stream, calleeGenericList, predicateIdentifier))
+    {
+        return predicateStart < predicateEnd;
+    }
+
+    stack u32[0 max] paramCount = (u32[0 max])callee.ParamCount();
+    for willexit (stack mut u32[0 max] param = 0; param < paramCount; param += 1)
+    {
+        stack mut u32[0 max] paramIdentifier = 0;
+        if (ThreadSafetyTypeSpanIsSingleIdentifier(stream, callee.ParamTypeStartTokenAt((u64[0 2 ** 63 - 1])param), callee.ParamTypeEndTokenAt((u64[0 2 ** 63 - 1])param), paramIdentifier)
+            && BindingTokenTextEqualsToken(source, stream, paramIdentifier, predicateIdentifier)
+            && param < body.ExprCallArgCountAt(callNode))
+        {
+            stack u32[0 max] argNode = body.ExprCallArgAt(callNode, param);
+            if (ExpressionTypeSpanForCopyableArgument(table, source, refs, scope, stream, body, argNode, typeStart, typeEnd))
+            {
+                return true;
+            }
+
+            stack bool argumentIsIntrinsicCopyable = ExpressionIsIntrinsicCopyableValue(stream, body, argNode);
+            intrinsicCopyable = argumentIsIntrinsicCopyable;
+            return argumentIsIntrinsicCopyable;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool CopyableLawArgumentSatisfied(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FunctionSignature caller,
+    borrow ThreadSafetyLawPredicateTable callerPredicates,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    bool intrinsicCopyable)
+{
+    if (intrinsicCopyable)
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] typeIdentifier = 0;
+    stack u32[0 max] callerGenericList = (u32[0 max])(caller.Name() + 1);
+    if (ThreadSafetyTypeSpanIsSingleIdentifier(stream, typeStart, typeEnd, typeIdentifier)
+        && GenericParamListMatches(source, stream, callerGenericList, typeIdentifier))
+    {
+        return ThreadSafetyLawPredicatesContainSingleIdentifier(callerPredicates, source, stream, typeIdentifier);
+    }
+
+    return CopyabilityTypeSpanIsCopyable(decls, table, source, stream, facts, typeStart, typeEnd, 0);
+}
+
+internal fn System.Memory.MemoryStatus CollectCopyableLawPredicateCallDiagnostics(
+    borrow FunctionSignature caller,
+    u32[0 max] callerKeywordToken,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut ThreadSafetyLawPredicateTable callerPredicates = new();
+    switch (BuildThreadSafetyLawPredicateTable(source, stream, callerKeywordToken, "Copyable"))
+    {
+        case BindResult<ThreadSafetyLawPredicateTable>.Err(var callerPredicateError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ThreadSafetyLawPredicateTable>.Ok(var builtCallerPredicates):
+            callerPredicates = builtCallerPredicates;
+    }
+
+    switch (BuildCallableCandidateSets(table, source, stream, refs, scope, body))
+    {
+        case BindResult<CallableCandidateSetTable>.Err(var candidateError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<CallableCandidateSetTable>.Ok(var candidates):
+            stack u64[0 2 ** 63 - 1] siteCount = candidates.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < siteCount; site += 1)
+            {
+                stack mut u32[0 max] targetPlusOne = 0;
+                if (TrySingleDeclarationCandidate(candidates, site, targetPlusOne))
+                {
+                    stack mut FunctionSignature callee = new();
+                    if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+                    {
+                        stack u64[0 2 ** 63 - 1] targetIndex = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+                        stack mut ThreadSafetyLawPredicateTable calleePredicates = new();
+                        switch (BuildThreadSafetyLawPredicateTable(source, stream, table.KeywordTokenAt(targetIndex), "Copyable"))
+                        {
+                            case BindResult<ThreadSafetyLawPredicateTable>.Err(var calleePredicateError):
+                                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                            case BindResult<ThreadSafetyLawPredicateTable>.Ok(var builtCalleePredicates):
+                                calleePredicates = builtCalleePredicates;
+                        }
+
+                        stack u64[0 2 ** 63 - 1] predicateCount = calleePredicates.Count();
+                        for willexit (stack mut u64[0 2 ** 63 - 1] predicate = 0; predicate < predicateCount; predicate += 1)
+                        {
+                            stack mut u32[0 max] typeStart = 0;
+                            stack mut u32[0 max] typeEnd = 0;
+                            stack mut bool intrinsicCopyable = false;
+                            if (TryMapCopyablePredicateToCallArgument(
+                                callee,
+                                source,
+                                table,
+                                refs,
+                                scope,
+                                stream,
+                                body,
+                                candidates.CallNodeAt(site),
+                                calleePredicates.TypeStartTokenAt(predicate),
+                                calleePredicates.TypeEndTokenAt(predicate),
+                                typeStart,
+                                typeEnd,
+                                intrinsicCopyable)
+                                && !CopyableLawArgumentSatisfied(
+                                    decls,
+                                    table,
+                                    source,
+                                    stream,
+                                    facts,
+                                    caller,
+                                    callerPredicates,
+                                    typeStart,
+                                    typeEnd,
+                                    intrinsicCopyable))
+                            {
+                                switch (diags.Append(BindDiagnosticCode.CopyableConstraintInvalid, candidates.NameTokenAt(site)))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var appendError):
+                                        return System.Memory.MemoryStatus.Err(appendError);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool FunctionScopeSymbolTypeIsCopyable(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow CopyabilityFactTable facts,
+    borrow FunctionScope scope,
+    u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    return target < scope.Count()
+        && CopyabilityTypeSpanIsCopyable(
+            decls,
+            table,
+            source,
+            stream,
+            facts,
+            scope.TypeStartTokenAt(target),
+            scope.TypeEndTokenAt(target),
+            0);
+}

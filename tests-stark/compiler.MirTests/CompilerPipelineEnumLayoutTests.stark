@@ -1,0 +1,360 @@
+import CompilerMirTestSupport
+import System.Testing
+module CompilerPipelineEnumLayoutTests
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineEnumLayoutTests.cs.
+// The C# originals run the full compiler pipeline stopping after the
+// "enum-layout" pass and assert over the EnumLayoutModel / ConcreteTypeLayout
+// object graph (tag bit widths, max tag values, ordered field names, and
+// concrete payload size/alignment in bytes). These ports use the host-test
+// enum-layout artifact renderer so the Stark assertions stay tied to the same
+// tag, field, and concrete-layout facts.
+
+// Ported from CompilerPipelineEnumLayoutTests.EnumLayoutsUseSmallestSoundTagWidths.
+internal fn bool EnumLayoutsUseSmallestSoundTagWidthsImpl()
+{
+    // PORT-NOTE: the C# original asserts the EnumLayoutModel tag types directly:
+    // MemoryError -> compact tag bitWidth 8 / maxTagValue 3, IOError -> bitWidth 8 /
+    // maxTagValue 6, BigStatus (257 variants) -> bitWidth 16 / maxTagValue 256.
+    // The enum-layout text renders tag ranges and concrete tag field sizes, so
+    // the smallest-sound-tag-width facts stay explicit in the port.
+    stack mut MirCompile small = CompileEnumLayout(
+        "enum-layout-smallest-tag-small",
+        raw"""
+module Facade
+
+public enum MemoryError
+{
+    OutOfMemory,
+    InvalidLayout,
+    UnsupportedAlignment,
+    TooLarge,
+}
+
+public enum IOError
+{
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    InvalidPath,
+    BrokenPipe,
+    DiskFull,
+    Unknown(i32[min max]),
+}
+""");
+
+    stack mut MirCompile medium = CompileEnumLayout(
+        "enum-layout-smallest-tag-medium",
+        raw"""
+module Facade
+
+public enum BigStatus
+{
+    Case0,
+    Case1,
+    Case2,
+    Case3,
+    Case4,
+    Case5,
+    Case6,
+    Case7,
+    Case8,
+    Case9,
+    Case10,
+    Case11,
+    Case12,
+    Case13,
+    Case14,
+    Case15,
+    Case16,
+    Case17,
+    Case18,
+    Case19,
+    Case20,
+    Case21,
+    Case22,
+    Case23,
+    Case24,
+    Case25,
+    Case26,
+    Case27,
+    Case28,
+    Case29,
+    Case30,
+    Case31,
+    Case32,
+    Case33,
+    Case34,
+    Case35,
+    Case36,
+    Case37,
+    Case38,
+    Case39,
+    Case40,
+    Case41,
+    Case42,
+    Case43,
+    Case44,
+    Case45,
+    Case46,
+    Case47,
+    Case48,
+    Case49,
+    Case50,
+    Case51,
+    Case52,
+    Case53,
+    Case54,
+    Case55,
+    Case56,
+    Case57,
+    Case58,
+    Case59,
+    Case60,
+    Case61,
+    Case62,
+    Case63,
+    Case64,
+    Case65,
+    Case66,
+    Case67,
+    Case68,
+    Case69,
+    Case70,
+    Case71,
+    Case72,
+    Case73,
+    Case74,
+    Case75,
+    Case76,
+    Case77,
+    Case78,
+    Case79,
+    Case80,
+    Case81,
+    Case82,
+    Case83,
+    Case84,
+    Case85,
+    Case86,
+    Case87,
+    Case88,
+    Case89,
+    Case90,
+    Case91,
+    Case92,
+    Case93,
+    Case94,
+    Case95,
+    Case96,
+    Case97,
+    Case98,
+    Case99,
+    Case100,
+    Case101,
+    Case102,
+    Case103,
+    Case104,
+    Case105,
+    Case106,
+    Case107,
+    Case108,
+    Case109,
+    Case110,
+    Case111,
+    Case112,
+    Case113,
+    Case114,
+    Case115,
+    Case116,
+    Case117,
+    Case118,
+    Case119,
+    Case120,
+    Case121,
+    Case122,
+    Case123,
+    Case124,
+    Case125,
+    Case126,
+    Case127,
+    Case128,
+    Case129,
+    Case130,
+    Case131,
+    Case132,
+    Case133,
+    Case134,
+    Case135,
+    Case136,
+    Case137,
+    Case138,
+    Case139,
+    Case140,
+    Case141,
+    Case142,
+    Case143,
+    Case144,
+    Case145,
+    Case146,
+    Case147,
+    Case148,
+    Case149,
+    Case150,
+    Case151,
+    Case152,
+    Case153,
+    Case154,
+    Case155,
+    Case156,
+    Case157,
+    Case158,
+    Case159,
+    Case160,
+    Case161,
+    Case162,
+    Case163,
+    Case164,
+    Case165,
+    Case166,
+    Case167,
+    Case168,
+    Case169,
+    Case170,
+    Case171,
+    Case172,
+    Case173,
+    Case174,
+    Case175,
+    Case176,
+    Case177,
+    Case178,
+    Case179,
+    Case180,
+    Case181,
+    Case182,
+    Case183,
+    Case184,
+    Case185,
+    Case186,
+    Case187,
+    Case188,
+    Case189,
+    Case190,
+    Case191,
+    Case192,
+    Case193,
+    Case194,
+    Case195,
+    Case196,
+    Case197,
+    Case198,
+    Case199,
+    Case200,
+    Case201,
+    Case202,
+    Case203,
+    Case204,
+    Case205,
+    Case206,
+    Case207,
+    Case208,
+    Case209,
+    Case210,
+    Case211,
+    Case212,
+    Case213,
+    Case214,
+    Case215,
+    Case216,
+    Case217,
+    Case218,
+    Case219,
+    Case220,
+    Case221,
+    Case222,
+    Case223,
+    Case224,
+    Case225,
+    Case226,
+    Case227,
+    Case228,
+    Case229,
+    Case230,
+    Case231,
+    Case232,
+    Case233,
+    Case234,
+    Case235,
+    Case236,
+    Case237,
+    Case238,
+    Case239,
+    Case240,
+    Case241,
+    Case242,
+    Case243,
+    Case244,
+    Case245,
+    Case246,
+    Case247,
+    Case248,
+    Case249,
+    Case250,
+    Case251,
+    Case252,
+    Case253,
+    Case254,
+    Case255,
+    Case256,
+}
+""");
+
+    return Succeeds(small)
+        && EnumLayoutContainsAll4(
+            small,
+            "tag: $tag: i8[0 3] size=1 align=1",
+            "tag: $tag: i8[0 6] size=1 align=1",
+            "$Unknown_0: i32 size=4 align=4",
+            "Unknown: tag=6")
+        && Succeeds(medium)
+        && EnumLayoutContainsAll4(
+            medium,
+            "enum BigStatus",
+            "tag: $tag: i16[0 256] size=2 align=2",
+            "layout: size=2 align=2",
+            "Case256: tag=256");
+}
+
+// Ported from CompilerPipelineEnumLayoutTests.EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegers.
+internal fn bool EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegersImpl()
+{
+    // PORT-NOTE: the C# original asserts the ConcreteTypeLayout (size, alignment)
+    // of each payload via ConcreteTypeLayoutHelper: I24 -> (3, 4), I48 -> (6, 8),
+    // I96 -> (12, 16), I192 -> (24, 16), and the whole WidePayload enum ->
+    // size 64 / alignment 16. The enum-layout text renders those concrete
+    // payload and whole-enum layout facts directly.
+    stack mut MirCompile c = CompileEnumLayout(
+        "enum-layout-wide-payload-alignment",
+        raw"""
+module Facade
+
+public enum WidePayload
+{
+    Empty,
+    I24(i24[min max]),
+    I48(i48[min max]),
+    I96(i96[min max]),
+    I192(i192[min max]),
+}
+""");
+
+    return Succeeds(c)
+        && EnumLayoutContainsAll4(
+            c,
+            "$I24_0: i24 size=3 align=4",
+            "$I48_0: i48 size=6 align=8",
+            "$I96_0: i96 size=12 align=16",
+            "$I192_0: i192 size=24 align=16")
+        && EnumLayoutContains(c, "layout: size=64 align=16");
+}

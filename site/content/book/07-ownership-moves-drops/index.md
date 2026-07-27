@@ -77,6 +77,61 @@ stack i32[min max] right = left;
 
 Both `left` and `right` remain usable. Structs and records should be assumed
 move-only unless the language and type rules say otherwise.
+The rule that decides this is *copyability*, and it is structural. A type is
+copyable when copying its bytes is safe and leaves nothing to clean up:
+
+- scalars, raw pointers, and text views are copyable
+- an `enum` is copyable when every variant is a unit variant or carries only copyable fields
+- a `struct` or `record` is copyable when every field is copyable
+- a type with a destructor is never copyable, and neither is anything that owns storage: `dynamic`, the owning text containers, or heap closures
+
+Reading a copyable value out of a field, an index, or a local is a copy, so the
+source stays usable. Reading a move-only value out is a move, so it does not.
+
+Sometimes a type is structurally copyable but should still behave like a unique
+handle. Give it an empty destructor to keep move semantics:
+
+```stark
+struct FileHandle
+{
+    i32[min max] Descriptor;
+
+    drop
+    {
+    }
+}
+```
+
+A type that is meant to stay copyable can assert it at the declaration with
+`[Copyable]`. Adding an owning field or a destructor later then fails at the
+type instead of at every place that copied it:
+
+```stark
+[Copyable]
+enum Direction
+{
+    North,
+    South,
+}
+```
+
+Generic code that needs to copy a value states the requirement the same way
+`Transferable` and `Shareable` bounds are written:
+
+```stark
+fn bool Duplicate<T>(T value)
+    where Copyable(T)
+{
+    stack T first = value;
+    stack T second = value;
+    return true;
+}
+```
+
+Call sites with concrete type arguments are checked structurally; a generic
+caller forwards the requirement by declaring the same `where Copyable(T)`.
+`Copyable` is purely structural — it cannot be granted or denied with an
+attribute.
 
 ## Step 5: Rely On Deterministic Cleanup For Owners
 

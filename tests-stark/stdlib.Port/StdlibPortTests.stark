@@ -1,0 +1,1683 @@
+import StdlibPortSupport
+import System.Testing
+import BookSampleStandardLibraryTests
+import StandardLibraryGenericTests
+import SystemBackendBoundaryAuditTests
+import SystemCStandardLibraryTests
+import SystemCollectionsDictionaryStandardLibraryTests
+import SystemCollectionsHashSetSortStandardLibraryTests
+import SystemCollectionsPackageDropRegressionTests
+import SystemCollectionsStackQueueStandardLibraryTests
+import SystemCollectionsStandardLibraryTests
+import SystemCompilerIntegerFactsStandardLibraryTests
+import SystemConsoleStandardLibraryTests
+import SystemFileSystemStandardLibraryTests
+import SystemIOFilePackagedStandardLibraryTests
+import SystemIOFileRuntimeStandardLibraryTests
+import SystemIOFileStandardLibraryTests
+import SystemIOPathPackagedStandardLibraryTests
+import SystemIOPathStandardLibraryTests
+import SystemJsonStandardLibraryTests
+import SystemMathStandardLibraryTests
+import SystemMemoryContractAuditStandardLibraryTests
+import SystemMemoryHelperStandardLibraryTests
+import SystemMemoryStandardLibraryTests
+import SystemNetStandardLibraryTests
+import SystemNetTcpStandardLibraryTests
+import SystemProcessStandardLibraryTests
+import SystemPromotedConsoleStandardLibraryTests
+import SystemPromotedIOFileSystemStandardLibraryTests
+import SystemPromotedNetTcpStandardLibraryTests
+import SystemPromotedRuntimeBufferStandardLibraryTests
+import SystemRangeNotationStandardLibraryTests
+import SystemRawPointerAuditStandardLibraryTests
+import SystemRuntimeBufferStandardLibraryTests
+import SystemRuntimePlatformLinuxStandardLibraryTests
+import SystemRuntimePlatformMacOSStandardLibraryTests
+import SystemRuntimePlatformWindowsStandardLibraryTests
+import SystemSyscallStandardLibraryTests
+import SystemTestingStandardLibraryTests
+import SystemTextInterningStandardLibraryTests
+import SystemTextRuntimeStandardLibraryTests
+import SystemTextStandardLibraryTests
+import SystemThreadingAtomicsStandardLibraryTests
+import SystemThreadingStandardLibraryTests
+[Collection("stdlib")]
+module StdlibPortTests
+
+// Ported standard-library tests from tests/compiler.StandardLibraryTests,
+// running against the current C# host compiler through the host test protocol.
+// Each [Fact] wrapper below delegates to a <Name>Impl body in an imported
+// companion module (one companion per C# source file). Imports and wrappers are
+// auto-wired as ports land. Requires STARK_HOST_COMPILER to point at the host
+// compiler executable. The original C# tests remain the oracle until cutover.
+
+// ---------------------------------------------------------------------------
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
+// ---------------------------------------------------------------------------
+[Fact]
+[Collection("book-sample")]
+fn bool PositiveBookSamplesCompileWithStrictIntegerRanges()
+{
+    return PositiveBookSamplesCompileWithStrictIntegerRangesImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool StdLibSourceGraphIncludesMilestone7ModuleLayout()
+{
+    return StdLibSourceGraphIncludesMilestone7ModuleLayoutImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool StdLibSourceTreeHasNoExperimentalModules()
+{
+    return StdLibSourceTreeHasNoExperimentalModulesImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool StdLibSourceCommonErrorResultModelUsesCompactEnumLayouts()
+{
+    return StdLibSourceCommonErrorResultModelUsesCompactEnumLayoutsImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool StdLibPackageBuildsFromRepositorySources()
+{
+    return StdLibPackageBuildsFromRepositorySourcesImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool PackagedStdLibCommonErrorResultModelWorksWithoutSource()
+{
+    return PackagedStdLibCommonErrorResultModelWorksWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool PackagedStdLibCanBeConsumedWithoutSource()
+{
+    return PackagedStdLibCanBeConsumedWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool PackagedStdLibLinuxArchiveHasNoLibcSymbolReferences()
+{
+    return PackagedStdLibLinuxArchiveHasNoLibcSymbolReferencesImpl();
+}
+
+[Fact]
+[Collection("standard-library-generic")]
+fn bool PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences()
+{
+    return PackagedStdLibWindowsArchiveHasNoCrtSymbolReferencesImpl();
+}
+
+[Fact]
+[Collection("backend-boundary-audit")]
+fn bool OptimizedStandardLibraryBenchmarksDoNotEmitOpaqueStandardLibraryFunctions()
+{
+    return OptimizedStandardLibraryBenchmarksDoNotEmitOpaqueStandardLibraryFunctionsImpl();
+}
+
+[Fact]
+[Collection("c")]
+fn bool SystemCSourceSurfaceCompiles()
+{
+    return SystemCSourceSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("c")]
+fn bool SystemCStringHelpersWorkAtRuntime()
+{
+    return SystemCStringHelpersWorkAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+{
+    return StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustifiedImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
+{
+    return StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool PromotedDictionaryLookupUsesGroupedControlByteProbe()
+{
+    return PromotedDictionaryLookupUsesGroupedControlByteProbeImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool StdLibSourceDictionaryGrowthLowersThroughSharedCapacityHelper()
+{
+    return StdLibSourceDictionaryGrowthLowersThroughSharedCapacityHelperImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsContract()
+{
+    return StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsContractImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContracts()
+{
+    return StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContractsImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool SourceStdLibPromotedDictionaryExecutableRuns()
+{
+    return SourceStdLibPromotedDictionaryExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool SourceStdLibTextKeyCollectionsExecutableRuns()
+{
+    return SourceStdLibTextKeyCollectionsExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-dictionary")]
+fn bool PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSource()
+{
+    return PackagedStdLibCollectionsGrowMoveDropExecutableRunsWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAllocation()
+{
+    return StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAllocationImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool StdLibSourceSortUsesOrdContractWithoutRuntimeClosureOrAllocation()
+{
+    return StdLibSourceSortUsesOrdContractWithoutRuntimeClosureOrAllocationImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool StdLibSourceSortRequiresOrdConformance()
+{
+    return StdLibSourceSortRequiresOrdConformanceImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool StdLibSourceHashSetGrowthLowersThroughDictionaryFastPath()
+{
+    return StdLibSourceHashSetGrowthLowersThroughDictionaryFastPathImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool StdLibSourceHashSetCustomKeysUseExplicitStaticHashAndEqualsContract()
+{
+    return StdLibSourceHashSetCustomKeysUseExplicitStaticHashAndEqualsContractImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool SourceStdLibHashSetExecutableRuns()
+{
+    return SourceStdLibHashSetExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool SourceStdLibDeterministicSortingExecutableRuns()
+{
+    return SourceStdLibDeterministicSortingExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-hash-set-sort")]
+fn bool SourceStdLibPromotedCollectionsCrossFamilyParityExecutableRuns()
+{
+    return SourceStdLibPromotedCollectionsCrossFamilyParityExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-stack-queue")]
+fn bool StdLibSourcePromotedCollectionReservesUseSparseSlotStorage()
+{
+    return StdLibSourcePromotedCollectionReservesUseSparseSlotStorageImpl();
+}
+
+[Fact]
+[Collection("collections-stack-queue")]
+fn bool SourceStdLibPromotedStackMatchesStableStackExecutableRuns()
+{
+    return SourceStdLibPromotedStackMatchesStableStackExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-stack-queue")]
+fn bool SourceStdLibPromotedQueueMatchesStableQueueExecutableRuns()
+{
+    return SourceStdLibPromotedQueueMatchesStableQueueExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-stack-queue")]
+fn bool SourceStdLibPromotedRingQueueCandidateExecutableRuns()
+{
+    return SourceStdLibPromotedRingQueueCandidateExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections-stack-queue")]
+fn bool PromotedQueueTryDequeueUsesSparseSlotRingPath()
+{
+    return PromotedQueueTryDequeueUsesSparseSlotRingPathImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool StdLibSourceCollectionsSupportOwnedAllocatorBackedSurface()
+{
+    return StdLibSourceCollectionsSupportOwnedAllocatorBackedSurfaceImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool StdLibSourcePromotedCollectionsExposeDynamicComparisonTypes()
+{
+    return StdLibSourcePromotedCollectionsExposeDynamicComparisonTypesImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool StdLibSourcePromotedListLowersThroughDynamicStorage()
+{
+    return StdLibSourcePromotedListLowersThroughDynamicStorageImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool SourceStdLibCollectionsGrowMoveDropExecutableRuns()
+{
+    return SourceStdLibCollectionsGrowMoveDropExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool SourceStdLibPromotedListMatchesStableListExecutableRuns()
+{
+    return SourceStdLibPromotedListMatchesStableListExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRuns()
+{
+    return SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("collections")]
+fn bool PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
+{
+    return PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeListImpl();
+}
+
+[Fact]
+[Collection("collections-package-drop-regression")]
+fn bool ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage()
+{
+    return ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackageImpl();
+}
+
+[Fact]
+[Collection("compiler-integer-facts")]
+fn bool SourceStdLibCompilerIntegerFactsExecutableRuns()
+{
+    return SourceStdLibCompilerIntegerFactsExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("compiler-integer-facts")]
+fn bool PackagedStdLibCompilerIntegerFactsWorksWithoutSource()
+{
+    return PackagedStdLibCompilerIntegerFactsWorksWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("console")]
+fn bool StdLibSourceConsoleSupportsAsciiAndUnicodeOverloads()
+{
+    return StdLibSourceConsoleSupportsAsciiAndUnicodeOverloadsImpl();
+}
+
+[Fact]
+[Collection("console")]
+fn bool StdLibSourceConsoleSupportsUnicodeInputSurface()
+{
+    return StdLibSourceConsoleSupportsUnicodeInputSurfaceImpl();
+}
+
+[Fact]
+[Collection("console")]
+fn bool StdLibSourceUnicodeConsoleInputWorksAtRuntime()
+{
+    return StdLibSourceUnicodeConsoleInputWorksAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("console")]
+fn bool PackagedStdLibConsoleReturnsIoStatusWithoutSource()
+{
+    return PackagedStdLibConsoleReturnsIoStatusWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("console")]
+fn bool PackagedStdLibUnicodeConsoleInputWorksWithoutSource()
+{
+    return PackagedStdLibUnicodeConsoleInputWorksWithoutSourceImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and checks metadata/temp/walk effects.
+[Fact]
+[Platform(linux)]
+[Collection("file-system")]
+fn bool SourceStdLibFileSystemMetadataTempWalkAndLineReadingWorkOnLinux()
+{
+    return SourceStdLibFileSystemMetadataTempWalkAndLineReadingWorkOnLinuxImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and checks recursive glob effects.
+[Fact]
+[Platform(linux)]
+[Collection("file-system")]
+fn bool SourceStdLibFileSystemGlobStreamsRecursiveMatchesOnLinux()
+{
+    return SourceStdLibFileSystemGlobStreamsRecursiveMatchesOnLinuxImpl();
+}
+
+[Fact]
+[Collection("file-system")]
+fn bool SourceStdLibDirectoryReadNextInfoRawReportsEntryLengthsAndEnd()
+{
+    return SourceStdLibDirectoryReadNextInfoRawReportsEntryLengthsAndEndImpl();
+}
+
+[Fact]
+[Collection("file-system")]
+fn bool PackagedStdLibFileSystemDirectoryLifecycleAndQueriesWorkWithoutSource()
+{
+    return PackagedStdLibFileSystemDirectoryLifecycleAndQueriesWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlush()
+{
+    return StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlushImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper()
+{
+    return StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelperImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop()
+{
+    return PackagedStdLibOwnedFileHandleFlushesAndClosesOnDropImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool PackagedStdLibFileBufferingModesBehaveAsExpected()
+{
+    return PackagedStdLibFileBufferingModesBehaveAsExpectedImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings()
+{
+    return PackagedStdLibOwnedFileWritesHonorExplicitTextEncodingsImpl();
+}
+
+[Fact]
+[Collection("io-file-runtime")]
+fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPath()
+{
+    return StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl();
+}
+
+[Fact]
+[Collection("io-file-runtime")]
+fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPath()
+{
+    return StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and checks seek file effects.
+[Fact]
+[Platform(linux)]
+[Collection("io-file-runtime")]
+fn bool SourceStdLibFileSeekRoundTripsOnLinux()
+{
+    return SourceStdLibFileSeekRoundTripsOnLinuxImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and checks whole-file effects.
+[Fact]
+[Platform(linux)]
+[Collection("io-file-runtime")]
+fn bool SourceStdLibWholeFileHelpersRoundTripOnLinux()
+{
+    return SourceStdLibWholeFileHelpersRoundTripOnLinuxImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and checks atomic replacement effects.
+[Fact]
+[Platform(linux)]
+[Collection("io-file-runtime")]
+fn bool SourceStdLibAtomicWholeFileHelpersReplaceOnLinux()
+{
+    return SourceStdLibAtomicWholeFileHelpersReplaceOnLinuxImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceRawFileHandleHelpersStayInternal()
+{
+    return StdLibSourceRawFileHandleHelpersStayInternalImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceWholeFileHelpersUseExplicitStatusAndChunkedBuffers()
+{
+    return StdLibSourceWholeFileHelpersUseExplicitStatusAndChunkedBuffersImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceAtomicWholeFileHelpersUseExclusiveCreateSyncAndMove()
+{
+    return StdLibSourceAtomicWholeFileHelpersUseExclusiveCreateSyncAndMoveImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloads()
+{
+    return StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloadsImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool StdLibSourceFileSeekSurfaceCompiles()
+{
+    return StdLibSourceFileSeekSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool PackagedStdLibFileMoveDeleteAndExistsRoundTrip()
+{
+    return PackagedStdLibFileMoveDeleteAndExistsRoundTripImpl();
+}
+
+[Fact]
+[Collection("io-file")]
+fn bool PackagedStdLibUnicodeConsoleAndRawFileWritesWorkWithoutSource()
+{
+    return PackagedStdLibUnicodeConsoleAndRawFileWritesWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer()
+{
+    return PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBufferImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool PackagedStdLibPathHelpersWorkWithoutSource()
+{
+    return PackagedStdLibPathHelpersWorkWithoutSourceImpl();
+}
+
+// Windows-only: the full oracle links/runs the packaged executable and checks Unicode path file effects.
+[Fact]
+[Platform(windows)]
+[Collection("io-path")]
+fn bool PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource()
+{
+    return PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool StdLibSourcePromotedPathLowersThroughDynamicStorage()
+{
+    return StdLibSourcePromotedPathLowersThroughDynamicStorageImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopies()
+{
+    return StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopiesImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool StdLibSourcePromotedPathCorrectnessSurfaceCompiles()
+{
+    return StdLibSourcePromotedPathCorrectnessSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool SourceStdLibPromotedPathCorrectnessExecutableRuns()
+{
+    return SourceStdLibPromotedPathCorrectnessExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool SourceStdLibPathTempNameAndPathHelpersUseExplicitAttempts()
+{
+    return SourceStdLibPathTempNameAndPathHelpersUseExplicitAttemptsImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool SourceStdLibPathGlobMatcherHandlesSegmentsAndRecursiveStars()
+{
+    return SourceStdLibPathGlobMatcherHandlesSegmentsAndRecursiveStarsImpl();
+}
+
+[Fact]
+[Collection("io-path")]
+fn bool StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizationRules()
+{
+    return StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizationRulesImpl();
+}
+
+[Fact]
+[Collection("json")]
+fn bool StdLibSourceJsonHelpersTypeCheckAndLower()
+{
+    return StdLibSourceJsonHelpersTypeCheckAndLowerImpl();
+}
+
+[Fact]
+[Collection("json")]
+fn bool SourceJsonParseAndWriteRoundTripExecute()
+{
+    return SourceJsonParseAndWriteRoundTripExecuteImpl();
+}
+
+[Fact]
+[Collection("math")]
+fn bool PackagedStdLibMathIntrinsicsWorkWithoutSource()
+{
+    return PackagedStdLibMathIntrinsicsWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("math")]
+fn bool PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsIt()
+{
+    return PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsItImpl();
+}
+
+[Fact]
+[Collection("math")]
+fn bool SourceStdLibMathXorShift32PseudoRandomExecutableRuns()
+{
+    return SourceStdLibMathXorShift32PseudoRandomExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("math")]
+fn bool SourceStdLibMathXorShift32PseudoRandomEmitsStraightLineBitOps()
+{
+    return SourceStdLibMathXorShift32PseudoRandomEmitsStraightLineBitOpsImpl();
+}
+
+[Fact]
+[Collection("memory-contract-audit")]
+fn bool StdLibOverlapSensitiveApisDeclareExplicitMemoryContracts()
+{
+    return StdLibOverlapSensitiveApisDeclareExplicitMemoryContractsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool StdLibSourceMemorySurfaceCompilesAndLowersIntrinsics()
+{
+    return StdLibSourceMemorySurfaceCompilesAndLowersIntrinsicsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool StdLibSourceMemoryModuleLowersRuntimeDisjointAppendFastPaths()
+{
+    return StdLibSourceMemoryModuleLowersRuntimeDisjointAppendFastPathsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsics()
+{
+    return StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsicsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool PackagedMemoryHelpersPreserveImportedAttributes()
+{
+    return PackagedMemoryHelpersPreserveImportedAttributesImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool SourceStdLibMemoryExecutableRuns()
+{
+    return SourceStdLibMemoryExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool SourceStdLibMemoryCopyExecutableRuns()
+{
+    return SourceStdLibMemoryCopyExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool SourceStdLibMemoryMoveExecutableRuns()
+{
+    return SourceStdLibMemoryMoveExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("memory-helper")]
+fn bool SourceStdLibMemoryAppendDisjointExecutableRuns()
+{
+    return SourceStdLibMemoryAppendDisjointExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool StdLibSourceMemoryModuleSupportsDefaultAllocatorSurface()
+{
+    return StdLibSourceMemoryModuleSupportsDefaultAllocatorSurfaceImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappers()
+{
+    return StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappersImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarget()
+{
+    return StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTargetImpl();
+}
+
+// Windows-only: the full oracle links/runs the executable and checks heap realloc contents.
+[Fact]
+[Platform(windows)]
+[Collection("memory")]
+fn bool SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPaths()
+{
+    return SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPathsImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
+{
+    return SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferencesImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences()
+{
+    return PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferencesImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool PackagedImportSystemConsoleExecutableDoesNotPullUnusedAllocatorCSymbols()
+{
+    return PackagedImportSystemConsoleExecutableDoesNotPullUnusedAllocatorCSymbolsImpl();
+}
+
+[Fact]
+[Collection("memory")]
+fn bool SourceImportedImportSystemConsoleExecutableDoesNotEmitUnusedMemoryObjects()
+{
+    return SourceImportedImportSystemConsoleExecutableDoesNotEmitUnusedMemoryObjectsImpl();
+}
+
+[Fact]
+[Collection("net")]
+fn bool StdLibSourceNetFoundationTypesAndCompactLayoutsTypeCheck()
+{
+    return StdLibSourceNetFoundationTypesAndCompactLayoutsTypeCheckImpl();
+}
+
+[Fact]
+[Collection("net")]
+fn bool PackagedStdLibNetFoundationTypesWorkWithoutSource()
+{
+    return PackagedStdLibNetFoundationTypesWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceNetTcpClosedHandleLifecycleTypeChecks()
+{
+    return StdLibSourceNetTcpClosedHandleLifecycleTypeChecksImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSource()
+{
+    return PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceNetTcpCloseRoutesOpenHandlesThroughPlatformSocketClose()
+{
+    return StdLibSourceNetTcpCloseRoutesOpenHandlesThroughPlatformSocketCloseImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxSocketCloseUsesCloseSyscallPath()
+{
+    return StdLibSourceLinuxSocketCloseUsesCloseSyscallPathImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxTcpConnectUsesSocketAndConnectSyscallPath()
+{
+    return StdLibSourceLinuxTcpConnectUsesSocketAndConnectSyscallPathImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxTcpShutdownUsesShutdownSyscallPath()
+{
+    return StdLibSourceLinuxTcpShutdownUsesShutdownSyscallPathImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxTcpReadWriteUseReadAndWriteSyscallPaths()
+{
+    return StdLibSourceLinuxTcpReadWriteUseReadAndWriteSyscallPathsImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxTcpListenUsesSocketBindAndListenSyscallPath()
+{
+    return StdLibSourceLinuxTcpListenUsesSocketBindAndListenSyscallPathImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceLinuxTcpAcceptUsesAccept4SyscallPath()
+{
+    return StdLibSourceLinuxTcpAcceptUsesAccept4SyscallPathImpl();
+}
+
+[Fact]
+[Collection("net-tcp")]
+fn bool StdLibSourceWindowsTcpUsesWinsockPath()
+{
+    return StdLibSourceWindowsTcpUsesWinsockPathImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool StdLibSourceProcessHelpersTypeCheckAndLower()
+{
+    return StdLibSourceProcessHelpersTypeCheckAndLowerImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool StdLibSourceProcessSpawnHelpersTypeCheckAndLower()
+{
+    return StdLibSourceProcessSpawnHelpersTypeCheckAndLowerImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool SourceProcessExitTerminatesWithRequestedExitCode()
+{
+    return SourceProcessExitTerminatesWithRequestedExitCodeImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool SourceProcessRunCaptureCapturesStdoutStderrExitCodeAndEnvironment()
+{
+    return SourceProcessRunCaptureCapturesStdoutStderrExitCodeAndEnvironmentImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool SourceProcessRunCaptureWithInputFeedsStdinAndClosesIt()
+{
+    return SourceProcessRunCaptureWithInputFeedsStdinAndClosesItImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool SourceProcessRunCaptureTimeoutKillsChildAndKeepsPartialOutput()
+{
+    return SourceProcessRunCaptureTimeoutKillsChildAndKeepsPartialOutputImpl();
+}
+
+[Fact]
+[Collection("process")]
+fn bool PackagedStdLibProcessHelpersWorkWithoutSource()
+{
+    return PackagedStdLibProcessHelpersWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("promoted-console")]
+fn bool StdLibSourcePromotedConsoleSurfaceCompiles()
+{
+    return StdLibSourcePromotedConsoleSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("promoted-console")]
+fn bool StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPaths()
+{
+    return StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPathsImpl();
+}
+
+[Fact]
+[Collection("promoted-console")]
+fn bool StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffers()
+{
+    return StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffersImpl();
+}
+
+[Fact]
+[Collection("promoted-console")]
+fn bool SourceStdLibPromotedConsoleExecutableRuns()
+{
+    return SourceStdLibPromotedConsoleExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("promoted-io-file-system")]
+fn bool StdLibSourcePromotedIOFileSystemSurfaceCompiles()
+{
+    return StdLibSourcePromotedIOFileSystemSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("promoted-io-file-system")]
+fn bool SourceStdLibPromotedFileExecutableRuns()
+{
+    return SourceStdLibPromotedFileExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("promoted-io-file-system")]
+fn bool SourceStdLibPromotedFileSystemExecutableRuns()
+{
+    return SourceStdLibPromotedFileSystemExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("promoted-net-tcp")]
+fn bool StdLibSourcePromotedNetTcpSurfaceCompiles()
+{
+    return StdLibSourcePromotedNetTcpSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("promoted-net-tcp")]
+fn bool StdLibSourcePromotedNetTcpBufferReadsUseBulkPaths()
+{
+    return StdLibSourcePromotedNetTcpBufferReadsUseBulkPathsImpl();
+}
+
+[Fact]
+[Collection("promoted-runtime-buffer")]
+fn bool StdLibSourcePromotedRuntimeBufferSurfaceCompiles()
+{
+    return StdLibSourcePromotedRuntimeBufferSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("promoted-runtime-buffer")]
+fn bool StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPaths()
+{
+    return StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPathsImpl();
+}
+
+[Fact]
+[Collection("promoted-runtime-buffer")]
+fn bool StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpers()
+{
+    return StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpersImpl();
+}
+
+[Fact]
+[Collection("promoted-runtime-buffer")]
+fn bool StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorage()
+{
+    return StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorageImpl();
+}
+
+[Fact]
+[Collection("promoted-runtime-buffer")]
+fn bool SourceStdLibPromotedRuntimeBufferExecutableRuns()
+{
+    return SourceStdLibPromotedRuntimeBufferExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("range-notation")]
+fn bool StdLibSourceUsesCanonicalRangeNotation()
+{
+    return StdLibSourceUsesCanonicalRangeNotationImpl();
+}
+
+[Fact]
+[Collection("raw-pointer-audit")]
+fn bool StdLibRawPointerUseStaysInDocumentedBoundaryFiles()
+{
+    return StdLibRawPointerUseStaysInDocumentedBoundaryFilesImpl();
+}
+
+[Fact]
+[Collection("raw-pointer-audit")]
+fn bool StdLibPublicRawPointerSurfaceStaysExplicitlyUnsafeAndAllowlisted()
+{
+    return StdLibPublicRawPointerSurfaceStaysExplicitlyUnsafeAndAllowlistedImpl();
+}
+
+[Fact]
+[Collection("raw-pointer-audit")]
+fn bool StdLibRootDoesNotReExportPublicRawPointerSurfaceModules()
+{
+    return StdLibRootDoesNotReExportPublicRawPointerSurfaceModulesImpl();
+}
+
+[Fact]
+[Collection("runtime-buffer")]
+fn bool StdLibSourceRuntimeBufferModuleSupportsLinearAndRingOperations()
+{
+    return StdLibSourceRuntimeBufferModuleSupportsLinearAndRingOperationsImpl();
+}
+
+[Fact]
+[Collection("runtime-buffer")]
+fn bool SourceRuntimeBufferModuleCanExecuteLinearAndRingOperations()
+{
+    return SourceRuntimeBufferModuleCanExecuteLinearAndRingOperationsImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPath()
+{
+    return StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPath()
+{
+    return StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath()
+{
+    return StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxFileOperationsUseSyscallBackedPath()
+{
+    return StdLibSourceLinuxFileOperationsUseSyscallBackedPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxFileExistsUsesStatSyscallPath()
+{
+    return StdLibSourceLinuxFileExistsUsesStatSyscallPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPath()
+{
+    return StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargets()
+{
+    return SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargetsImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable with redirected fds.
+[Fact]
+[Platform(linux)]
+[Collection("runtime-platform-linux")]
+fn bool SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminal()
+{
+    return SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminalImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxProcessHelpersUseSyscallBackedPath()
+{
+    return StdLibSourceLinuxProcessHelpersUseSyscallBackedPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxEventWaitingUsesEpollSyscallPath()
+{
+    return StdLibSourceLinuxEventWaitingUsesEpollSyscallPathImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and observes epoll readiness.
+[Fact]
+[Platform(linux)]
+[Collection("runtime-platform-linux")]
+fn bool SourceRuntimePlatformWaitWritableUsesLinuxEpoll()
+{
+    return SourceRuntimePlatformWaitWritableUsesLinuxEpollImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-linux")]
+fn bool StdLibSourceLinuxFutexSynchronizationUsesSyscallPath()
+{
+    return StdLibSourceLinuxFutexSynchronizationUsesSyscallPathImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and observes futex syscall results.
+[Fact]
+[Platform(linux)]
+[Collection("runtime-platform-linux")]
+fn bool SourceRuntimePlatformFutexWaitWakeUseLinuxSyscall()
+{
+    return SourceRuntimePlatformFutexWaitWakeUseLinuxSyscallImpl();
+}
+
+// Linux-only: the full oracle links/runs the executable and observes exit_group.
+[Fact]
+[Platform(linux)]
+[Collection("runtime-platform-linux")]
+fn bool SourceRuntimePlatformProcessExitUsesLinuxExitGroup()
+{
+    return SourceRuntimePlatformProcessExitUsesLinuxExitGroupImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool MacOSDispatchTemplateMirrorsLinuxDispatchSurface()
+{
+    return MacOSDispatchTemplateMirrorsLinuxDispatchSurfaceImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool StdLibSourceMacOSPlatformUsesLibSystemPosixApis()
+{
+    return StdLibSourceMacOSPlatformUsesLibSystemPosixApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool StdLibSourceMacOSPathMetadataUsesStatModeBits()
+{
+    return StdLibSourceMacOSPathMetadataUsesStatModeBitsImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool StdLibSourceMacOSThreadingPreservesEntryReturnCodeThroughPthreadJoin()
+{
+    return StdLibSourceMacOSThreadingPreservesEntryReturnCodeThroughPthreadJoinImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool MacOSDispatchProcessExitCallsLibSystemExitWithoutSymbolCollision()
+{
+    return MacOSDispatchProcessExitCallsLibSystemExitWithoutSymbolCollisionImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool SourceStdLibBuildRoutesPlatformCallsThroughMacOSModuleForMacOSTargets()
+{
+    return SourceStdLibBuildRoutesPlatformCallsThroughMacOSModuleForMacOSTargetsImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool SourceStdLibBuildRoutesProcessSpawnThroughMacOSModuleForMacOSTargets()
+{
+    return SourceStdLibBuildRoutesProcessSpawnThroughMacOSModuleForMacOSTargetsImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-mac-os")]
+fn bool MacOSRuntimeAllocatorUsesMallocReallocAndFreeForAppleTargets()
+{
+    return MacOSRuntimeAllocatorUsesMallocReallocAndFreeForAppleTargetsImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsConsoleAndFileOperationsUseWin32Apis()
+{
+    return StdLibSourceWindowsConsoleAndFileOperationsUseWin32ApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsWidePathCopiesUseInlineAsmHelper()
+{
+    return StdLibSourceWindowsWidePathCopiesUseInlineAsmHelperImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModule()
+{
+    return StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModuleImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool RootWindowsStdLibCompileKeepsWriteBufferToHandleOnDirectMirPath()
+{
+    return RootWindowsStdLibCompileKeepsWriteBufferToHandleOnDirectMirPathImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsConsoleInputOutputUsesKernel32Apis()
+{
+    return StdLibSourceWindowsConsoleInputOutputUsesKernel32ApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsFilePrimitivesUseKernel32Apis()
+{
+    return StdLibSourceWindowsFilePrimitivesUseKernel32ApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsDirectoryAndMetadataUseKernel32Apis()
+{
+    return StdLibSourceWindowsDirectoryAndMetadataUseKernel32ApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsPathBehaviorUsesWideNormalizationRules()
+{
+    return StdLibSourceWindowsPathBehaviorUsesWideNormalizationRulesImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool StdLibSourceWindowsProcessHelpersUseKernel32Apis()
+{
+    return StdLibSourceWindowsProcessHelpersUseKernel32ApisImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool WindowsDispatchProcessExitCallsKernelImportWithoutSymbolCollision()
+{
+    return WindowsDispatchProcessExitCallsKernelImportWithoutSymbolCollisionImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool PackagedStdLibWindowsTargetCanBeConsumedWithoutSource()
+{
+    return PackagedStdLibWindowsTargetCanBeConsumedWithoutSourceImpl();
+}
+
+// Windows-only: the full oracle links/runs the executable and checks redirected console IO.
+[Fact]
+[Platform(windows)]
+[Collection("runtime-platform-windows")]
+fn bool SourceWindowsConsoleExecutableWritesRedirectedOutputAndErrors()
+{
+    return SourceWindowsConsoleExecutableWritesRedirectedOutputAndErrorsImpl();
+}
+
+// Windows-only: the full oracle links/runs the executable and drives cmd.exe capture.
+[Fact]
+[Platform(windows)]
+[Collection("runtime-platform-windows")]
+fn bool SourceWindowsProcessCaptureRunsCmdWithEnvironmentAndInput()
+{
+    return SourceWindowsProcessCaptureRunsCmdWithEnvironmentAndInputImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLongNameChecks()
+{
+    return SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLongNameChecksImpl();
+}
+
+// Windows-only: the full oracle creates Windows fixtures, links/runs, and scans the directory.
+[Fact]
+[Platform(windows)]
+[Collection("runtime-platform-windows")]
+fn bool SourceWindowsPromotedDirectoryEnumerationExecutablePreservesCachedFirstEntry()
+{
+    return SourceWindowsPromotedDirectoryEnumerationExecutablePreservesCachedFirstEntryImpl();
+}
+
+[Fact]
+[Collection("runtime-platform-windows")]
+fn bool WindowsDispatchTemplateMirrorsLinuxDispatchSurface()
+{
+    return WindowsDispatchTemplateMirrorsLinuxDispatchSurfaceImpl();
+}
+
+[Fact]
+[Collection("syscall")]
+fn bool SystemSyscallDirectEntryPointsAreInternal()
+{
+    return SystemSyscallDirectEntryPointsAreInternalImpl();
+}
+
+// Linux-only: the full oracle packages, links/runs the executable, and observes syscall behavior.
+[Fact]
+[Platform(linux)]
+[Collection("syscall")]
+fn bool PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSource()
+{
+    return PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSourceImpl();
+}
+
+[Fact]
+[Collection("syscall")]
+fn bool SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture()
+{
+    return SystemSyscallModuleSelectsExpectedLinuxShimPerArchitectureImpl();
+}
+
+[Fact]
+[Collection("testing")]
+fn bool StdLibSourceTestingHelpersCompileWithExplicitFactRunner()
+{
+    return StdLibSourceTestingHelpersCompileWithExplicitFactRunnerImpl();
+}
+
+[Fact]
+[Collection("testing")]
+fn bool SourceStdLibTestingRichAssertionsExecutableRuns()
+{
+    return SourceStdLibTestingRichAssertionsExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("testing")]
+fn bool StdLibTestingModuleStaysRawPointerFreeAndExplicit()
+{
+    return StdLibTestingModuleStaysRawPointerFreeAndExplicitImpl();
+}
+
+[Fact]
+[Collection("text-interning")]
+fn bool StdLibSourceTextInterningSurfaceCompiles()
+{
+    return StdLibSourceTextInterningSurfaceCompilesImpl();
+}
+
+[Fact]
+[Collection("text-interning")]
+fn bool StdLibSourceTextInternerIdsAreNominallyDistinct()
+{
+    return StdLibSourceTextInternerIdsAreNominallyDistinctImpl();
+}
+
+[Fact]
+[Collection("text-interning")]
+fn bool SourceStdLibTextInterningExecutableRuns()
+{
+    return SourceStdLibTextInterningExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("text-runtime")]
+fn bool SourceStdLibPromotedTextExecutableRuns()
+{
+    return SourceStdLibPromotedTextExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("text-runtime")]
+fn bool SourceStdLibTextLiteralEscapingExecutableRuns()
+{
+    return SourceStdLibTextLiteralEscapingExecutableRunsImpl();
+}
+
+[Fact]
+[Collection("text-runtime")]
+fn bool SourceImportedStdLibTryFormatExecutableWritesText()
+{
+    return SourceImportedStdLibTryFormatExecutableWritesTextImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile()
+{
+    return StdLibSourceTextBuiltinsAndPathHelperSurfaceCompileImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourcePromotedTextLowersThroughDynamicStorage()
+{
+    return StdLibSourcePromotedTextLowersThroughDynamicStorageImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers()
+{
+    return StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpersImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectly()
+{
+    return StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectlyImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffs()
+{
+    return StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffsImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegions()
+{
+    return StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegionsImpl();
+}
+
+[Fact]
+[Collection("text")]
+fn bool PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource()
+{
+    return PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool AtomicI64SingleThreadedOperationSemanticsAreExactAtRuntime()
+{
+    return AtomicI64SingleThreadedOperationSemanticsAreExactAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool AtomicI64TwoThreadCounterIsExactAtRuntime()
+{
+    return AtomicI64TwoThreadCounterIsExactAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool AtomicBoolFlagHandoffAcrossThreadsWorksAtRuntime()
+{
+    return AtomicBoolFlagHandoffAcrossThreadsWorksAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool AllTier1AtomicWidthsHaveExactSemanticsAtRuntime()
+{
+    return AllTier1AtomicWidthsHaveExactSemanticsAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier2ContainerAtomicWidthsHaveExactSemanticsAtRuntime()
+{
+    return Tier2ContainerAtomicWidthsHaveExactSemanticsAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier2AtomicTwoThreadCountersAreExactAtRuntime()
+{
+    return Tier2AtomicTwoThreadCountersAreExactAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier2ContainerAtomicsLowerToLockFreeContainerInstructions()
+{
+    return Tier2ContainerAtomicsLowerToLockFreeContainerInstructionsImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool PackagedStdLibAtomicsWorkWithoutSource()
+{
+    return PackagedStdLibAtomicsWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier3EmbeddedLockAtomicWidthsHaveExactSemanticsAtRuntime()
+{
+    return Tier3EmbeddedLockAtomicWidthsHaveExactSemanticsAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier3EmbeddedLockAtomicTwoThreadCounterIsExactAtRuntime()
+{
+    return Tier3EmbeddedLockAtomicTwoThreadCounterIsExactAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool Tier3EmbeddedLockAtomicsLowerToSpinlockProtectedOperations()
+{
+    return Tier3EmbeddedLockAtomicsLowerToSpinlockProtectedOperationsImpl();
+}
+
+[Fact]
+[Collection("threading-atomics")]
+fn bool AtomicI64Tier1BuiltinsLowerToSingleAtomicInstructions()
+{
+    return AtomicI64Tier1BuiltinsLowerToSingleAtomicInstructionsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool PackagedStdLibThreadingEntrySchedulerAndThreadLifecycleWorkWithoutSource()
+{
+    return PackagedStdLibThreadingEntrySchedulerAndThreadLifecycleWorkWithoutSourceImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSurfaceSupportsThreadEntryAndSchedulerCalls()
+{
+    return StdLibSourceThreadingSurfaceSupportsThreadEntryAndSchedulerCallsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSurfaceSupportsSynchronizedGuardedState()
+{
+    return StdLibSourceThreadingSurfaceSupportsSynchronizedGuardedStateImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSynchronizedIsShareableWhenPayloadIsTransferable()
+{
+    return StdLibSourceThreadingSynchronizedIsShareableWhenPayloadIsTransferableImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSynchronizedShareabilityRequiresTransferablePayload()
+{
+    return StdLibSourceThreadingSynchronizedShareabilityRequiresTransferablePayloadImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSurfaceRejectsProtectedBorrowEscapingLockedGuard()
+{
+    return StdLibSourceThreadingSurfaceRejectsProtectedBorrowEscapingLockedGuardImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool SystemThreadingSynchronizedGuardsSharedMutableStateAtRuntime()
+{
+    return SystemThreadingSynchronizedGuardsSharedMutableStateAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSurfaceSupportsMpscChannels()
+{
+    return StdLibSourceThreadingSurfaceSupportsMpscChannelsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingChannelHandlesCarryThreadSafetyLawFacts()
+{
+    return StdLibSourceThreadingChannelHandlesCarryThreadSafetyLawFactsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingChannelSendRequiresTransferablePayload()
+{
+    return StdLibSourceThreadingChannelSendRequiresTransferablePayloadImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool SystemThreadingChannelMovesMessagesAndObservesCloseAtRuntime()
+{
+    return SystemThreadingChannelMovesMessagesAndObservesCloseAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool SystemThreadingChannelHandlesContendedProducersAtRuntime()
+{
+    return SystemThreadingChannelHandlesContendedProducersAtRuntimeImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingSurfaceSupportsPayloadThreadStarts()
+{
+    return StdLibSourceThreadingSurfaceSupportsPayloadThreadStartsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadPayloadStartRequiresTransferablePayload()
+{
+    return StdLibSourceThreadPayloadStartRequiresTransferablePayloadImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceThreadingErrorEnumsUseCompactLayouts()
+{
+    return StdLibSourceThreadingErrorEnumsUseCompactLayoutsImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedScheduler()
+{
+    return StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedSchedulerImpl();
+}
+
+[Fact]
+[Collection("threading")]
+fn bool StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCalls()
+{
+    return StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCallsImpl();
+}

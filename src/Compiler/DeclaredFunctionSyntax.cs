@@ -40,10 +40,15 @@ internal static class DeclaredFunctionSyntaxCollector
         return Collect(parseResult, syntaxModel: null);
     }
 
-    public static IReadOnlyList<DeclaredFunctionSyntax> Collect(ParseResult parseResult, SyntaxModel? syntaxModel)
+    public static IReadOnlyList<DeclaredFunctionSyntax> Collect(
+        ParseResult parseResult,
+        SyntaxModel? syntaxModel,
+        bool includeUnselectedDeclarations = false)
     {
         var functions = new List<DeclaredFunctionSyntax>();
-        var selectedFunctionsByIdentity = syntaxModel?.Declarations
+        var selectedFunctionsByIdentity = includeUnselectedDeclarations
+            ? null
+            : syntaxModel?.Declarations
             .Where(static declaration => declaration.Kind == DeclarationKind.Function && declaration.Function is not null)
             .GroupBy(static declaration => declaration.Name, StringComparer.Ordinal)
             .ToDictionary(

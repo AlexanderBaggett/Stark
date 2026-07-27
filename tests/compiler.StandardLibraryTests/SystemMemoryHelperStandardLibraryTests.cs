@@ -828,7 +828,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -857,8 +856,10 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         Assert.DoesNotContain("snapshot", appendCodePointsDisjointBody, StringComparison.Ordinal);
         Assert.Contains("@MoveBytesInfallible", moveBytesBody, StringComparison.Ordinal);
         Assert.Contains("@MoveCodePointsInfallible", moveCodePointsBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ult ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ult ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memmove.p0.p0.i64(", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memmove.p0.p0.i64(", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("i1 false)", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("i1 false)", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_alloc", moveBytesInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_alloc", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_try_realloc", moveBytesInfallibleBody, StringComparison.Ordinal);
@@ -879,7 +880,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -914,7 +914,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         Directory.CreateDirectory(packageDirectory);
 
         var libraryFileName = OperatingSystem.IsWindows() ? "SystemMemory.lib" : "libSystemMemory.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var llvmPath = Path.Combine(tempDirectory.FullName, "App.ll");
 
@@ -970,7 +970,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             var sourceResult = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(File.ReadAllText(modulePath), modulePath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     EmitLlvmIr: true,
                     ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -983,8 +982,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 sourceLlvm,
                 "define fastcc noundef %MemoryStatus @FillBytes(");
 
-            string[] copyAttributes = ["readonly nocapture", "noalias nocapture", "nounwind willreturn mustprogress", "alwaysinline"];
-            string[] fillAttributes = ["noalias nocapture", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] copyAttributes = ["readonly captures(none)", "noalias captures(none)", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] fillAttributes = ["noalias captures(none)", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
             AssertContainsAll(copyDeclaration, copyAttributes);
             AssertContainsAll(copyDefinition, copyAttributes);
             AssertContainsAll(fillDeclaration, fillAttributes);
@@ -1034,8 +1033,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory(tempPrefix);
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");

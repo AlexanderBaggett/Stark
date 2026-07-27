@@ -20,8 +20,7 @@ public sealed class SystemMathStandardLibraryTests
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-math-xorshift32-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -157,7 +156,6 @@ public sealed class SystemMathStandardLibraryTests
             new CompilerOptions(
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -192,6 +190,14 @@ public sealed class SystemMathStandardLibraryTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Equal(string.Empty, text);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 }

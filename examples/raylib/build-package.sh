@@ -18,18 +18,17 @@ mkdir -p "${raylib_dist}"
 if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
   if [[ ! -d "${RAYLIB_SRC_DIR}" ]]; then
     echo "RAYLIB_SRC_DIR must point to Raylib's src directory." >&2
-    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-5.5/src bash examples/breakout/run-raylib.sh" >&2
+    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash examples/breakout/run-raylib.sh" >&2
     exit 1
   fi
 
   if [[ ! -f "${RAYLIB_SRC_DIR}/raylib.h" ]]; then
     echo "RAYLIB_SRC_DIR does not look like a Raylib src directory because raylib.h was not found." >&2
-    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-5.5/src bash examples/breakout/run-raylib.sh" >&2
+    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash examples/breakout/run-raylib.sh" >&2
     exit 1
   fi
 
   native_args=(
-    --native-source "${script_dir}/RaylibNative.c"
     --native-include-dir "${RAYLIB_SRC_DIR}"
     --native-library-dir "${RAYLIB_SRC_DIR}"
     --native-library raylib
@@ -48,7 +47,7 @@ else
   if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists raylib; then
     echo "Raylib is not visible to pkg-config on this machine." >&2
     echo "Either install raylib.pc and set PKG_CONFIG_PATH, or point RAYLIB_SRC_DIR at a local Raylib src directory." >&2
-    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-5.5/src bash examples/breakout/run-raylib.sh" >&2
+    echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash examples/breakout/run-raylib.sh" >&2
     exit 1
   fi
 
@@ -59,8 +58,7 @@ fi
   --emit-lib \
   -I "${script_dir}" \
   -o "${raylib_dist}/libRaylibStark.a" \
-  "${native_args[@]}" \
-  -O0
+  "${native_args[@]}"
 
 echo "Built ${raylib_dist}/libRaylibStark.a"
-echo "Built ${raylib_dist}/libRaylibStark.starkpkg.json"
+echo "Built ${raylib_dist}/libRaylibStark.starkpkg"

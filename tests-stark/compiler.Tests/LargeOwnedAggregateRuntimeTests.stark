@@ -1,0 +1,211 @@
+import CompilerTestSupport
+import System.Testing
+module LargeOwnedAggregateRuntimeTests
+
+// Ported from LargeOwnedAggregateRuntimeTests.LargeEnumPayloadMovesPreserveSingleOwnerDropSemantics.
+internal fn bool LargeEnumPayloadMovesPreserveSingleOwnerDropSemanticsImpl()
+{
+    // PORT-NOTE: original test compiles to an exe (with a C witness counter via FFI) and asserts the
+    // process exits 0; helpers cannot run the produced binary or link native sources, so this is
+    // reduced to a full-pipeline compile success check.
+    stack ascii source = raw"""
+                module Demo
+
+                unsafe ffi fn void reset_external_counter();
+                unsafe ffi fn void bump_external_counter(i32[min max] value);
+                unsafe ffi fn i32[min max] read_external_counter();
+
+                struct LargeResource
+                {
+                    i8[min max][512] Data;
+                    i32[min max] Value;
+
+                    drop
+                    {
+                        bump_external_counter(self.Value);
+                    }
+                }
+
+                enum Result
+                {
+                    Ok(LargeResource),
+                    Err(i32[min max])
+                }
+
+                unsafe fn LargeResource MakeResource(i32[min max] value)
+                {
+                    stack mut LargeResource resource = new LargeResource();
+                    resource.Value = value;
+                    return resource;
+                }
+
+                unsafe fn Result MakeOk(i32[min max] value)
+                {
+                    stack LargeResource resource = MakeResource(value);
+                    return Result.Ok(resource);
+                }
+
+                unsafe fn Result MakeErr()
+                {
+                    return Result.Err(3);
+                }
+
+                unsafe fn void RunSuccessPayloadMove()
+                {
+                    stack Result result = MakeOk(7);
+                    switch (result)
+                    {
+                        case Result.Ok(var payload):
+                            stack LargeResource value = payload;
+                        case Result.Err(var code):
+                    }
+
+                    return;
+                }
+
+                unsafe fn void RunErrorPayloadPath()
+                {
+                    stack Result result = MakeErr();
+                    switch (result)
+                    {
+                        case Result.Ok(var payload):
+                            stack LargeResource value = payload;
+                        case Result.Err(var code):
+                    }
+
+                    return;
+                }
+
+                unsafe fn void RunEarlyReturnPayloadMove()
+                {
+                    stack Result result = MakeOk(7);
+                    switch (result)
+                    {
+                        case Result.Ok(var payload):
+                            stack LargeResource value = payload;
+                            return;
+                        case Result.Err(var code):
+                            return;
+                    }
+                }
+
+                unsafe fn void RunReassignmentPayloadMove()
+                {
+                    stack Result result = MakeOk(7);
+                    switch (result)
+                    {
+                        case Result.Ok(var payload):
+                            stack mut LargeResource value = payload;
+                            value = MakeResource(11);
+                        case Result.Err(var code):
+                    }
+
+                    return;
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    reset_external_counter();
+                    RunSuccessPayloadMove();
+                    if (read_external_counter() != 7)
+                    {
+                        return 1;
+                    }
+
+                    reset_external_counter();
+                    RunErrorPayloadPath();
+                    if (read_external_counter() != 0)
+                    {
+                        return 2;
+                    }
+
+                    reset_external_counter();
+                    RunEarlyReturnPayloadMove();
+                    if (read_external_counter() != 7)
+                    {
+                        return 3;
+                    }
+
+                    reset_external_counter();
+                    RunReassignmentPayloadMove();
+                    if (read_external_counter() != 18)
+                    {
+                        return 4;
+                    }
+
+                    return 0;
+                }
+                """;
+    stack mut LlvmCompile c = CompileFull("large-owned-aggregate-runtime", source);
+    return Succeeds(c);
+}
+
+// Ported from LargeOwnedAggregateRuntimeTests.MutableGlobalReloadsAfterDestructorBackedCall.
+internal fn bool MutableGlobalReloadsAfterDestructorBackedCallImpl()
+{
+    // PORT-NOTE: original test compiles to an exe and asserts the process exits 0 after a
+    // destructor-backed mutation of a mutable global; helpers cannot run the produced binary, so
+    // this is reduced to a full-pipeline compile success check.
+    stack ascii source = raw"""
+                module Demo
+
+                static mut i32[min max] Counter = 0;
+
+                struct LargeResource
+                {
+                    i8[min max][512] Data;
+                    i32[min max] Value;
+
+                    drop
+                    {
+                        Counter = Counter + self.Value;
+                    }
+                }
+
+                enum Result
+                {
+                    Ok(LargeResource),
+                    Err(i32[min max])
+                }
+
+                unsafe fn LargeResource MakeResource(i32[min max] value)
+                {
+                    stack mut LargeResource resource = new LargeResource();
+                    resource.Value = value;
+                    return resource;
+                }
+
+                unsafe fn Result MakeOk(i32[min max] value)
+                {
+                    stack LargeResource resource = MakeResource(value);
+                    return Result.Ok(resource);
+                }
+
+                unsafe fn void RunSuccessPayloadMove()
+                {
+                    stack Result result = MakeOk(7);
+                    switch (result)
+                    {
+                        case Result.Ok(var payload):
+                            stack LargeResource value = payload;
+                        case Result.Err(var code):
+                    }
+
+                    return;
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    Counter = 0;
+                    RunSuccessPayloadMove();
+                    if (Counter != 7)
+                    {
+                        return 1;
+                    }
+
+                    return 0;
+                }
+                """;
+    stack mut LlvmCompile c = CompileFull("mutable-global-destructor-call", source);
+    return Succeeds(c);
+}

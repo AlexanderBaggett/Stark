@@ -31,6 +31,104 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositions()
+    {
+        // Regression: the assignment-target place resolvers used to treat the
+        // start/count bracket over a dynamic of raw pointers as two chained
+        // single-index steps ((argv[0])[count]), emitting a pointee-typed load
+        // that was then stored as the slice pair.
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] CountEntries(borrow rawptr<i8[min max]>[] entries)
+            {
+                return entries.Length;
+            }
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut dynamic rawptr<i8[min max]> pointers = new();
+                if (!pointers.TryReserve(2))
+                {
+                    return 1;
+                }
+
+                stack mut i8[min max] storage = 7;
+                init pointers[pointers.Length] = &storage;
+                init pointers[pointers.Length] = null;
+
+                stack rawptr<i8[min max]>[] view = pointers[0, pointers.Length];
+                if (view.Length != 2)
+                {
+                    return 2;
+                }
+
+                if (CountEntries(pointers[0, pointers.Length]) != 2)
+                {
+                    return 3;
+                }
+
+                if (*(view[0]) != 7)
+                {
+                    return 4;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // Both slice uses (local binding and direct call argument) must build the
+        // { ptr, i64 } pair from the element address and the count.
+        Assert.Equal(2, Regex.Matches(llvm, @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr ").Count);
+        // The broken chained form loaded a pointee byte and stored it as the pair.
+        Assert.DoesNotMatch(new Regex(@"%(\w+) = load i8[^\n]*\n\s*store \{ ptr, i64 \} %\1[,\s]"), llvm);
+    }
+
+    [Fact]
+    public void DynamicRawPointerStorageSliceReassignmentLowersToSlicePair()
+    {
+        // Same regression family for plain reassignment of an existing slice
+        // local from a start/count access over a dynamic of raw pointers.
+        var result = Compile(
+            """
+            module Demo
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut dynamic rawptr<i8[min max]> pointers = new();
+                if (!pointers.TryReserve(1))
+                {
+                    return 1;
+                }
+
+                init pointers[pointers.Length] = null;
+                stack mut rawptr<i8[min max]>[] view = pointers[0, 0];
+                view = pointers[0, pointers.Length];
+                if (view.Length != 1)
+                {
+                    return 2;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // The dead initial slice store may be eliminated; the live reassignment
+        // must still build the pair.
+        Assert.True(
+            Regex.Matches(llvm, @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr ").Count >= 1,
+            "Expected the dynamic start/count reassignment to lower to a slice-pair construction.");
+        Assert.DoesNotMatch(new Regex(@"%(\w+) = load i8[^\n]*\n\s*store \{ ptr, i64 \} %\1[,\s]"), llvm);
+    }
+
+    [Fact]
     public void FunctionPointerCallsEmitFastccIndirectCall()
     {
         var result = Compile(
@@ -39,21 +137,115 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
             {
-                return left + right;
+                stack i32[min max] a = left + (right / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
             {
-                stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
+                stack fnptr<unsafe fn i32[min max](i32[min max], i32[min max])> op = Add;
                 return op(40, 2);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("call fastcc i32 @Add(", llvm);
+    }
+
+    [Fact]
+    public void RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Pfn = fnptr<unsafe ffi(c) fn i32[min max](i32[min max])>;
+
+            unsafe fn i32[min max] Apply(rawptr<i8[min max]> pointer, i32[min max] value)
+            {
+                unsafe
+                {
+                    stack Pfn callback = (Pfn)pointer;
+                    return callback(value);
+                }
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var body = ExtractDefinitionBody(llvm, "Apply");
+
+        Assert.Contains("call i32 %arg_pointer(i32 %arg_value)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ptrtoint", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("inttoptr", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("bitcast", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Dog : Speaker
+            {
+                i32[min max] Volume;
+
+                finite law i32[min max] Speak(borrow Dog self)
+                {
+                    return self.Volume;
+                }
+            }
+
+            export fn i32[min max] Announce(borrow dyn Speaker speaker)
+            {
+                return speaker.Speak();
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Dog d = new Dog() { Volume = 7 };
+                stack borrow dyn Speaker s = d;
+                return Announce(s);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var announceBody = ExtractDefinitionBody(llvm, "Announce");
+
+        // The vtable global, the slot load (SsaDynVTableSlotRValue -> getelementptr+load),
+        // and the indirect call carrying the trait method's law/finite attributes. The
+        // dyn object crosses an export boundary so the closed-world devirtualizer
+        // cannot collapse the dispatch to a direct call.
+        Assert.Contains("@__stark_vtable_Dog__Speaker", llvm, StringComparison.Ordinal);
+        Assert.Contains("getelementptr ptr,", announceBody, StringComparison.Ordinal);
+        Assert.Contains("load ptr,", announceBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", announceBody, StringComparison.Ordinal);
+        Assert.Contains("nosync nofree", announceBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -63,64 +255,47 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32[min max] Run()
+            export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
             {
-                stack closure<finite law i32[min max](i32[min max])> op =
-                    (i32[min max] value) => value + 1;
-
-                return op(41);
-            }
-            """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var runBody = ExtractDefinitionBody(llvm, "Run");
-
-        Assert.Contains("{ ptr @Run___lambda_", llvm, StringComparison.Ordinal);
-        Assert.Contains("ptr null", llvm, StringComparison.Ordinal);
-        Assert.Contains("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
-        Assert.Contains("willreturn", runBody, StringComparison.Ordinal);
-        Assert.Contains("mustprogress", runBody, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void FunctionItemClosurePromotionEmitsEmptyEnvironmentAdapterAtO0()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            fn i32[min max] AddOne(i32[min max] value)
-            {
-                return value + 1;
-            }
-
-            fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
-            {
-                return op(value);
+                stack i32[min max] r = op(41);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             fn i32[min max] Run()
             {
-                return Apply(AddOne, 41);
+                stack closure<finite law i32[min max](i32[min max])> op =
+                    (i32[min max] value) => value + 1;
+
+                return Apply(op);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
-        var runBody = ExtractDefinitionBody(llvm, "Run");
-        var adapterBody = Regex.Match(
-            llvm,
-            @"define [^{]+@Run___closure_adapter_\d+_\d+\([^)]*\)[\s\S]*?^}",
-            RegexOptions.Multiline).Value;
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
 
-        Assert.Contains("store { ptr, ptr } { ptr @Run___closure_adapter_", runBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @Apply(", runBody, StringComparison.Ordinal);
-        Assert.Contains("tail call fastcc i32 @AddOne(", adapterBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("missing-function-body", llvm, StringComparison.Ordinal);
+        // The closure crosses an export boundary so the devirtualizer cannot
+        // collapse the invoke-pointer call to a direct lambda call.
+        Assert.Contains("{ ptr @Run___lambda_", llvm, StringComparison.Ordinal);
+        Assert.Contains("ptr null", llvm, StringComparison.Ordinal);
+        Assert.Contains("extractvalue { ptr, ptr }", applyBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", applyBody, StringComparison.Ordinal);
+        Assert.Contains("willreturn", applyBody, StringComparison.Ordinal);
+        Assert.Contains("mustprogress", applyBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -145,7 +320,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(AddOne, 41);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -165,20 +340,40 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32[min max] Run()
+            export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
+            {
+                stack i32[min max] r = op(35);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
+            }
+
+            fn i32[min max] Run()
             {
                 stack i32[min max] offset = 7;
                 stack closure<finite law i32[min max](i32[min max])> op =
                     capture(copy offset) (i32[min max] value) => value + offset;
 
-                return op(35);
+                return Apply(op);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var runBody = ExtractDefinitionBody(llvm, "Run");
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
         var lambdaBody = Regex.Match(
             llvm,
             @"define [^{]+@Run___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
@@ -189,7 +384,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("ptr null", runBody, StringComparison.Ordinal);
         Assert.Contains("getelementptr", lambdaBody, StringComparison.Ordinal);
         Assert.Contains("load i32", lambdaBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", applyBody, StringComparison.Ordinal);
 
         var lambdaHeader = Regex.Match(lambdaBody, @"define[^\n]+").Value;
         Assert.Contains("nonnull", lambdaHeader, StringComparison.Ordinal);
@@ -197,7 +392,238 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("align 4", lambdaHeader, StringComparison.Ordinal);
         Assert.Contains("noalias", lambdaHeader, StringComparison.Ordinal);
         Assert.Contains("readonly", lambdaHeader, StringComparison.Ordinal);
-        Assert.Contains("nocapture", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("captures(none)", lambdaHeader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AggregateAccessorScanLoopDoesNotFoldToMissedMatch()
+    {
+        // Mirror of the selfhost owner-scan shape: a column-backed table, a
+        // by-value accessor copying guarded dynamic reads into a loop-local
+        // aggregate, and a field-compare scan with an early return. The
+        // matching row exists, so a correct pipeline either keeps the loop or
+        // folds Run to `ret i64 1`; folding to `ret i64 0` (scan never
+        // matches) is the wrong-code this pins — observed as the selfhost
+        // enum-owner lookup failing unless IO calls sat in the loop body.
+        var result = Compile(
+            """
+            module Demo
+
+            struct Item
+            {
+                u8[0 max] Kind;
+                u32[0 max] Name;
+                u64[0 max] Start;
+                u64[0 max] End;
+                u64[0 max] Extra;
+
+                Item()
+                {
+                    self.Kind = 0;
+                    self.Name = 0;
+                    self.Start = 0;
+                    self.End = 0;
+                    self.Extra = 0;
+                }
+            }
+
+            struct Table
+            {
+                dynamic u8[0 max] Kinds;
+                dynamic u32[0 max] Names;
+
+                Table()
+                {
+                    self.Kinds = new();
+                    self.Names = new();
+                }
+
+                fn bool Push(mut borrow Table self, u8[0 max] kind, u32[0 max] name)
+                {
+                    if (!self.Kinds.TryReserve(1) || !self.Names.TryReserve(1))
+                    {
+                        return false;
+                    }
+
+                    init self.Kinds[self.Kinds.Length] = kind;
+                    init self.Names[self.Names.Length] = name;
+                    return true;
+                }
+
+                finite law u64[0 2 ** 63 - 1] Count(borrow Table self)
+                {
+                    return self.Kinds.Length;
+                }
+
+                finite law Item ItemAt(borrow Table self, u64[0 2 ** 63 - 1] index)
+                {
+                    stack mut Item item = new();
+                    if (index >= self.Kinds.Length)
+                    {
+                        return item;
+                    }
+
+                    if (index >= self.Names.Length)
+                    {
+                        return item;
+                    }
+
+                    item.Kind = self.Kinds[index];
+                    item.Name = self.Names[index];
+                    return item;
+                }
+            }
+
+            finite bool Scan(borrow u8[0 max][] tags, borrow Table table, u32[0 max] want, out u32[0 max] foundIndex, out Item found)
+            {
+                foundIndex = 0;
+                found = new();
+                stack u64[0 2 ** 63 - 1] count = table.Count();
+                stack mut u64[0 2 ** 63 - 1] index = 0;
+                while willexit (index < count)
+                {
+                    stack Item item = table.ItemAt(index);
+                    if (item.Kind == 1 && item.Name == want)
+                    {
+                        foundIndex = (u32[0 max])index;
+                        found = item;
+                        return true;
+                    }
+
+                    index = index + 1;
+                }
+
+                return false;
+            }
+
+            fn i64[min max] Run()
+            {
+                stack mut Table table = new Table();
+                if (!table.Push(2, 7) || !table.Push(1, 9))
+                {
+                    return -1;
+                }
+
+                stack u8[0 max][2] tags = { 1, 2 };
+                stack mut u32[0 max] foundIndex = 0;
+                stack mut Item found = new();
+                if (!Scan(tags, table, 9, foundIndex, found))
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // The producing sret call must be allowed to write its own result
+        // slot: the fresh scope claimed by the slot reload's !alias.scope may
+        // not appear in the call's !noalias set, or LLVM proves the reload
+        // independent of the call and forwards stale pre-call bytes.
+        var scanBody = ExtractDefinitionBody(llvm, "Scan");
+        var sretCall = Regex.Match(scanBody, @"call .*sret\(%Item\).*!noalias !(\d+)");
+        Assert.True(sretCall.Success, "expected a scoped sret call to ItemAt inside Scan");
+        var callNoAliasId = sretCall.Groups[1].Value;
+        var freshScopeNode = Regex.Match(llvm, @"!(\d+) = distinct !\{![0-9]+, ![0-9]+, !""[^""]*\.fresh\.[^""]*""\}");
+        Assert.True(freshScopeNode.Success, "expected a fresh-result noalias scope node");
+        var freshId = freshScopeNode.Groups[1].Value;
+        var callNoAliasList = Regex.Match(llvm, $@"^!{callNoAliasId} = !\{{([^}}]*)\}}", RegexOptions.Multiline);
+        Assert.True(callNoAliasList.Success, "expected the call's noalias metadata list");
+        Assert.DoesNotContain($"!{freshId}", callNoAliasList.Groups[1].Value.Split(',').Select(static part => part.Trim()));
+    }
+
+    [Fact]
+    public void ZeroSizedBorrowReceiverOmitsDereferenceableAttribute()
+    {
+        // LLVM rejects `dereferenceable(0)` at module parse. A zero-sized
+        // move-only marker struct (empty body + empty drop) is the legal
+        // source shape that produces a zero-extent borrow receiver; the
+        // attribute must be omitted, never rendered with a zero byte count.
+        // (Regression: the selfhost.Ir dependency build emitted 460
+        // dereferenceable(0) receiver attributes on monomorphized generic
+        // receivers whose instantiated layout resolved to size zero,
+        // 2026-07-07.)
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token
+            {
+                drop
+                {
+                }
+            }
+
+            fn i64[min max] Observe(borrow Token token)
+            {
+                return 5;
+            }
+
+            fn i64[min max] Run()
+            {
+                stack Token token = new Token();
+                return Observe(token);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        Assert.DoesNotContain("dereferenceable(0)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadCapturingClosureIndirectCallEmitsReadProvenanceCapture()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            export finite law i32[min max] Apply(closure<finite law i32[min max]()> op)
+            {
+                stack i32[min max] r = op();
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                return d;
+            }
+
+            finite law i32[min max] Run()
+            {
+                stack Box box = new Box()
+                {
+                    Value = 42
+                };
+                stack closure<finite law i32[min max]()> op =
+                    capture(read box) () => box.Value;
+
+                return Apply(op);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
+        var indirectCall = Regex.Match(
+            applyBody,
+            @"call fastcc i32 %[^(]+\([^\n]*\)[^\n]*",
+            RegexOptions.CultureInvariant);
+
+        Assert.True(indirectCall.Success, applyBody);
+        Assert.Contains("ptr readonly captures(address, read_provenance)", indirectCall.Value, StringComparison.Ordinal);
+        Assert.DoesNotContain("captures(none)", indirectCall.Value, StringComparison.Ordinal);
+        Assert.Contains("memory(argmem: read)", indirectCall.Value, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -221,7 +647,7 @@ public sealed class LlvmIrEmissionTests
                 return total;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -253,7 +679,7 @@ public sealed class LlvmIrEmissionTests
                 return add(35);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -294,7 +720,7 @@ public sealed class LlvmIrEmissionTests
                 return op();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -334,7 +760,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(producer);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -379,7 +805,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(producer);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -416,7 +842,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -462,7 +888,7 @@ public sealed class LlvmIrEmissionTests
                 return ui.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -503,7 +929,7 @@ public sealed class LlvmIrEmissionTests
                 return Outer(capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -541,7 +967,7 @@ public sealed class LlvmIrEmissionTests
                 return ApplyIf(enabled, capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -580,7 +1006,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -610,7 +1036,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(capture(copy seed) () => seed + 1);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -635,7 +1061,7 @@ public sealed class LlvmIrEmissionTests
                 return f(x);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -673,7 +1099,7 @@ public sealed class LlvmIrEmissionTests
                 return f(x);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -713,7 +1139,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -749,7 +1175,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -783,7 +1209,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -822,7 +1248,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -852,7 +1278,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -881,7 +1307,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -908,7 +1334,7 @@ public sealed class LlvmIrEmissionTests
                 return f(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -933,7 +1359,7 @@ public sealed class LlvmIrEmissionTests
                 return f(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(outResult.Succeeded, string.Join(", ", outResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var outCall = ExtractFirstIndirectCall(GetLlvmRaw(outResult), "Apply", "f");
@@ -952,7 +1378,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(initResult.Succeeded, string.Join(", ", initResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var initCall = ExtractFirstIndirectCall(GetLlvmRaw(initResult), "Apply", "f");
@@ -977,7 +1403,7 @@ public sealed class LlvmIrEmissionTests
                 return f(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(aggregateResult.Succeeded, string.Join(", ", aggregateResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var aggregateCall = ExtractFirstIndirectCall(GetLlvmRaw(aggregateResult), "Apply", "f");
@@ -1008,7 +1434,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Value;
             }
 
-            unsafe fn i32[min max] Apply(fnptr<fn i32[min max](borrow Box)> op, borrow Box box)
+            unsafe fn i32[min max] Apply(fnptr<unsafe fn i32[min max](borrow Box)> op, borrow Box box)
             {
                 return op(box);
             }
@@ -1022,7 +1448,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(Read, box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1032,7 +1458,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i32 %arg_op\(ptr nonnull noalias readonly captures\(address, read_provenance\) dereferenceable\(4\) align 4 %v\d+\)",
+            @"call fastcc i32 %arg_op\(ptr nonnull noalias readonly captures\(address, read_provenance\) dereferenceable\(4\) align 4 %arg_box\)",
             applyBody);
     }
 
@@ -1060,7 +1486,7 @@ public sealed class LlvmIrEmissionTests
                 return callback();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1100,7 +1526,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1110,8 +1536,93 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i1 %arg_op\(ptr nonnull noalias writeonly captures\(address, provenance\) dereferenceable\(4\) align 4 %v\d+\)",
+            @"call fastcc i1 %arg_op\(ptr nonnull noalias writeonly dereferenceable\(4\) writable initializes\(\(0, 4\)\) captures\(address, provenance\) align 4 %arg_value\)",
             applyBody);
+    }
+
+    [Fact]
+    public void OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturn()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Write(out u32[0 max] value)
+            {
+                value = 7;
+                return true;
+            }
+
+            unsafe fn bool Apply(fnptr<fn bool(out u32[0 max])> op, out u32[0 max] value)
+            {
+                return op(value);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var writeHeader = ExtractDefinitionHeader(llvm, "Write");
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
+
+        Assert.Contains("writeonly", writeHeader, StringComparison.Ordinal);
+        Assert.Contains("writable", writeHeader, StringComparison.Ordinal);
+        Assert.Contains("initializes((0, 4))", writeHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("dead_on_return", writeHeader, StringComparison.Ordinal);
+        Assert.Contains("writeonly dereferenceable(4) writable initializes((0, 4))", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dead_on_return", applyBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExplicitDeadOnReturnDestinationParametersEmitLlvmAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+            {
+                value = 7;
+                return true;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "WriteAndConsume");
+
+        Assert.Contains("writeonly", header, StringComparison.Ordinal);
+        Assert.Contains("writable", header, StringComparison.Ordinal);
+        Assert.Contains("initializes((0, 4))", header, StringComparison.Ordinal);
+        Assert.Contains("dead_on_return", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FunctionPointerDeadOnReturnContractsEmitCallSiteAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Apply(
+                fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op,
+                out u32[0 max] value)
+                where dead_on_return(value)
+            {
+                return op(value);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var applyHeader = ExtractDefinitionHeader(llvm, "Apply");
+        var indirectCall = ExtractFirstIndirectCall(llvm, "Apply", "op");
+
+        Assert.Contains("dead_on_return", applyHeader, StringComparison.Ordinal);
+        Assert.Contains("dead_on_return", indirectCall, StringComparison.Ordinal);
+        Assert.Contains("writable initializes((0, 4))", indirectCall, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1128,7 +1639,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
 
-            unsafe fn void Apply(fnptr<fn void(init u32[0 max][])> op, init u32[0 max][] destination)
+            unsafe fn void Apply(fnptr<unsafe fn void(init u32[0 max][])> op, init u32[0 max][] destination)
             {
                 op(destination);
                 return;
@@ -1142,7 +1653,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1152,7 +1663,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc void %arg_op\(ptr nonnull noalias captures\(address, provenance\) dereferenceable\(16\) align 8 %v\d+\)",
+            @"call fastcc void %arg_op\(ptr nonnull noalias captures\(address, provenance\) dereferenceable\(16\) align 8 %arg_destination\)",
             applyBody);
     }
 
@@ -1170,7 +1681,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 {
@@ -1186,7 +1697,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1213,7 +1724,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 where overlap(left, right)
@@ -1228,7 +1739,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1255,7 +1766,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 where same(left, right)
@@ -1270,7 +1781,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1301,7 +1812,7 @@ public sealed class LlvmIrEmissionTests
                 return value.A + value.B + value.C;
             }
 
-            unsafe fn i64[min max] Apply(fnptr<fn i64[min max](Big)> op, Big value)
+            unsafe fn i64[min max] Apply(fnptr<unsafe fn i64[min max](Big)> op, Big value)
             {
                 return op(value);
             }
@@ -1315,7 +1826,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(Sum, value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1349,7 +1860,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            unsafe fn Big Apply(fnptr<fn Big(i64[min max])> op, i64[min max] seed)
+            unsafe fn Big Apply(fnptr<unsafe fn Big(i64[min max])> op, i64[min max] seed)
             {
                 return op(seed);
             }
@@ -1360,7 +1871,7 @@ public sealed class LlvmIrEmissionTests
                 return value.C;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1380,20 +1891,33 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn void Touch(out u32[0 max] value)
+            fn void Touch(out i32[min max] value, i32[min max] seed)
             {
-                value = 42;
+                value = seed;
+                value = value + (value / 3);
+                value = value - (value / 5);
+                value = value + (value / 7);
+                value = value - (value / 11);
+                value = value + (value / 13);
+                value = value - (value / 17);
+                value = value + (value / 19);
+                value = value - (value / 23);
+                value = value + (value / 29);
+                value = value - (value / 31);
+                value = value + (value / 37);
+                value = value - (value / 41);
+                value = value + (value / 43);
                 return;
             }
 
-            unsafe fn u32[0 max] Run()
+            unsafe fn i32[min max] Run(i32[min max] seed)
             {
-                stack mut u32[0 max] value = 0;
-                Touch(value);
+                stack mut i32[min max] value = 0;
+                Touch(value, seed);
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1422,7 +1946,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.D;
+                stack i64[min max] a = value.A + (value.D / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Run()
@@ -1434,7 +1971,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1445,7 +1982,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("memory(none)", runHeader);
         Assert.DoesNotContain("memory(readwrite", runHeader);
         Assert.Contains("define fastcc noundef i64 @Read(ptr noundef nonnull byval(%Big)", llvm);
-        Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly nocapture dereferenceable\(32\) align 8 %abi_callarg_value_\d+\)", runBody);
+        Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly captures\(none\) dereferenceable\(32\) align 8 %abi_callarg_value_\d+\)", runBody);
         Assert.DoesNotContain("%slot_value", runBody);
         Assert.DoesNotContain("load %Big", runBody);
         Assert.DoesNotContain("store %Big", runBody);
@@ -1468,7 +2005,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.D;
+                stack i64[min max] a = value.A + (value.D / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Forward(Big value)
@@ -1476,7 +2026,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1487,7 +2037,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc noundef i64 @Forward(ptr noundef nonnull byval(%Big)", llvm);
         Assert.Contains("memory(argmem: read)", forwardHeader);
         Assert.DoesNotContain("memory(readwrite", forwardHeader);
-        Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly nocapture dereferenceable\(32\) align 8 %arg_value\)", forwardBody);
+        Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly captures\(none\) dereferenceable\(32\) align 8 %arg_value\)", forwardBody);
         Assert.DoesNotContain("%abi_callarg_value", forwardBody);
         Assert.DoesNotContain("load %Big", forwardBody);
     }
@@ -1506,7 +2056,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1527,6 +2077,64 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void PositiveDynamicStorageAllocationElidesZeroAndOverflowBranches()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run()
+            {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var runBody = ExtractDefinitionBody(GetLlvmRaw(result), "Run");
+
+        Assert.Contains("@__stark_runtime_alloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_is_zero", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_overflow", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_dynamic_alloc", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run()
+            {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(arena, 4);
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame", runBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue { ptr, i64, i64 }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_is_zero", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_overflow", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_dynamic_alloc", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_arena_dynamic_alloc", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_free_ptr", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DynamicStorageDropEmitsElementDestructorLoopBeforeFree()
     {
         var result = Compile(
@@ -1537,7 +2145,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn void Bump(i32[min max] value)
             {
-                Counter = Counter + value;
+                stack i32[min max] a = value + (value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                Counter = Counter + m;
                 return;
             }
 
@@ -1565,7 +2186,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1595,14 +2216,14 @@ public sealed class LlvmIrEmissionTests
                 return values[1];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
 
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
-        Assert.True(Regex.Matches(runBody, @"store i64 %v\d+, ptr %v\d+, align 8").Count >= 2, runBody);
+        Assert.True(Regex.Matches(runBody, @"store i64 (?:%v\d+|\d+), ptr %v\d+, align 8").Count >= 2, runBody);
         Assert.Matches(@"load i64, ptr %v\d+, align 8", runBody);
     }
 
@@ -1620,7 +2241,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1647,7 +2268,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1672,7 +2293,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1701,7 +2322,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1740,7 +2361,7 @@ public sealed class LlvmIrEmissionTests
                 return 3;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1771,7 +2392,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1790,6 +2411,183 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocate()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                values.Reserve(8);
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 8 ptr @__stark_arena_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageTryReserveEmitsFallibleGrowCopy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                if (!values.TryReserve(8))
+                {
+                    return 0;
+                }
+
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_try_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias noundef ptr @__stark_arena_try_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("phi i1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                if (!values.TryReserveCapacity(8))
+                {
+                    return 0;
+                }
+
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_try_reserve_capacity_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias noundef ptr @__stark_arena_try_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("phi i1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve_minimum", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve_new_capacity", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            unsafe fn void Bump(i32[min max] value)
+            {
+                stack i32[min max] a = value + (value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                Counter = Counter + m;
+                return;
+            }
+
+            struct Token
+            {
+                i32[min max] Value;
+
+                drop
+                {
+                    Bump(self.Value);
+                }
+            }
+
+            unsafe fn void Run()
+            {
+                stack mut dynamic Token values = new(arena, 1);
+                init values[0] = new Token()
+                {
+                    Value = 1
+                };
+                values.Reserve(4);
+                init values[1] = new Token()
+                {
+                    Value = 2
+                };
+                return;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 ptr @__stark_arena_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 4", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc void @Bump", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.True(
+            runBody.IndexOf("call fastcc void @Bump", StringComparison.Ordinal)
+            < runBody.IndexOf("@__stark_arena_leave", StringComparison.Ordinal),
+            runBody);
+        Assert.DoesNotContain("dynamic_free_ptr", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DynamicStorageInitSliceWritesCommitOwnerLength()
     {
         var result = Compile(
@@ -1805,7 +2603,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1832,7 +2630,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1864,16 +2662,19 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var fillHeader = ExtractDefinitionHeader(llvm, "Fill");
 
         Assert.Contains(
-            "ptr noundef nonnull noalias nocapture dereferenceable(16) align 8 %arg_dest",
+            "ptr noundef nonnull noalias captures(none) dereferenceable(16) align 8 %arg_dest",
             fillHeader);
         Assert.DoesNotContain("writeonly", fillHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("writable", fillHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("initializes(", fillHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("dead_on_return", fillHeader, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1889,7 +2690,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1906,16 +2707,21 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[min max] Run()
+            unsafe fn i64[min max] Run(bool drain)
             {
                 stack mut dynamic i64[min max] values = new(2);
                 init values[0] = 10;
                 init values[1] = 20;
+                if (drain)
+                {
+                    stack i64[min max] a = values.MoveLast();
+                    stack i64[min max] b = values.MoveLast();
+                }
                 stack i64[min max] moved = values.MoveLast();
                 return moved + values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1943,7 +2749,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveLast();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1962,17 +2768,17 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[min max] Run()
+            unsafe fn i64[min max] Run(u8[0 5] index)
             {
                 stack mut dynamic i64[min max] values = new(3);
                 init values[0] = 10;
                 init values[1] = 20;
                 init values[2] = 30;
-                stack i64[min max] moved = values.MoveAt(0);
+                stack i64[min max] moved = values.MoveAt(index);
                 return moved + values[0] + values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2002,7 +2808,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveAt(0);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2038,7 +2844,7 @@ public sealed class LlvmIrEmissionTests
                 return moved.Len;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2077,7 +2883,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveLast();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2120,7 +2926,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveAt(0);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2157,13 +2963,13 @@ public sealed class LlvmIrEmissionTests
                 return true;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var popBody = Regex.Match(llvm, @"define fastcc[^{]+ @Pop\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
 
-        Assert.Contains("ptr noundef nonnull noalias writeonly nocapture dereferenceable(520) align 8 %arg_value", llvm);
+        Assert.Contains("ptr noundef nonnull noalias writeonly dereferenceable(520) writable initializes((0, 520)) captures(none) align 8 %arg_value", llvm);
         Assert.Matches(
             @"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 8 %arg_value, ptr align 8 %abi_dynamic_move_element_ptr_\d+, i64 520, i1 false\)",
             popBody);
@@ -2192,7 +2998,7 @@ public sealed class LlvmIrEmissionTests
                 return true;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2231,7 +3037,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2276,7 +3082,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2320,7 +3126,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2360,7 +3166,7 @@ public sealed class LlvmIrEmissionTests
                 return left >> right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2382,13 +3188,29 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run()
+            unsafe fn i32[min max] Run(i32[min max] seed)
             {
-                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
-                return increment(41);
+                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) =>
+                {
+                    stack i32[min max] a = value + (value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
+                };
+                return increment(seed);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2407,7 +3229,21 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
             {
-                return op(41);
+                stack i32[min max] r = op(41);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
@@ -2415,7 +3251,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply((i32[min max] value) => value + 1);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2484,7 +3320,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void DebugMetadataMarksOptimizedAndUnoptimizedBuildsAccurately()
+    public void DebugMetadataMarksBuildsAsOptimized()
     {
         var optimized = Compile(
             """
@@ -2495,22 +3331,11 @@ public sealed class LlvmIrEmissionTests
                 return 1;
             }
             """);
-        var debugFriendly = Compile(
-            """
-            module Demo
-
-            unsafe fn i32[min max] Run()
-            {
-                return 1;
-            }
-            """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(optimized.Succeeded);
-        Assert.True(debugFriendly.Succeeded);
 
         Assert.Contains("isOptimized: true", GetLlvm(optimized));
-        Assert.Contains("isOptimized: false", GetLlvm(debugFriendly));
+        Assert.DoesNotContain("isOptimized: false", GetLlvm(optimized));
     }
 
     [Fact]
@@ -2781,7 +3606,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2911,8 +3736,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -2920,6 +3744,35 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("declare i32 @printf(ptr readonly, ...)", llvm);
         Assert.Contains("call i32 (ptr, ...) @printf(", llvm);
         Assert.Contains("i32 %", llvm);
+    }
+
+    [Fact]
+    public void FfiVarargsPercentSAcceptsRawCCharPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi varargs unsafe fn i32[min max] printf(ascii format);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut System.C.c_char[6] name =
+                {
+                    83, 116, 97, 114, 107, 0
+                };
+
+                return printf("name=%s", &name[0]);
+            }
+            """,
+            new CompilerOptions(
+                EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare i32 @printf(ptr readonly, ...)", llvm);
+        Assert.Contains("call i32 (ptr, ...) @printf(", llvm);
     }
 
     [Fact]
@@ -2985,6 +3838,59 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("%Pair = type { i32, i32 }", llvm);
         Assert.Contains("@Origin = local_unnamed_addr constant %Pair { i32 1, i32 2 }", llvm);
         Assert.Contains("@Values = local_unnamed_addr constant [3 x i32] [i32 4, i32 7, i32 9]", llvm);
+    }
+
+    [Fact]
+    public void IntegralAndScientificFloatConstantsEmitValidHexFloatLiterals()
+    {
+        // Regression: f64/f32 constant emission used to render invalid LLVM
+        // IR — integral f64 constants used to print as bare integers
+        // (`double 1`, `double 10`) and >= 1e17 magnitudes as bare scientific
+        // notation (`double 1E+17`); LLVM rejects both ("integer constant must
+        // have integer type"). Both the global-initializer array path and the
+        // function-body scalar path now emit bit-exact hex floats (`double
+        // 0xH...`), which round-trip every value.
+        var result = Compile(
+            """
+            module Demo
+
+            const f64[23] Pow10 =
+            {
+                1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+                1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+            };
+
+            unsafe finite f64 ScalarScientific()
+            {
+                return 1e17;
+            }
+
+            unsafe finite f64 Run()
+            {
+                return Pow10[17] + ScalarScientific();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        // The array constant must render every element as a hex float, in
+        // particular the integral elements (1e0 = double 1) and the scientific
+        // ones (1e17 .. 1e22). 1e0 = 0x3FF0..., 1e1 = 0x4024..., 1e17 = 0x4376....
+        Assert.Contains(
+            "@Pow10 = local_unnamed_addr constant [23 x double] [double 0x3FF0000000000000, double 0x4024000000000000",
+            llvm);
+        Assert.Contains("double 0x4376345785D8A000", llvm); // 1e17 element
+        Assert.Contains("double 0x4480F0CF064DD592", llvm); // 1e22 element (largest)
+
+        // The scalar scientific return must also be a hex float, not `1E+17`.
+        Assert.Contains("ret double 0x4376345785D8A000", llvm);
+
+        // No bug-form float literal survives anywhere: a `double`/`float`
+        // constant operand that is a bare integer or bare scientific form.
+        Assert.False(
+            Regex.IsMatch(llvm, @"\b(?:double|float)\s+-?\d+(?:[eE][+-]?\d+)?(?=[\s,\]\)])"),
+            $"Emitted IR still contains an invalid bare-integer / scientific float literal:{Environment.NewLine}{llvm}");
     }
 
     [Fact]
@@ -3101,8 +4007,9 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("@Bits = local_unnamed_addr constant i8 7", llvm);
-        Assert.Contains("@Value = local_unnamed_addr constant double 3.5, align 4", llvm);
-        Assert.Contains("@FloatValue = local_unnamed_addr constant float 3.5, align 4", llvm);
+        // f64/f32 3.5 both emit as the bit-exact hex float 0x400C000000000000.
+        Assert.Contains("@Value = local_unnamed_addr constant double 0x400C000000000000, align 4", llvm);
+        Assert.Contains("@FloatValue = local_unnamed_addr constant float 0x400C000000000000, align 4", llvm);
         Assert.Contains("@Buffer = local_unnamed_addr constant ptr null, align 4", llvm);
         Assert.Contains("@Label = local_unnamed_addr constant %stark_ascii", llvm);
         Assert.Contains("i64 2 }, align 4", llvm);
@@ -3365,6 +4272,46 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void StaticGenericConstructorInitializersCanForwardAggregateArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter
+            {
+                i32[min max] Value;
+            }
+
+            struct Box<T>
+            {
+                T Value;
+
+                Box(T initial)
+                {
+                    self.Value = initial;
+                }
+            }
+
+            static mut Box<Counter> Current = new Box<Counter>(new Counter()
+            {
+                Value = 42
+            });
+
+            unsafe finite i32[min max] Run()
+            {
+                return Current.Value.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Counter = type { i32 }", llvm);
+        Assert.Contains("@Current = global %Box_Counter_ { %Counter { i32 42 } }", llvm);
+    }
+
+    [Fact]
     public void AggregateArrayFieldsEmitConcreteInitializers()
     {
         var result = Compile(
@@ -3448,13 +4395,14 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
 
         Assert.Matches(@"load %Box, ptr @Current, align 4, !invariant\.load !\d+", llvm);
-        Assert.Matches(@"load %Box, ptr @Frozen, align 4, !invariant\.load !\d+", llvm);
+        Assert.Contains("ret i32 7", ExtractDefinitionBody(llvm, "ReadConst"));
+        Assert.DoesNotContain("load %Box, ptr @Frozen", ExtractDefinitionBody(llvm, "ReadConst"));
         Assert.Matches(@"load i32, ptr %v\d+, align 4, !invariant\.load !\d+", llvm);
         Assert.DoesNotContain("load i32, ptr @Counter, !invariant.load", llvm);
     }
 
     [Fact]
-    public void OnceInitializedReadonlyStackStorageEmitsInvariantStartAndLoadMetadata()
+    public void OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -3488,15 +4436,17 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)", llvm);
+        Assert.Contains("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr captures(none))", llvm);
         Assert.Matches(@"call ptr @llvm\.invariant\.start\.p0\(i64 4, ptr %slot_value\)", llvm);
-        Assert.Matches(@"load i32, ptr %v\d+, align 4, !invariant\.load !\d+", llvm);
-        Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)", llvm);
+        Assert.DoesNotContain("!invariant.load", llvm, StringComparison.Ordinal);
+        // The escaped slot is immutable and only escapes through a read-only raw
+        // pointer, so the optimizer can prove it invariant as well.
+        Assert.Contains("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)", llvm);
         Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_mutable)", llvm);
 
         var mutableDefinitionIndex = llvm.IndexOf("define fastcc noundef i32 @ReadMutable", StringComparison.Ordinal);
@@ -3532,13 +4482,13 @@ public sealed class LlvmIrEmissionTests
                 return value.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var readBody = ExtractDefinitionBody(llvm, "Read");
 
-        Assert.Contains("call fastcc void @Box_Clear(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %slot__tmp1_drop)", readBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc void @Box_Clear(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %slot__tmp1_drop)", readBody, StringComparison.Ordinal);
         Assert.DoesNotContain("llvm.invariant.start.p0(i64 4, ptr %slot__tmp1_drop)", readBody, StringComparison.Ordinal);
         Assert.DoesNotContain("!invariant.load", readBody, StringComparison.Ordinal);
     }
@@ -3673,7 +4623,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3707,7 +4657,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&buffer.Values[2]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3732,7 +4682,7 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(rawPointerResult.Succeeded, string.Join(Environment.NewLine, rawPointerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var rawPointerLlvm = GetLlvmRaw(rawPointerResult);
@@ -3752,12 +4702,12 @@ public sealed class LlvmIrEmissionTests
                 return *readonlyPtr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(rawCastResult.Succeeded, string.Join(Environment.NewLine, rawCastResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var rawCastLlvm = GetLlvmRaw(rawCastResult);
 
-        Assert.Contains("getelementptr inbounds nuw i8, ptr %slot_value, i32 0", rawCastLlvm);
+        Assert.Contains("load i8, ptr %slot_value", rawCastLlvm);
         Assert.DoesNotContain("ptrtoint", rawCastLlvm);
         Assert.DoesNotContain("inttoptr", rawCastLlvm);
         Assert.DoesNotContain("!tbaa", rawCastLlvm);
@@ -3778,7 +4728,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(escapedResult.Succeeded, string.Join(Environment.NewLine, escapedResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var escapedLlvm = GetLlvmRaw(escapedResult);
@@ -3805,7 +4755,7 @@ public sealed class LlvmIrEmissionTests
                 return right.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3836,7 +4786,7 @@ public sealed class LlvmIrEmissionTests
                 return *other;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3876,7 +4826,7 @@ public sealed class LlvmIrEmissionTests
                     return view[0].Value + backing[0].Value + other[0].Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3906,13 +4856,17 @@ public sealed class LlvmIrEmissionTests
                 return left[0] + right[0];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("!\"stark.noalias.Run.dynamic.left\"", llvm);
         Assert.Contains("!\"stark.noalias.Run.dynamic.right\"", llvm);
+        Assert.Contains("\"separate_storage\"", llvm, StringComparison.Ordinal);
+        Assert.Matches(
+            @"call void @llvm\.assume\(i1 true\) \[""separate_storage""\(ptr %[^,]+, ptr %[^)]+\)\]",
+            llvm);
         Assert.Matches(@"store i64 .* ptr %v\d+, align 8, !alias\.scope !\d+, !noalias !\d+", llvm);
         Assert.Matches(@"load i64, ptr %v\d+, align 8, !range !\d+, !alias\.scope !\d+, !noalias !\d+", llvm);
     }
@@ -3930,7 +4884,7 @@ public sealed class LlvmIrEmissionTests
                     return *left + *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3938,6 +4892,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("!alias.scope", llvm);
         Assert.DoesNotContain("!noalias", llvm);
         Assert.DoesNotContain("!\"stark.noalias", llvm);
+        Assert.DoesNotContain("\"separate_storage\"", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3953,7 +4908,7 @@ public sealed class LlvmIrEmissionTests
                     return left[0] + right[0];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3980,7 +4935,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4005,7 +4960,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4101,7 +5056,7 @@ public sealed class LlvmIrEmissionTests
                 return ~value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4676,7 +5631,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc float @Run()", llvm);
-        Assert.Contains("ret float 8", llvm);
+        // 2.0 ** 3.0 folds to 8.0; f32 8.0 emits as a bit-exact hex float.
+        Assert.Contains("ret float 0x4020000000000000", llvm);
         Assert.DoesNotContain("@llvm.pow.f32", llvm);
     }
 
@@ -4727,7 +5683,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void FloatLiteralArgumentsEmitLlvmDecimalConstants()
+    public void FloatLiteralArgumentsEmitValidHexFloatConstants()
     {
         var result = Compile(
             """
@@ -4757,13 +5713,17 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("call fast fastcc double @Echo(double 0.0)", llvm);
+        // f64 0.0 and 3.0 emit as bit-exact hex floats (0.0 = all-zero bits,
+        // 3.0 = 0x4008...). The old bare-integer form (`double 0`, `double 3`)
+        // is invalid LLVM IR.
+        Assert.Contains("call fast fastcc double @Echo(double 0x0000000000000000)", llvm);
         Assert.Contains("fcmp fast one double %", llvm);
-        Assert.Contains(", 0.0", llvm);
-        Assert.Contains("call fast fastcc double @Echo(double 3.0)", llvm);
-        Assert.Contains(", 3.0", llvm);
+        Assert.Contains(", 0x0000000000000000", llvm);
+        Assert.Contains("call fast fastcc double @Echo(double 0x4008000000000000)", llvm);
+        Assert.Contains(", 0x4008000000000000", llvm);
         Assert.DoesNotContain("call fast fastcc double @Echo(double 0)", llvm);
         Assert.DoesNotContain("call fast fastcc double @Echo(double 3)", llvm);
+        Assert.DoesNotContain("double 3.0", llvm);
     }
 
     [Fact]
@@ -4868,6 +5828,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Status Next()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc < 0)
+                {
+                    return Status.Err(acc);
+                }
+
                 return Status.Ok;
             }
 
@@ -4882,7 +5864,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -4924,13 +5906,15 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("%Token = type { i8, i32, i32, i32, i32, i32 }", llvm);
-        Assert.Contains("insertvalue %Token zeroinitializer, i8 0, 0", llvm);
+        // The unit case's all-zero payload (tag 0 included) now materializes as a
+        // zeroinitializing memset instead of per-field insertvalues.
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)", llvm);
         Assert.Contains("insertvalue %Token zeroinitializer, i8 1, 0", llvm);
         Assert.Contains("!{i8 0, i8 2}", llvm);
         Assert.Matches(@"load i8, ptr %[A-Za-z0-9_]+, !range !\d+", llvm);
@@ -4995,6 +5979,142 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("select i1 %arg_allow", llvm);
         Assert.DoesNotContain("switch i32", llvm);
         Assert.DoesNotContain("declare fastcc i32 @Run(i32, i1)", llvm);
+    }
+
+    [Fact]
+    public void OrPatternLiteralSwitchPreservesNativeSwitchLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Run(u8[0 3] value)
+            {
+                switch (value)
+                {
+                    case 0 | 2:
+                        return 10;
+                    case 1 | 3:
+                        return 20;
+                }
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("switch i8 %arg_value", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 0, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 1, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 2, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 3, label", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i8)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RangePatternIntegerSwitchEmitsGuardedComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Run(u8[0 30] value)
+            {
+                switch (value)
+                {
+                    case 0..9:
+                        return 10;
+                    case 12..20:
+                        return 20;
+                    default:
+                        return 30;
+                }
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("switch i8 %arg_value", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp ule i8 %arg_value, 9", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp uge i8 %arg_value, 12", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i8)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RangePatternEnumPayloadSwitchEmitsPayloadComparison()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            unsafe fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(0..9):
+                        return 1;
+                    case Token.Number(_):
+                        return 2;
+                    case Token.End:
+                        return 0;
+                }
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@Run(%Token", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i8", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp sge i32", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp sle i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%Token)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OrPatternEnumCapturesShareBodyLocal()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Left(i32[min max]),
+                Right(i32[min max]),
+                End,
+            }
+
+            unsafe fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Left(var value) | Token.Right(var value):
+                        return value;
+                    case Token.End:
+                        return 0;
+                }
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@Run(%Token", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i8", llvm, StringComparison.Ordinal);
+        Assert.Contains("ret i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%Token)", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -5252,6 +6372,40 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RawAndMultilineTextLiteralsEmitExactTextConstants()
+    {
+        var result = Compile(
+            """""
+            module Demo
+
+            unsafe fn ascii RawPath()
+            {
+                return raw"c:\temp\next";
+            }
+
+            unsafe fn ascii Multiline()
+            {
+                return raw"""
+                    first
+                    second
+                    """;
+            }
+
+            unsafe fn ascii Interpolated()
+            {
+                return $raw"Score: {100}\n";
+            }
+            """"");
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"c:\\5Ctemp\\5Cnext\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"first\\0Asecond\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"Score: 100\\5Cn\\00\"", llvm);
+    }
+
+    [Fact]
     public void SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitions()
     {
         var result = Compile(
@@ -5391,15 +6545,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_check_capacity", llvm);
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5429,16 +6582,15 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_check_capacity", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("store i32 99, ptr", llvm);
         Assert.Contains("store i32 100, ptr", llvm);
         Assert.Contains("store i32 101, ptr", llvm);
-        Assert.Contains("store i64 3, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5467,7 +6619,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "abcdef"[start, 3]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -5500,18 +6652,17 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
-        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.Contains("ascii2unicode_data", llvm);
+        Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64(", llvm);
         Assert.Contains("constant [42 x i32]", llvm);
         Assert.Contains("i64 164, i1 false)", llvm);
-        Assert.Contains("store i64 41, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
-        Assert.DoesNotContain("abi_ascii2unicode_unit", llvm);
+        Assert.DoesNotContain("ascii2unicode_unit", llvm);
     }
 
     [Fact]
@@ -5539,7 +6690,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -5574,14 +6725,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5611,14 +6761,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5648,14 +6797,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5684,16 +6832,15 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "A\nZ");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 65, ptr", llvm);
         Assert.Contains("store i32 10, ptr", llvm);
         Assert.Contains("store i32 90, ptr", llvm);
-        Assert.Contains("store i64 3, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5718,14 +6865,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
-        Assert.DoesNotContain("abi_ascii2unicode_data_is_null", llvm);
+        Assert.DoesNotContain("ascii2unicode_data_is_null", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5743,14 +6890,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(null, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_null_destination", llvm);
-        Assert.Contains("icmp eq ptr null, null", llvm);
-        Assert.Contains("false, %abi_ascii2unicode_null_destination", llvm);
+        // The constant-null destination folds the specialized null check all the
+        // way to the failure result.
+        Assert.Contains("ret i1 false", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5779,12 +6926,12 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_capacity_too_small", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("icmp slt i64", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
@@ -5811,12 +6958,12 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_data_is_null", llvm);
+        Assert.Contains("ascii2unicode_data_is_null", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
@@ -5856,7 +7003,7 @@ public sealed class LlvmIrEmissionTests
                 return result;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -5892,7 +7039,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "caf\u00E9");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -6222,6 +7369,619 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FfiLinkNameControlsLlvmDeclarationAndCallTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_add_i32")]
+            unsafe ffi(c) fn i32[min max] AddAlias(i32[min max] left, i32[min max] right);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return AddAlias(value, 1);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare i32 @native_add_i32(i32, i32) nounwind", llvm);
+        Assert.Contains("call i32 @native_add_i32(i32 %arg_value", llvm);
+        Assert.DoesNotContain("@AddAlias", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiLinkNameControlsFunctionAddressSymbol()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_scale_i32")]
+            unsafe ffi(c) fn i32[min max] ScaleAlias(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                stack fnptr<unsafe ffi(c) fn i32[min max](i32[min max])> op = ScaleAlias;
+                return op(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@native_scale_i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@ScaleAlias", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutAggregatesUseNativeCAbiCarriersWithLinkName()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            [StructLayout(C)]
+            struct Image
+            {
+                rawmutptr<i8[min max]> Data;
+                i32[min max] Width;
+                i32[min max] Height;
+                i32[min max] Mipmaps;
+                i32[min max] Format;
+            }
+
+            [LinkName("ClearBackground")]
+            unsafe ffi(c) fn void NativeClear(Color color);
+
+            [LinkName("LoadImage")]
+            unsafe ffi(c) fn Image NativeLoad(ascii fileName);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Color color = new Color()
+                {
+                    R = 1,
+                    G = 2,
+                    B = 3,
+                    A = 4
+                };
+
+                NativeClear(color);
+
+                stack Image image = NativeLoad("asset.png");
+                return image.Width;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @ClearBackground(i32) nounwind", llvm);
+        Assert.Contains("declare void @LoadImage(ptr noalias sret(%Image)", llvm);
+        Assert.Contains("call void @ClearBackground(i32", llvm);
+        Assert.Contains("call void @LoadImage(ptr noalias sret(%Image)", llvm);
+        Assert.DoesNotContain("@NativeClear", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeLoad", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector2UsesSysVVectorCarrierForReturnAndParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector2
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            unsafe ffi(c) fn Vector2 NativeGet(i32[min max] monitor);
+
+            [LinkName("DrawLineV")]
+            unsafe ffi(c) fn void NativeDraw(Vector2 start, Vector2 end);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector2 position = NativeGet(0);
+                NativeDraw(position, position);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare <2 x float> @GetMonitorPosition(i32) nounwind", llvm);
+        Assert.Contains("declare void @DrawLineV(<2 x float>, <2 x float>) nounwind", llvm);
+        Assert.Contains("call <2 x float> @GetMonitorPosition(i32", llvm);
+        Assert.Contains("call void @DrawLineV(<2 x float>", llvm);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector2UsesWin64IntegerCarrierWhenTargetIsWin64()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector2
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            unsafe ffi(c) fn Vector2 NativeGet(i32[min max] monitor);
+
+            [LinkName("DrawLineV")]
+            unsafe ffi(c) fn void NativeDraw(Vector2 start, Vector2 end);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector2 position = NativeGet(0);
+                NativeDraw(position, position);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("target triple = \"x86_64-pc-windows-msvc\"", llvm);
+        Assert.Contains("declare i64 @GetMonitorPosition(i32) nounwind", llvm);
+        Assert.Contains("declare void @DrawLineV(i64, i64) nounwind", llvm);
+        Assert.Contains("call i64 @GetMonitorPosition(i32", llvm);
+        Assert.Contains("call void @DrawLineV(i64", llvm);
+        Assert.DoesNotContain("declare <2 x float> @GetMonitorPosition", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutRectangleParameterExpandsToTwoSysVVectorCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Rectangle
+            {
+                f32 X;
+                f32 Y;
+                f32 Width;
+                f32 Height;
+            }
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            [LinkName("DrawRectangleRec")]
+            unsafe ffi(c) fn void NativeDraw(Rectangle rec, Color tint);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Rectangle rec = new Rectangle()
+                {
+                    X = 1.0,
+                    Y = 2.0,
+                    Width = 3.0,
+                    Height = 4.0
+                };
+                stack Color color = new Color()
+                {
+                    R = 255,
+                    G = 64,
+                    B = 32,
+                    A = 255
+                };
+                NativeDraw(rec, color);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @DrawRectangleRec(<2 x float>, <2 x float>, i32) nounwind", llvm);
+        Assert.Contains("call void @DrawRectangleRec(<2 x float>", llvm);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector3ReturnUsesSysVCarrierStruct()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector3
+            {
+                f32 X;
+                f32 Y;
+                f32 Z;
+            }
+
+            [LinkName("GetCameraPosition")]
+            unsafe ffi(c) fn Vector3 NativeGet();
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector3 position = NativeGet();
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare { <2 x float>, float } @GetCameraPosition() nounwind", llvm);
+        Assert.Contains("call { <2 x float>, float } @GetCameraPosition()", llvm);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutLargeAggregateUsesIndirectSysVCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Matrix
+            {
+                f32 M0;
+                f32 M1;
+                f32 M2;
+                f32 M3;
+                f32 M4;
+                f32 M5;
+                f32 M6;
+                f32 M7;
+                f32 M8;
+                f32 M9;
+                f32 M10;
+                f32 M11;
+                f32 M12;
+                f32 M13;
+                f32 M14;
+                f32 M15;
+            }
+
+            [LinkName("MakeMatrix")]
+            unsafe ffi(c) fn Matrix NativeMake();
+
+            [LinkName("TakeMatrix")]
+            unsafe ffi(c) fn void NativeTake(Matrix matrix);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Matrix matrix = NativeMake();
+                NativeTake(matrix);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @MakeMatrix(ptr noalias sret(%Matrix)", llvm);
+        Assert.Contains("declare void @TakeMatrix(ptr nonnull byval(%Matrix)", llvm);
+        Assert.Contains("call void @MakeMatrix(ptr noalias sret(%Matrix)", llvm);
+        Assert.Contains("call void @TakeMatrix(ptr nonnull byval(%Matrix)", llvm);
+        Assert.DoesNotContain("@NativeMake", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeTake", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutSixteenByteIntegerAggregateUsesSplitSysVIntegerCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Pair
+            {
+                u64[0 max] Left;
+                u64[0 max] Right;
+            }
+
+            [LinkName("GetPair")]
+            unsafe ffi(c) fn Pair NativeGet();
+
+            [LinkName("TakePair")]
+            unsafe ffi(c) fn void NativeTake(Pair pair);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Pair pair = NativeGet();
+                NativeTake(pair);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare { i64, i64 } @GetPair() nounwind", llvm);
+        Assert.Contains("declare void @TakePair(i64, i64) nounwind", llvm);
+        Assert.Contains("call { i64, i64 } @GetPair()", llvm);
+        Assert.Contains("call void @TakePair(i64", llvm);
+        Assert.DoesNotContain("[2 x i64] @GetPair", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeTake", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IncompatibleFfiDeclarationsForSameLinkNameAreRejectedBeforeLlvmEmission()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_read")]
+            unsafe ffi(c) fn i32[min max] ReadI32(i32[min max] value);
+
+            [LinkName("native_read")]
+            unsafe ffi(c) fn i64[min max] ReadI64(i64[min max] value);
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4122"
+                && diagnostic.Message.Contains("native_read", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("incompatible LLVM ABI signatures", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void EquivalentFfiDeclarationsWithCallbackParametersShareLinkName()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_start")]
+            unsafe ffi(c) fn i32[min max] StartA(fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(rawmutptr<i8[min max]>)> callback);
+
+            [LinkName("native_start")]
+            unsafe ffi(c) fn i32[min max] StartB(fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(rawmutptr<i8[min max]>)> callback);
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
+    public void ExplicitFfiAbiModifiersEmitLlvmCallingConventions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(win64) fn i32[min max] NativeRead(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return NativeRead(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare win64cc i32 @NativeRead(i32) nounwind", llvm);
+        Assert.Contains("define i32 @main(i32 %arg_value)", llvm);
+        Assert.Contains("call win64cc i32 @NativeRead(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("call fastcc i32 @NativeRead", llvm);
+    }
+
+    [Fact]
+    public void PlatformSelectedFfiAbiModifiersResolvePerTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max] NativeRead(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return NativeRead(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare x86_64_sysvcc i32 @NativeRead(i32) nounwind", llvm);
+        Assert.Contains("call x86_64_sysvcc i32 @NativeRead(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("call fastcc i32 @NativeRead", llvm);
+    }
+
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 range(i64 1, 2) 1)")]
+    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 range(i64 1, 2) 1)")]
+    public void SystemCPrimitiveAliasesLowerToTargetLlvmTypes(
+        string targetTriple,
+        string expectedNativeLongDeclaration,
+        string expectedNativeLongCall)
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn System.C.c_long NativeLong(System.C.c_size_t bytes);
+            unsafe ffi(c) fn void NativeFree(rawmutptr<System.C.c_void> ptr);
+
+            unsafe fn i32[min max] Run(rawmutptr<System.C.c_void> ptr)
+            {
+                NativeFree(ptr);
+                return (i32[min max])NativeLong(1);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains(expectedNativeLongDeclaration, llvm);
+        Assert.Contains(expectedNativeLongCall, llvm);
+        Assert.Contains("declare void @NativeFree(ptr) nounwind", llvm);
+        Assert.Contains("call void @NativeFree(ptr %arg_ptr)", llvm);
+    }
+
+    [Fact]
+    public void SystemCVaListLowersAsTargetCAbiPointerCarrier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> NativeFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args);
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> ForwardFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args)
+            {
+                return NativeFormat(format, args);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare ptr @NativeFormat(ptr readonly, ptr) nounwind", llvm);
+        Assert.Contains("define ptr @ForwardFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
+        Assert.Contains("call ptr @NativeFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
+    }
+
+    [Fact]
+    public void ExplicitFfiFunctionPointerAbiEmitsIndirectCallConvention()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Apply(fnptr<ffi(win64) fn i32[min max](i32[min max])> op, i32[min max] value)
+            {
+                return op(value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
+
+        Assert.Contains("call win64cc i32 %arg_op(i32 %arg_value)", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 %arg_op", applyBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnsafeFfiFunctionItemsPromoteToUnsafeFfiFunctionPointerArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(win64) fn i32[min max] Callback(i32[min max] value);
+            unsafe ffi(win64) fn i32[min max] Register(fnptr<unsafe ffi(win64) fn i32[min max](i32[min max])> callback, i32[min max] value);
+
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
+                return Register(Callback, value);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare win64cc i32 @Callback(i32) nounwind", llvm);
+        Assert.Matches(@"declare win64cc i32 @Register\(ptr(?: [^,\)]*)?, i32\) nounwind", llvm);
+        Assert.Matches(@"call win64cc i32 @Register\(ptr(?: [^,\)]*)? @Callback, i32 %arg_value\)", llvm);
+    }
+
+    [Fact]
+    public void FfiFunctionBodiesPromoteToNativeCallbackPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void Register(AudioCallback callback);
+
+            export unsafe fn void Install()
+            {
+                Register(FillAudio);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"define void @FillAudio\(ptr(?: [^,\)]*)? %arg_bufferData, i32(?: [^,\)]*)? %arg_frames\)", llvm);
+        Assert.DoesNotContain("define fastcc void @FillAudio", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"declare void @Register\(ptr(?: [^,\)]*)?\) nounwind", llvm);
+        Assert.Matches(@"call void @Register\(ptr(?: [^,\)]*)? @FillAudio\)", ExtractDefinitionBody(llvm, "Install"));
+    }
+
+    [Fact]
     public void InternalStringFunctionsUseConcreteStringAbi()
     {
         var result = Compile(
@@ -6230,6 +7990,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe finite law ascii Echo(ascii text)
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > -4000000000000000000)
+                {
+                    return text;
+                }
+
                 return text;
             }
 
@@ -6238,7 +8020,7 @@ public sealed class LlvmIrEmissionTests
                 return Echo(input);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -6388,6 +8170,71 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi fn i32[min max] Native(i32[min max] value);
+
+            unsafe fn i32[min max] Leaf(i32[min max] value)
+            {
+                return value;
+            }
+
+            unsafe fn i32[min max] Caller(i32[min max] value)
+            {
+                return Leaf(value);
+            }
+
+            unsafe fn i32[min max] SelfRecursive(i32[min max] value)
+            {
+                return SelfRecursive(value);
+            }
+
+            unsafe fn i32[min max] MutualA(i32[min max] value)
+            {
+                return MutualB(value);
+            }
+
+            unsafe fn i32[min max] MutualB(i32[min max] value)
+            {
+                return MutualA(value);
+            }
+
+            unsafe fn i32[min max] Apply(
+                fnptr<unsafe fn i32[min max](i32[min max])> op,
+                i32[min max] value)
+            {
+                return op(value);
+            }
+
+            unsafe fn i32[min max] CallsApply(i32[min max] value)
+            {
+                return Apply(Leaf, value);
+            }
+
+            unsafe fn i32[min max] CallsFfi(i32[min max] value)
+            {
+                return Native(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("norecurse", ExtractDefinitionHeader(llvm, "Leaf"), StringComparison.Ordinal);
+        Assert.Contains("norecurse", ExtractDefinitionHeader(llvm, "Caller"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "SelfRecursive"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "MutualA"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "MutualB"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "Apply"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "CallsApply"), StringComparison.Ordinal);
+        Assert.DoesNotContain("norecurse", ExtractDefinitionHeader(llvm, "CallsFfi"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BorrowParametersEmitCapturesAttributes()
     {
         var result = Compile(
@@ -6399,7 +8246,17 @@ public sealed class LlvmIrEmissionTests
                 i32[min max] Value;
             }
 
+            finite law i32[min max] Read(borrow Box value)
+            {
+                return value.Value;
+            }
+
             unsafe fn retborrow Box Echo(retborrow Box value)
+            {
+                return value;
+            }
+
+            unsafe fn storeborrow Box Hold(storeborrow Box value)
             {
                 return value;
             }
@@ -6407,10 +8264,64 @@ public sealed class LlvmIrEmissionTests
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
+        var readHeader = ExtractDefinitionHeader(llvm, "Read");
         var echoHeader = ExtractDefinitionHeader(llvm, "Echo");
+        var holdHeader = ExtractDefinitionHeader(llvm, "Hold");
 
+        Assert.Contains("ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_value", readHeader);
+        Assert.DoesNotContain("captures(address", readHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("captures(ret:", readHeader, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Echo(ptr noundef", echoHeader);
-        Assert.Contains("captures(ret: address, read_provenance)", llvm);
+        Assert.Contains("captures(ret: address, read_provenance)", echoHeader);
+        Assert.DoesNotContain("captures(none)", echoHeader, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Hold(ptr noundef", holdHeader);
+        Assert.Contains("captures(address, read_provenance)", holdHeader);
+        Assert.DoesNotContain("captures(none)", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("captures(ret:", holdHeader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RetborrowReceiverTemporaryLoadRemainsLiveForDirectBorrowCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Row
+            {
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Row self)
+                {
+                    return self.Value;
+                }
+            }
+
+            struct Holder
+            {
+                Row Item;
+
+                finite law retborrow Row Get(borrow Holder self)
+                {
+                    return self.Item;
+                }
+
+                finite law i32[min max] Read(borrow Holder self)
+                {
+                    return self.Get().Read();
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var body = ExtractDefinitionBody(GetLlvmRaw(result), "Holder_Read");
+        var temporaryLoad = Regex.Match(
+            body,
+            @"(?m)^\s*%(v\d+) = load ptr, ptr %slot__tmp\d+_ptrcast[^\n]*\n\s*%v\d+ = call[^\n]* %\1\)");
+
+        Assert.True(
+            temporaryLoad.Success,
+            $"Expected the direct borrow call to consume the emitted retborrow temporary load:{Environment.NewLine}{body}");
     }
 
     [Fact]
@@ -6437,7 +8348,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Hold(ptr noundef", holdHeader);
         Assert.Contains("captures(address, read_provenance)", holdHeader);
-        Assert.DoesNotContain("nocapture", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("captures(none)", holdHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("captures(ret:", holdHeader, StringComparison.Ordinal);
     }
 
@@ -6569,7 +8480,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6617,14 +8528,14 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains(
-            "define fastcc noundef i32 @ReadBorrow(ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)",
+            "define fastcc noundef i32 @ReadBorrow(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)",
             ExtractDefinitionHeader(llvm, "ReadBorrow"));
         Assert.Contains(
-            "define fastcc noundef i32 @ReadView(ptr noundef nonnull noalias readonly nocapture dereferenceable(16) align 8 %arg_view, i32 noundef %arg_index)",
+            "define fastcc noundef i32 @ReadView(ptr noundef nonnull noalias readonly captures(none) dereferenceable(16) align 8 %arg_view, i32 noundef %arg_index)",
             ExtractDefinitionHeader(llvm, "ReadView"));
 
         var rawHeader = ExtractDefinitionHeader(llvm, "RawInternal");
-        Assert.Contains("ptr noundef readonly nocapture %arg_ptr", rawHeader);
+        Assert.Contains("ptr noundef readonly captures(none) %arg_ptr", rawHeader);
         Assert.DoesNotContain("nonnull", rawHeader);
         Assert.DoesNotContain("dereferenceable", rawHeader);
         Assert.DoesNotContain("dereferenceable_or_null", rawHeader);
@@ -6702,7 +8613,29 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn u8[0 10] Bounded()
             {
-                return 7;
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > 0)
+                {
+                    return 7;
+                }
+
+                return 3;
             }
 
             unsafe fn u8[0 10] ReadThroughPointer(u8[0 10] input)
@@ -6717,12 +8650,12 @@ public sealed class LlvmIrEmissionTests
                 return Bounded();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i8, ptr %v\d+, !range !\d+", llvm);
+        Assert.Matches(@"load i8, ptr (?:%v\d+|%slot_value), !range !\d+", llvm);
         Assert.Matches(@"call fastcc i8 @Bounded\(\), !range !\d+", llvm);
         Assert.Contains("!{i8 0, i8 11}", llvm);
     }
@@ -6736,7 +8669,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn u8[0 10] Bounded(u8[0 10] input)
             {
-                return input;
+                stack i32[min max] a = input + (input / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                if (m < -2000000000)
+                {
+                    return 3;
+                }
+
+                return 7;
             }
 
             unsafe fn u8[0 10] CallBounded(u8[0 10] input)
@@ -6744,7 +8695,7 @@ public sealed class LlvmIrEmissionTests
                 return Bounded(input);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6756,23 +8707,62 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void IntegerRangeFactsCoverGlobalsAndNarrowActualCallArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut u8[0 10] GlobalValue = 3;
+
+            unsafe noinline fn u8[0 max] UseWide(u8[0 max] value)
+            {
+                return value;
+            }
+
+            unsafe fn u8[0 max] CallWithNarrowActual(u8[0 10] value)
+            {
+                return UseWide(value);
+            }
+
+            unsafe fn u8[0 10] ReadGlobal()
+            {
+                return GlobalValue;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var useWideHeader = ExtractDefinitionHeader(llvm, "UseWide");
+        var callWithNarrowActualBody = ExtractDefinitionBody(llvm, "CallWithNarrowActual");
+        var readGlobalBody = ExtractDefinitionBody(llvm, "ReadGlobal");
+
+        Assert.DoesNotContain("range(i8 0, 11) %arg_value", useWideHeader, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i8 @UseWide(i8 range(i8 0, 11) %arg_value)", callWithNarrowActualBody, StringComparison.Ordinal);
+        Assert.Matches(@"load i8, ptr @GlobalValue(?:, align \d+)?, !range !\d+", readGlobalBody);
+        Assert.Contains("!{i8 0, i8 11}", llvm);
+    }
+
+    [Fact]
     public void BranchRefinedIntegerComparisonsEmitTargetedAssumes()
     {
         var result = Compile(
             """
             module Demo
 
-            unsafe fn i32[min max] Range(i32[min max] value)
+            unsafe fn i32[min max] Range(rawmutptr<i32[min max]> sink, i32[min max] value)
             {
                 if (value >= 0)
                 {
+                    *sink = value;
                     return value;
                 }
 
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6800,7 +8790,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6829,7 +8819,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6860,7 +8850,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -6883,12 +8873,12 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i8, ptr %v\d+, !range !\d+", llvm);
+        Assert.Matches(@"load i8, ptr (?:%v\d+|%slot_value), !range !\d+", llvm);
         Assert.Contains("!{i8 -10, i8 11}", llvm);
     }
 
@@ -6923,9 +8913,62 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i32 @ReadGlobal()", llvm);
         Assert.Contains("memory(read, argmem: none)", llvm);
-        Assert.Contains("define fastcc void @TouchArg(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @TouchArg(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("memory(argmem: readwrite)", llvm);
         Assert.DoesNotContain("load %Box, ptr %arg_box", llvm);
+    }
+
+    [Fact]
+    public void FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyForms()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            static mut i32[min max] Counter = 0;
+
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
+                return left + right;
+            }
+
+            unsafe fn i32[min max] ReadGlobal()
+            {
+                return Counter;
+            }
+
+            unsafe fn void TouchArg(borrow mut Box box)
+            {
+                box.Value = 1;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        var addHeader = ExtractDefinitionHeader(llvm, "Add");
+        Assert.Contains("memory(none)", addHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readnone", addHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readonly", addHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("argmemonly", addHeader, StringComparison.Ordinal);
+
+        var readGlobalHeader = ExtractDefinitionHeader(llvm, "ReadGlobal");
+        Assert.Contains("memory(read, argmem: none)", readGlobalHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readnone", readGlobalHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readonly", readGlobalHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("argmemonly", readGlobalHeader, StringComparison.Ordinal);
+
+        var touchArgHeader = ExtractDefinitionHeader(llvm, "TouchArg");
+        Assert.Contains("memory(argmem: readwrite)", touchArgHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readnone", touchArgHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("readonly", touchArgHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("argmemonly", touchArgHeader, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -7015,6 +9058,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn ascii Message()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > -4000000000000000000)
+                {
+                    return "Hello";
+                }
+
                 return "Hello";
             }
 
@@ -7025,7 +9090,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7215,7 +9280,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7253,7 +9318,7 @@ public sealed class LlvmIrEmissionTests
                 return acc - left * right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7376,15 +9441,24 @@ public sealed class LlvmIrEmissionTests
     [Fact]
     public void UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
     {
+        // Definite-return analysis (STK3045) and switch exhaustiveness (STK3044) make
+        // user-reachable fall-off-the-end paths a compile error, so the only remaining
+        // unreachable paths are compiler-proven impossible ones — e.g. the mandatory
+        // default destination of an LLVM `switch` over an exhaustively-covered enum.
+        // Those still lower through the cold trap helper (never exception machinery).
         var result = Compile(
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool fail)
+            enum Color { Red, Green, Blue }
+
+            unsafe fn i32[min max] Run(Color c)
             {
-                if (fail)
+                switch (c)
                 {
-                    return 1;
+                    case Color.Red: return 1;
+                    case Color.Green: return 2;
+                    case Color.Blue: return 3;
                 }
             }
             """);
@@ -7433,9 +9507,9 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
-        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind", llvm);
+        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr nounwind", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
         Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("@__stark_alloc_lock = linkonce_odr hidden global i32 0, comdat, align 4", llvm);
         Assert.Contains("@__stark_alloc_bucket_16 = linkonce_odr hidden thread_local(localexec) global ptr null, comdat, align 8", llvm);
@@ -7473,6 +9547,49 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ArenaObjectCreationUsesFrameAllocatorLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 7
+                };
+                return box.Value;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.DoesNotContain("@__stark_heap_alloc", llvm);
+        Assert.DoesNotContain("@__stark_heap_free", llvm);
+        Assert.DoesNotContain("alloca %Box", runBody, StringComparison.Ordinal);
+        Assert.Contains("%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame", runBody, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden void @__stark_arena_enter(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden void @__stark_arena_leave(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HeapFieldInitializationDoesNotReadUninitializedAggregateStorage()
     {
         var result = Compile(
@@ -7485,15 +9602,18 @@ public sealed class LlvmIrEmissionTests
                 i32[min max] Right;
             }
 
+            unsafe ffi fn void Touch(rawptr<Pair> pair);
+
             unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
             {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
+                Touch(&pair);
                 return pair.Left + pair.Right;
             }
             """,
-            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null), OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
@@ -7562,12 +9682,12 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias noundef ptr @__stark_runtime_try_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias noundef ptr @__stark_runtime_try_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
         Assert.DoesNotContain("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
-        Assert.Contains("define linkonce_odr hidden ptr @__stark_runtime_try_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden ptr @__stark_runtime_try_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind comdat", llvm);
         Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
         Assert.Contains("@Allocate(", llvm);
@@ -7791,7 +9911,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i64, ptr %v\d+, align 8", llvm);
+        Assert.Contains("load i64, ptr %slot_value, align 8", llvm);
     }
 
     [Fact]
@@ -7821,10 +9941,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
+            unsafe ffi fn void Sink(rawptr<ascii> ptr);
+
             unsafe fn i32[min max] Probe(ascii input)
             {
                 stack ascii slot = input;
                 stack rawptr<ascii> ptr = &slot;
+                Sink(ptr);
                 return 0;
             }
             """,
@@ -7832,8 +9955,7 @@ public sealed class LlvmIrEmissionTests
                 EmitLlvmIr: true,
                 TargetInfo: new LlvmTargetInfo(
                     "i386-unknown-linux-gnu",
-                    "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128"),
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                    "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128")));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7891,11 +10013,30 @@ public sealed class LlvmIrEmissionTests
                 i64[min max] C;
             }
 
+            unsafe ffi fn void Drain(rawmutptr<i32[min max]> ptr);
+
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3
+                    A = acc, B = acc + 1, C = acc + 2
                 };
             }
 
@@ -7905,6 +10046,7 @@ public sealed class LlvmIrEmissionTests
                 {
                     stack mut i32[min max] value = 41;
                     stack rawmutptr<i32[min max]> ptr = &value;
+                    Drain(ptr);
                     stack Big made = Make();
                     return (i64[min max])*ptr + made.A;
                 }
@@ -7912,7 +10054,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = NormalizeLlvm(GetLlvmRaw(result));
@@ -8535,7 +10677,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Read(Box box)
             {
-                return box.Value;
+                stack i32[min max] a = box.Value + (box.Value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
@@ -8546,7 +10701,7 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -8579,7 +10734,307 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)", llvm);
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)", llvm);
+    }
+
+    [Fact]
+    public void PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C), Pack(1)]
+            struct Packet
+            {
+                u8[0 max] Tag;
+                i32[min max] Value;
+            }
+
+            unsafe fn i32[min max] Read(borrow Packet packet)
+            {
+                return packet.Value;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "Read");
+        var readBody = ExtractDefinitionBody(llvm, "Read");
+
+        Assert.Contains("%Packet = type <{ i8, i32 }>", llvm, StringComparison.Ordinal);
+        Assert.Contains("dereferenceable(5)", header, StringComparison.Ordinal);
+        Assert.Contains("getelementptr inbounds nuw i8, ptr %", readBody, StringComparison.Ordinal);
+        Assert.Contains(", i64 1", readBody, StringComparison.Ordinal);
+        Assert.Contains("load i32, ptr", readBody, StringComparison.Ordinal);
+        Assert.Contains("align 1", readBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe fn u16[0 max] ReadHigh(borrow WordParts value)
+            {
+                return value.High;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "ReadHigh");
+        var readBody = ExtractDefinitionBody(llvm, "ReadHigh");
+
+        Assert.Contains("%WordParts = type { [4 x i8] }", llvm, StringComparison.Ordinal);
+        Assert.Contains("dereferenceable(4)", header, StringComparison.Ordinal);
+        Assert.Contains("align 4", header, StringComparison.Ordinal);
+        Assert.Contains("getelementptr inbounds nuw i8, ptr %", readBody, StringComparison.Ordinal);
+        Assert.Contains(", i64 2", readBody, StringComparison.Ordinal);
+        Assert.Contains("load i16, ptr", readBody, StringComparison.Ordinal);
+        Assert.Contains("align 2", readBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCStructLayoutArgumentsUseX64SysVCAbiCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct NormalRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(C), Pack(1), Align(4)]
+            struct PackedRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe ffi(c) fn i32[min max] stark_check_layout(
+                NormalRecord normal,
+                PackedRecord packed,
+                WordParts word);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack NormalRecord normal = new NormalRecord()
+                {
+                    Tag = 17,
+                    Length = 287454020,
+                    Code = 21862
+                };
+                stack PackedRecord packed = new PackedRecord()
+                {
+                    Tag = 34,
+                    Length = 1432778632,
+                    Code = 30600
+                };
+                stack WordParts word = new WordParts()
+                {
+                    Whole = 305419896
+                };
+
+                return stark_check_layout(normal, packed, word);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "x86_64-unknown-linux-gnu",
+                    "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @stark_check_layout(i64, i32, ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("byval(%PackedRecord)", llvm, StringComparison.Ordinal);
+        Assert.Contains(", i32)", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("[2 x i64]", llvm, StringComparison.Ordinal);
+        Assert.Contains("load i64, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("load i32, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stark_check_layout(i64", mainBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCStructLayoutArgumentsUseAArch64Aapcs64Carriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct NormalRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(C), Pack(1), Align(4)]
+            struct PackedRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe ffi(c) fn i32[min max] stark_check_layout(
+                NormalRecord normal,
+                PackedRecord packed,
+                WordParts word);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack NormalRecord normal = new NormalRecord()
+                {
+                    Tag = 17,
+                    Length = 287454020,
+                    Code = 21862
+                };
+                stack PackedRecord packed = new PackedRecord()
+                {
+                    Tag = 34,
+                    Length = 1432778632,
+                    Code = 30600
+                };
+                stack WordParts word = new WordParts()
+                {
+                    Whole = 305419896
+                };
+
+                return stark_check_layout(normal, packed, word);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "aarch64-unknown-linux-gnu",
+                    "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @stark_check_layout([2 x i64], i64, i64)", llvm, StringComparison.Ordinal);
+        Assert.Contains("load [2 x i64], ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("load i64, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stark_check_layout([2 x i64]", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("byval(%PackedRecord)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiAArch64FourByteCStructUsesExactReturnAndRoundedParameterCarrier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            unsafe ffi(c) fn Color roundtrip_color(Color value);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Color input = new Color()
+                {
+                    R = 230,
+                    G = 41,
+                    B = 55,
+                    A = 255
+                };
+                stack Color output = roundtrip_color(input);
+                return (i32[min max])output.A;
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "arm64-apple-macosx11.0.0",
+                    "e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @roundtrip_color(i64)", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @roundtrip_color(i64", mainBody, StringComparison.Ordinal);
+        Assert.Contains("store i32", mainBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiAArch64HomogeneousFloatAggregateDoesNotUseIntegerCompositeCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct FloatPair
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            unsafe ffi(c) fn void consume_pair(FloatPair value);
+
+            export unsafe fn void forward_pair(FloatPair value)
+            {
+                consume_pair(value);
+                return;
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "aarch64-unknown-linux-gnu",
+                    "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @consume_pair(%FloatPair)", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare void @consume_pair(i64)", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare void @consume_pair([2 x i64])", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -8687,7 +11142,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Pair = type { i8, i32 }", llvm);
-        Assert.Contains("load %Pair, ptr %v", llvm);
+        Assert.Contains("load %Pair, ptr %slot_source", llvm);
         Assert.Contains("store %Pair %abi_copy_load_", llvm);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm);
     }
@@ -8749,7 +11204,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %v", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %slot_dest, ptr align 4 %slot_source", llvm);
         Assert.Contains("i64 36, i1 false)", llvm);
     }
 
@@ -8793,21 +11248,21 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i8[min max] Run()
+            unsafe fn i8[min max] Run(i8[min max] seed, u8[0 max] index)
             {
                 stack mut i8[min max][256] values;
-                values[7] = 42;
-                return values[7];
+                values[7] = seed;
+                return values[index];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
         Assert.Contains("%slot_values = alloca [256 x i8]", llvm);
         Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0", llvm);
-        Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %v", llvm);
+        Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0, i32 7", llvm);
         Assert.Contains("i32 7", llvm);
         Assert.Contains("store i8", llvm);
         Assert.Contains("load i8", llvm);
@@ -8838,7 +11293,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Result Make()
             {
-                stack Big value = new Big();
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                stack mut Big value = new Big();
+                value.Len = acc;
                 return Result.Ok(value);
             }
 
@@ -8857,8 +11330,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             options: new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -8886,7 +11358,20 @@ public sealed class LlvmIrEmissionTests
 
                 fn i64[min max] ReadLen(mut borrow Big self)
                 {
-                    return self.Len;
+                    stack i64[min max] a = self.Len + (self.Len / 3);
+                    stack i64[min max] b = a - (a / 5);
+                    stack i64[min max] c = b + (b / 7);
+                    stack i64[min max] d = c - (c / 11);
+                    stack i64[min max] e = d + (d / 13);
+                    stack i64[min max] f = e - (e / 17);
+                    stack i64[min max] g = f + (f / 19);
+                    stack i64[min max] h = g - (g / 23);
+                    stack i64[min max] i = h + (h / 29);
+                    stack i64[min max] j = i - (i / 31);
+                    stack i64[min max] k = j + (j / 37);
+                    stack i64[min max] l = k - (k / 41);
+                    stack i64[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -8898,10 +11383,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Result Make()
             {
-                stack Big value = new Big()
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
                 {
-                    Len = 7
-                };
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                stack mut Big value = new Big();
+                value.Len = acc;
                 return Result.Ok(value);
             }
 
@@ -8919,8 +11419,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             options: new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9110,6 +11609,10 @@ public sealed class LlvmIrEmissionTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn i32[min max] Run()
@@ -9188,9 +11691,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Box Make()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Box()
                 {
-                    Value = 7
+                    Value = acc
                 };
             }
 
@@ -9200,7 +11720,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9227,9 +11747,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3
+                    A = acc, B = acc + 1, C = acc + 2
                 };
             }
 
@@ -9239,7 +11776,7 @@ public sealed class LlvmIrEmissionTests
                 return (i64[min max])value.C;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9275,13 +11812,30 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Texture DefaultTexture()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Texture()
                 {
-                    Id = 0,
-                    Width = 0,
-                    Height = 0,
-                    Mipmaps = 0,
-                    Format = 0
+                    Id = acc,
+                    Width = acc + 1,
+                    Height = acc + 2,
+                    Mipmaps = acc + 3,
+                    Format = acc + 4
                 };
             }
 
@@ -9295,7 +11849,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9367,7 +11921,7 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9375,7 +11929,8 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Make(ptr noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)", llvm);
         Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)", makeBody);
-        Assert.Contains("getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 0", makeBody);
+        // The zero tag is covered by the zeroinitializing memset; only the payload
+        // projection needs an explicit field address.
         Assert.Contains("getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1", makeBody);
         Assert.Contains("store i64 7, ptr %abi_insert_field_store_", makeBody);
         Assert.DoesNotContain("insertvalue %IOResult_Big_", makeBody);
@@ -9402,9 +11957,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3, D = 4, E = 5
+                    A = acc, B = acc + 1, C = acc + 2, D = acc + 3, E = acc + 4
                 };
             }
 
@@ -9413,7 +11985,7 @@ public sealed class LlvmIrEmissionTests
                 return Make();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9445,9 +12017,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3, D = 4, E = 5
+                    A = acc, B = acc + 1, C = acc + 2, D = acc + 3, E = acc + 4
                 };
             }
 
@@ -9457,7 +12046,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9495,7 +12084,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)", llvm);
         Assert.True(
             Regex.IsMatch(
                 llvm,
@@ -9505,6 +12094,43 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
         Assert.DoesNotContain("%abi_arg_value_value", llvm);
         Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateIndirectParameterInsertedIntoAggregateFieldMaterializesValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big
+            {
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
+            }
+
+            struct Box
+            {
+                Big Value;
+            }
+
+            unsafe fn Box Wrap(Big value)
+            {
+                stack mut Box box = new Box();
+                box.Value = value;
+                return box;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+        var wrapBody = ExtractDefinitionBody(llvm, "Wrap");
+
+        Assert.Contains("define fastcc void @Wrap(ptr noalias sret(%Box) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("load %Big, ptr %arg_value", wrapBody);
+        Assert.DoesNotMatch(@"insertvalue %Box [^\n]+, %Big %arg_value,", wrapBody);
     }
 
     [Fact]
@@ -9524,6 +12150,31 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Step(Big value)
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc < -4000000000000000000)
+                {
+                    return new Big()
+                    {
+                        A = value.A + acc, B = value.B, C = value.C, D = value.D
+                    };
+                }
+
                 return value;
             }
 
@@ -9532,15 +12183,15 @@ public sealed class LlvmIrEmissionTests
                 return Step(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
         var forwardBody = Regex.Match(llvm, @"define fastcc[^{]+ @Forward\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
 
-        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)", llvm);
         Assert.Contains("call fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret", forwardBody);
-        Assert.Contains("ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value", forwardBody);
+        Assert.Contains("ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value", forwardBody);
         Assert.DoesNotContain("%abi_callret_slot_", forwardBody);
         Assert.DoesNotContain("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret", forwardBody);
         Assert.DoesNotContain("load %Big, ptr %abi_callret_slot_", forwardBody);
@@ -9564,7 +12215,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.C;
+                stack i64[min max] a = value.A + (value.C / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Run()
@@ -9575,15 +12239,15 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i64 @Read(", llvm);
-        Assert.Contains("ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8 %arg_value", llvm);
+        Assert.Contains("ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8 %arg_value", llvm);
         Assert.Contains("memory(argmem: read)", llvm);
-        Assert.Contains("call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8", llvm);
+        Assert.Contains("call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8", llvm);
         Assert.DoesNotContain("define fastcc i64 @Read(%Big", llvm);
     }
 
@@ -9602,9 +12266,22 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Pair Step(Pair value, i32[min max] delta)
             {
+                stack i32[min max] a = value.Left + (delta / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
                 return new Pair()
                 {
-                    Left = value.Left + delta,
+                    Left = m,
                     Right = value.Right + delta
                 };
             }
@@ -9623,7 +12300,7 @@ public sealed class LlvmIrEmissionTests
                 return current.Left + current.Right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9651,9 +12328,22 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Step(Big value, i64[min max] delta)
             {
+                stack i64[min max] a = value.A + (delta / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
                 return new Big()
                 {
-                    A = value.A + delta,
+                    A = m,
                     B = value.B + delta,
                     C = value.C + delta,
                     D = value.D + delta
@@ -9673,14 +12363,14 @@ public sealed class LlvmIrEmissionTests
                 return current.A + current.D;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value, i64 %arg_delta)", llvm);
+        Assert.Contains("define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value, i64 %arg_delta)", llvm);
         Assert.Contains("call fastcc void @Step(ptr noalias sret(%Big)", llvm);
-        Assert.Contains("ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8", llvm);
+        Assert.Contains("ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8", llvm);
         Assert.DoesNotContain("define fastcc %Big @Step(", llvm);
     }
 
@@ -9742,7 +12432,20 @@ public sealed class LlvmIrEmissionTests
 
                 unsafe fn i32[min max] Read(Box box)
                 {
-                    return box.Value;
+                    stack i32[min max] a = box.Value + (box.Value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -9755,7 +12458,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Read();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9792,8 +12495,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Box_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Box_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("call fastcc i32 @Box_Read(ptr nonnull", llvm);
         Assert.DoesNotContain("tail call fastcc i32 @Box_Read", llvm);
     }
@@ -9821,7 +12524,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Touch(ptr nocapture %arg_buffer, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_buffer, i64 %arg_index, i8 %arg_value)", llvm);
         Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %arg_buffer, i32 0, i32 0", llvm);
         Assert.Contains("getelementptr [16 x i8], ptr", llvm);
         Assert.DoesNotContain("getelementptr inbounds [16 x i8], ptr", llvm);
@@ -9846,7 +12549,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Touch(ptr nocapture %arg_data, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_data, i64 %arg_index, i8 %arg_value)", llvm);
         Assert.Contains("getelementptr i8, ptr %arg_data, i64 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds i8, ptr %arg_data, i64 %arg_index", llvm);
         Assert.DoesNotContain("alloca ptr", llvm);
@@ -9879,10 +12582,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Buffer_Put(ptr nonnull noalias nocapture dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)", llvm);
-        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly nocapture dereferenceable(16) %arg_self, i64 %arg_index)", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %v0, i32 0, i32 0", llvm);
+        Assert.Contains("define fastcc void @Buffer_Put(ptr nonnull noalias captures(none) dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)", llvm);
+        Assert.Contains("define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly captures(none) dereferenceable(16) %arg_self, i64 %arg_index)", llvm);
+        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0, i32 0", llvm);
+        Assert.Contains("getelementptr [16 x i8], ptr %v", llvm);
         Assert.DoesNotContain("alloca %Buffer", llvm);
     }
 
@@ -9908,7 +12611,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.DoesNotContain("define fastcc void @Touch(ptr nonnull noalias readonly", llvm);
     }
 
@@ -10020,12 +12723,11 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_index)", llvm);
         Assert.Contains("alloca [3 x i32]", llvm);
-        Assert.Contains("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)", llvm);
-        Assert.Contains("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)", llvm);
+        Assert.Contains("declare void @llvm.lifetime.start.p0(i64 immarg, ptr captures(none))", llvm);
+        Assert.Contains("declare void @llvm.lifetime.end.p0(i64 immarg, ptr captures(none))", llvm);
         Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
         Assert.Contains("call void @llvm.lifetime.end.p0(i64 12, ptr %slot_values)", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("load i32, ptr", llvm);
@@ -10062,7 +12764,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("alloca [3 x i32]", runBody);
         Assert.Contains("extractvalue [3 x i32]", runBody);
         Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_", runBody);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", runBody);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_[^,]+, i32 0, i32 %arg_index", runBody);
         Assert.Contains("load i32, ptr", runBody);
         Assert.DoesNotContain("declare fastcc i32 @Run", llvm);
     }
@@ -10208,8 +12910,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc i32 @Read([3 x i32] %arg_values, i32 %arg_index)", llvm);
         Assert.Contains("%slot_param_values = alloca [3 x i32]", llvm);
         Assert.Contains("store [3 x i32] %arg_values, ptr %slot_param_values", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_param_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_param_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("load i32, ptr", llvm);
@@ -10244,9 +12945,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Matches(@"getelementptr inbounds nuw \[3 x i32\], ptr %v\d+, i32 0, i8 %arg_index", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
-        Assert.Single(Regex.Matches(llvm, @"getelementptr inbounds nuw \[3 x i32\], ptr %v\d+, i32 0, i8 %arg_index").Cast<Match>());
+        Assert.Matches(@"getelementptr inbounds nuw \[3 x i32\], ptr %slot_values, i32 0, i8 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
+        Assert.Single(Regex.Matches(llvm, @"getelementptr inbounds nuw \[3 x i32\], ptr %slot_values, i32 0, i8 %arg_index").Cast<Match>());
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
     }
 
@@ -10303,8 +13004,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_index)", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
@@ -10449,7 +13149,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare i64 @Syscall2", llvm);
-        Assert.Contains("call i64 @Syscall2(i64 2, ptr", llvm);
+        Assert.Contains("call i64 @Syscall2(i64 range(i64 2, 3) 2, ptr readonly", llvm);
         Assert.DoesNotContain("; imported asm definition: Syscall.Syscall2", llvm);
         Assert.DoesNotContain("define i64 @Syscall2", llvm);
     }
@@ -10486,7 +13186,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ImportedGlobalsUseQualifiedDependencySymbols()
+    public void ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValues()
     {
         var result = Compile(
             """
@@ -10526,7 +13226,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("@Math_Counter = external global i32", llvm);
         Assert.Contains("load i32, ptr @Math_Counter", llvm);
         Assert.Matches(@"store i32 %[^,]+, ptr @Math_Counter", llvm);
-        Assert.Contains("load i8, ptr @Math_Answer", llvm);
+        Assert.DoesNotContain("load i8, ptr @Math_Answer", llvm);
     }
 
     [Fact]
@@ -11082,7 +13782,7 @@ public sealed class LlvmIrEmissionTests
                 return Forward(box, delta);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11093,7 +13793,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Forward\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private member-call forwarder to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @Forward(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @Forward(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11120,7 +13820,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11131,7 +13831,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private field-access wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11155,7 +13855,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(boxes, index);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11193,7 +13893,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11204,7 +13904,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private conversion wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i64 @Read(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @Read(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11228,7 +13928,7 @@ public sealed class LlvmIrEmissionTests
                 return Pin(buffer, index);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11239,7 +13939,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Pin\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private address-of wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc ptr @Pin(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc ptr @Pin(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11266,7 +13966,7 @@ public sealed class LlvmIrEmissionTests
                 return AddDelta(box, delta);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11277,7 +13977,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@AddDelta\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private binary-operator wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @AddDelta(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @AddDelta(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11304,7 +14004,7 @@ public sealed class LlvmIrEmissionTests
                 return IsBelow(box, limit);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11315,7 +14015,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@IsBelow\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private comparison wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i1 @IsBelow(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @IsBelow(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11346,7 +14046,7 @@ public sealed class LlvmIrEmissionTests
                 return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11357,7 +14057,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@ChooseBranch\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private terminal-if selection wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @ChooseBranch(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @ChooseBranch(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11385,7 +14085,7 @@ public sealed class LlvmIrEmissionTests
                 return ChooseSwitch(selector, left, middle, right);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11396,7 +14096,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@ChooseSwitch\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private terminal-switch selection wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -12118,7 +14818,6 @@ public sealed class LlvmIrEmissionTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
@@ -12441,7 +15140,7 @@ public sealed class LlvmIrEmissionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(borrow Box box)
+            unsafe noinline fn void Touch(borrow Box box)
             {
                 return;
             }
@@ -12452,16 +15151,17 @@ public sealed class LlvmIrEmissionTests
                 Touch(aliasBox);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("%slot_aliasBox = alloca %Box", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Box, ptr %slot_aliasBox", llvm);
-        Assert.Contains("call fastcc void @Touch(ptr nonnull", llvm);
+        Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
+        // The alias slot is fully promoted away; the forwarded call uses the
+        // original parameter pointer directly.
+        Assert.Matches(@"call fastcc void @Touch\(ptr [^\n]*%arg_box\)", llvm);
+        Assert.DoesNotContain("abi_borrow_ptr_load", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
     }
 
@@ -12494,8 +15194,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Counter_Reset(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self)", llvm);
-        Assert.Contains("define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self, i32 %arg_value)", llvm);
+        Assert.Contains("define fastcc void @Counter_Reset(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self)", llvm);
+        Assert.Contains("define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self, i32 %arg_value)", llvm);
         Assert.Matches(@"call fastcc void @Counter_Reset\(ptr [^\n]*%arg_self\)", llvm);
         Assert.DoesNotContain("callarg_self", llvm);
     }
@@ -12513,7 +15213,20 @@ public sealed class LlvmIrEmissionTests
 
                 unsafe fn void Set(borrow mut Inner self, i32[min max] value)
                 {
-                    self.Value = value;
+                    stack i32[min max] a = value + (value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    self.Value = m;
                     return;
                 }
             }
@@ -12529,15 +15242,106 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc void @Inner_Set(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self", llvm);
+        Assert.Contains("define fastcc void @Inner_Set(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self", llvm);
         Assert.Contains("call fastcc void @Inner_Set(ptr nonnull", llvm);
         Assert.DoesNotContain("call fastcc void @Inner_Set(ptr %slot_", llvm);
         Assert.DoesNotContain("alloca %Inner", llvm);
+    }
+
+    [Fact]
+    public void StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter
+            {
+                i32[min max] Value;
+
+                fn Holder Hold(storeborrow mut Counter self)
+                {
+                    return new Holder(self);
+                }
+            }
+
+            struct Holder
+            {
+                storeborrow mut Counter Owner;
+                bool Held;
+
+                Holder(storeborrow mut Counter owner)
+                {
+                    self.Owner = owner;
+                    self.Held = true;
+                }
+
+                unsafe fn void Set(mut borrow Holder self, i32[min max] value)
+                {
+                    self.Owner.Value = value;
+                    return;
+                }
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Counter counter = new Counter()
+                {
+                    Value = 1
+                };
+                stack mut Holder holder = counter.Hold();
+                holder.Set(42);
+                if (!*(&holder.Held))
+                {
+                    return 0;
+                }
+
+                return counter.Value;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        var llvm = GetLlvm(result);
+        var holdHeader = ExtractDefinitionHeader(llvm, "Counter_Hold");
+        var setHeader = ExtractDefinitionHeader(llvm, "Holder_Set");
+        var runHeader = ExtractDefinitionHeader(llvm, "Run");
+
+        Assert.Contains("%Counter = type { i32 }", llvm);
+        Assert.Contains("%Holder = type { ptr, i1 }", llvm);
+        Assert.Contains("!\"Stark TBAA\"", llvm);
+        Assert.Contains("load ptr", llvm);
+        Assert.Contains("getelementptr inbounds nuw %Counter", llvm);
+        Assert.Contains("captures(address", holdHeader);
+        Assert.DoesNotContain("captures(none)", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("noalias", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("noalias", setHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("writeonly", setHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory(none)", runHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("%Holder = type { %Counter", llvm);
+
+        var pointerDescriptor = Regex.Match(
+            llvm,
+            @"!(\d+) = !\{!""stark\.ptr"", !\d+, i64 0\}",
+            RegexOptions.CultureInvariant);
+        var boolDescriptor = Regex.Match(
+            llvm,
+            @"!(\d+) = !\{!""stark\.bool"", !\d+, i64 0\}",
+            RegexOptions.CultureInvariant);
+        var holderDescriptor = Regex.Match(
+            llvm,
+            @"!\d+ = !\{!""stark\.Holder"", (?<fields>[^}]*)\}",
+            RegexOptions.CultureInvariant);
+        Assert.True(pointerDescriptor.Success, llvm);
+        Assert.True(boolDescriptor.Success, llvm);
+        Assert.True(holderDescriptor.Success, llvm);
+        Assert.Contains($"!{pointerDescriptor.Groups[1].Value}, i64 0", holderDescriptor.Groups["fields"].Value);
+        Assert.Contains($"!{boolDescriptor.Groups[1].Value}, i64 8", holderDescriptor.Groups["fields"].Value);
     }
 
     [Fact]
@@ -12565,7 +15369,7 @@ public sealed class LlvmIrEmissionTests
                 return current;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
         var llvm = GetLlvm(result);
@@ -12594,7 +15398,10 @@ public sealed class LlvmIrEmissionTests
                 {
                     i32[min max] Value;
 
-                    unsafe fn void Reset(borrow mut Counter self)
+                    // noinline keeps the imported call a real call under the
+                    // always-on optimizing pipeline, so the consumer emits the
+                    // declare this test inspects instead of folding the body.
+                    unsafe noinline fn void Reset(borrow mut Counter self)
                     {
                         self.Value = 0;
                         return;
@@ -12618,14 +15425,14 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn void Run()
+                    unsafe fn i32[min max] Run()
                     {
                         stack mut Facade.Counter counter = new Facade.Counter()
                         {
                             Value = 1
                         };
                         counter.Reset();
-                        return;
+                        return counter.Value;
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -12637,12 +15444,81 @@ public sealed class LlvmIrEmissionTests
             var llvm = GetLlvm(consumerResult);
 
             Assert.Contains(
-                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4)",
+                "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4)",
                 llvm);
             Assert.DoesNotContain(
                 "declare fastcc void @Facade_Counter_Reset(ptr nonnull noalias readonly",
                 llvm,
                 StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ImportedSourceMethodsUseDefiningModuleQualifiedSymbols()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-method-symbol-llvm-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                public struct Box
+                {
+                    i32[min max] Value;
+
+                    public unsafe noinline fn i32[min max] Read(borrow Box self)
+                    {
+                        return self.Value;
+                    }
+                }
+                """);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    unsafe fn i32[min max] Run()
+                    {
+                        stack Lib.Box box = new Lib.Box()
+                        {
+                            Value = 7
+                        };
+
+                        return box.Read();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Matches(
+                @"declare fastcc .*@Lib_Box_Read\(ptr .*nonnull .*noalias .*readonly .*dereferenceable\(4\) align 4\)",
+                llvm);
+            Assert.Matches(
+                @"call fastcc i32 @Lib_Box_Read\(ptr .*nonnull .*noalias .*readonly .*dereferenceable\(4\) align 4",
+                llvm);
+            Assert.DoesNotContain("@Box_Read(", llvm, StringComparison.Ordinal);
         }
         finally
         {
@@ -12673,7 +15549,20 @@ public sealed class LlvmIrEmissionTests
             {
                 unsafe finite law i32[min max] Read(borrow mut Box box)
                 {
-                    return box.Value;
+                    stack i32[min max] a = box.Value + (box.Value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -12682,13 +15571,13 @@ public sealed class LlvmIrEmissionTests
                 return Inspect.Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc i32 @Inspect_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Inspect_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
+        Assert.Contains("define fastcc i32 @Run(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("call fastcc i32 @Inspect_Read(ptr nonnull", llvm);
     }
 
@@ -12764,7 +15653,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("trunc i64 %arg_bits to i32", llvm);
-        Assert.Contains("getelementptr inbounds nuw i32, ptr %slot_value, i32 0", llvm);
+        Assert.Contains("store i32 %v2, ptr %slot_value", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw i8, ptr %", llvm);
         Assert.DoesNotContain("ptrtoint", llvm);
         Assert.DoesNotContain("inttoptr", llvm);
@@ -12800,7 +15689,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = NormalizeLlvm(GetLlvmRaw(result));
@@ -12831,7 +15720,7 @@ public sealed class LlvmIrEmissionTests
                 return false;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -12864,7 +15753,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -12872,7 +15761,9 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("getelementptr i8, ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("or i1", llvm, StringComparison.Ordinal);
-        Assert.Contains("br i1", llvm, StringComparison.Ordinal);
+        // The two constant-returning branches fold into a select over the
+        // disjointness comparison.
+        Assert.Contains("select i1", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -12892,7 +15783,7 @@ public sealed class LlvmIrEmissionTests
                 return false;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -12923,7 +15814,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -12952,7 +15843,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -12961,6 +15852,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("stark.noalias.Check.runtime-disjoint-0.param.ptr[4..7]", llvm, StringComparison.Ordinal);
         Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", llvm);
         Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", llvm);
+        Assert.DoesNotContain("\"separate_storage\"", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -12980,7 +15872,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&ptr[4]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13011,7 +15903,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13021,6 +15913,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", llvm);
         Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", llvm);
         Assert.DoesNotContain("icmp ule ptr", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"separate_storage\"", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -13051,7 +15944,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13094,13 +15987,13 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var copyBody = ExtractDefinitionBody(llvm, "Copy");
 
-        Assert.Matches(@"call fastcc i32 @Read\(ptr [^\n]*\), !llvm\.access\.group !\d+", copyBody);
+        Assert.Matches(@"call fastcc i32 @Read\(ptr [^\n]*\).*!llvm\.access\.group !\d+", copyBody);
         Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
     }
 
@@ -13124,7 +16017,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var runBody = ExtractDefinitionBody(GetLlvmRaw(result), "Run");
@@ -13153,8 +16046,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
 
-        Assert.Contains("ptr noundef noalias nocapture %arg_left", header, StringComparison.Ordinal);
-        Assert.Contains("ptr noundef noalias nocapture %arg_right", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef noalias captures(none) %arg_left", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef noalias captures(none) %arg_right", header, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -13175,8 +16068,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
 
-        Assert.Contains("ptr noundef noalias nocapture %arg_left", header, StringComparison.Ordinal);
-        Assert.Contains("ptr noundef noalias nocapture %arg_right", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef noalias captures(none) %arg_left", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef noalias captures(none) %arg_right", header, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -13198,8 +16091,8 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
 
-        Assert.Contains("ptr noundef nocapture %arg_left", header, StringComparison.Ordinal);
-        Assert.Contains("ptr noundef nocapture %arg_right", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef captures(none) %arg_left", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef captures(none) %arg_right", header, StringComparison.Ordinal);
         Assert.DoesNotContain("noalias", header, StringComparison.Ordinal);
     }
 
@@ -13220,7 +16113,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Touch");
 
-        Assert.Contains("ptr noundef nonnull dereferenceable(16) align 4 readonly nocapture %arg_input", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef nonnull dereferenceable(16) align 4 readonly captures(none) %arg_input", header, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -13247,8 +16140,8 @@ public sealed class LlvmIrEmissionTests
         var positiveHeader = ExtractDefinitionHeader(llvm, "TouchPositive");
         var maybeEmptyHeader = ExtractDefinitionHeader(llvm, "TouchMaybeEmpty");
 
-        Assert.Contains("ptr noundef nonnull dereferenceable(4) align 4 readonly nocapture %arg_input", positiveHeader, StringComparison.Ordinal);
-        Assert.Contains("ptr noundef readonly nocapture %arg_input", maybeEmptyHeader, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef nonnull dereferenceable(4) align 4 readonly captures(none) %arg_input", positiveHeader, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef readonly captures(none) %arg_input", maybeEmptyHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("nonnull", maybeEmptyHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("dereferenceable(", maybeEmptyHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("declare void @llvm.assume(i1 noundef)", llvm, StringComparison.Ordinal);
@@ -13271,7 +16164,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "TouchEmpty");
 
-        Assert.Contains("ptr noundef readonly nocapture %arg_input", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef readonly captures(none) %arg_input", header, StringComparison.Ordinal);
         Assert.DoesNotContain("nonnull", header, StringComparison.Ordinal);
         Assert.DoesNotContain("dereferenceable(", header, StringComparison.Ordinal);
     }
@@ -13289,7 +16182,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> op,
+                fnptr<unsafe fn void(rawptr<i32[min max]>[arg1], u8[1 10])> op,
                 rawptr<i32[min max]>[count] input,
                 u8[1 10] count)
                 {
@@ -13303,7 +16196,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13311,7 +16204,7 @@ public sealed class LlvmIrEmissionTests
         var applyBody = ExtractDefinitionBody(llvm, "Apply");
 
         Assert.Contains("ptr noundef nonnull %arg_op", applyHeader, StringComparison.Ordinal);
-        Assert.Contains("ptr noundef nonnull dereferenceable(4) align 4 readonly nocapture %arg_input", applyHeader, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef nonnull dereferenceable(4) align 4 readonly captures(none) %arg_input", applyHeader, StringComparison.Ordinal);
         Assert.Contains(
             "call fastcc void %arg_op(ptr nonnull dereferenceable(4) align 4 readonly captures(address, read_provenance) %arg_input, i8 range(i8 1, 11) %arg_count)",
             applyBody,
@@ -13343,7 +16236,7 @@ public sealed class LlvmIrEmissionTests
                     return op(input, count);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13351,13 +16244,13 @@ public sealed class LlvmIrEmissionTests
         var directBody = ExtractDefinitionBody(llvm, "Direct");
         var indirectBody = ExtractDefinitionBody(llvm, "Indirect");
 
-        Assert.Contains("ptr noundef readonly nocapture %arg_input", touchHeader, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef readonly captures(none) %arg_input", touchHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("nonnull", touchHeader, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i32 @Touch\(ptr nonnull dereferenceable\(16\) align 4 readonly nocapture %arg_input, i8 range\(i8 0, 11\) %arg_count\)",
+            @"call fastcc i32 @Touch\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(none\) %arg_input, i8 range\(i8 4, 11\) %arg_count\)",
             directBody);
         Assert.Matches(
-            @"call fastcc i32 %arg_op\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(address, read_provenance\) %arg_input, i8 range\(i8 0, 11\) %arg_count\)",
+            @"call fastcc i32 %arg_op\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(address, read_provenance\) %arg_input, i8 range\(i8 4, 11\) %arg_count\)",
             indirectBody);
     }
 
@@ -13373,7 +16266,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&input[index]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13400,7 +16293,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13423,7 +16316,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13449,7 +16342,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13477,11 +16370,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var header = ExtractDefinitionHeader(GetLlvmRaw(result), "Inspect");
 
-        Assert.Contains("ptr noundef readonly nocapture %arg_ptr", header, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef readonly captures(none) %arg_ptr", header, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ConstRawPointerParameterLoadsEmitInvariantMetadata()
+    public void ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -13492,12 +16385,12 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]
@@ -13526,7 +16419,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13538,7 +16431,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void RawSlicesFromConstPointersPreserveInvariantLoadMetadata()
+    public void RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -13555,16 +16448,16 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]
-    public void RawSlicesFromConstPointerLocalsPreserveInvariantLoadMetadata()
+    public void RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -13582,12 +16475,12 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]
@@ -13608,7 +16501,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13636,7 +16529,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13662,7 +16555,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13689,7 +16582,7 @@ public sealed class LlvmIrEmissionTests
                 return sum;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13719,7 +16612,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13751,7 +16644,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13789,7 +16682,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13824,7 +16717,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13849,13 +16742,13 @@ public sealed class LlvmIrEmissionTests
                 {
                     for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
                 {
-                    *(&output[index]) = *(&input[index]);
+                    *(&output[index]) = *(&input[index]) + 1;
                 }
 
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13889,7 +16782,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13926,7 +16819,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i8 %arg_count to i64", llvm);
         Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
         Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
@@ -13965,7 +16858,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
     }
@@ -14071,7 +16964,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false\)", llvm);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("%slot_temporary", llvm, StringComparison.Ordinal);
@@ -14112,7 +17005,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false\)", llvm);
         Assert.Contains("store i32 17", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
@@ -14162,7 +17055,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("icmp ult ptr", llvm, StringComparison.Ordinal);
@@ -14213,7 +17106,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %arg_count, 4", llvm);
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("icmp ult ptr", llvm, StringComparison.Ordinal);
@@ -14285,7 +17178,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i8 %arg_count to i64", llvm);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %arg_output, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
@@ -14313,7 +17206,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_count_\d+ = zext i8 %arg_count to i64", llvm);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %abi_rawptr_loop_destination_data_\d+, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("%v0_phi = phi", llvm, StringComparison.Ordinal);
@@ -14344,7 +17237,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
         var fillBody = ExtractDefinitionBody(llvm, "Fill");
 
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %abi_rawptr_loop_destination_data_\d+, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", fillBody);
         Assert.Contains("dynamic_length_final", fillBody, StringComparison.Ordinal);
         Assert.DoesNotContain("%v0_phi = phi", fillBody, StringComparison.Ordinal);
@@ -14379,7 +17272,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
         var fillBody = ExtractDefinitionBody(llvm, "Fill");
 
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %dynamic_append_tail, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", fillBody);
         Assert.Contains("%dynamic_append_final_length = add", fillBody, StringComparison.Ordinal);
         Assert.DoesNotContain("_for_body", fillBody, StringComparison.Ordinal);
@@ -14411,7 +17304,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
         Assert.Matches(@"call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("%v0_phi = phi", llvm, StringComparison.Ordinal);
@@ -14451,7 +17344,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 16, i1 false\)", llvm);
         Assert.DoesNotContain("%slot_temporary", llvm, StringComparison.Ordinal);
     }
@@ -14486,7 +17379,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
         Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %arg_output, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", llvm);
         Assert.DoesNotContain("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
     }
@@ -14521,7 +17414,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);

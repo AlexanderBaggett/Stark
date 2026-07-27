@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stark-lang.org/schemas/release/archive-content-v1.json",
+  "title": "Stark release archive content manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "topLevelDirectory", "repositoryContent", "nativeBinaryPolicy", "entries"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "topLevelDirectory": { "type": "string", "enum": ["asset-base-name"] },
+    "repositoryContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forbiddenExtensions", "trees"],
+      "properties": {
+        "forbiddenExtensions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^\\.[a-z0-9]+$" },
+          "uniqueItems": true
+        },
+        "trees": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "source", "destination", "includeExtensions", "includeFiles"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+              "source": { "type": "string", "minLength": 1 },
+              "destination": { "type": "string", "minLength": 1 },
+              "includeExtensions": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^\\.[a-z0-9]+$" },
+                "uniqueItems": true
+              },
+              "includeFiles": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "nativeBinaryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvedRoots"],
+      "properties": {
+        "approvedRoots": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "pathType", "kind", "owner", "mode", "checksumClass", "targets"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "path": { "type": "string", "minLength": 1 },
+          "pathType": { "type": "string", "enum": ["exact", "tree"] },
+          "kind": { "type": "string", "enum": ["file", "directory"] },
+          "owner": { "type": "string", "enum": ["compiler", "sdk", "system", "vendor-catalog", "private-backend", "documentation", "release"] },
+          "mode": { "type": "string", "enum": ["0644", "0755"] },
+          "checksumClass": { "type": "string", "enum": ["release-sha256", "sdk-sha256", "metadata", "excluded"] },
+          "targets": {
+            "oneOf": [
+              { "const": "all" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+                "uniqueItems": true
+              }
+            ]
+          },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

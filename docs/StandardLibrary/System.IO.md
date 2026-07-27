@@ -18,7 +18,11 @@ public enum IOError
     InvalidPath,
     BrokenPipe,
     DiskFull,
-    Unknown(i32),
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    TooManyLinks,
+    Unknown(i32[min max]),
 }
 
 public enum IOResult<T>
@@ -82,6 +86,8 @@ finite law bool IsOk(System.IO.IOStatus status)
 ## Current Status
 
 - These shared types are implemented and used by `System.Console`.
-- `System.IO.File` exposes owned file handles and slice/buffer-based byte IO;
-  raw file handles are internal stdlib/platform boundaries.
+- `System.IO.File` exposes owned file handles, slice/buffer-based byte IO,
+  whole-file text/byte helpers, atomic whole-file replacement helpers, and
+  line-oriented text reading; raw file handles are internal stdlib/platform
+  boundaries.
 - Directory-wide operations live in `System.FileSystem`.

@@ -1,0 +1,347 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedDeclarationLookup
+import Compiler.Typing.TypedEnumLayoutGenerics
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCtfeQueries
+
+internal fn bool TypedEnumLayoutQueryTypeSpanHasTopLevelDot(borrow TokenStream stream, u32[0 max] startToken, u32[0 max] endToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = startToken;
+    while willexit (scan < endToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Dot)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutTryResolveQueryOwner(
+    borrow DeclarationList declarations,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] genericOpenToken,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    stack mut u32[0 max] typeStart = 0;
+    stack mut u32[0 max] typeEnd = 0;
+    if (!TypedEnumLayoutGenericArgumentSegment(stream, genericOpenToken, false, 0, typeStart, typeEnd)
+        || TypedEnumLayoutQueryTypeSpanHasTopLevelDot(stream, typeStart, typeEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStart, typeEnd, typeStart);
+    if (typePrimaryToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack u32[0 max] declarationIndexPlusOne = TypedIdentifierDeclarationIndexByNameToken(source, stream, declarations, typePrimaryToken);
+    if (declarationIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack DeclItem item = declarations.ItemAt((u64[0 2 ** 63 - 1])(declarationIndexPlusOne - 1));
+    if (item.Kind != DeclarationKind.Enum)
+    {
+        return false;
+    }
+
+    ownerDeclarationIndex = (u32[0 max])(declarationIndexPlusOne - 1);
+    return true;
+}
+
+internal fn bool TypedEnumLayoutTryReadQueryU64Segment(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] startToken,
+    u32[0 max] endToken,
+    out u64[0 max] value)
+{
+    value = 0;
+    if (startToken >= endToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] valueToken = startToken;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])valueToken) == TokenKind.Comptime)
+    {
+        valueToken = (u32[0 max])(valueToken + 1);
+    }
+
+    if (valueToken < endToken && stream.KindAt((u64[0 2 ** 63 - 1])valueToken) == TokenKind.Plus)
+    {
+        valueToken = (u32[0 max])(valueToken + 1);
+    }
+
+    if ((u32[0 max])(valueToken + 1) != endToken)
+    {
+        return false;
+    }
+
+    if (TypedEnumLayoutTryReadU64Token(source, stream, valueToken, value))
+    {
+        return true;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])valueToken) == TokenKind.Identifier)
+    {
+        return TypedEnumLayoutTryReadGenericComptimeU64(source, stream, contexts, contextIndexPlusOne, valueToken, value);
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutTryReadQueryU32(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] genericOpenToken,
+    u32[0 max] valueOrdinal,
+    out u32[0 max] value)
+{
+    value = 0;
+    stack mut u32[0 max] valueStart = 0;
+    stack mut u32[0 max] valueEnd = 0;
+    if (!TypedEnumLayoutGenericArgumentSegment(stream, genericOpenToken, true, valueOrdinal, valueStart, valueEnd))
+    {
+        return false;
+    }
+
+    stack mut TypedEnumLayoutGenericContextTable noContexts = new();
+    stack mut u64[0 max] wideValue = 0;
+    if (!TypedEnumLayoutTryReadQueryU64Segment(source, stream, noContexts, 0, valueStart, valueEnd, wideValue)
+        || wideValue > 4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])wideValue;
+    return true;
+}
+
+internal fn bool TryFoldEnumTagLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    stack mut u64[0 max] offsetBytes = 0;
+    stack mut u64[0 max] sizeBytes = 0;
+    stack mut u64[0 max] alignmentBytes = 1;
+    stack mut bool isMisaligned = false;
+    if (!layouts.TryGetEnumTagLayout(ownerDeclarationIndex, offsetBytes, sizeBytes, alignmentBytes, isMisaligned))
+    {
+        return false;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagOffset"))
+    {
+        constant.SetU64(offsetBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagSize"))
+    {
+        constant.SetU64(sizeBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagAlign"))
+    {
+        constant.SetU64(alignmentBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagIsMisaligned"))
+    {
+        constant.SetBool(isMisaligned);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryFoldEnumVariantLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantTag"))
+    {
+        stack mut u64[0 max] tagValue = 0;
+        if (!layouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+        {
+            return false;
+        }
+
+        constant.SetU64(tagValue);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadCount"))
+    {
+        stack mut u64[0 max] payloadCount = 0;
+        if (!layouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount))
+        {
+            return false;
+        }
+
+        constant.SetU64(payloadCount);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryFoldEnumVariantPayloadLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    stack mut u64[0 max] offsetBytes = 0;
+    stack mut u64[0 max] sizeBytes = 0;
+    stack mut u64[0 max] alignmentBytes = 1;
+    stack mut bool isMisaligned = false;
+    if (!layouts.TryGetEnumVariantPayloadLayout(
+        ownerDeclarationIndex,
+        variantOrdinal,
+        payloadOrdinal,
+        offsetBytes,
+        sizeBytes,
+        alignmentBytes,
+        isMisaligned))
+    {
+        return false;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadOffset"))
+    {
+        constant.SetU64(offsetBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadSize"))
+    {
+        constant.SetU64(sizeBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadAlign"))
+    {
+        constant.SetU64(alignmentBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadIsMisaligned"))
+    {
+        constant.SetBool(isMisaligned);
+        return true;
+    }
+
+    return false;
+}
+
+public fn bool TryFoldEnumLayoutComptimeQueryCall(
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    if (queryNameToken == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] genericOpenToken = (u32[0 max])(queryNameToken + 1);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack u32[0 max] genericCloseToken = TypedSignatureMatchingCloseToken(stream, genericOpenToken);
+    if (genericCloseToken <= genericOpenToken
+        || stream.KindAt((u64[0 2 ** 63 - 1])(genericCloseToken + 1)) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    if (!TypedEnumLayoutTryResolveQueryOwner(declarations, source, stream, genericOpenToken, ownerDeclarationIndex))
+    {
+        return false;
+    }
+
+    if (TryFoldEnumTagLayoutComptimeQuery(layouts, source, stream, queryNameToken, ownerDeclarationIndex, constant))
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TypedEnumLayoutTryReadQueryU32(source, stream, genericOpenToken, 0, variantOrdinal))
+    {
+        return false;
+    }
+
+    if (TryFoldEnumVariantLayoutComptimeQuery(layouts, source, stream, queryNameToken, ownerDeclarationIndex, variantOrdinal, constant))
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] payloadOrdinal = 0;
+    if (!TypedEnumLayoutTryReadQueryU32(source, stream, genericOpenToken, 1, payloadOrdinal))
+    {
+        return false;
+    }
+
+    return TryFoldEnumVariantPayloadLayoutComptimeQuery(
+        layouts,
+        source,
+        stream,
+        queryNameToken,
+        ownerDeclarationIndex,
+        variantOrdinal,
+        payloadOrdinal,
+        constant);
+}

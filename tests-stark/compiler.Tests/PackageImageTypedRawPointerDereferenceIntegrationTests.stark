@@ -1,0 +1,134 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedRawPointerDereferenceIntegrationTests
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed raw-pointer dereference bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "package-image-typed-raw-pointer-deref",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max] current = 5;
+    stack i32[min max] tag = 0;
+    return Facade.Observe(&current, 3, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag)
+{
+    stack mut i32[min max] copy = *ptr;
+    return *ptr += copy + value;
+}
+""",
+            "Facade.Observe",
+            "",
+            13);
+    }
+}
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed projected raw-pointer dereference bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "package-image-typed-projected-raw-pointer-deref",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max][4] values =
+    {
+        10, 20, 30, 40
+    };
+    stack mut Facade.Buffer buffer =
+    {
+        First = 5, Values = values
+    };
+    stack i32[min max] tag = 0;
+    return Facade.Observe(&buffer, 2, 3, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag)
+{
+    return ptr;
+}
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag)
+{
+    (*ptr).First += value;
+    return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
+}
+""",
+            "Facade.Observe",
+            "Facade.Pick",
+            11);
+    }
+}
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    {
+        // Covers manifest-backed address-of bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
+            "package-image-typed-address-of",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Observe(5, tag);
+}
+""",
+            "Facade",
+            raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max][4] data =
+    {
+        1, 2, 3, 4
+    };
+    stack mut Buffer buffer =
+    {
+        First = value, Values = data
+    };
+    stack rawmutptr<i32[min max]> firstPtr = &buffer.First;
+    stack rawmutptr<i32[min max]> slotPtr = &buffer.Values[2];
+    stack rawmutptr<i32[min max]> aliasPtr = &*slotPtr;
+    return *aliasPtr = *firstPtr + value;
+}
+""",
+            "Facade.Observe",
+            "",
+            10);
+    }
+}

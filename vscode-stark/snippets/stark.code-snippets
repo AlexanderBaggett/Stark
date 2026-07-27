@@ -15,6 +15,13 @@
     ],
     "description": "Import a Stark module"
   },
+  "Import Vendor Binding": {
+    "prefix": "import Vendor",
+    "body": [
+      "import ${1|Vendor.Raylib,Vendor.SQLite,Vendor.GLFW,Vendor.SDL3,Vendor.Miniaudio,Vendor.STB.Image,Vendor.Cgltf|}"
+    ],
+    "description": "Import a bundled Vendor binding"
+  },
   "Export Import": {
     "prefix": "export import",
     "body": [
@@ -41,6 +48,16 @@
       "}"
     ],
     "description": "Declare a pure terminating function"
+  },
+  "Tail Function": {
+    "prefix": "tail fn",
+    "body": [
+      "tail fn ${1:i64[min max]} ${2:Name}(${3:i64[min max] value})",
+      "{",
+      "\tbecome ${4:Next}(${5:value});",
+      "}"
+    ],
+    "description": "Declare a tail-callable function"
   },
   "Main Void": {
     "prefix": "main",
@@ -171,6 +188,20 @@
     ],
     "description": "Add a disjoint memory contract"
   },
+  "Where Dead On Return": {
+    "prefix": "where dead_on_return",
+    "body": [
+      "where dead_on_return(${1:value})"
+    ],
+    "description": "Add a pointee-dead-after-return contract"
+  },
+  "Become": {
+    "prefix": "become",
+    "body": [
+      "become ${1:Next}(${2:value});"
+    ],
+    "description": "Transfer to a tail-callable callee"
+  },
   "If Disjoint": {
     "prefix": "if disjoint",
     "body": [
@@ -198,6 +229,29 @@
     ],
     "description": "Declare a native FFI function"
   },
+  "FFI LinkName Declaration": {
+    "prefix": "linkname ffi",
+    "body": [
+      "[LinkName(\"${1:foreign_symbol}\")]",
+      "unsafe ffi(c) fn ${2:i32[min max]} ${3:LocalName}(${4});"
+    ],
+    "description": "Declare a native FFI function with an explicit foreign linker symbol"
+  },
+  "C Aggregate FFI Declaration": {
+    "prefix": "c aggregate ffi",
+    "body": [
+      "[StructLayout(C)]",
+      "public struct ${1:NativeStruct}",
+      "{",
+      "\tpublic ${2:f32} ${3:X};",
+      "\tpublic ${4:f32} ${5:Y};",
+      "}",
+      "",
+      "[LinkName(\"${6:NativeSymbol}\")]",
+      "unsafe ffi(c) fn ${1:NativeStruct} ${7:LocalName}(${8});"
+    ],
+    "description": "Declare a C-layout aggregate and a direct by-value FFI function"
+  },
   "Assembly Function": {
     "prefix": "asmfn",
     "body": [
@@ -216,6 +270,20 @@
       "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};"
     ],
     "description": "Declare a stack local"
+  },
+  "Arena Local": {
+    "prefix": "arena",
+    "body": [
+      "arena ${1:mut }${2:Node} ${3:name} = new ${2:Node}();"
+    ],
+    "description": "Declare an arena-backed local"
+  },
+  "Arena Dynamic Storage": {
+    "prefix": "new arena",
+    "body": [
+      "stack mut dynamic ${1:u8[0 max]} ${2:items} = new(arena, ${3:capacity});"
+    ],
+    "description": "Declare dynamic storage with arena-backed capacity"
   },
   "Constant": {
     "prefix": "const",

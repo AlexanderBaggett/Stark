@@ -21,6 +21,8 @@ public sealed class ProjectCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Usage: stark build", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--package-image-json", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
         finally
@@ -47,6 +49,36 @@ public sealed class ProjectCliTests
             Assert.Equal(0, exitCode);
             Assert.Contains("Usage: stark test", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("Build and run Stark test projects.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--target <triple>", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--stage stage0", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CleanHelpUsesProjectCommandDriver()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-clean-help-");
+
+        try
+        {
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["clean", "--help"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Usage: stark clean", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Default scope is `stage`.", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
         finally
@@ -59,7 +91,7 @@ public sealed class ProjectCliTests
     [Fact]
     public async Task BuildBuildsCurrentProjectFromManifest()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -80,9 +112,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "demo-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -100,12 +129,1249 @@ public sealed class ProjectCliTests
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(["build"], new StringReader(string.Empty), stdout, stderr);
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--stage", "stage0", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "demo", ExecutableFileName("demo-app"))));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "demo", ExecutableFileName("demo-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildWritesExplicitPackageImageJsonInspectionViewUnderArtifacts()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-pkg-json-view-");
+
+        try
+        {
+            await CreateSolutionFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var firstStdout = new StringWriter();
+            var firstStderr = new StringWriter();
+            var firstExitCode = await CompilerCli.RunAsync(
+                ["build", "math", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                firstStdout,
+                firstStderr);
+
+            Assert.Equal(0, firstExitCode);
+            Assert.Equal(string.Empty, firstStderr.ToString());
+            var packageImagePath = BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math");
+            var packageJsonPath = BuildPackageImageJsonInspectionPath(tempDirectory.FullName, targetInfo.Triple, "math", "Math");
+            Assert.True(File.Exists(packageImagePath));
+            Assert.False(File.Exists(PackageImageBinaryFormat.JsonSidecarPath(packageImagePath)));
+            Assert.False(File.Exists(packageJsonPath));
+
+            var secondStdout = new StringWriter();
+            var secondStderr = new StringWriter();
+            var secondExitCode = await CompilerCli.RunAsync(
+                ["build", "math", "--target", targetInfo.Triple, "--package-image-json"],
+                new StringReader(string.Empty),
+                secondStdout,
+                secondStderr);
+
+            Assert.Equal(0, secondExitCode);
+            Assert.Equal(string.Empty, secondStderr.ToString());
+            Assert.Contains("Emitted package image JSON:", secondStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(packageImagePath));
+            Assert.False(File.Exists(PackageImageBinaryFormat.JsonSidecarPath(packageImagePath)));
+            Assert.True(File.Exists(packageJsonPath));
+
+            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packageJsonPath));
+            Assert.NotNull(manifest);
+            Assert.Equal("Math", manifest!.RootModule);
+            Assert.Single(manifest.Modules);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildUsesStageLocalStdlibSearchDirectory()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-stage-stdlib-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "stage-stdlib-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "stage-stdlib-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.StageProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.StageProbe.Value();
+                }
+                """);
+
+            var stageStdlibModuleDirectory = Path.Combine(
+                BuildStagePath(tempDirectory.FullName, targetInfo.Triple),
+                "stdlib",
+                "System");
+            Directory.CreateDirectory(stageStdlibModuleDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(stageStdlibModuleDirectory, "StageProbe.stark"),
+                """
+                module System.StageProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "stage-stdlib-app", ExecutableFileName("stage-stdlib-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSelectsStageSdkManifestAndIgnoresUnmanifestedStageSources()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var originalSdkRoot = Environment.GetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName);
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-stage-sdk-");
+
+        try
+        {
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, null);
+            var stageRoot = BuildStagePath(tempDirectory.FullName, targetInfo.Triple);
+            var packageDirectory = Path.Combine(stageRoot, "stdlib", "packages");
+            var packageSourceDirectory = Path.Combine(tempDirectory.FullName, "stage-package-source");
+            Directory.CreateDirectory(packageDirectory);
+            Directory.CreateDirectory(packageSourceDirectory);
+
+            var packageSourcePath = Path.Combine(packageSourceDirectory, "StageManifestProbe.stark");
+            var packageLibraryPath = Path.Combine(packageDirectory, LibraryFileName("StageManifestProbe"));
+            var packageImagePath = Path.Combine(packageDirectory, "StageManifestProbe.starkpkg");
+            await File.WriteAllTextAsync(
+                packageSourcePath,
+                """
+                module System.StageManifestProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            var packageStdout = new StringWriter();
+            var packageStderr = new StringWriter();
+            var packageExitCode = await CompilerCli.RunAsync(
+                [
+                    packageSourcePath,
+                    "--emit-lib",
+                    "--target", targetInfo.Triple,
+                    "--package-profile", "dev",
+                    "--package-image-output", packageImagePath,
+                    "--no-stark-path",
+                    "-o", packageLibraryPath
+                ],
+                new StringReader(string.Empty),
+                packageStdout,
+                packageStderr);
+            Assert.True(packageExitCode == 0, packageStderr.ToString());
+
+            var writerStdout = new StringWriter();
+            var writerStderr = new StringWriter();
+            var writerExitCode = await CompilerCli.RunAsync(
+                [StageSdkManifestWriter.CommandOption, stageRoot, "stage0"],
+                new StringReader(string.Empty),
+                writerStdout,
+                writerStderr);
+            Assert.True(writerExitCode == 0, writerStderr.ToString());
+            Assert.Equal(string.Empty, writerStderr.ToString());
+
+            var stageManifest = SdkManifestLoader.Load(stageRoot);
+            Assert.True(stageManifest.Succeeded, string.Join(
+                Environment.NewLine,
+                stageManifest.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+            Assert.Equal(SdkDistributionKind.Stage, stageManifest.Manifest!.Kind);
+            Assert.Contains(
+                stageManifest.Manifest.Modules,
+                static module => module.ModuleName == "System.StageManifestProbe");
+            Assert.True(PackageImageLoader.TryLoadManifest(packageImagePath, out var packageManifest));
+            var packageTarget = Assert.IsType<StarkPackageTargetManifest>(packageManifest.Target);
+            Assert.Equal(packageTarget.Triple, stageManifest.Manifest.Target.LlvmTriple);
+            Assert.Equal(packageTarget.DataLayout, stageManifest.Manifest.Target.DataLayout);
+            Assert.Equal(packageTarget.Cpu, stageManifest.Manifest.Target.BaselineCpu);
+            Assert.Equal(packageTarget.Features ?? [], stageManifest.Manifest.Target.BaselineFeatures);
+            Assert.Equal(packageTarget.RelocationModel, stageManifest.Manifest.Target.RelocationModel);
+            Assert.Equal(packageTarget.CodeModel, stageManifest.Manifest.Target.CodeModel);
+            Assert.Equal(
+                packageTarget.CDataModel?.Kind,
+                stageManifest.Manifest.Target.CDataModel,
+                ignoreCase: true);
+
+            var packageIdentity = Assert.IsType<StarkPackageIdentityManifest>(packageManifest.Identity);
+            var sdkPackage = Assert.Single(stageManifest.Manifest.Packages);
+            Assert.Equal(packageIdentity.PackageId, sdkPackage.Id);
+            Assert.Equal(packageIdentity.ApiHash, sdkPackage.ApiHash);
+            Assert.Equal(packageIdentity.ContentHash, sdkPackage.ContentHash);
+            Assert.Equal("dev", sdkPackage.Profile);
+            Assert.Equal(Path.GetFileName(packageImagePath), Path.GetFileName(sdkPackage.ImagePath));
+            Assert.Equal(Path.GetFileName(packageLibraryPath), Path.GetFileName(sdkPackage.LibraryPath));
+
+            var manifestPath = Path.Combine(stageRoot, SdkRootResolver.ManifestFileName);
+            var firstManifestText = await File.ReadAllTextAsync(manifestPath);
+            var repeatedWriterStderr = new StringWriter();
+            var repeatedWriterExitCode = await CompilerCli.RunAsync(
+                [StageSdkManifestWriter.CommandOption, stageRoot, "stage0"],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                repeatedWriterStderr);
+            Assert.True(repeatedWriterExitCode == 0, repeatedWriterStderr.ToString());
+            Assert.Equal(firstManifestText, await File.ReadAllTextAsync(manifestPath));
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "stage-sdk-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "stage-sdk-app"
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.StageManifestProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.StageManifestProbe.Value();
+                }
+                """);
+
+            var unmanifestedDirectory = Path.Combine(stageRoot, "stdlib", "System");
+            var unmanifestedSourcePath = Path.Combine(unmanifestedDirectory, "UnmanifestedProbe.stark");
+            Directory.CreateDirectory(unmanifestedDirectory);
+            await File.WriteAllTextAsync(
+                unmanifestedSourcePath,
+                """
+                module System.UnmanifestedProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 1;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+            var firstStdout = new StringWriter();
+            var firstStderr = new StringWriter();
+            var firstExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                firstStdout,
+                firstStderr);
+            Assert.True(firstExitCode == 0, firstStderr.ToString());
+            Assert.Contains("Emitted executable:", firstStdout.ToString(), StringComparison.Ordinal);
+
+            var stampPath = Assert.Single(Directory.GetFiles(
+                Path.Combine(stageRoot, "bin", "stage-sdk-app"),
+                ".stark-build-stamp",
+                SearchOption.TopDirectoryOnly));
+            var firstStamp = await File.ReadAllTextAsync(stampPath);
+
+            await File.AppendAllTextAsync(unmanifestedSourcePath, Environment.NewLine);
+            var secondStdout = new StringWriter();
+            var secondStderr = new StringWriter();
+            var secondExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                secondStdout,
+                secondStderr);
+            Assert.True(secondExitCode == 0, secondStderr.ToString());
+            Assert.Equal(firstStamp, await File.ReadAllTextAsync(stampPath));
+
+            var overrideSdkRoot = Path.Combine(tempDirectory.FullName, "explicit-sdk-override");
+            Directory.CreateDirectory(overrideSdkRoot);
+            var overrideManifestPath = Path.Combine(overrideSdkRoot, SdkRootResolver.ManifestFileName);
+            await File.WriteAllTextAsync(overrideManifestPath, "{");
+
+            var explicitStderr = new StringWriter();
+            var explicitExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple, "--sdk-root", overrideSdkRoot],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                explicitStderr);
+            Assert.Equal(1, explicitExitCode);
+            Assert.Contains("STK7401", explicitStderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains(overrideManifestPath, explicitStderr.ToString(), StringComparison.Ordinal);
+
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, overrideSdkRoot);
+            var environmentStderr = new StringWriter();
+            var environmentExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                environmentStderr);
+            Assert.Equal(1, environmentExitCode);
+            Assert.Contains("STK7401", environmentStderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains(overrideManifestPath, environmentStderr.ToString(), StringComparison.Ordinal);
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, null);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, originalSdkRoot);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotDiscoverProjectLocalStdlibSourceTreeWithoutSdk()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-stdlib-src-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-stdlib-source-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-stdlib-source-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.RepoSourceProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.RepoSourceProbe.Value();
+                }
+                """);
+
+            var stdlibSourceDirectory = Path.Combine(tempDirectory.FullName, "stdlib", "src", "System");
+            Directory.CreateDirectory(stdlibSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "stdlib", "Stark.toml"),
+                """
+                [project]
+                name = "stdlib"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/System.stark"
+                output = "System"
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(stdlibSourceDirectory, "RepoSourceProbe.stark"),
+                """
+                module System.RepoSourceProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.RepoSourceProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(stdlibSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotDiscoverProjectLocalVendorSourceTreeWithoutSdk()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-src-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-source-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-source-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.RepoSourceProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return Vendor.RepoSourceProbe.Value();
+                }
+                """);
+
+            var vendorSourceDirectory = Path.Combine(tempDirectory.FullName, "vendor", "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "vendor", "Stark.toml"),
+                """
+                [project]
+                name = "vendor"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/RepoSourceProbe.stark"
+                output = "Vendor"
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "RepoSourceProbe.stark"),
+                """
+                module Vendor.RepoSourceProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.RepoSourceProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotUseProjectLocalVendorSourceNativeMetadataWithoutSdk()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-native-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-native-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-native-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.NativeProbe
+                module App
+
+                export unsafe fn i32[min max] main()
+                {
+                    unsafe
+                    {
+                        return Vendor.NativeProbe.Value();
+                    }
+                }
+                """);
+
+            var vendorDirectory = Path.Combine(tempDirectory.FullName, "vendor");
+            var vendorSourceDirectory = Path.Combine(vendorDirectory, "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "Stark.toml"),
+                """
+                [project]
+                name = "vendor-native-probe"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/NativeProbe.stark"
+                output = "VendorNativeProbe"
+
+                [native]
+                sources = ["NativeProbe.c"]
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "NativeProbe.stark"),
+                """
+                module Vendor.NativeProbe
+
+                [LinkName("stark_native_probe_value")]
+                unsafe ffi fn i32[min max] NativeProbeValue();
+
+                public unsafe fn i32[min max] Value()
+                {
+                    unsafe
+                    {
+                        return NativeProbeValue();
+                    }
+                }
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "NativeProbe.c"),
+                """
+                int stark_native_probe_value(void) {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.NativeProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotDiscoverAncestorVendorSourceNativeMetadata()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-native-diag-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-native-diagnostic-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-native-diagnostic-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.NativeProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return Vendor.NativeProbe.Value();
+                }
+                """);
+
+            var vendorDirectory = Path.Combine(tempDirectory.FullName, "vendor");
+            var vendorSourceDirectory = Path.Combine(vendorDirectory, "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "Stark.toml"),
+                """
+                [project]
+                name = "vendor-native-probe"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/NativeProbe.stark"
+                output = "VendorNativeProbe"
+
+                [native.fallback.linux]
+                include-dirs = ["${native.paths.native-probe-include}"]
+
+                [native.fallback.macos]
+                include-dirs = ["${native.paths.native-probe-include}"]
+
+                [native.fallback.windows]
+                include-dirs = ["${native.paths.native-probe-include}"]
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "NativeProbe.stark"),
+                """
+                module Vendor.NativeProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", "test-triple"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.NativeProbe'", stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain("native.paths.native-probe-include", stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderrText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RunPrefersProjectLocalStdlibDistPackageBeforeProjectLocalSource()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-stdlib-dist-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-stdlib-dist-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-stdlib-dist-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.RepoDistProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.RepoDistProbe.Value();
+                }
+                """);
+
+            await CreateRepoStdlibDistProbePackageAsync(tempDirectory.FullName, targetInfo.Triple);
+
+            var stdlibSourceDirectory = Path.Combine(tempDirectory.FullName, "stdlib", "src", "System");
+            Directory.CreateDirectory(stdlibSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(stdlibSourceDirectory, "RepoDistProbe.stark"),
+                """
+                module System.RepoDistProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 7;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["run", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                $"Expected project-local stdlib dist package to run successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotProbeCompilerParentStdlibWithoutSdkManifest()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-installed-stdlib-");
+        var installedPackage = await CreateInstalledStdlibProbePackageAsync(targetInfo.Triple);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "installed-stdlib-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "installed-stdlib-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.InstalledProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.InstalledProbe.Value();
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.InstalledProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(installedPackage.DistDirectory, stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            CleanupInstalledStdlibProbePackage(installedPackage);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildReportsStdlibDiscoveryPathsForMissingSystemImport()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-stdlib-diagnostics-");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "missing-stdlib-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "missing-stdlib-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.DoesNotExist
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetTriple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.DoesNotExist'", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Stark stdlib discovery failed while resolving a System.* import.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Active stdlib context: profile=dev, target=test-triple, stage=stage0", stderrText, StringComparison.Ordinal);
+            Assert.Contains(BuildStagePath(tempDirectory.FullName, targetTriple), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(tempDirectory.FullName, "stdlib"), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(AppContext.BaseDirectory, "stdlib"), stderrText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildReportsVendorDiscoveryPathsForMissingVendorImport()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-vendor-diagnostics-");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "missing-vendor-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "missing-vendor-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.DoesNotExist
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetTriple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.DoesNotExist'", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Stark vendor library discovery failed while resolving a Vendor.* import.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Active vendor library context: profile=dev, target=test-triple, stage=stage0", stderrText, StringComparison.Ordinal);
+            Assert.Contains(BuildStagePath(tempDirectory.FullName, targetTriple), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(tempDirectory.FullName, "vendor"), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(AppContext.BaseDirectory, "vendor"), stderrText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task ProjectBuildDoesNotUseStarkPathAsHiddenStdlibDiscovery()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var originalStarkPath = Environment.GetEnvironmentVariable("STARK_PATH");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-no-stark-path-");
+        var globalSearchDirectory = Path.Combine(tempDirectory.FullName, "global-search");
+        var globalSystemDirectory = Path.Combine(globalSearchDirectory, "System");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "hidden-env-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "hidden-env-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.GlobalProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.GlobalProbe.Value();
+                }
+                """);
+
+            Directory.CreateDirectory(globalSystemDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(globalSystemDirectory, "GlobalProbe.stark"),
+                """
+                module System.GlobalProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.SetEnvironmentVariable("STARK_PATH", globalSearchDirectory);
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetTriple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.GlobalProbe'", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Stark stdlib discovery failed while resolving a System.* import.", stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(globalSearchDirectory, stderrText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_PATH", originalStarkPath);
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildRejectsUnavailableCompilerStage()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-unavailable-stage-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "demo"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "demo-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--stage=stage1", "--target=test-triple"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("Compiler stage 'stage1' is not available yet.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CleanDeletesSelectedStageByDefault()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-clean-stage-");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await CreateMinimalExecutableProjectAsync(tempDirectory.FullName, "clean-demo");
+            var stage0Path = BuildStagePath(tempDirectory.FullName, targetTriple, "stage0");
+            var stage1Path = BuildStagePath(tempDirectory.FullName, targetTriple, "stage1");
+            Directory.CreateDirectory(Path.Combine(stage0Path, "bin"));
+            Directory.CreateDirectory(Path.Combine(stage1Path, "bin"));
+            await File.WriteAllTextAsync(Path.Combine(stage0Path, "bin", "old"), "delete");
+            await File.WriteAllTextAsync(Path.Combine(stage1Path, "bin", "keep"), "keep");
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["clean", "--target", targetTriple], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Deleted", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.False(Directory.Exists(stage0Path));
+            Assert.True(Directory.Exists(stage1Path));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CleanDeletesTargetAndProfileScopes()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-clean-profile-target-");
+        const string targetTriple = "test-triple";
+        const string otherTargetTriple = "other-triple";
+
+        try
+        {
+            await CreateMinimalExecutableProjectAsync(tempDirectory.FullName, "clean-demo");
+            var targetPath = Path.Combine(tempDirectory.FullName, "build", "dev", targetTriple);
+            var otherTargetPath = Path.Combine(tempDirectory.FullName, "build", "dev", otherTargetTriple);
+            var releaseProfilePath = Path.Combine(tempDirectory.FullName, "build", "release");
+            Directory.CreateDirectory(Path.Combine(targetPath, "stage0"));
+            Directory.CreateDirectory(Path.Combine(otherTargetPath, "stage0"));
+            Directory.CreateDirectory(Path.Combine(releaseProfilePath, targetTriple, "stage0"));
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var targetStdout = new StringWriter();
+            var targetStderr = new StringWriter();
+            var targetExitCode = await CompilerCli.RunAsync(["clean", "target", "--target", targetTriple], new StringReader(string.Empty), targetStdout, targetStderr);
+
+            Assert.Equal(0, targetExitCode);
+            Assert.Equal(string.Empty, targetStderr.ToString());
+            Assert.False(Directory.Exists(targetPath));
+            Assert.True(Directory.Exists(otherTargetPath));
+            Assert.True(Directory.Exists(releaseProfilePath));
+
+            var profileStdout = new StringWriter();
+            var profileStderr = new StringWriter();
+            var profileExitCode = await CompilerCli.RunAsync(["clean", "profile"], new StringReader(string.Empty), profileStdout, profileStderr);
+
+            Assert.Equal(0, profileExitCode);
+            Assert.Equal(string.Empty, profileStderr.ToString());
+            Assert.False(Directory.Exists(Path.Combine(tempDirectory.FullName, "build", "dev")));
+            Assert.True(Directory.Exists(releaseProfilePath));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CleanDeletesDiagnosticsAndArtifactsScopes()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-clean-artifacts-");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await CreateMinimalExecutableProjectAsync(tempDirectory.FullName, "clean-demo");
+            var stagePath = BuildStagePath(tempDirectory.FullName, targetTriple);
+            var diagnosticsPath = Path.Combine(stagePath, "diagnostics");
+            var artifactsPath = Path.Combine(stagePath, "artifacts");
+            var binPath = Path.Combine(stagePath, "bin");
+            Directory.CreateDirectory(diagnosticsPath);
+            Directory.CreateDirectory(artifactsPath);
+            Directory.CreateDirectory(binPath);
+            await File.WriteAllTextAsync(Path.Combine(diagnosticsPath, "diagnostic.txt"), "delete");
+            await File.WriteAllTextAsync(Path.Combine(artifactsPath, "artifact.txt"), "delete");
+            await File.WriteAllTextAsync(Path.Combine(binPath, "program"), "keep");
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var diagnosticsStdout = new StringWriter();
+            var diagnosticsStderr = new StringWriter();
+            var diagnosticsExitCode = await CompilerCli.RunAsync(["clean", "diagnostics", "--target", targetTriple], new StringReader(string.Empty), diagnosticsStdout, diagnosticsStderr);
+
+            Assert.Equal(0, diagnosticsExitCode);
+            Assert.Equal(string.Empty, diagnosticsStderr.ToString());
+            Assert.False(Directory.Exists(diagnosticsPath));
+            Assert.True(Directory.Exists(artifactsPath));
+            Assert.True(Directory.Exists(binPath));
+
+            var artifactsStdout = new StringWriter();
+            var artifactsStderr = new StringWriter();
+            var artifactsExitCode = await CompilerCli.RunAsync(["clean", "artifacts", "--target", targetTriple], new StringReader(string.Empty), artifactsStdout, artifactsStderr);
+
+            Assert.Equal(0, artifactsExitCode);
+            Assert.Equal(string.Empty, artifactsStderr.ToString());
+            Assert.False(Directory.Exists(artifactsPath));
+            Assert.True(Directory.Exists(binPath));
         }
         finally
         {
@@ -117,7 +1383,7 @@ public sealed class ProjectCliTests
     [Fact]
     public async Task BuildBuildsSolutionDefaultTargetAndPathDependencies()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -138,8 +1404,10 @@ public sealed class ProjectCliTests
             Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "math", LibraryFileName("Math"))));
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "app", ExecutableFileName("demo-app"))));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", LibraryFileName("Math"))));
+            Assert.True(File.Exists(BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math")));
+            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg")));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "app", ExecutableFileName("demo-app"))));
         }
         finally
         {
@@ -183,7 +1451,7 @@ public sealed class ProjectCliTests
     [Fact]
     public async Task TestRunsCurrentTestProjectFromManifest()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -204,9 +1472,6 @@ public sealed class ProjectCliTests
                 [test]
                 root = "Tests.stark"
                 output = "demo-tests"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -231,7 +1496,542 @@ public sealed class ProjectCliTests
             Assert.Contains("Running test project 'demo-tests'...", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("Passed test project 'demo-tests'.", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "demo-tests", ExecutableFileName("demo-tests"))));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "tests", "demo-tests", ExecutableFileName("demo-tests"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratesFactRunnerFromMetadataAndAppliesFilter()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-filter-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test", "--filter=Adds"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = GeneratedRunnerPath(testDirectory, targetInfo.Triple);
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            Assert.Contains("import System.Testing", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"AddsNumbers\", AddsNumbers())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"FailsByDesign\", FailsByDesign())", generatedRunner, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentFilteredGeneratedTestRunsSerializeSharedBuildOutput()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-filter-race-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var passingStdout = new StringWriter();
+            var passingStderr = new StringWriter();
+            var failingStdout = new StringWriter();
+            var failingStderr = new StringWriter();
+
+            var passingRun = CompilerCli.RunAsync(
+                ["test", "--filter=AddsNumbers"],
+                new StringReader(string.Empty),
+                passingStdout,
+                passingStderr);
+            var failingRun = CompilerCli.RunAsync(
+                ["test", "--filter=FailsByDesign"],
+                new StringReader(string.Empty),
+                failingStdout,
+                failingStderr);
+
+            var exitCodes = await Task.WhenAll(passingRun, failingRun);
+
+            Assert.Equal(0, exitCodes[0]);
+            Assert.Equal(1, exitCodes[1]);
+            Assert.Contains("Passed test project 'generated-tests'.", passingStdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, passingStderr.ToString());
+            Assert.Contains("Running test project 'generated-tests'...", failingStdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Failed test project 'generated-tests' with exit code 1.", failingStderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerAppliesPlatformGatesFromTargetTriple()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !TryGetPlatformSelectorForTarget(targetInfo.Triple, out var platformSelector))
+        {
+            return;
+        }
+
+        var otherPlatformSelector = platformSelector == "linux" ? "windows" : "linux";
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-platform-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            await File.WriteAllTextAsync(
+                Path.Combine(testDirectory, "GeneratedTests.stark"),
+                $$"""
+                  module GeneratedTests
+
+                  [Fact]
+                  [Platform({{platformSelector}})]
+                  fn bool RunsHere()
+                  {
+                      return true;
+                  }
+
+                  [Fact]
+                  [Platform({{otherPlatformSelector}})]
+                  fn bool SkipsElsewhere()
+                  {
+                      return false;
+                  }
+
+                  [Fact]
+                  [SkipPlatform({{platformSelector}})]
+                  fn bool SkipsCurrent()
+                  {
+                      return false;
+                  }
+
+                  [Platform({{platformSelector}})]
+                  struct CurrentPlatformGroup
+                  {
+                      [Fact]
+                      static fn bool GroupRunsHere()
+                      {
+                          return true;
+                      }
+                  }
+
+                  [Platform({{otherPlatformSelector}})]
+                  struct OtherPlatformGroup
+                  {
+                      [Fact]
+                      static fn bool GroupSkipsElsewhere()
+                      {
+                          return false;
+                      }
+                  }
+                  """);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = GeneratedRunnerPath(testDirectory, targetInfo.Triple);
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            Assert.Contains("\"RunsHere\", RunsHere())", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains(
+                "\"CurrentPlatformGroup.GroupRunsHere\", CurrentPlatformGroup.GroupRunsHere())",
+                generatedRunner,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "System.Testing.SkipFact(\"SkipsElsewhere\", \"target does not match [Platform]\")",
+                generatedRunner,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "System.Testing.SkipFact(\"SkipsCurrent\", \"excluded by [SkipPlatform]\")",
+                generatedRunner,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "System.Testing.SkipFact(\"OtherPlatformGroup.GroupSkipsElsewhere\", \"target does not match [Platform]\")",
+                generatedRunner,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("\"SkipsElsewhere\", SkipsElsewhere())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"SkipsCurrent\", SkipsCurrent())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "\"OtherPlatformGroup.GroupSkipsElsewhere\", OtherPlatformGroup.GroupSkipsElsewhere())",
+                generatedRunner,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerAppliesSerialCollections()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-collections-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            await File.WriteAllTextAsync(
+                Path.Combine(testDirectory, "GeneratedTests.stark"),
+                """
+                module GeneratedTests
+
+                [Fact]
+                fn bool Before()
+                {
+                    return true;
+                }
+
+                [Fact]
+                [Collection(Toolchain)]
+                fn bool ToolchainA()
+                {
+                    return true;
+                }
+
+                [Fact]
+                fn bool Between()
+                {
+                    return true;
+                }
+
+                [Fact]
+                [Collection("Toolchain")]
+                fn bool ToolchainB()
+                {
+                    return true;
+                }
+
+                [Serial]
+                struct SerialGroup
+                {
+                    [Fact]
+                    static fn bool First()
+                    {
+                        return true;
+                    }
+
+                    [Fact]
+                    static fn bool Second()
+                    {
+                        return true;
+                    }
+                }
+                """);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = GeneratedRunnerPath(testDirectory, targetInfo.Triple);
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            AssertInOrder(
+                generatedRunner,
+                "\"Before\", Before())",
+                "    // Test collection: Toolchain",
+                "\"ToolchainA\", ToolchainA())",
+                "\"ToolchainB\", ToolchainB())",
+                "\"Between\", Between())",
+                "    // Test collection: Serial",
+                "\"SerialGroup.First\", SerialGroup.First())",
+                "\"SerialGroup.Second\", SerialGroup.Second())");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerExpandsInlineDataTheories()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-theories-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            await File.WriteAllTextAsync(
+                Path.Combine(testDirectory, "GeneratedTests.stark"),
+                """
+                module GeneratedTests
+
+                [Theory]
+                [InlineData(1, 2, 3)]
+                [InlineData(-2, 5, 3)]
+                fn bool Adds(i32[min max] left, i32[min max] right, i32[min max] expected)
+                {
+                    return left + right == expected;
+                }
+
+                [Collection(TextCases)]
+                [Theory]
+                [InlineData("stark", true)]
+                fn bool TextCase(ascii name, bool expected)
+                {
+                    return expected;
+                }
+                """);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = GeneratedRunnerPath(testDirectory, targetInfo.Triple);
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            Assert.Contains("\"Adds(1, 2, 3)\", Adds(1, 2, 3))", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("    // Test collection: TextCases", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains(
+                "\"TextCase(\\\"stark\\\", true)\", TextCase(\"stark\", true))",
+                generatedRunner,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerExpandsMemberDataTheories()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-member-data-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            await File.WriteAllTextAsync(
+                Path.Combine(testDirectory, "GeneratedTests.stark"),
+                """
+                module GeneratedTests
+
+                record AddRow(i32[min max] Left, i32[min max] Right, i32[min max] Expected) { }
+
+                finite law AddRow AddRows(u64[0 2 ** 63 - 1] index)
+                {
+                    switch (index)
+                    {
+                        case 0:
+                            return new AddRow(1, 2, 3);
+                        default:
+                            return new AddRow(-2, 5, 3);
+                    }
+                }
+
+                [Theory]
+                [MemberData(AddRows, AddRow, 2, Left, Right, Expected)]
+                fn bool Adds(i32[min max] left, i32[min max] right, i32[min max] expected)
+                {
+                    return left + right == expected;
+                }
+                """);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = GeneratedRunnerPath(testDirectory, targetInfo.Triple);
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            Assert.Contains("stack AddRow __stark_member_data_0 = AddRows(0);", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains(
+                "\"Adds[AddRows:0]\", Adds(__stark_member_data_0.Left, __stark_member_data_0.Right, __stark_member_data_0.Expected))",
+                generatedRunner,
+                StringComparison.Ordinal);
+            Assert.Contains("stack AddRow __stark_member_data_1 = AddRows(1);", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains(
+                "\"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
+                generatedRunner,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerReportsFailingFactThroughExitCode()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-fail-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("Running test project 'generated-tests'...", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Failed test project 'generated-tests' with exit code 1.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestRejectsFilterWhenNoGeneratedFactsExist()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-filter-no-facts-");
+
+        try
+        {
+            await CreateSimpleTestProjectAsync(
+                tempDirectory.FullName,
+                """
+                module Tests
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["test", "--filter", "Anything", "--target=test-triple"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("No [Fact] or [Theory] tests were found, so --filter cannot be applied.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestRejectsExplicitMainWhenFactRunnerIsGenerated()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-fact-main-conflict-");
+
+        try
+        {
+            await CreateSimpleTestProjectAsync(
+                tempDirectory.FullName,
+                """
+                module Tests
+
+                [Fact]
+                fn bool AddsNumbers()
+                {
+                    return 2 + 2 == 4;
+                }
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test", "--target=test-triple"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("Remove the explicit 'main' function from the test root.", stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -264,9 +2064,6 @@ public sealed class ProjectCliTests
                 [test]
                 root = "Tests.stark"
                 output = "failing-tests"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -300,7 +2097,7 @@ public sealed class ProjectCliTests
     [Fact]
     public async Task TestRunsSolutionDefaultTestTargetAndPathDependencies()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
             return;
         }
@@ -323,8 +2120,10 @@ public sealed class ProjectCliTests
             Assert.Contains("Running test project 'math-tests'...", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("Passed test project 'math-tests'.", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "math", LibraryFileName("Math"))));
-            Assert.True(File.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", "math-tests", ExecutableFileName("math-tests"))));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", LibraryFileName("Math"))));
+            Assert.True(File.Exists(BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math")));
+            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg")));
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "tests", "math-tests", ExecutableFileName("math-tests"))));
         }
         finally
         {
@@ -354,9 +2153,6 @@ public sealed class ProjectCliTests
             [aliases]
             app = "app"
             math = "math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -370,9 +2166,6 @@ public sealed class ProjectCliTests
             [library]
             root = "Math.stark"
             output = "Math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -400,9 +2193,6 @@ public sealed class ProjectCliTests
 
             [dependencies]
             math = { path = "../math" }
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -439,9 +2229,6 @@ public sealed class ProjectCliTests
             [aliases]
             math = "math"
             tests = "math-tests"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -455,9 +2242,6 @@ public sealed class ProjectCliTests
             [library]
             root = "Math.stark"
             output = "Math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -485,9 +2269,6 @@ public sealed class ProjectCliTests
 
             [dependencies]
             math = { path = "../math" }
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -508,6 +2289,303 @@ public sealed class ProjectCliTests
             """);
     }
 
+    private static async Task<string> CreateGeneratedRunnerFixtureAsync(string rootDirectory)
+    {
+        var testingDirectory = Path.Combine(rootDirectory, "testing");
+        var testDirectory = Path.Combine(rootDirectory, "generated-tests");
+        Directory.CreateDirectory(testingDirectory);
+        Directory.CreateDirectory(testDirectory);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testingDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "testing"
+            version = "0.1.0"
+            kind = "library"
+
+            [library]
+            root = "Testing.stark"
+            output = "TestSupport"
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testingDirectory, "Testing.stark"),
+            """
+            module System.Testing
+
+            public fn u8[0 1] RunFact(ascii name, bool assertion)
+            {
+                if (assertion)
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+
+            public fn void BeginFact(bool progress, ascii name)
+            {
+            }
+
+            public fn u8[0 1] RunFactCounted(bool progress, u32[0 2 ** 31 - 1] ordinal, u32[0 2 ** 31 - 1] total, ascii name, bool assertion)
+            {
+                return RunFact(name, assertion);
+            }
+
+            public fn u8[0 1] SkipFact(ascii name, ascii reason)
+            {
+                return 0;
+            }
+
+            public fn u64[0 2 ** 63 - 1] CollectionArgumentCount()
+            {
+                return 0;
+            }
+
+            public fn bool CollectionArgumentEquals(u64[0 2 ** 63 - 1] index, ascii expected)
+            {
+                return false;
+            }
+
+            public fn void ReportUnknownCollection()
+            {
+            }
+
+            public fn void ReportKnownCollection(ascii name)
+            {
+            }
+
+            public fn void ReportNoFactsSelected()
+            {
+            }
+
+            public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
+            {
+                if (failureCount == 0)
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "generated-tests"
+            version = "0.1.0"
+            kind = "test"
+
+            [test]
+            root = "GeneratedTests.stark"
+            output = "generated-tests"
+
+            [dependencies]
+            testing = { path = "../testing" }
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testDirectory, "GeneratedTests.stark"),
+            """
+            module GeneratedTests
+
+            [Fact]
+            fn bool AddsNumbers()
+            {
+                return 2 + 2 == 4;
+            }
+
+            [Fact]
+            fn bool FailsByDesign()
+            {
+                return false;
+            }
+            """);
+
+        return testDirectory;
+    }
+
+    private static async Task CreateSimpleTestProjectAsync(string rootDirectory, string sourceText)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "simple-tests"
+            version = "0.1.0"
+            kind = "test"
+
+            [test]
+            root = "Tests.stark"
+            output = "simple-tests"
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "Tests.stark"),
+            sourceText);
+    }
+
+    private static void AssertInOrder(string text, params string[] needles)
+    {
+        var currentIndex = -1;
+        foreach (var needle in needles)
+        {
+            var nextIndex = text.IndexOf(needle, currentIndex + 1, StringComparison.Ordinal);
+            Assert.True(nextIndex >= 0, $"Expected to find '{needle}' after index {currentIndex}.{Environment.NewLine}{text}");
+            currentIndex = nextIndex;
+        }
+    }
+
+    private static async Task CreateRepoStdlibDistProbePackageAsync(string rootDirectory, string targetTriple)
+    {
+        var stdlibRootDirectory = Path.Combine(rootDirectory, "stdlib");
+        var distDirectory = Path.Combine(stdlibRootDirectory, "dist");
+        var packageSourceDirectory = Path.Combine(rootDirectory, "stdlib-package-src");
+        Directory.CreateDirectory(distDirectory);
+        Directory.CreateDirectory(packageSourceDirectory);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(stdlibRootDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "stdlib"
+            version = "0.1.0"
+            kind = "library"
+
+            [library]
+            root = "src/System.stark"
+            output = "System"
+            """);
+
+        var packageSourcePath = Path.Combine(packageSourceDirectory, "RepoDistProbe.stark");
+        await File.WriteAllTextAsync(
+            packageSourcePath,
+            """
+            module System.RepoDistProbe
+
+            public finite law i32[min max] Value()
+            {
+                return 0;
+            }
+            """);
+
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                packageSourcePath,
+                "--emit-lib",
+                "-o",
+                Path.Combine(distDirectory, LibraryFileName("SystemRepoDistProbe")),
+                "--package-image-output",
+                Path.Combine(distDirectory, "libSystemRepoDistProbe.starkpkg"),
+                "--target",
+                targetTriple
+            ],
+            new StringReader(string.Empty),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    private static async Task<InstalledStdlibProbePackage> CreateInstalledStdlibProbePackageAsync(string targetTriple)
+    {
+        var stdlibRootDirectory = Path.Combine(AppContext.BaseDirectory, "stdlib");
+        var distDirectory = Path.Combine(stdlibRootDirectory, "dist");
+        var packageSourceDirectory = Path.Combine(AppContext.BaseDirectory, "installed-stdlib-probe-src");
+        Directory.CreateDirectory(distDirectory);
+        Directory.CreateDirectory(packageSourceDirectory);
+
+        var packageSourcePath = Path.Combine(packageSourceDirectory, "InstalledProbe.stark");
+        await File.WriteAllTextAsync(
+            packageSourcePath,
+            """
+            module System.InstalledProbe
+
+            public finite law i32[min max] Value()
+            {
+                return 0;
+            }
+            """);
+
+        var libraryPath = Path.Combine(distDirectory, LibraryFileName("SystemInstalledProbe"));
+        var packageImagePath = Path.Combine(distDirectory, "libSystemInstalledProbe.starkpkg");
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                packageSourcePath,
+                "--emit-lib",
+                "-o",
+                libraryPath,
+                "--package-image-output",
+                packageImagePath,
+                "--target",
+                targetTriple
+            ],
+            new StringReader(string.Empty),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        return new InstalledStdlibProbePackage(
+            stdlibRootDirectory,
+            distDirectory,
+            packageSourceDirectory,
+            libraryPath,
+            packageImagePath);
+    }
+
+    private static void CleanupInstalledStdlibProbePackage(InstalledStdlibProbePackage installedPackage)
+    {
+        TryDeleteFile(installedPackage.PackageImagePath);
+        TryDeleteFile(installedPackage.LibraryPath);
+        TryDeleteDirectory(installedPackage.PackageSourceDirectory, recursive: true);
+        TryDeleteDirectory(installedPackage.DistDirectory);
+        TryDeleteDirectory(installedPackage.StdlibRootDirectory);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
+    }
+
+    private static void TryDeleteDirectory(string path, bool recursive = false)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive);
+            }
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
+    }
+
     private static string ExecutableFileName(string name)
     {
         return OperatingSystem.IsWindows() ? $"{name}.exe" : name;
@@ -516,6 +2594,127 @@ public sealed class ProjectCliTests
     private static string LibraryFileName(string outputName)
     {
         return OperatingSystem.IsWindows() ? $"{outputName}.lib" : $"lib{outputName}.a";
+    }
+
+    private static string BuildArtifactPath(string rootDirectory, string targetTriple, string artifactKind, string projectKey, string fileName)
+    {
+        return Path.Combine(
+            BuildStagePath(rootDirectory, targetTriple),
+            artifactKind,
+            projectKey,
+            fileName);
+    }
+
+    private static string BuildPackageImagePath(string rootDirectory, string targetTriple, string projectKey, string outputName)
+    {
+        return BuildArtifactPath(rootDirectory, targetTriple, "pkg", projectKey, $"lib{outputName}.starkpkg");
+    }
+
+    private static string BuildPackageImageJsonInspectionPath(string rootDirectory, string targetTriple, string projectKey, string outputName)
+    {
+        return Path.Combine(
+            BuildStagePath(rootDirectory, targetTriple),
+            "artifacts",
+            "pkg",
+            projectKey,
+            $"lib{outputName}.starkpkg.json");
+    }
+
+    private static string GeneratedRunnerPath(string testDirectory, string targetTriple)
+    {
+        return Path.Combine(
+            BuildStagePath(testDirectory, targetTriple),
+            "tests",
+            "generated-tests",
+            "generated",
+            "generated-tests.generated.stark");
+    }
+
+    private static string BuildStagePath(string rootDirectory, string targetTriple, string stageName = "stage0")
+    {
+        return Path.Combine(
+            rootDirectory,
+            "build",
+            "dev",
+            NormalizeBuildPathSegment(targetTriple),
+            stageName);
+    }
+
+    private static string NormalizeBuildPathSegment(string value)
+    {
+        var chars = value.Trim().Select(static ch =>
+            char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.' or '+'
+                ? ch
+                : '_');
+        var normalized = new string(chars.ToArray());
+        return normalized.Length == 0 ? "_" : normalized;
+    }
+
+    private static bool TryGetPlatformSelectorForTarget(string targetTriple, out string selector)
+    {
+        var normalized = targetTriple.ToLowerInvariant();
+        if (normalized.Contains("android", StringComparison.Ordinal))
+        {
+            selector = "android";
+            return true;
+        }
+
+        if (normalized.Contains("ios", StringComparison.Ordinal))
+        {
+            selector = "ios";
+            return true;
+        }
+
+        if (normalized.Contains("windows", StringComparison.Ordinal)
+            || normalized.Contains("win32", StringComparison.Ordinal)
+            || normalized.Contains("mingw", StringComparison.Ordinal))
+        {
+            selector = "windows";
+            return true;
+        }
+
+        if (normalized.Contains("darwin", StringComparison.Ordinal)
+            || normalized.Contains("macos", StringComparison.Ordinal))
+        {
+            selector = "macos";
+            return true;
+        }
+
+        if (normalized.Contains("linux", StringComparison.Ordinal))
+        {
+            selector = "linux";
+            return true;
+        }
+
+        selector = string.Empty;
+        return false;
+    }
+
+    private static async Task CreateMinimalExecutableProjectAsync(string rootDirectory, string projectName)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "Stark.toml"),
+            $$"""
+            [project]
+            name = "{{projectName}}"
+            version = "0.1.0"
+            kind = "executable"
+
+            [executable]
+            root = "App.stark"
+            output = "{{projectName}}"
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "App.stark"),
+            """
+            module App
+
+            export fn i32[min max] main()
+            {
+                return 0;
+            }
+            """);
     }
 
     private static void Cleanup(DirectoryInfo tempDirectory)
@@ -529,4 +2728,11 @@ public sealed class ProjectCliTests
             // Best effort cleanup only.
         }
     }
+
+    private sealed record InstalledStdlibProbePackage(
+        string StdlibRootDirectory,
+        string DistDirectory,
+        string PackageSourceDirectory,
+        string LibraryPath,
+        string PackageImagePath);
 }

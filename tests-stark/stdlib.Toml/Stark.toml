@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-toml-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "TomlTests.stark"
+output = "stdlib-toml-tests"

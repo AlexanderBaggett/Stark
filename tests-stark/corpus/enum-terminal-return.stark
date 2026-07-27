@@ -1,0 +1,25 @@
+enum Tag { Left, Right }
+enum Pick { First, Second }
+
+fn Pick choose(Tag tag)
+{
+    switch (tag)
+    {
+        case Tag.Left:
+            return Pick.First;
+        default:
+            return Pick.Second;
+    }
+}
+
+export fn i64[min max] main()
+{
+    stack Pick pick = choose(Tag.Left);
+    switch (pick)
+    {
+        case Pick.First:
+            return 7;
+        default:
+            return 1;
+    }
+}

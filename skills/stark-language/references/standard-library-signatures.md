@@ -5,21 +5,24 @@ Generated from `stdlib/src/System` public modules. This reference lists public t
 ## Module Summary
 
 - `System.BitOperations`: bit counting, leading/trailing zero counts, rotations, byte swaps, and powers of two.
-- `System.Collections`: owned list, stack, queue, ring queue, dictionary, and linked list containers.
+- `System.C`: C primitive aliases, null-terminated C string views/owners/buffers, explicit text conversion, and foreign-owned C string copy/dispose helpers.
+- `System.Collections`: owned list, stack, queue, ring queue, dictionary, hash set, lookup, and in-place sorting helpers.
+- `System.Compiler.IntegerFacts`: bounded `i1024`/`u1024` compiler integer-fact helpers for range, storage, tag, checked arithmetic, known-bit, and two's-complement reasoning.
 - `System.Console`: console input/output for text, byte buffers, and owned text containers.
-- `System.FileSystem`: directories, file existence/type checks, directory iteration, and filesystem mutations.
+- `System.Core`: canonical `Option<T>` and `Result<T, E>` enum definitions backing the root `System` aliases.
+- `System.FileSystem`: directories, file existence/type checks, directory iteration, filesystem mutations, metadata, recursive walk, and streaming glob traversal.
 - `System.IO`: shared IO result/status/error enums.
-- `System.IO.File`: owned file handles, file open modes, buffering choices, byte/text reads, writes, close, delete, and move.
-- `System.IO.Path`: path parsing and simple path queries.
-- `System.Math`: scalar math helpers, trigonometry, rounding, min/max/clamp, and xorshift PRNG.
+- `System.IO.File`: owned file handles, file open modes, buffering choices, byte/text reads, whole-file text/byte helpers, atomic whole-file replacement helpers, writes, close, delete, and move.
+- `System.IO.Path`: path parsing, current/temp directory queries, glob matching, and path queries.
+- `System.Math`: scalar math helpers, trigonometry, hyperbolic functions, `Exp`/`Log`/`Pow`, rounding, min/max/clamp, fused multiply-add, reciprocal estimates, and xorshift PRNG.
 - `System.Memory`: reservation, append, copy, move, fill, allocation status/result contracts.
 - `System.Net`: network result/status/error types and IPv4 endpoint values.
 - `System.Net.Tcp`: owned blocking TCP clients/listeners, scalar and vectored I/O, waits, shutdown, and close.
-- `System.Process`: process id and process exit helpers.
+- `System.Process`: process id/exit plus Linux-backed spawn/capture with optional stdin input, environment, cwd, and argv helpers.
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers with read/write cursors and slices.
-- `System.Testing`: test assertions and failure status helpers.
-- `System.Text`: owned ASCII/Unicode/UTF-16 text, conversions, formatting, and encoding results.
-- `System.Threading`: thread handles, thread start/join/detach, yield, and sleep.
+- `System.Testing`: test assertions and failure status helpers used by generated `[Fact]` / `[Theory]` runners with inline and typed indexed member data.
+- `System.Text`: owned ASCII/Unicode/UTF-16 text, conversions, formatting, Stark literal escaping/decoding, and encoding results.
+- `System.Threading`: thread handles, no-payload and explicit payload thread start/join/detach, yield, sleep, guarded shared state, MPSC channels, and atomic types for every integer width plus bool (seq-cst shared state).
 
 ## Public API Signatures
 
@@ -42,6 +45,185 @@ public finite law i32[min max] RotateRight(i32[min max] value, i32[min max] amou
 public finite law i64[min max] RotateRight(i64[min max] value, i64[min max] amount);
 ```
 
+### System.C
+
+Source: `stdlib/src/System/C.stark`
+
+Compiler-known C primitive aliases (target-resolved to Stark sized primitives):
+
+`c_char`, `c_schar`, `c_uchar`, `c_short`, `c_ushort`, `c_int`, `c_uint`,
+`c_long`, `c_ulong`, `c_longlong`, `c_ulonglong`, `c_size_t`, `c_ptrdiff_t`, and
+`c_void` (incomplete pointee, valid only behind `rawptr`/`rawmutptr`). `VaList`
+models C `va_list` only as an unsafe `ffi(c)`-compatible parameter, an `ffi(c)`
+function-pointer parameter, or a direct raw-pointer pointee. The
+compile-time bool `System.C.c_char_is_signed` reports the target's plain-`char`
+signedness. `c_int` is `i32[min max]`; `c_long` is `i32[min max]` on
+ILP32/LLP64 and `i64[min max]` on LP64; `c_size_t` is `u64[0 max]` on 64-bit and
+`u32[0 max]` on 32-bit. No implicit conversion exists between `rawptr<c_char>`
+and `ascii`, or between `rawptr<c_void>` and a typed raw pointer.
+
+Public types:
+
+- `enum CStringError`
+- `enum CStringResult<T>`
+- `struct CStr`
+- `struct OwnedCStr`
+- `struct CCharBuffer`
+- `struct ForeignOwnedCStr`
+
+Public aliases:
+
+```stark
+public alias CStringDisposer =
+    fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_char>)>;
+```
+
+Top-level functions:
+
+```stark
+public unsafe fn CStringResult<CStr> TryFromRawBounded(
+    rawptr<System.C.c_char> data,
+    u64[0 2 ** 63 - 1] maxLength);
+public unsafe fn CStr FromRawUnchecked(
+    rawptr<System.C.c_char> data,
+    u64[0 2 ** 63 - 1] length);
+public unsafe fn CStringResult<ForeignOwnedCStr> TryFromForeignOwnedRaw(
+    rawmutptr<System.C.c_char> data);
+public unsafe fn void DisposeForeignOwned(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose);
+public fn CStringResult<OwnedCStr> FromAscii(ascii text);
+public fn CStringResult<OwnedCStr> FromUnicodeUtf8(unicode text);
+public fn CStringResult<System.Text.OwnedAscii> ToAscii(borrow CStr text);
+public fn CStringResult<System.Text.OwnedUnicode> ToUnicodeUtf8(borrow CStr text);
+public unsafe fn CStringResult<System.Text.OwnedAscii> CopyForeignOwnedAsciiAndDispose(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength);
+public unsafe fn CStringResult<System.Text.OwnedUnicode> CopyForeignOwnedUnicodeUtf8AndDispose(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength);
+public fn CStringResult<CCharBuffer> NewCCharBuffer(u64[1 2 ** 63 - 1] capacity);
+```
+
+Member functions:
+
+`CStr`
+
+```stark
+inline finite law bool IsEmpty(borrow CStr self);
+inline finite law u64[0 2 ** 63 - 1] Length(borrow CStr self);
+unsafe inline finite law rawptr<System.C.c_char> Data(borrow CStr self);
+```
+
+`OwnedCStr`
+
+```stark
+inline finite law bool IsEmpty(borrow OwnedCStr self);
+inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedCStr self);
+inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedCStr self);
+unsafe finite law rawptr<System.C.c_char> Data(borrow OwnedCStr self);
+unsafe finite law CStr View(borrow OwnedCStr self);
+```
+
+`CCharBuffer`
+
+```stark
+inline finite law bool IsEmpty(borrow CCharBuffer self);
+inline finite law u64[0 2 ** 63 - 1] Capacity(borrow CCharBuffer self);
+unsafe finite law rawmutptr<System.C.c_char> Data(mut borrow CCharBuffer self);
+unsafe fn CStringResult<CStr> TryAsCStr(borrow CCharBuffer self);
+```
+
+`ForeignOwnedCStr`
+
+```stark
+inline finite law bool IsNull(borrow ForeignOwnedCStr self);
+unsafe inline finite law rawmutptr<System.C.c_char> Data(borrow ForeignOwnedCStr self);
+unsafe fn CStringResult<CStr> TryViewBounded(
+    borrow ForeignOwnedCStr self,
+    u64[0 2 ** 63 - 1] maxLength);
+```
+
+### System.Core
+
+Source: `stdlib/src/System/Core.stark`
+
+Public types:
+
+- `enum Result<T, E>`
+- `enum Option<T>`
+
+### System.Compiler.IntegerFacts
+
+Source: `stdlib/src/System/Compiler/IntegerFacts.stark`
+
+Public types:
+
+- `enum IntegerFactError`
+- `enum IntegerFactResult<T>`
+- `enum IntegerRangeStorageViolationKind`
+- `struct IntegerTypeBounds`
+- `struct IntegerStorageClass`
+- `struct IntegerStorageSuggestion`
+- `struct SignedRange`
+- `struct UnsignedRange`
+- `struct IntegerTagType`
+- `struct KnownBits`
+
+Top-level functions:
+
+```stark
+public inline finite law bool IsValidBitWidth(u64[0 max] bitWidth);
+public inline finite law bool IsValidBitCount(u64[0 max] bitCount);
+public inline finite law bool IsSupportedIntegerWidth(u64[0 max] bitWidth);
+public inline finite law i1024[min max] MinSigned(i1024[min max] left, i1024[min max] right);
+public inline finite law i1024[min max] MaxSigned(i1024[min max] left, i1024[min max] right);
+public inline finite law u1024[0 max] MinUnsigned(u1024[0 max] left, u1024[0 max] right);
+public inline finite law u1024[0 max] MaxUnsigned(u1024[0 max] left, u1024[0 max] right);
+public inline finite law IntegerFactResult<u1024[0 max]> BitMask(u64[0 max] bitCount);
+public inline finite law IntegerFactResult<u1024[0 max]> UnsignedMaxForBitWidth(u64[0 max] bitWidth);
+public inline finite law IntegerFactResult<i1024[min max]> SignedMinForBitWidth(u64[0 max] bitWidth);
+public inline finite law IntegerFactResult<i1024[min max]> SignedMaxForBitWidth(u64[0 max] bitWidth);
+public inline finite law IntegerFactResult<IntegerTypeBounds> GetIntegerTypeBounds(u64[0 max] bitWidth, bool isUnsigned);
+public inline finite law bool FitsUnsigned(u1024[0 max] value, u64[0 max] bitWidth);
+public inline finite law bool FitsSigned(i1024[min max] value, u64[0 max] bitWidth);
+public inline finite law IntegerFactResult<u1024[0 max]> TrySignedToUnsigned(i1024[min max] value);
+public inline finite law IntegerFactResult<i1024[min max]> TryUnsignedToSigned(u1024[0 max] value);
+public inline finite law IntegerFactResult<SignedRange> CreateSignedRange(i1024[min max] min, i1024[min max] max);
+public inline finite law IntegerFactResult<UnsignedRange> CreateUnsignedRange(u1024[0 max] min, u1024[0 max] max);
+public inline finite law bool ContainsSigned(borrow SignedRange range, i1024[min max] value);
+public inline finite law bool ContainsUnsigned(borrow UnsignedRange range, u1024[0 max] value);
+public inline finite law IntegerFactResult<SignedRange> IntersectSignedRanges(borrow SignedRange left, borrow SignedRange right);
+public inline finite law SignedRange UnionSignedRanges(borrow SignedRange left, borrow SignedRange right);
+public inline finite law IntegerFactResult<UnsignedRange> IntersectUnsignedRanges(borrow UnsignedRange left, borrow UnsignedRange right);
+public inline finite law UnsignedRange UnionUnsignedRanges(borrow UnsignedRange left, borrow UnsignedRange right);
+public finite law IntegerFactResult<IntegerStorageClass> SmallestUnsignedStorageForRange(u1024[0 max] min, u1024[0 max] max);
+public finite law IntegerFactResult<IntegerStorageClass> SmallestSignedStorageForRange(i1024[min max] min, i1024[min max] max);
+public finite law IntegerFactResult<IntegerStorageSuggestion> GetStorageViolation(u64[0 max] currentBitWidth, bool currentIsUnsigned, i1024[min max] min, i1024[min max] max);
+public finite law IntegerFactResult<IntegerTagType> TagTypeForVariantCount(u64[0 max] variantCount);
+public finite law IntegerFactResult<i1024[min max]> CheckedAddSigned(i1024[min max] left, i1024[min max] right);
+public finite law IntegerFactResult<i1024[min max]> CheckedSubSigned(i1024[min max] left, i1024[min max] right);
+public finite law IntegerFactResult<u1024[0 max]> CheckedAddUnsigned(u1024[0 max] left, u1024[0 max] right);
+public inline finite law IntegerFactResult<u1024[0 max]> CheckedSubUnsigned(u1024[0 max] left, u1024[0 max] right);
+public finite law IntegerFactResult<u1024[0 max]> CheckedMulUnsigned(u1024[0 max] left, u1024[0 max] right);
+public finite law IntegerFactResult<u1024[0 max]> CheckedShiftLeftUnsigned(u1024[0 max] value, u64[0 max] shift, u64[0 max] bitWidth);
+public finite law IntegerFactResult<u1024[0 max]> ShiftLeftMaskedUnsigned(u1024[0 max] value, u64[0 max] shift, u64[0 max] bitWidth);
+public finite law IntegerFactResult<u1024[0 max]> ShiftRightMaskedUnsigned(u1024[0 max] value, u64[0 max] shift, u64[0 max] bitWidth);
+public finite law IntegerFactResult<KnownBits> CreateKnownBits(u64[0 max] bitWidth, u1024[0 max] knownZero, u1024[0 max] knownOne);
+public inline finite law IntegerFactResult<KnownBits> UnknownKnownBits(u64[0 max] bitWidth);
+public finite law IntegerFactResult<KnownBits> KnownBitsFromUnsignedConstant(u1024[0 max] value, u64[0 max] bitWidth);
+public finite law IntegerFactResult<KnownBits> KnownBitsAnd(borrow KnownBits left, borrow KnownBits right);
+public finite law IntegerFactResult<KnownBits> KnownBitsOr(borrow KnownBits left, borrow KnownBits right);
+public finite law IntegerFactResult<KnownBits> KnownBitsXor(borrow KnownBits left, borrow KnownBits right);
+public finite law IntegerFactResult<KnownBits> KnownBitsShiftLeft(borrow KnownBits value, u64[0 max] shift);
+public finite law IntegerFactResult<KnownBits> KnownBitsLogicalShiftRight(borrow KnownBits value, u64[0 max] shift);
+public inline finite law u1024[0 max] KnownMask(borrow KnownBits value);
+public finite law IntegerFactResult<u1024[0 max]> TwosComplementNormalize(i1024[min max] value, u64[0 max] bitWidth);
+public finite law IntegerFactResult<i1024[min max]> SignExtendUnsigned(u1024[0 max] value, u64[0 max] bitWidth);
+```
+
 
 ### System.Collections
 
@@ -51,6 +233,11 @@ Public types:
 
 - `trait Equatable<T>`
 - `trait Hashable<T>`
+- `trait Eq`
+- `trait Hash`
+- `trait Ord`
+- `trait Format`
+- `enum Ordering`
 - `doctrine DictionaryKey<T>`
 - `struct List<T>`
 - `struct Stack<T>`
@@ -58,15 +245,46 @@ Public types:
 - `struct RingQueue<T>`
 - `enum DictionaryRemoveResult<T>`
 - `struct Dictionary<K, V>`
+- `struct HashSet<T>`
 - `struct LinkedList<T>`
 
 Top-level functions:
 
 ```stark
 public inline finite law retborrow frozen T Lookup<T>(const T[] table, u64[0 2 ** 63 - 1] index);
+public inline fn void SortBy<T>(
+    mut borrow T[] values,
+    inline closure<finite law Ordering(borrow T, borrow T) where overlap(arg0, arg1)> compare);
+public inline fn void Sort<T>(mut borrow T[] values) where T: Ord;
 ```
 
 Member functions:
+
+`Eq`
+
+```stark
+finite law bool Equals(borrow Self left, borrow Self right) where overlap(left, right);
+```
+
+`Hash`
+
+```stark
+alias Code = u64[0 max];
+finite law Self.Code Hash(borrow Self value);
+```
+
+`Ord`
+
+```stark
+finite law Ordering Compare(borrow Self left, borrow Self right) where overlap(left, right);
+```
+
+`Format`
+
+```stark
+alias Writer;
+finite law System.Memory.MemoryStatus Format(borrow Self value, mut borrow Self.Writer writer);
+```
 
 `Equatable<T>`
 
@@ -168,6 +386,22 @@ inline fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key) where over
 fn void Clear(mut borrow Dictionary<K, V> self);
 ```
 
+`HashSet<T>`
+
+```stark
+HashSet();
+HashSet(System.Memory.Allocator allocator);
+inline finite law u64[0 2 ** 63 - 1] Count(borrow HashSet<T> self);
+inline finite law u64[0 2 ** 63 - 1] Capacity(borrow HashSet<T> self);
+inline finite law bool IsEmpty(borrow HashSet<T> self);
+inline finite law u64[0 2 ** 63 - 1] FindIndex(borrow HashSet<T> self, borrow T value) where overlap(self, value);
+fn System.Memory.MemoryStatus Reserve(mut borrow HashSet<T> self, u64[0 2 ** 63 - 1] additional);
+inline fn System.Memory.MemoryStatus Add(mut borrow HashSet<T> self, T value);
+inline finite law bool Contains(borrow HashSet<T> self, borrow T value) where overlap(self, value);
+inline fn bool Remove(mut borrow HashSet<T> self, borrow T value) where overlap(self, value);
+fn void Clear(mut borrow HashSet<T> self);
+```
+
 `LinkedList<T>`
 
 ```stark
@@ -242,6 +476,7 @@ Public types:
 - `enum FileSystemEntryKind`
 - `struct FileSystemEntry`
 - `struct FileSystemEntryInfo`
+- `struct FileMetadata`
 - `enum DirectoryReadResult`
 - `enum DirectoryReadInfoResult`
 - `struct Directory`
@@ -251,11 +486,18 @@ Top-level functions:
 ```stark
 public fn System.IO.IOStatus CreateDirectory(ascii path);
 public fn System.IO.IOStatus DeleteDirectory(ascii path);
+public fn System.IO.IOStatus DeleteTree(ascii root);
+public fn System.IO.IOStatus DeleteTreeIfExists(ascii root);
 public fn System.IO.IOResult<Directory> OpenDirectory(ascii path);
 public fn System.IO.IOResult<bool> Exists(ascii path);
 public fn System.IO.IOResult<bool> IsFile(ascii path);
 public fn System.IO.IOResult<bool> IsDirectory(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
+public fn System.IO.IOResult<FileMetadata> Metadata(ascii path);
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectoryIn(ascii parent, ascii prefix);
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectory(ascii prefix);
+public fn System.IO.IOStatus WalkRecursive(ascii root, inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor);
+public fn System.IO.IOStatus Glob(ascii root, ascii pattern, inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor) where overlap(root, pattern);
 ```
 
 Member functions:
@@ -273,6 +515,12 @@ finite law bool IsOpen(borrow Directory self);
 inline fn System.IO.IOStatus Close(mut borrow Directory self);
 fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self);
 fn DirectoryReadResult ReadNext(mut borrow Directory self);
+```
+
+`FileMetadata`
+
+```stark
+inline finite law bool IsExecutable(borrow FileMetadata self);
 ```
 
 
@@ -296,6 +544,7 @@ Public types:
 - `enum FileMode`
 - `enum FileBuffering`
 - `enum SeekOrigin`
+- `enum FileLineReadResult`
 - `struct File`
 
 Top-level functions:
@@ -305,9 +554,28 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode);
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering buffering);
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding);
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
+public fn System.IO.IOStatus ReadAllBytesInto(ascii path, mut borrow System.Runtime.Buffer.DynamicByteBuffer destination);
+public fn System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> ReadAllBytes(ascii path);
+public fn System.IO.IOStatus ReadAllTextInto(ascii path, mut borrow System.Text.OwnedAscii destination);
+public fn System.IO.IOResult<System.Text.OwnedAscii> ReadAllText(ascii path);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow i8[min max][] source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.DynamicByteBuffer source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer512 source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer4096 source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer8192 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow i8[min max][] source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.DynamicByteBuffer source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer512 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer4096 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer8192 source);
+public fn System.IO.IOStatus WriteAllText(ascii path, ascii text);
+public fn System.IO.IOStatus WriteAllText(ascii path, unicode text);
+public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, ascii text);
+public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, unicode text);
 public fn System.IO.IOStatus Delete(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
 public fn System.IO.IOResult<bool> Exists(ascii path);
+public fn System.IO.IOStatus ReadLines(ascii path, inline closure<fn System.IO.IOStatus(ascii)> visitor);
 ```
 
 Member functions:
@@ -325,6 +593,7 @@ inline fn System.IO.IOStatus Flush(mut borrow File self);
 inline fn System.IO.IOStatus SyncAll(mut borrow File self);
 inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin);
 inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination);
+fn FileLineReadResult ReadLine(mut borrow File self, mut borrow System.Text.OwnedAscii destination);
 inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source);
 inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow System.Runtime.Buffer.DynamicByteBuffer source);
 inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow System.Runtime.Buffer.FixedByteBuffer512 source);
@@ -353,15 +622,42 @@ public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
 public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.OwnedAscii destination);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
+public fn System.Memory.MemoryStatus TempDirectory(mut borrow System.Text.OwnedAscii destination);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempDirectory();
 public finite law ascii ParentDirectory();
+public finite law bool GlobMatches(ascii pattern, ascii path) where overlap(pattern, path);
+public fn System.Memory.MemoryStatus TryTempName(mut borrow System.Text.OwnedAscii destination, ascii prefix, u64[0 max] attempt, ascii suffix) where overlap(destination, prefix), overlap(destination, suffix), overlap(prefix, suffix);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempName(ascii prefix, u64[0 max] attempt, ascii suffix) where overlap(prefix, suffix);
+public fn System.Memory.MemoryStatus TryTempPathIn(mut borrow System.Text.OwnedAscii destination, ascii parent, ascii prefix, u64[0 max] attempt, ascii suffix) where overlap(destination, parent), overlap(destination, prefix), overlap(destination, suffix), overlap(parent, prefix), overlap(parent, suffix), overlap(prefix, suffix);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempPathIn(ascii parent, ascii prefix, u64[0 max] attempt, ascii suffix) where overlap(parent, prefix), overlap(parent, suffix), overlap(prefix, suffix);
 public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right) where overlap(destination, left), overlap(destination, right), overlap(left, right);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third) where overlap(destination, first), overlap(destination, second), overlap(destination, third), overlap(first, second), overlap(first, third), overlap(second, third);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third, ascii fourth) where overlap(destination, first), overlap(destination, second), overlap(destination, third), overlap(destination, fourth), overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii left, const ascii right) where overlap(left, right);
+public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii first, const ascii second, const ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
+public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii first, const ascii second, const ascii third, const ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right) where overlap(left, right);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third, ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) where overlap(left, right);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third, const ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryStatus TryNormalizeSeparators(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
 public fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparators(ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparatorsConst(const ascii path);
+public fn System.Memory.MemoryStatus TryNormalizeLexically(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
+public fn System.Memory.MemoryStatus TryNormalizeLexicallyConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeLexically(ascii path);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeLexicallyConst(const ascii path);
+public fn System.Memory.MemoryStatus TryFullPath(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
+public fn System.Memory.MemoryStatus TryFullPathConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> FullPath(ascii path);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> FullPathConst(const ascii path);
+public fn System.Memory.MemoryStatus TryChangeExtension(mut borrow System.Text.OwnedAscii destination, ascii path, ascii extension) where overlap(destination, path), overlap(destination, extension), overlap(path, extension);
+public fn System.Memory.MemoryStatus TryChangeExtensionConst(mut borrow System.Text.OwnedAscii destination, const ascii path, const ascii extension) where overlap(path, extension);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ChangeExtension(ascii path, ascii extension) where overlap(path, extension);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ChangeExtensionConst(const ascii path, const ascii extension) where overlap(path, extension);
 public finite law PathFacts GetFacts(ascii path);
 public finite law PathFacts GetConstFacts(const ascii path);
 public finite law ascii Extension(ascii path);
@@ -370,6 +666,14 @@ public finite law ascii BaseName(ascii path);
 public finite law ascii BaseNameConst(const ascii path);
 public finite law ascii DirectoryName(ascii path);
 public finite law ascii DirectoryNameConst(const ascii path);
+public finite law ascii RootName(ascii path);
+public finite law ascii RootNameConst(const ascii path);
+public finite law bool IsRooted(ascii path);
+public finite law bool IsRootedConst(const ascii path);
+public finite law bool IsAbsolute(ascii path);
+public finite law bool IsAbsoluteConst(const ascii path);
+public finite law bool IsRelative(ascii path);
+public finite law bool IsRelativeConst(const ascii path);
 ```
 
 Member functions:
@@ -380,6 +684,11 @@ Member functions:
 inline finite law i64[min max] PathLength(borrow PathFacts self);
 inline finite law i64[min max] ExtensionLength(borrow PathFacts self);
 inline finite law ascii Extension(borrow PathFacts self);
+inline finite law i64[min max] RootNameLength(borrow PathFacts self);
+inline finite law ascii RootName(borrow PathFacts self);
+inline finite law bool IsRooted(borrow PathFacts self);
+inline finite law bool IsAbsolute(borrow PathFacts self);
+inline finite law bool IsRelative(borrow PathFacts self);
 inline finite law i64[min max] BaseNameLength(borrow PathFacts self);
 inline finite law ascii BaseName(borrow PathFacts self);
 inline finite law i64[min max] DirectoryNameLength(borrow PathFacts self);
@@ -594,6 +903,46 @@ Top-level functions:
 ```stark
 public fn i32[min max] CurrentId();
 public fn void Exit(i32[min max] code);
+
+public enum ProcessError;
+public enum ProcessStatus;
+public enum ProcessResult<T>;
+public enum ProcessOption<T>;
+public struct ProcessOutput;
+public struct ProcessArguments;
+public struct ProcessCommand;
+
+public fn ProcessResult<ProcessCommand> Command(ascii executable);
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(mut borrow ProcessCommand command);
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(ascii executable);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithTimeout(mut borrow ProcessCommand command, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithTimeout(ascii executable, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInput(mut borrow ProcessCommand command, ascii input);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInput(ascii executable, ascii input);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInputTimeout(mut borrow ProcessCommand command, ascii input, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInputTimeout(ascii executable, ascii input, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn ProcessResult<ProcessOption<System.Text.OwnedAscii>> GetEnvironment(ascii name);
+public unsafe fn ProcessStatus SetEnvironment(ascii name, ascii value);
+public unsafe fn ProcessStatus RemoveEnvironment(ascii name);
+public fn ProcessResult<System.Text.OwnedAscii> CurrentDirectory();
+public unsafe fn ProcessStatus SetCurrentDirectory(ascii path);
+public unsafe fn ProcessResult<ProcessArguments> Arguments();
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ArgumentCount();
+
+// ProcessCommand members
+public fn ProcessStatus AddArgument(mut borrow ProcessCommand self, ascii argument);
+public fn ProcessStatus SetWorkingDirectory(mut borrow ProcessCommand self, ascii path);
+
+// ProcessOutput members
+public inline finite law u64[0 2 ** 63 - 1] StdoutLength(borrow ProcessOutput self);
+public inline finite law u64[0 2 ** 63 - 1] StderrLength(borrow ProcessOutput self);
+public finite law retborrow i8[min max][] StdoutSlice(borrow ProcessOutput self);
+public finite law retborrow i8[min max][] StderrSlice(borrow ProcessOutput self);
+public inline finite law bool WasTimedOut(borrow ProcessOutput self);
+
+// ProcessArguments members
+public inline finite law u64[0 2 ** 63 - 1] Count(borrow ProcessArguments self);
+public finite law retborrow System.Text.OwnedAscii[] AsSlice(borrow ProcessArguments self);
 ```
 
 
@@ -702,25 +1051,180 @@ Source: `stdlib/src/System/Testing.stark`
 Public types:
 
 - `enum TestStatus`
+- `enum SnapshotResult`
+- `struct SnapshotDifference`
+- `enum DiagnosticSeverity`
+- `struct DiagnosticLocation`
+- `struct Diagnostic`
+- `struct TempDirectory`
+
+Member functions:
+
+`TempDirectory`
+
+```stark
+finite ascii View(mut borrow TempDirectory self);
+finite law bool IsActive(borrow TempDirectory self);
+fn System.IO.IOResult<System.Text.OwnedAscii> PathFor(mut borrow TempDirectory self, ascii relativePath) where overlap(self, relativePath);
+fn System.IO.IOStatus CreateDirectory(mut borrow TempDirectory self, ascii relativePath) where overlap(self, relativePath);
+fn System.IO.IOStatus DeleteDirectory(mut borrow TempDirectory self, ascii relativePath) where overlap(self, relativePath);
+fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, ascii text) where overlap(self, relativePath), overlap(self, text), overlap(relativePath, text);
+fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, unicode text) where overlap(self, relativePath), overlap(self, text), overlap(relativePath, text);
+fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, ascii text) where overlap(self, relativePath), overlap(self, text), overlap(relativePath, text);
+fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, unicode text) where overlap(self, relativePath), overlap(self, text), overlap(relativePath, text);
+fn System.IO.IOResult<System.Text.OwnedAscii> ReadText(mut borrow TempDirectory self, ascii relativePath) where overlap(self, relativePath);
+fn System.IO.IOStatus DeleteFile(mut borrow TempDirectory self, ascii relativePath) where overlap(self, relativePath);
+fn System.IO.IOStatus Cleanup(mut borrow TempDirectory self);
+```
 
 Top-level functions:
 
 ```stark
-public fn bool True(bool condition);
-public fn bool False(bool condition);
+public fn System.IO.IOResult<TempDirectory> CreateTempDirectory(ascii prefix);
+public finite law bool True(bool condition);
+public finite law bool False(bool condition);
 public fn bool Fail(ascii message);
-public fn bool Equal(bool expected, bool actual);
-public fn bool Equal(i32[min max] expected, i32[min max] actual);
-public fn bool Equal(i64[min max] expected, i64[min max] actual);
-public fn bool Equal(u32[0 max] expected, u32[0 max] actual);
-public fn bool Equal(u64[0 max] expected, u64[0 max] actual);
-public fn bool Equal(ascii expected, ascii actual);
-public fn bool Equal(unicode expected, unicode actual);
-public fn TestStatus Status(bool assertion);
+public finite law bool Equal(bool expected, bool actual);
+public finite law bool Equal(i32[min max] expected, i32[min max] actual);
+public finite law bool Equal(i64[min max] expected, i64[min max] actual);
+public finite law bool Equal(u32[0 max] expected, u32[0 max] actual);
+public finite law bool Equal(u64[0 max] expected, u64[0 max] actual);
+public finite law bool Equal(ascii expected, ascii actual);
+public finite law bool Equal(unicode expected, unicode actual);
+public finite law bool NotEqual(bool expected, bool actual);
+public finite law bool NotEqual(i32[min max] expected, i32[min max] actual);
+public finite law bool NotEqual(i64[min max] expected, i64[min max] actual);
+public finite law bool NotEqual(u32[0 max] expected, u32[0 max] actual);
+public finite law bool NotEqual(u64[0 max] expected, u64[0 max] actual);
+public finite law bool NotEqual(ascii expected, ascii actual);
+public finite law bool NotEqual(unicode expected, unicode actual);
+public finite law bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual);
+public finite law bool InRange(i64[min max] min, i64[min max] max, i64[min max] actual);
+public finite law bool InRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual);
+public finite law bool InRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual);
+public finite law bool NotInRange(i32[min max] min, i32[min max] max, i32[min max] actual);
+public finite law bool NotInRange(i64[min max] min, i64[min max] max, i64[min max] actual);
+public finite law bool NotInRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual);
+public finite law bool NotInRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual);
+public finite law bool Empty(ascii value);
+public finite law bool Empty(unicode value);
+public finite law bool Empty<T>(borrow T[] values);
+public finite law bool Empty<T>(borrow System.Collections.List<T> values);
+public finite law bool NotEmpty(ascii value);
+public finite law bool NotEmpty(unicode value);
+public finite law bool NotEmpty<T>(borrow T[] values);
+public finite law bool NotEmpty<T>(borrow System.Collections.List<T> values);
+public finite law bool Single<T>(borrow T[] values);
+public finite law bool Single<T>(borrow System.Collections.List<T> values);
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow T[] values);
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Collections.List<T> values);
+public finite law bool Contains(ascii value, ascii expected) where overlap(value, expected);
+public finite law bool Contains(unicode value, unicode expected) where overlap(value, expected);
+public finite law bool DoesNotContain(ascii value, ascii expected) where overlap(value, expected);
+public finite law bool DoesNotContain(unicode value, unicode expected) where overlap(value, expected);
+public finite law bool StartsWith(ascii value, ascii expected) where overlap(value, expected);
+public finite law bool StartsWith(unicode value, unicode expected) where overlap(value, expected);
+public finite law bool EndsWith(ascii value, ascii expected) where overlap(value, expected);
+public finite law bool EndsWith(unicode value, unicode expected) where overlap(value, expected);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle) where overlap(value, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode value, unicode needle) where overlap(value, needle);
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle) where overlap(value, needle);
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, unicode value, unicode needle) where overlap(value, needle);
+public inline finite law bool DiagnosticCode(ascii expected, borrow Diagnostic diagnostic) where overlap(expected, diagnostic);
+public inline finite law bool DiagnosticSeverityIs(DiagnosticSeverity expected, borrow Diagnostic diagnostic);
+public inline finite law bool DiagnosticStage(ascii expected, borrow Diagnostic diagnostic) where overlap(expected, diagnostic);
+public inline finite law bool DiagnosticMessageEqual(ascii expected, borrow Diagnostic diagnostic) where overlap(expected, diagnostic);
+public inline finite law bool DiagnosticMessageContains(borrow Diagnostic diagnostic, ascii expected) where overlap(diagnostic, expected);
+public inline finite law bool DiagnosticHasLocation(borrow Diagnostic diagnostic);
+public inline finite law bool DiagnosticHasEndLocation(borrow Diagnostic diagnostic);
+public inline finite law bool DiagnosticFilePath(ascii expected, borrow Diagnostic diagnostic) where overlap(expected, diagnostic);
+public inline finite law bool DiagnosticAt(borrow Diagnostic diagnostic, u64[0 2 ** 63 - 1] line, u64[0 2 ** 63 - 1] column);
+public inline finite law bool DiagnosticEndsAt(borrow Diagnostic diagnostic, u64[0 2 ** 63 - 1] endLine, u64[0 2 ** 63 - 1] endColumn);
+public inline finite law bool DiagnosticMatches(borrow Diagnostic diagnostic, ascii code, DiagnosticSeverity severity, ascii stage, ascii messageContains) where overlap(diagnostic, code), overlap(diagnostic, stage), overlap(diagnostic, messageContains), overlap(code, stage), overlap(code, messageContains), overlap(stage, messageContains);
+public inline finite law bool DiagnosticMatchesAt(borrow Diagnostic diagnostic, ascii code, DiagnosticSeverity severity, ascii stage, ascii messageContains, u64[0 2 ** 63 - 1] line, u64[0 2 ** 63 - 1] column) where overlap(diagnostic, code), overlap(diagnostic, stage), overlap(diagnostic, messageContains), overlap(code, stage), overlap(code, messageContains), overlap(stage, messageContains);
+public finite law bool DiagnosticsCount(u64[0 2 ** 63 - 1] expected, borrow Diagnostic[] diagnostics);
+public finite law bool DiagnosticsEmpty(borrow Diagnostic[] diagnostics);
+public finite law bool DiagnosticsNotEmpty(borrow Diagnostic[] diagnostics);
+public finite law bool DiagnosticsContainCode(borrow Diagnostic[] diagnostics, ascii code) where overlap(diagnostics, code);
+public finite law bool DiagnosticsContainMessage(borrow Diagnostic[] diagnostics, ascii messageContains) where overlap(diagnostics, messageContains);
+public finite law bool DiagnosticsContain(borrow Diagnostic[] diagnostics, ascii code, DiagnosticSeverity severity, ascii stage, ascii messageContains) where overlap(diagnostics, code), overlap(diagnostics, stage), overlap(diagnostics, messageContains), overlap(code, stage), overlap(code, messageContains), overlap(stage, messageContains);
+public finite law bool DiagnosticsContainAt(borrow Diagnostic[] diagnostics, ascii code, DiagnosticSeverity severity, ascii stage, ascii messageContains, u64[0 2 ** 63 - 1] line, u64[0 2 ** 63 - 1] column) where overlap(diagnostics, code), overlap(diagnostics, stage), overlap(diagnostics, messageContains), overlap(code, stage), overlap(code, messageContains), overlap(stage, messageContains);
+public finite law u64[0 2 ** 63 - 1] DiagnosticsSeverityCount(DiagnosticSeverity severity, borrow Diagnostic[] diagnostics);
+public finite law u64[0 2 ** 63 - 1] DiagnosticsErrorCount(borrow Diagnostic[] diagnostics);
+public finite law u64[0 2 ** 63 - 1] DiagnosticsWarningCount(borrow Diagnostic[] diagnostics);
+public finite law u64[0 2 ** 63 - 1] DiagnosticsInfoCount(borrow Diagnostic[] diagnostics);
+public finite law bool DiagnosticsHaveNoErrors(borrow Diagnostic[] diagnostics);
+public finite law bool DiagnosticsHaveErrors(borrow Diagnostic[] diagnostics);
+public finite law bool TypeIs<TActual, TExpected>();
+public finite law bool TypeIsBool<T>();
+public finite law bool TypeIsInteger<T>();
+public finite law bool TypeIsFloat<T>();
+public finite law bool TypeIsRawPointer<T>();
+public finite law bool TypeIsFixedArray<T>();
+public finite law bool TypeIsSlice<T>();
+public finite law bool TypeIsDynamic<T>();
+public finite law bool TypeIsFunctionPointer<T>();
+public finite law bool TypeIsClosure<T>();
+public finite law bool TypeIsNamed<T>();
+public finite law bool TypeIsStruct<T>();
+public finite law bool TypeIsRecord<T>();
+public finite law bool TypeIsEnum<T>();
+public finite law bool TypeIsTrait<T>();
+public finite law bool TypeIsDoctrine<T>();
+public finite law bool TypeIsDynTrait<T>();
+public finite law bool TypeHasConcreteLayout<T>();
+public finite law bool TypeIsZeroSized<T>();
+public finite law bool TypeSizeIs<T>(u64[0 max] expected);
+public finite law bool TypeAlignIs<T>(u64[0 max] expected);
+public finite law bool TypeDisplayName<T>(ascii expected);
+public finite law bool TypeBaseName<T>(ascii expected);
+public finite law bool TypeModuleName<T>(ascii expected);
+public finite law bool TypeIsGenericInstantiation<T>();
+public finite law bool TypeArgumentCount<T>(u64[0 max] expected);
+public finite law bool TypeComptimeArgumentCount<T>(u64[0 max] expected);
+public finite law bool OptionSome<T>(borrow System.Core.Option<T> value);
+public finite law bool OptionNone<T>(borrow System.Core.Option<T> value);
+public finite law bool ResultOk<T, E>(borrow System.Core.Result<T, E> value);
+public finite law bool ResultErr<T, E>(borrow System.Core.Result<T, E> value);
+public finite law bool ProcessExitCode(i32[min max] expected, borrow System.Process.ProcessOutput output);
+public finite law bool ProcessTimedOut(borrow System.Process.ProcessOutput output);
+public finite law bool ProcessCompleted(borrow System.Process.ProcessOutput output);
+public finite law bool ProcessStdoutEqual(ascii expected, borrow System.Process.ProcessOutput output) where overlap(expected, output);
+public finite law bool ProcessStderrEqual(ascii expected, borrow System.Process.ProcessOutput output) where overlap(expected, output);
+public finite law bool ProcessStdoutContains(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law bool ProcessStderrContains(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law u64[0 2 ** 63 - 1] ProcessStdoutCountOccurrences(borrow System.Process.ProcessOutput output, ascii needle) where overlap(output, needle);
+public finite law u64[0 2 ** 63 - 1] ProcessStderrCountOccurrences(borrow System.Process.ProcessOutput output, ascii needle) where overlap(output, needle);
+public finite law bool ProcessStdoutOccurrences(u64[0 2 ** 63 - 1] expected, borrow System.Process.ProcessOutput output, ascii needle) where overlap(output, needle);
+public finite law bool ProcessStderrOccurrences(u64[0 2 ** 63 - 1] expected, borrow System.Process.ProcessOutput output, ascii needle) where overlap(output, needle);
+public finite law bool ProcessStdoutStartsWith(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law bool ProcessStderrStartsWith(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law bool ProcessStdoutEndsWith(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law bool ProcessStderrEndsWith(borrow System.Process.ProcessOutput output, ascii expected) where overlap(output, expected);
+public finite law bool ProcessStdoutEmpty(borrow System.Process.ProcessOutput output);
+public finite law bool ProcessStderrEmpty(borrow System.Process.ProcessOutput output);
+public finite law bool ProcessOutputEqual(i32[min max] expectedExitCode, ascii expectedStdout, ascii expectedStderr, borrow System.Process.ProcessOutput output) where overlap(expectedStdout, expectedStderr), overlap(expectedStdout, output), overlap(expectedStderr, output);
+public unsafe fn bool RunProcessMatches(mut borrow System.Process.ProcessCommand command, i32[min max] expectedExitCode, ascii expectedStdout, ascii expectedStderr) where overlap(command, expectedStdout), overlap(command, expectedStderr), overlap(expectedStdout, expectedStderr);
+public unsafe fn bool RunProcessMatchesWithInput(mut borrow System.Process.ProcessCommand command, ascii input, i32[min max] expectedExitCode, ascii expectedStdout, ascii expectedStderr) where overlap(command, input), overlap(command, expectedStdout), overlap(command, expectedStderr), overlap(input, expectedStdout), overlap(input, expectedStderr), overlap(expectedStdout, expectedStderr);
+public unsafe fn bool RunProcessTimesOut(mut borrow System.Process.ProcessCommand command, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn bool RunProcessTimesOutWithInput(mut borrow System.Process.ProcessCommand command, ascii input, u32[0 2 ** 31 - 1] timeoutMilliseconds) where overlap(command, input);
+public unsafe fn bool RunProcessMatches(ascii executable, i32[min max] expectedExitCode, ascii expectedStdout, ascii expectedStderr) where overlap(executable, expectedStdout), overlap(executable, expectedStderr), overlap(expectedStdout, expectedStderr);
+public unsafe fn bool RunProcessMatchesWithInput(ascii executable, ascii input, i32[min max] expectedExitCode, ascii expectedStdout, ascii expectedStderr) where overlap(executable, input), overlap(executable, expectedStdout), overlap(executable, expectedStderr), overlap(input, expectedStdout), overlap(input, expectedStderr), overlap(expectedStdout, expectedStderr);
+public unsafe fn bool RunProcessTimesOut(ascii executable, u32[0 2 ** 31 - 1] timeoutMilliseconds);
+public unsafe fn bool RunProcessTimesOutWithInput(ascii executable, ascii input, u32[0 2 ** 31 - 1] timeoutMilliseconds) where overlap(executable, input);
+public finite law TestStatus Status(bool assertion);
 public fn u8[0 1] RunFact(ascii name, bool assertion);
 public fn u8[0 1] RunFact(unicode name, bool assertion);
-public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount);
+public fn u8[0 1] SkipFact(ascii name, ascii reason);
+public fn u8[0 1] SkipFact(unicode name, unicode reason);
+public finite law i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount);
 public fn void Exit(u32[0 2 ** 31 - 1] failureCount);
+public finite law SnapshotResult CompareSnapshotText(borrow System.Text.OwnedAscii expected, ascii actual) where overlap(expected, actual);
+public fn SnapshotResult VerifySnapshot(ascii path, ascii actual);
+public fn SnapshotResult UpdateSnapshot(ascii path, ascii actual);
+public fn SnapshotResult VerifyOrUpdateSnapshot(ascii path, ascii actual, bool update);
+public finite law bool SnapshotSucceeded(SnapshotResult result);
+public fn System.Memory.MemoryStatus AppendSnapshotDifference(mut borrow System.Text.OwnedAscii writer, borrow SnapshotDifference difference);
 ```
 
 
@@ -733,6 +1237,8 @@ Public types:
 - `enum Encoding`
 - `enum TextError`
 - `enum TextResult<T>`
+- `enum TextBuildError`
+- `enum TextBuildResult<T>`
 - `struct OwnedAscii`
 - `struct OwnedUnicode`
 - `struct OwnedUtf16`
@@ -744,6 +1250,19 @@ public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
 public finite law i64[min max] AsciiLength(ascii source);
 public finite law i64[min max] UnicodeLength(unicode source);
+public finite law bool StartsWith(ascii source, ascii prefix) where overlap(source, prefix);
+public finite law bool StartsWith(unicode source, unicode prefix) where overlap(source, prefix);
+public finite law bool EndsWith(ascii source, ascii suffix) where overlap(source, suffix);
+public finite law bool EndsWith(unicode source, unicode suffix) where overlap(source, suffix);
+public finite law bool Contains(ascii source, ascii needle) where overlap(source, needle);
+public finite law bool Contains(unicode source, unicode needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode source, unicode needle) where overlap(source, needle);
+public finite law bool AsciiBytesEqual(borrow i8[min max][] source, ascii expected) where overlap(source, expected);
+public finite law bool AsciiBytesStartsWith(borrow i8[min max][] source, ascii prefix) where overlap(source, prefix);
+public finite law bool AsciiBytesEndsWith(borrow i8[min max][] source, ascii suffix) where overlap(source, suffix);
+public finite law bool AsciiBytesContains(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] AsciiBytesCountOccurrences(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
 public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
@@ -751,6 +1270,11 @@ public fn System.Memory.MemoryStatus FromConstUnicode(out OwnedUnicode destinati
 public fn System.Memory.MemoryStatus FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destination, unicode source);
+public fn TextBuildResult<OwnedAscii> EscapeAsciiForStringLiteral(ascii source);
+public fn TextBuildResult<OwnedAscii> EscapeUnicodeForStringLiteral(unicode source);
+public fn TextBuildResult<OwnedUnicode> DecodeStringLiteralToUnicode(ascii literal);
+public fn TextBuildResult<OwnedAscii> DecodeStringLiteralToUtf8(ascii literal);
+public fn TextBuildResult<i32[min max]> DecodeCharacterLiteralCodePoint(ascii literal);
 public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAsciiToUtf16(out OwnedUtf16 destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicodeToUtf16(out OwnedUtf16 destination, unicode source);
@@ -975,7 +1499,7 @@ OwnedAscii();
 inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedAscii self);
 inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedAscii self);
 inline finite law bool IsEmpty(borrow OwnedAscii self);
-finite retborrow i8[min max][] AsSlice(borrow OwnedAscii self);
+finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self);
 finite retborrow mut i8[min max][] AsMutableSlice(mut borrow OwnedAscii self);
 finite ascii View(mut borrow OwnedAscii self);
 fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional);
@@ -989,6 +1513,7 @@ fn System.Memory.MemoryStatus AppendU64(mut borrow OwnedAscii self, u64[0 max] v
 fn System.Memory.MemoryStatus AppendCodePointAsUtf8(mut borrow OwnedAscii self, i32[min max] codePoint);
 fn System.Memory.MemoryStatus AppendUnicodeAsUtf8(mut borrow OwnedAscii self, unicode source);
 fn void Clear(mut borrow OwnedAscii self);
+fn void Truncate(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] length);
 ```
 
 `OwnedUnicode`
@@ -998,7 +1523,7 @@ OwnedUnicode();
 inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUnicode self);
 inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUnicode self);
 inline finite law bool IsEmpty(borrow OwnedUnicode self);
-finite retborrow i32[min max][] AsSlice(borrow OwnedUnicode self);
+finite law retborrow i32[min max][] AsSlice(borrow OwnedUnicode self);
 finite retborrow mut i32[min max][] AsMutableSlice(mut borrow OwnedUnicode self);
 finite unicode View(mut borrow OwnedUnicode self);
 fn System.Memory.MemoryStatus Reserve(mut borrow OwnedUnicode self, u64[0 2 ** 63 - 1] additional);
@@ -1021,7 +1546,7 @@ OwnedUtf16();
 inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUtf16 self);
 inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUtf16 self);
 inline finite law bool IsEmpty(borrow OwnedUtf16 self);
-finite retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self);
+finite law retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self);
 finite retborrow mut i16[min max][] AsMutableSlice(mut borrow OwnedUtf16 self);
 fn System.Memory.MemoryStatus Reserve(mut borrow OwnedUtf16 self, u64[0 2 ** 63 - 1] additional);
 fn System.Memory.MemoryStatus AppendCodeUnit(mut borrow OwnedUtf16 self, i16[min max] value);
@@ -1042,12 +1567,27 @@ Public types:
 - `enum ThreadError`
 - `enum ThreadStatus`
 - `enum ThreadJoinResult`
+- `enum ChannelError`
+- `enum ChannelStatus`
+- `enum ChannelSenderResult<T>`
+- `enum ChannelReceiverResult<T>`
+- `enum ChannelReceiveResult<T>`
 - `struct Thread`
+- `struct Synchronized<T>`
+- `struct Locked<T>`
+- `struct Channel<T>`
+- `struct Sender<T>`
+- `struct Receiver<T>`
+- `struct AtomicBool`
+- `struct AtomicI8` … `struct AtomicI1024` and `struct AtomicU8` … `struct AtomicU1024`
+  (one atomic struct per Stark integer width: 8, 16, 24, 32, 48, 64, 96, 128, 192,
+  256, 384, 512, 768, 1024)
 
 Top-level functions:
 
 ```stark
 public alias ThreadEntry = fnptr<fn i32[min max]()>;
+public alias ThreadPayloadEntry<T> = fnptr<fn i32[min max](T)>;
 ```
 
 Member functions:
@@ -1059,6 +1599,62 @@ Thread(ThreadEntry entry);
 finite law bool IsJoinable(borrow Thread self);
 fn ThreadJoinResult Join(mut borrow Thread self);
 fn ThreadStatus Detach(mut borrow Thread self);
+static fn Thread Start<T>(ThreadPayloadEntry<T> entry, T payload)
+    where Transferable(T);
 static fn void Yield();
 static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds);
+```
+
+`Synchronized<T>` / `Locked<T>`
+
+```stark
+Synchronized(T initial);
+fn Locked<T> Lock(storeborrow mut Synchronized<T> self);
+
+fn retborrow mut T Value(mut borrow Locked<T> self);
+mut drop;
+```
+
+`Channel<T>` / `Sender<T>` / `Receiver<T>`
+
+```stark
+Channel();
+fn ChannelSenderResult<T> CreateSender(storeborrow mut Channel<T> self);
+fn ChannelReceiverResult<T> CreateReceiver(storeborrow mut Channel<T> self);
+fn u64[0 2 ** 63 - 1] PendingCount(storeborrow mut Channel<T> self);
+
+fn ChannelStatus Send(mut borrow Sender<T> self, T value)
+    where Transferable(T);
+fn ChannelStatus Close(mut borrow Sender<T> self);
+mut drop;
+
+fn ChannelReceiveResult<T> Receive(mut borrow Receiver<T> self);
+fn ChannelStatus Close(mut borrow Receiver<T> self);
+mut drop;
+```
+
+`AtomicI64` (the same shape repeats for every `AtomicI*`/`AtomicU*` width; all
+operations are seq-cst; RMW operations return the previous value; `Add`/`Sub` wrap)
+
+```stark
+AtomicI64(i64[min max] initial);
+fn i64[min max] Load(borrow AtomicI64 self);
+fn void Store(mut borrow AtomicI64 self, i64[min max] value);
+fn i64[min max] Add(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Sub(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] And(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Or(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Xor(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Exchange(mut borrow AtomicI64 self, i64[min max] value);
+fn bool CompareExchange(mut borrow AtomicI64 self, i64[min max] expected, i64[min max] desired);
+```
+
+`AtomicBool`
+
+```stark
+AtomicBool(bool initial);
+fn bool Load(borrow AtomicBool self);
+fn void Store(mut borrow AtomicBool self, bool value);
+fn bool Exchange(mut borrow AtomicBool self, bool value);
+fn bool CompareExchange(mut borrow AtomicBool self, bool expected, bool desired);
 ```

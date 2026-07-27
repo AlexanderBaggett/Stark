@@ -8,6 +8,6 @@ fn i32[min max] DistanceFromZero(i32[min max] value) {
     }
 }
 
-export unsafe fn i32[min max] main() {
+export fn i32[min max] main() {
     return DistanceFromZero(-7);
 }

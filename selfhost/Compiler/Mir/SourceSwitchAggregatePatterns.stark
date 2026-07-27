@@ -1,0 +1,3679 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchAggregatePatterns
+
+internal fn bool SourceSwitchTypedAggregatePatternRowMatchesParsedLabel(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] patternStartToken,
+    u32[0 max] patternEndToken,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] enumVariantOrdinalPlusOne,
+    u32[0 max] memberCount)
+{
+    if (patternStartToken == 4294967295
+        || patternEndToken <= patternStartToken)
+    {
+        return false;
+    }
+
+    stack u32[0 max] typedRow = SourceSwitchAggregatePatternRowForStartToken(moduleFacts, patternStartToken);
+    if (!moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedRow - 1);
+    if (moduleFacts.SwitchPatterns.AggregatePatterns.PatternStartTokenAt(typedIndex) != patternStartToken
+        || moduleFacts.SwitchPatterns.AggregatePatterns.PatternEndTokenAt(typedIndex) != patternEndToken
+        || moduleFacts.SwitchPatterns.AggregatePatterns.EnumVariantOrdinalPlusOneAt(typedIndex) != enumVariantOrdinalPlusOne
+        || moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(typedIndex) != memberCount)
+    {
+        return false;
+    }
+
+    if (ownerTypeToken != 0
+        && moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypeHeadTokenAt(typedIndex) != ownerTypeToken
+        && moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypePrimaryTokenAt(typedIndex) != ownerTypeToken)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn bool SourceSwitchTypedStructAggregatePatternRowMatchesParsedLabel(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] patternStartTokenWide,
+    u64[0 2 ** 63 - 1] patternEndTokenWide,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] memberCount)
+{
+    if (patternStartTokenWide > 4294967295
+        || patternEndTokenWide > 4294967295)
+    {
+        return false;
+    }
+
+    return SourceSwitchTypedAggregatePatternRowMatchesParsedLabel(
+        moduleFacts,
+        (u32[0 max])patternStartTokenWide,
+        (u32[0 max])patternEndTokenWide,
+        ownerTypeToken,
+        0,
+        memberCount);
+}
+
+internal fn bool SourceSwitchTypedEnumAggregatePatternRowMatchesParsedLabel(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] patternStartTokenWide,
+    u64[0 2 ** 63 - 1] patternEndTokenWide,
+    u32[0 max] variantOrdinal,
+    u64[0 max] payloadCount)
+{
+    if (patternStartTokenWide > 4294967295
+        || patternEndTokenWide > 4294967295
+        || payloadCount > 4294967295
+        || variantOrdinal == 4294967295)
+    {
+        return false;
+    }
+
+    return SourceSwitchTypedAggregatePatternRowMatchesParsedLabel(
+        moduleFacts,
+        (u32[0 max])patternStartTokenWide,
+        (u32[0 max])patternEndTokenWide,
+        0,
+        variantOrdinal + 1,
+        (u32[0 max])payloadCount);
+}
+
+internal fn bool SourceSwitchTypedListPatternRowMatchesParsedLabel(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] patternStartTokenWide,
+    u64[0 2 ** 63 - 1] patternEndTokenWide,
+    ParamAbiFacts fixedArrayFacts,
+    u32[0 max] elementPatternCount)
+{
+    if (patternStartTokenWide > 4294967295
+        || patternEndTokenWide > 4294967295
+        || !fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack u32[0 max] patternStartToken = (u32[0 max])patternStartTokenWide;
+    stack u32[0 max] patternEndToken = (u32[0 max])patternEndTokenWide;
+    if (patternStartToken == 4294967295
+        || patternEndToken <= patternStartToken)
+    {
+        return false;
+    }
+
+    stack u32[0 max] typedRow = SourceSwitchListPatternRowForStartToken(moduleFacts, patternStartToken);
+    if (!moduleFacts.SwitchPatterns.ListPatterns.ContainsRow(typedRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedRow - 1);
+    if (moduleFacts.SwitchPatterns.ListPatterns.PatternStartTokenAt(typedIndex) != patternStartToken
+        || moduleFacts.SwitchPatterns.ListPatterns.PatternEndTokenAt(typedIndex) != patternEndToken
+        || !moduleFacts.SwitchPatterns.ListPatterns.HasFixedLengthAt(typedIndex)
+        || moduleFacts.SwitchPatterns.ListPatterns.FixedLengthAt(typedIndex) != fixedArrayFacts.FixedArrayLength
+        || moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(typedIndex) != elementPatternCount)
+    {
+        return false;
+    }
+
+    if ((elementPatternCount == 0 && moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedIndex) != 0)
+        || (elementPatternCount != 0 && moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedIndex) == 0))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+
+internal fn bool TryParseSourceSwitchEnumPayloadScalarOrCapturePattern(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] payloadTypeCode,
+    bool allowPayloadCapture,
+    u64[0 2 ** 63 - 1] valueStart,
+    out u32[0 max] patternKind,
+    out i64[min max] minValue,
+    out i64[min max] maxValue,
+    out u32[0 max] captureNameToken,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+    minValue = 0;
+    maxValue = 0;
+    captureNameToken = 0;
+    nextToken = valueStart;
+    if (allowPayloadCapture
+        && stream.KindAt(valueStart) == TokenKind.Var
+        && stream.KindAt(valueStart + 1) == TokenKind.Identifier
+        && (payloadTypeCode == SourceResolvedFieldTypeCodeBool() || SourceSwitchResolvedFieldTypeCodeIsInteger(payloadTypeCode)))
+    {
+        captureNameToken = (u32[0 max])(valueStart + 1);
+        nextToken = valueStart + 2;
+        return true;
+    }
+
+    return TryParseSourceSwitchEnumPayloadScalarPattern(
+        stream,
+        source,
+        payloadTypeCode,
+        valueStart,
+        patternKind,
+        minValue,
+        maxValue,
+        nextToken);
+}
+
+
+internal fn bool TryParseTerminalSwitchFixedArrayListCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    ParamAbiFacts fixedArrayFacts,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])elementPatternIndices.Count() + 1;
+    patternCount = 0;
+    nextToken = valueStart;
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    if (stream.KindAt(valueStart) == TokenKind.Discard)
+    {
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (stream.KindAt(valueStart) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] cursor = valueStart + 1;
+    while willexit (elementIndex < fixedArrayFacts.FixedArrayLength)
+    {
+        stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+        stack mut i64[min max] minValue = 0;
+        stack mut i64[min max] maxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterPattern = cursor;
+        if (!TryParseSourceSwitchEnumPayloadScalarPattern(
+                stream,
+                source,
+                fixedArrayFacts.FixedArrayFieldTypeCode,
+                cursor,
+                patternKind,
+                minValue,
+                maxValue,
+                afterPattern))
+        {
+            return false;
+        }
+
+        if (patternKind != SourceSwitchEnumPayloadPatternKindDiscard())
+        {
+            if (elementPatternIndices.Add(elementIndex) == 0
+                || elementPatternTypeCodes.Add(fixedArrayFacts.FixedArrayFieldTypeCode) == 0
+                || elementPatternKinds.Add(patternKind) == 0
+                || elementPatternMinValues.Add(minValue) == 0
+                || elementPatternMaxValues.Add(maxValue) == 0)
+            {
+                return false;
+            }
+
+            patternCount = patternCount + 1;
+        }
+
+        elementIndex = elementIndex + 1;
+        cursor = afterPattern;
+        if (elementIndex < fixedArrayFacts.FixedArrayLength)
+        {
+            if (stream.KindAt(cursor) != TokenKind.Comma)
+            {
+                return false;
+            }
+
+            cursor = cursor + 1;
+        }
+        else if (stream.KindAt(cursor) == TokenKind.Comma)
+        {
+            cursor = cursor + 1;
+        }
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.RBrack)
+    {
+        return false;
+    }
+
+    nextToken = cursor + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchFixedArrayListCaseLabelWithCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    ParamAbiFacts fixedArrayFacts,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u32[0 max] captureStart,
+    out u32[0 max] captureCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])elementPatternIndices.Count() + 1;
+    patternCount = 0;
+    captureStart = (u32[0 max])elementCaptureNameTokens.Count() + 1;
+    captureCount = 0;
+    nextToken = valueStart;
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    if (stream.KindAt(valueStart) == TokenKind.Discard)
+    {
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (stream.KindAt(valueStart) == TokenKind.Var
+        && stream.KindAt(valueStart + 1) == TokenKind.Identifier)
+    {
+        if (elementCaptureIndices.Add(fixedArrayFacts.FixedArrayLength) == 0
+            || elementCaptureTypeCodes.Add(SourceLocalTypeCodeFixedArrayParam()) == 0
+            || elementCaptureNameTokens.Add((u32[0 max])(valueStart + 1)) == 0)
+        {
+            return false;
+        }
+
+        captureCount = 1;
+        nextToken = valueStart + 2;
+        return true;
+    }
+
+    if (stream.KindAt(valueStart) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] cursor = valueStart + 1;
+    while willexit (elementIndex < fixedArrayFacts.FixedArrayLength)
+    {
+        stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+        stack mut i64[min max] minValue = 0;
+        stack mut i64[min max] maxValue = 0;
+        stack mut u32[0 max] captureNameToken = 0;
+        stack mut u64[0 2 ** 63 - 1] afterPattern = cursor;
+        if (!TryParseSourceSwitchEnumPayloadScalarOrCapturePattern(
+                stream,
+                source,
+                fixedArrayFacts.FixedArrayFieldTypeCode,
+                true,
+                cursor,
+                patternKind,
+                minValue,
+                maxValue,
+                captureNameToken,
+                afterPattern))
+        {
+            return false;
+        }
+
+        if (captureNameToken != 0)
+        {
+            if (elementCaptureIndices.Add(elementIndex) == 0
+                || elementCaptureTypeCodes.Add(fixedArrayFacts.FixedArrayFieldTypeCode) == 0
+                || elementCaptureNameTokens.Add(captureNameToken) == 0)
+            {
+                return false;
+            }
+
+            captureCount = captureCount + 1;
+        }
+
+        if (patternKind != SourceSwitchEnumPayloadPatternKindDiscard())
+        {
+            if (elementPatternIndices.Add(elementIndex) == 0
+                || elementPatternTypeCodes.Add(fixedArrayFacts.FixedArrayFieldTypeCode) == 0
+                || elementPatternKinds.Add(patternKind) == 0
+                || elementPatternMinValues.Add(minValue) == 0
+                || elementPatternMaxValues.Add(maxValue) == 0)
+            {
+                return false;
+            }
+
+            patternCount = patternCount + 1;
+        }
+
+        elementIndex = elementIndex + 1;
+        cursor = afterPattern;
+        if (elementIndex < fixedArrayFacts.FixedArrayLength)
+        {
+            if (stream.KindAt(cursor) != TokenKind.Comma)
+            {
+                return false;
+            }
+
+            cursor = cursor + 1;
+        }
+        else if (stream.KindAt(cursor) == TokenKind.Comma)
+        {
+            cursor = cursor + 1;
+        }
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.RBrack)
+    {
+        return false;
+    }
+
+    nextToken = cursor + 1;
+    return true;
+}
+
+internal fn bool TryAppendSourceSwitchFixedArrayListCaseLabelFromTypedRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    ParamAbiFacts fixedArrayFacts,
+    u32[0 max] valueStartToken,
+    u32[0 max] typedRow,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u32[0 max] captureStart,
+    out u32[0 max] captureCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])elementPatternIndices.Count() + 1;
+    patternCount = 0;
+    captureStart = (u32[0 max])elementCaptureNameTokens.Count() + 1;
+    captureCount = 0;
+    nextToken = valueStartToken;
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || !moduleFacts.SwitchPatterns.ListPatterns.ContainsRow(typedRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedRow - 1);
+    stack u32[0 max] typedEndToken = moduleFacts.SwitchPatterns.ListPatterns.PatternEndTokenAt(typedIndex);
+    stack u32[0 max] typedElementStart = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedIndex);
+    stack u32[0 max] typedElementCount = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(typedIndex);
+    if (!SourceSwitchTypedListPatternRowMatchesParsedLabel(
+            moduleFacts,
+            valueStartToken,
+            typedEndToken,
+            fixedArrayFacts,
+            fixedArrayFacts.FixedArrayLength)
+        || typedElementStart == 0
+        || typedElementCount != fixedArrayFacts.FixedArrayLength)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < typedElementCount)
+    {
+        if (offset > 4294967295 - typedElementStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = typedElementStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack u32[0 max] elementOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+        if (elementOrdinal != offset)
+        {
+            return false;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Discard)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Capture)
+        {
+            stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(memberIndex);
+            if (captureNameToken == 0
+                || elementCaptureIndices.Add(elementOrdinal) == 0
+                || elementCaptureTypeCodes.Add(fixedArrayFacts.FixedArrayFieldTypeCode) == 0
+                || elementCaptureNameTokens.Add(captureNameToken) == 0)
+            {
+                return false;
+            }
+
+            captureCount = captureCount + 1;
+        }
+        else if (memberKind == TypedSwitchPatternKind.Literal
+            || memberKind == TypedSwitchPatternKind.Range)
+        {
+            stack u32[0 max] memberPatternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+            stack u32[0 max] memberPatternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+            stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+            stack mut i64[min max] minValue = 0;
+            stack mut i64[min max] maxValue = 0;
+            stack mut u64[0 2 ** 63 - 1] afterPattern = memberPatternStart;
+            if (memberPatternStart == 0
+                || memberPatternEnd <= memberPatternStart
+                || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                    stream,
+                    source,
+                    fixedArrayFacts.FixedArrayFieldTypeCode,
+                    memberPatternStart,
+                    patternKind,
+                    minValue,
+                    maxValue,
+                    afterPattern)
+                || afterPattern != (u64[0 2 ** 63 - 1])memberPatternEnd
+                || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval()
+                || elementPatternIndices.Add(elementOrdinal) == 0
+                || elementPatternTypeCodes.Add(fixedArrayFacts.FixedArrayFieldTypeCode) == 0
+                || elementPatternKinds.Add(patternKind) == 0
+                || elementPatternMinValues.Add(minValue) == 0
+                || elementPatternMaxValues.Add(maxValue) == 0)
+            {
+                return false;
+            }
+
+            patternCount = patternCount + 1;
+        }
+        else
+        {
+            return false;
+        }
+
+        offset = offset + 1;
+    }
+
+    nextToken = typedEndToken;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    ParamAbiFacts fixedArrayFacts,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u32[0 max] captureStart,
+    out u32[0 max] captureCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])elementPatternIndices.Count() + 1;
+    patternCount = 0;
+    captureStart = (u32[0 max])elementCaptureNameTokens.Count() + 1;
+    captureCount = 0;
+    nextToken = valueStart;
+    if (stream.KindAt(valueStart) != TokenKind.LBrack)
+    {
+        return TryParseTerminalSwitchFixedArrayListCaseLabelWithCaptures(
+            stream,
+            source,
+            fixedArrayFacts,
+            valueStart,
+            elementPatternIndices,
+            elementPatternTypeCodes,
+            elementPatternKinds,
+            elementPatternMinValues,
+            elementPatternMaxValues,
+            elementCaptureIndices,
+            elementCaptureTypeCodes,
+            elementCaptureNameTokens,
+            patternStart,
+            patternCount,
+            captureStart,
+            captureCount,
+            nextToken);
+    }
+
+    if (valueStart > 4294967295)
+    {
+        return false;
+    }
+
+    stack u32[0 max] typedRow = SourceSwitchListPatternRowForStartToken(moduleFacts, (u32[0 max])valueStart);
+    return TryAppendSourceSwitchFixedArrayListCaseLabelFromTypedRow(
+        stream,
+        source,
+        moduleFacts,
+        fixedArrayFacts,
+        (u32[0 max])valueStart,
+        typedRow,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues,
+        elementCaptureIndices,
+        elementCaptureTypeCodes,
+        elementCaptureNameTokens,
+        patternStart,
+        patternCount,
+        captureStart,
+        captureCount,
+        nextToken);
+}
+
+internal fn bool TryResolveFixedArraySwitchScrutineeFacts(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts)
+{
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    if (!nodes.Contains(scrutineeNode))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(scrutineeNode);
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+    {
+        return false;
+    }
+
+    stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, node.Left + 1);
+    if (!facts.IsFixedArray
+        || facts.FixedArrayLength == 0
+        || facts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    fixedArrayParamIndex = node.Left;
+    fixedArrayFacts = facts;
+    return true;
+}
+
+internal fn ParamAbiFacts FixedArrayStorageLocalAbiFacts(FixedArrayStorageLocal local)
+{
+    stack mut ParamAbiFacts facts = new();
+    facts.IsFixedArray = true;
+    facts.FixedArrayElementType = local.ElementType;
+    facts.FixedArrayElementSize = local.ElementSize;
+    facts.FixedArrayAlignment = local.Alignment;
+    facts.FixedArrayLength = local.ArrayLength;
+    facts.FixedArrayFieldTypeCode = local.FieldTypeCode;
+    return facts;
+}
+
+internal fn bool TryResolveFixedArrayStorageSwitchScrutineeFacts(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out ParamAbiFacts fixedArrayFacts)
+{
+    fixedArrayLocal = new();
+    fixedArrayFacts = new();
+    if (!nodes.Contains(scrutineeNode))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(scrutineeNode);
+    stack mut FixedArrayStorageLocal resolvedLocal = new();
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr
+        || !TryFindFixedArrayStorageLocalByParamIndex(fixedArrayStorageLocals, node.Left, resolvedLocal)
+        || resolvedLocal.ArrayLength == 0
+        || resolvedLocal.ElementSize == 0
+        || resolvedLocal.Alignment == 0
+        || resolvedLocal.FieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    fixedArrayLocal = resolvedLocal;
+    fixedArrayFacts = FixedArrayStorageLocalAbiFacts(resolvedLocal);
+    return true;
+}
+
+internal fn bool TryResolveFixedArrayFieldSwitchScrutineeFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    u64[0 2 ** 63 - 1] scrutineeStart,
+    u64[0 2 ** 63 - 1] scrutineeEnd,
+    out ExprParseResult scrutinee,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out ParamAbiFacts fixedArrayFacts)
+    where overlap(objectLocals, source)
+{
+    scrutinee = new();
+    fixedArrayLocal = new();
+    fixedArrayFacts = new();
+    if (scrutineeStart + 2 >= scrutineeEnd
+        || stream.KindAt(scrutineeStart) != TokenKind.Identifier
+        || stream.KindAt(scrutineeStart + 1) != TokenKind.Dot
+        || stream.KindAt(scrutineeStart + 2) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut ConstructedObjectLocal objectLocal = new();
+    if (!TryFindConstructedObjectLocal(
+        objectLocals,
+        source,
+        stream.StartAt(scrutineeStart),
+        stream.LengthAt(scrutineeStart),
+        objectLocal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] nextToken = scrutineeStart;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] leafMemberFactRow = 0;
+    if (!TryResolveConstructedObjectMemberChainStorageField(
+        stream,
+        source,
+        moduleFacts,
+        objectLocal.TypeToken,
+        scrutineeStart + 2,
+        nextToken,
+        fieldOffset,
+        fieldAlignment,
+        fieldTypeToken,
+        leafMemberFactRow)
+        || nextToken != scrutineeEnd
+        || !SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, leafMemberFactRow))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] baseByteOffset = 0;
+    stack mut u32[0 max] elementSizeBytes = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut MirType elementType = MirType.I64;
+    stack mut u32[0 max] arrayLength = 0;
+    if (!TryResolveFixedArrayFieldLayoutAtField(
+        stream,
+        source,
+        fieldTypeToken,
+        fieldOffset,
+        baseByteOffset,
+        elementSizeBytes,
+        elementAlignment,
+        elementType,
+        arrayLength))
+    {
+        return false;
+    }
+
+    stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+    if (arrayLength == 0
+        || elementSizeBytes == 0
+        || elementAlignment == 0
+        || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut FixedArrayStorageLocal resolvedFixedArrayLocal = new();
+    resolvedFixedArrayLocal.Start = stream.StartAt(scrutineeStart);
+    resolvedFixedArrayLocal.Length = stream.LengthAt(scrutineeStart);
+    resolvedFixedArrayLocal.ParamIndex = objectLocal.ParamIndex;
+    resolvedFixedArrayLocal.BaseByteOffset = baseByteOffset;
+    resolvedFixedArrayLocal.ElementSize = elementSizeBytes;
+    resolvedFixedArrayLocal.Alignment = elementAlignment;
+    resolvedFixedArrayLocal.ArrayLength = arrayLength;
+    resolvedFixedArrayLocal.ElementType = elementType;
+    resolvedFixedArrayLocal.FieldTypeCode = fieldTypeCode;
+    stack mut i64[min max] declaredElementLower = 0;
+    stack mut i64[min max] declaredElementUpperExclusive = 0;
+    if (TryDeclaredElementRangeFactForMemberPathFact(
+        moduleFacts.MemberPathFacts,
+        leafMemberFactRow,
+        declaredElementLower,
+        declaredElementUpperExclusive))
+    {
+        resolvedFixedArrayLocal.HasDeclaredElementRange = true;
+        resolvedFixedArrayLocal.DeclaredElementRangeLower = declaredElementLower;
+        resolvedFixedArrayLocal.DeclaredElementRangeUpperExclusive = declaredElementUpperExclusive;
+    }
+
+    fixedArrayLocal = resolvedFixedArrayLocal;
+    fixedArrayFacts = FixedArrayStorageLocalAbiFacts(resolvedFixedArrayLocal);
+    scrutinee = MakeParseResult(MakeName(nodes, objectLocal.ParamIndex), scrutineeEnd);
+    return true;
+}
+
+internal fn bool TryLowerFixedArrayListSwitchCaseCondition(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    out MirValueId condition)
+{
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < patternCount)
+    {
+        stack u32[0 max] row = patternStart + offset;
+        if (!elementPatternIndices.Contains(row)
+            || !elementPatternTypeCodes.Contains(row)
+            || !elementPatternKinds.Contains(row)
+            || !elementPatternMinValues.Contains(row)
+            || !elementPatternMaxValues.Contains(row))
+        {
+            return false;
+        }
+
+        stack u32[0 max] patternKind = elementPatternKinds.Get(row);
+        if (patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementIndex = elementPatternIndices.Get(row);
+        stack u32[0 max] elementTypeCode = elementPatternTypeCodes.Get(row);
+        if (elementIndex >= fixedArrayFacts.FixedArrayLength
+            || elementTypeCode != fixedArrayFacts.FixedArrayFieldTypeCode)
+        {
+            return false;
+        }
+
+        stack MirValueId elementValue = MirFixedArrayParamElement(
+            instrs,
+            fixedArrayParamIndex,
+            elementIndex,
+            fixedArrayFacts.FixedArrayLength,
+            fixedArrayFacts.FixedArrayElementType);
+        stack i64[min max] elementMinValue = elementPatternMinValues.Get(row);
+        stack i64[min max] elementMaxValue = elementPatternMaxValues.Get(row);
+        stack MirValueId elementCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            elementValue,
+            elementMinValue,
+            elementMaxValue,
+            fixedArrayFacts.FixedArrayElementType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, elementCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryLowerFixedArrayStorageListSwitchCaseCondition(
+    mut borrow IrTable<MirInstruction> instrs,
+    FixedArrayStorageLocal fixedArrayLocal,
+    borrow IrTable<u32[0 max]> localOverrides,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    out MirValueId condition)
+{
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (fixedArrayLocal.ArrayLength == 0
+        || fixedArrayLocal.ElementSize == 0
+        || fixedArrayLocal.Alignment == 0
+        || fixedArrayLocal.FieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || !localOverrides.Contains(fixedArrayLocal.ParamIndex + 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] storageValue = localOverrides.Get(fixedArrayLocal.ParamIndex + 1);
+    if (storageValue == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < patternCount)
+    {
+        stack u32[0 max] row = patternStart + offset;
+        if (!elementPatternIndices.Contains(row)
+            || !elementPatternTypeCodes.Contains(row)
+            || !elementPatternKinds.Contains(row)
+            || !elementPatternMinValues.Contains(row)
+            || !elementPatternMaxValues.Contains(row))
+        {
+            return false;
+        }
+
+        stack u32[0 max] patternKind = elementPatternKinds.Get(row);
+        if (patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementIndex = elementPatternIndices.Get(row);
+        stack u32[0 max] elementTypeCode = elementPatternTypeCodes.Get(row);
+        if (elementIndex >= fixedArrayLocal.ArrayLength
+            || elementTypeCode != fixedArrayLocal.FieldTypeCode
+            || elementIndex > 4294967295 / fixedArrayLocal.ElementSize)
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementByteOffset = elementIndex * fixedArrayLocal.ElementSize;
+        if (fixedArrayLocal.BaseByteOffset > 4294967295 - elementByteOffset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] byteOffset = fixedArrayLocal.BaseByteOffset + elementByteOffset;
+        stack MirValueId elementPointer = MirPtrOffset(
+            instrs,
+            MirValueIdOf(storageValue),
+            byteOffset,
+            fixedArrayLocal.Alignment);
+        stack mut MirValueId elementValue = MirValueIdOf(0);
+        if (fixedArrayLocal.HasDeclaredElementRange)
+        {
+            elementValue = MirLoadPtrAlignedTypedWithDeclaredRange(
+                instrs,
+                fixedArrayLocal.ElementType,
+                elementPointer,
+                fixedArrayLocal.Alignment,
+                fixedArrayLocal.DeclaredElementRangeLower,
+                fixedArrayLocal.DeclaredElementRangeUpperExclusive);
+        }
+        else
+        {
+            elementValue = MirLoadPtrAlignedTyped(
+                instrs,
+                fixedArrayLocal.ElementType,
+                elementPointer,
+                fixedArrayLocal.Alignment);
+        }
+
+        stack i64[min max] elementMinValue = elementPatternMinValues.Get(row);
+        stack i64[min max] elementMaxValue = elementPatternMaxValues.Get(row);
+        stack MirValueId elementCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            elementValue,
+            elementMinValue,
+            elementMaxValue,
+            fixedArrayLocal.ElementType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, elementCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryGetSourceStructPatternFieldCount(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out u32[0 max] fieldCount)
+{
+    fieldCount = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] resolvedCount = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            if (FindSelfHostedFieldNameToken(stream, segmentStart, headerScan) != 0)
+                            {
+                                resolvedCount = resolvedCount + 1;
+                            }
+
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    if (FindSelfHostedFieldNameToken(stream, field, fieldEnd) != 0)
+                    {
+                        resolvedCount = resolvedCount + 1;
+                    }
+
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            fieldCount = resolvedCount;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetSourceStructPatternFieldNameByOrdinal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] fieldOrdinal,
+    out u32[0 max] fieldNameToken)
+{
+    fieldNameToken = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] currentOrdinal = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0)
+                            {
+                                if (currentOrdinal == fieldOrdinal)
+                                {
+                                    fieldNameToken = nameToken;
+                                    return true;
+                                }
+
+                                currentOrdinal = currentOrdinal + 1;
+                            }
+
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0)
+                    {
+                        if (currentOrdinal == fieldOrdinal)
+                        {
+                            fieldNameToken = nameToken;
+                            return true;
+                        }
+
+                        currentOrdinal = currentOrdinal + 1;
+                    }
+
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetSourceStructPatternFieldOrdinalByName(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] fieldOrdinal)
+{
+    fieldOrdinal = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] currentOrdinal = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, segmentStart, headerScan);
+                            if (nameToken != 0)
+                            {
+                                if (TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                                {
+                                    fieldOrdinal = currentOrdinal;
+                                    return true;
+                                }
+
+                                currentOrdinal = currentOrdinal + 1;
+                            }
+
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
+                    stack u32[0 max] nameToken = FindSelfHostedFieldNameToken(stream, field, fieldEnd);
+                    if (nameToken != 0)
+                    {
+                        if (TokenTextEqualsAsciiSpan(stream, source, nameToken, fieldNameToken))
+                        {
+                            fieldOrdinal = currentOrdinal;
+                            return true;
+                        }
+
+                        currentOrdinal = currentOrdinal + 1;
+                    }
+
+                    field = fieldEnd;
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    u32[0 max] fieldOrdinal,
+    out u32[0 max] fieldTypeToken,
+    out u32[0 max] flatStart,
+    out u32[0 max] flatCount,
+    out u32[0 max] flatShapeCode)
+{
+    fieldTypeToken = 0;
+    flatStart = 0;
+    flatCount = 0;
+    flatShapeCode = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack mut u32[0 max] currentOrdinal = 0;
+            stack mut u32[0 max] currentFlatStart = 0;
+            if (stream.KindAt(scan) == TokenKind.Record)
+            {
+                stack u32[0 max] headerOpen = FindSelfHostedRecordHeaderOpenToken(stream, scan + 1);
+                if (headerOpen != 0)
+                {
+                    stack u32[0 max] headerClose = MatchingParenForMirLowering(stream, headerOpen);
+                    stack mut u64[0 2 ** 63 - 1] segmentStart = (u64[0 2 ** 63 - 1])headerOpen + 1;
+                    stack mut u64[0 2 ** 63 - 1] headerScan = segmentStart;
+                    stack mut u32[0 max] depth = 0;
+                    while willexit (headerScan <= (u64[0 2 ** 63 - 1])headerClose)
+                    {
+                        stack TokenKind headerKind = stream.KindAt(headerScan);
+                        stack mut bool boundary = headerScan == (u64[0 2 ** 63 - 1])headerClose;
+                        if (headerKind == TokenKind.LParen || headerKind == TokenKind.LBrack || headerKind == TokenKind.LBrace || headerKind == TokenKind.Lt)
+                        {
+                            depth = depth + 1;
+                        }
+                        else if (headerKind == TokenKind.RParen || headerKind == TokenKind.RBrack || headerKind == TokenKind.RBrace || headerKind == TokenKind.Gt)
+                        {
+                            if (depth > 0)
+                            {
+                                depth = depth - 1;
+                            }
+                        }
+
+                        if (depth == 0 && headerKind == TokenKind.Comma)
+                        {
+                            boundary = true;
+                        }
+
+                        if (boundary && segmentStart < headerScan)
+                        {
+                            stack mut u32[0 max] spanCount = 0;
+                            stack mut u32[0 max] spanShapeCode = 0;
+                            if (!TryReadStructValueFlatScalarFieldSpan(
+                                    stream,
+                                    source,
+                                    (u32[0 max])segmentStart,
+                                    spanCount,
+                                    spanShapeCode))
+                            {
+                                return false;
+                            }
+
+                            if (currentOrdinal == fieldOrdinal)
+                            {
+                                fieldTypeToken = (u32[0 max])segmentStart;
+                                flatStart = currentFlatStart;
+                                flatCount = spanCount;
+                                flatShapeCode = spanShapeCode;
+                                return true;
+                            }
+
+                            if (currentFlatStart > 4294967295 - spanCount)
+                            {
+                                return false;
+                            }
+
+                            currentFlatStart = currentFlatStart + spanCount;
+                            currentOrdinal = currentOrdinal + 1;
+                            segmentStart = headerScan + 1;
+                        }
+
+                        headerScan = headerScan + 1;
+                    }
+                }
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack mut u32[0 max] spanCount = 0;
+                    stack mut u32[0 max] spanShapeCode = 0;
+                    if (!TryReadStructValueFlatScalarFieldSpan(
+                            stream,
+                            source,
+                            (u32[0 max])field,
+                            spanCount,
+                            spanShapeCode))
+                    {
+                        return false;
+                    }
+
+                    if (currentOrdinal == fieldOrdinal)
+                    {
+                        fieldTypeToken = (u32[0 max])field;
+                        flatStart = currentFlatStart;
+                        flatCount = spanCount;
+                        flatShapeCode = spanShapeCode;
+                        return true;
+                    }
+
+                    if (currentFlatStart > 4294967295 - spanCount)
+                    {
+                        return false;
+                    }
+
+                    currentFlatStart = currentFlatStart + spanCount;
+                    currentOrdinal = currentOrdinal + 1;
+                    field = FindSelfHostedFieldEnd(stream, field, count);
+                }
+
+                field = field + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryAppendSourceStructNestedAggregateCaptureRowsFromTypedMemberRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] memberRow,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out u32[0 max] addedCaptureCount)
+{
+    addedCaptureCount = 0;
+    if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+    stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+    if (memberKind != TypedSwitchPatternKind.Aggregate)
+    {
+        return false;
+    }
+
+    stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+    stack mut u32[0 max] fieldNameToken = 0;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] ignoredFieldMemberFactRow = 0;
+    stack mut u32[0 max] fieldFlatStart = 0;
+    stack mut u32[0 max] fieldFlatCount = 0;
+    stack mut u32[0 max] ignoredFieldFlatShapeCode = 0;
+    if (!TryGetSourceStructPatternFieldNameByOrdinal(
+            stream,
+            source,
+            ownerTypeToken,
+            fieldOrdinal,
+            fieldNameToken)
+        || !TryFindStructStorageFieldLayoutWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            fieldOffset,
+            fieldAlignment,
+            fieldTypeToken)
+        || !SourceMemberPathFactMatchesFieldStep(
+            stream,
+            source,
+            moduleFacts.MemberFactRowsByToken,
+            moduleFacts.MemberPathFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            ignoredFieldMemberFactRow)
+        || !TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+            stream,
+            source,
+            ownerTypeToken,
+            fieldOrdinal,
+            fieldTypeToken,
+            fieldFlatStart,
+            fieldFlatCount,
+            ignoredFieldFlatShapeCode)
+        || fieldFlatCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] nestedAggregateRow = moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(memberIndex);
+    stack mut u32[0 max] nestedOwnerTypeToken = 0;
+    if (nestedAggregateRow == 0
+        || !SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, fieldTypeToken)
+        || !TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+            moduleFacts,
+            nestedAggregateRow,
+            nestedOwnerTypeToken)
+        || !TokenTextEqualsToken(stream, source, fieldTypeToken, nestedOwnerTypeToken)
+        || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(nestedAggregateRow))
+    {
+        return false;
+    }
+
+    stack mut List<SourceStructNestedAggregateCaptureFrame> frames = new();
+    if (frames.Push(MakeSourceStructNestedAggregateCaptureFrame(
+            nestedOwnerTypeToken,
+            nestedAggregateRow,
+            fieldOffset,
+            fieldFlatStart,
+            fieldFlatCount)) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    while willexit (!frames.IsEmpty())
+    {
+        stack mut SourceStructNestedAggregateCaptureFrame frame = new();
+        if (!frames.TryPop(frame)
+            || frame.OwnerTypeToken == 0
+            || frame.FlatCount == 0
+            || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(frame.TypedAggregateRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] descriptorOwnerTypeToken = 0;
+        stack u64[0 2 ** 63 - 1] frameAggregateIndex = (u64[0 2 ** 63 - 1])(frame.TypedAggregateRow - 1);
+        if (!TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                moduleFacts,
+                frame.TypedAggregateRow,
+                descriptorOwnerTypeToken)
+            || !TokenTextEqualsToken(stream, source, frame.OwnerTypeToken, descriptorOwnerTypeToken)
+            || moduleFacts.SwitchPatterns.AggregatePatterns.EnumVariantOrdinalPlusOneAt(frameAggregateIndex) != 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] typedMemberStart = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(frameAggregateIndex);
+        stack u32[0 max] typedMemberCount = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(frameAggregateIndex);
+        if (typedMemberCount != 0 && typedMemberStart == 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < typedMemberCount)
+        {
+            if (typedMemberStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] nestedMemberRow = typedMemberStart + offset;
+            if (!moduleFacts.SwitchPatterns.Members.ContainsRow(nestedMemberRow))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] nestedMemberIndex = (u64[0 2 ** 63 - 1])(nestedMemberRow - 1);
+            stack TypedSwitchPatternKind nestedMemberKind = moduleFacts.SwitchPatterns.Members.KindAt(nestedMemberIndex);
+            if (nestedMemberKind == TypedSwitchPatternKind.Discard
+                || nestedMemberKind == TypedSwitchPatternKind.Literal
+                || nestedMemberKind == TypedSwitchPatternKind.Range)
+            {
+                offset = offset + 1;
+                continue;
+            }
+
+            stack u32[0 max] nestedFieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(nestedMemberIndex);
+            stack mut u32[0 max] nestedFieldNameToken = 0;
+            stack mut u32[0 max] nestedFieldOffset = 0;
+            stack mut u32[0 max] nestedFieldAlignment = 0;
+            stack mut u32[0 max] nestedFieldTypeToken = 0;
+            stack mut u32[0 max] nestedFieldMemberFactRow = 0;
+            stack mut u32[0 max] nestedFlatTypeToken = 0;
+            stack mut u32[0 max] nestedFlatStart = 0;
+            stack mut u32[0 max] nestedFlatCount = 0;
+            stack mut u32[0 max] ignoredNestedFlatShapeCode = 0;
+            if (!TryGetSourceStructPatternFieldNameByOrdinal(
+                    stream,
+                    source,
+                    frame.OwnerTypeToken,
+                    nestedFieldOrdinal,
+                    nestedFieldNameToken)
+                || !TryFindStructStorageFieldLayoutWithEnums(
+                    stream,
+                    source,
+                    moduleFacts,
+                    frame.OwnerTypeToken,
+                    nestedFieldNameToken,
+                    nestedFieldOffset,
+                    nestedFieldAlignment,
+                    nestedFieldTypeToken)
+                || !SourceMemberPathFactMatchesFieldStep(
+                    stream,
+                    source,
+                    moduleFacts.MemberFactRowsByToken,
+                    moduleFacts.MemberPathFacts,
+                    frame.OwnerTypeToken,
+                    nestedFieldNameToken,
+                    nestedFieldMemberFactRow)
+                || !TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                    stream,
+                    source,
+                    frame.OwnerTypeToken,
+                    nestedFieldOrdinal,
+                    nestedFlatTypeToken,
+                    nestedFlatStart,
+                    nestedFlatCount,
+                    ignoredNestedFlatShapeCode)
+                || nestedFlatCount == 0
+                || nestedFlatStart >= frame.FlatCount
+                || nestedFlatCount > frame.FlatCount - nestedFlatStart
+                || frame.FlatBaseIndex > 4294967295 - nestedFlatStart
+                || frame.BaseByteOffset > 4294967295 - nestedFieldOffset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] absoluteFieldOffset = frame.BaseByteOffset + nestedFieldOffset;
+            stack u32[0 max] absoluteFlatStart = frame.FlatBaseIndex + nestedFlatStart;
+            if (nestedMemberKind == TypedSwitchPatternKind.Aggregate)
+            {
+                stack u32[0 max] nestedAggregateRow = moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(nestedMemberIndex);
+                stack mut u32[0 max] nestedOwnerTypeToken = 0;
+                if (nestedAggregateRow == 0
+                    || !SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, nestedFieldTypeToken)
+                    || !TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                        moduleFacts,
+                        nestedAggregateRow,
+                        nestedOwnerTypeToken)
+                    || !TokenTextEqualsToken(stream, source, nestedFieldTypeToken, nestedOwnerTypeToken)
+                    || frames.Push(MakeSourceStructNestedAggregateCaptureFrame(
+                        nestedOwnerTypeToken,
+                        nestedAggregateRow,
+                        absoluteFieldOffset,
+                        absoluteFlatStart,
+                        nestedFlatCount)) != MemoryStatus.Ok)
+                {
+                    return false;
+                }
+
+                offset = offset + 1;
+                continue;
+            }
+
+            if (nestedMemberKind == TypedSwitchPatternKind.List)
+            {
+                stack mut u32[0 max] arrayBaseByteOffset = 0;
+                stack mut u32[0 max] elementSize = 0;
+                stack mut u32[0 max] elementAlignment = 0;
+                stack mut MirType elementType = MirType.I64;
+                stack mut u32[0 max] arrayLength = 0;
+                if (!SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, nestedFieldMemberFactRow)
+                    || !TryResolveFixedArrayFieldLayoutAtField(
+                        stream,
+                        source,
+                        nestedFieldTypeToken,
+                        absoluteFieldOffset,
+                        arrayBaseByteOffset,
+                        elementSize,
+                        elementAlignment,
+                        elementType,
+                        arrayLength))
+                {
+                    return false;
+                }
+
+                stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                stack u32[0 max] nestedListRow = moduleFacts.SwitchPatterns.Members.NestedListPatternRowAt(nestedMemberIndex);
+                if (arrayLength == 0
+                    || elementSize == 0
+                    || elementAlignment == 0
+                    || elementTypeCode == SourceResolvedFieldTypeCodeInvalid()
+                    || nestedFlatCount != arrayLength
+                    || nestedListRow == 0
+                    || !moduleFacts.SwitchPatterns.ListPatterns.ContainsRow(nestedListRow))
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] typedListIndex = (u64[0 2 ** 63 - 1])(nestedListRow - 1);
+                stack u32[0 max] typedElementStart = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedListIndex);
+                stack u32[0 max] typedElementCount = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(typedListIndex);
+                if (!moduleFacts.SwitchPatterns.ListPatterns.HasFixedLengthAt(typedListIndex)
+                    || moduleFacts.SwitchPatterns.ListPatterns.FixedLengthAt(typedListIndex) != arrayLength
+                    || typedElementStart == 0
+                    || typedElementCount != arrayLength)
+                {
+                    return false;
+                }
+
+                stack mut u32[0 max] elementOffset = 0;
+                while willexit (elementOffset < typedElementCount)
+                {
+                    if (typedElementStart > 4294967295 - elementOffset)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] elementMemberRow = typedElementStart + elementOffset;
+                    if (!moduleFacts.SwitchPatterns.Members.ContainsRow(elementMemberRow))
+                    {
+                        return false;
+                    }
+
+                    stack u64[0 2 ** 63 - 1] elementMemberIndex = (u64[0 2 ** 63 - 1])(elementMemberRow - 1);
+                    stack u32[0 max] elementOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(elementMemberIndex);
+                    stack TypedSwitchPatternKind elementKind = moduleFacts.SwitchPatterns.Members.KindAt(elementMemberIndex);
+                    if (elementOrdinal != elementOffset)
+                    {
+                        return false;
+                    }
+
+                    if (elementKind == TypedSwitchPatternKind.Discard
+                        || elementKind == TypedSwitchPatternKind.Literal
+                        || elementKind == TypedSwitchPatternKind.Range)
+                    {
+                        elementOffset = elementOffset + 1;
+                        continue;
+                    }
+
+                    if (TypedSwitchPatternKindIsNestedShape(elementKind))
+                    {
+                        return false;
+                    }
+
+                    if (elementKind != TypedSwitchPatternKind.Capture)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(elementMemberIndex);
+                    if (captureNameToken == 0
+                        || elementOrdinal >= arrayLength
+                        || elementOrdinal > 4294967295 / elementSize
+                        || absoluteFlatStart > 4294967295 - elementOrdinal)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] elementByteOffset = elementOrdinal * elementSize;
+                    if (arrayBaseByteOffset > 4294967295 - elementByteOffset)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] captureByteOffset = arrayBaseByteOffset + elementByteOffset;
+                    stack u32[0 max] captureFlatIndex = absoluteFlatStart + elementOrdinal;
+                    if (fieldCaptureIndices.Add(captureFlatIndex) == 0
+                        || fieldCaptureOffsets.Add(captureByteOffset) == 0
+                        || fieldCaptureAlignments.Add(elementAlignment) == 0
+                        || fieldCaptureTypeCodes.Add(elementTypeCode) == 0
+                        || fieldCaptureMemberFactRows.Add(nestedFieldMemberFactRow) == 0
+                        || fieldCaptureNameTokens.Add(captureNameToken) == 0)
+                    {
+                        return false;
+                    }
+
+                    addedCaptureCount = addedCaptureCount + 1;
+                    elementOffset = elementOffset + 1;
+                }
+
+                offset = offset + 1;
+                continue;
+            }
+
+            if (TypedSwitchPatternKindIsNestedShape(nestedMemberKind))
+            {
+                return false;
+            }
+
+            if (nestedMemberKind != TypedSwitchPatternKind.Capture)
+            {
+                return false;
+            }
+
+            stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(nestedMemberIndex);
+            stack mut MirType nestedFieldType = MirType.I64;
+            stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (captureNameToken == 0
+                || nestedFlatCount != 1
+                || !TryGetSourceValueTypeCodeWithEnums(
+                    stream,
+                    source,
+                    moduleFacts,
+                    nestedFieldTypeToken,
+                    nestedFieldType,
+                    nestedFieldTypeCode)
+                || !SourceMemberPathFactAgreesWithFieldTypeCode(
+                    moduleFacts.MemberPathFacts,
+                    nestedFieldMemberFactRow,
+                    nestedFieldTypeCode))
+            {
+                return false;
+            }
+
+            if (fieldCaptureIndices.Add(absoluteFlatStart) == 0
+                || fieldCaptureOffsets.Add(absoluteFieldOffset) == 0
+                || fieldCaptureAlignments.Add(nestedFieldAlignment) == 0
+                || fieldCaptureTypeCodes.Add(nestedFieldTypeCode) == 0
+                || fieldCaptureMemberFactRows.Add(nestedFieldMemberFactRow) == 0
+                || fieldCaptureNameTokens.Add(captureNameToken) == 0)
+            {
+                return false;
+            }
+
+            addedCaptureCount = addedCaptureCount + 1;
+            offset = offset + 1;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool TryAppendSourceStructNestedListCaptureRowsFromTypedMemberRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] memberRow,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out u32[0 max] addedCaptureCount)
+{
+    addedCaptureCount = 0;
+    if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+    stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+    if (memberKind != TypedSwitchPatternKind.List)
+    {
+        return false;
+    }
+
+    stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+    stack mut u32[0 max] fieldNameToken = 0;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] fieldMemberFactRow = 0;
+    stack mut u32[0 max] ignoredFlatTypeToken = 0;
+    stack mut u32[0 max] fieldFlatStart = 0;
+    stack mut u32[0 max] fieldFlatCount = 0;
+    stack mut u32[0 max] ignoredFlatShapeCode = 0;
+    if (!TryGetSourceStructPatternFieldNameByOrdinal(
+            stream,
+            source,
+            ownerTypeToken,
+            fieldOrdinal,
+            fieldNameToken)
+        || !TryFindStructStorageFieldLayoutWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            fieldOffset,
+            fieldAlignment,
+            fieldTypeToken)
+        || !SourceMemberPathFactMatchesFieldStep(
+            stream,
+            source,
+            moduleFacts.MemberFactRowsByToken,
+            moduleFacts.MemberPathFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            fieldMemberFactRow)
+        || !TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+            stream,
+            source,
+            ownerTypeToken,
+            fieldOrdinal,
+            ignoredFlatTypeToken,
+            fieldFlatStart,
+            fieldFlatCount,
+            ignoredFlatShapeCode)
+        || !SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, fieldMemberFactRow))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] arrayBaseByteOffset = 0;
+    stack mut u32[0 max] elementSize = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut MirType elementType = MirType.I64;
+    stack mut u32[0 max] arrayLength = 0;
+    if (!TryResolveFixedArrayFieldLayoutAtField(
+            stream,
+            source,
+            fieldTypeToken,
+            fieldOffset,
+            arrayBaseByteOffset,
+            elementSize,
+            elementAlignment,
+            elementType,
+            arrayLength))
+    {
+        return false;
+    }
+
+    stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+    stack u32[0 max] nestedListRow = moduleFacts.SwitchPatterns.Members.NestedListPatternRowAt(memberIndex);
+    if (arrayLength == 0
+        || elementSize == 0
+        || elementAlignment == 0
+        || elementTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || fieldFlatCount != arrayLength
+        || nestedListRow == 0
+        || !moduleFacts.SwitchPatterns.ListPatterns.ContainsRow(nestedListRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedListIndex = (u64[0 2 ** 63 - 1])(nestedListRow - 1);
+    stack u32[0 max] typedElementStart = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedListIndex);
+    stack u32[0 max] typedElementCount = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(typedListIndex);
+    if (!moduleFacts.SwitchPatterns.ListPatterns.HasFixedLengthAt(typedListIndex)
+        || moduleFacts.SwitchPatterns.ListPatterns.FixedLengthAt(typedListIndex) != arrayLength
+        || typedElementStart == 0
+        || typedElementCount != arrayLength)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < typedElementCount)
+    {
+        if (typedElementStart > 4294967295 - offset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementMemberRow = typedElementStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(elementMemberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] elementMemberIndex = (u64[0 2 ** 63 - 1])(elementMemberRow - 1);
+        stack u32[0 max] elementOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(elementMemberIndex);
+        stack TypedSwitchPatternKind elementKind = moduleFacts.SwitchPatterns.Members.KindAt(elementMemberIndex);
+        if (elementOrdinal != offset)
+        {
+            return false;
+        }
+
+        if (elementKind == TypedSwitchPatternKind.Discard
+            || elementKind == TypedSwitchPatternKind.Literal
+            || elementKind == TypedSwitchPatternKind.Range)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (TypedSwitchPatternKindIsNestedShape(elementKind))
+        {
+            return false;
+        }
+
+        if (elementKind != TypedSwitchPatternKind.Capture)
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(elementMemberIndex);
+        if (captureNameToken == 0
+            || elementOrdinal >= arrayLength
+            || elementOrdinal > 4294967295 / elementSize
+            || fieldFlatStart > 4294967295 - elementOrdinal)
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementByteOffset = elementOrdinal * elementSize;
+        if (arrayBaseByteOffset > 4294967295 - elementByteOffset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureByteOffset = arrayBaseByteOffset + elementByteOffset;
+        stack u32[0 max] captureFlatIndex = fieldFlatStart + elementOrdinal;
+        if (fieldCaptureIndices.Add(captureFlatIndex) == 0
+            || fieldCaptureOffsets.Add(captureByteOffset) == 0
+            || fieldCaptureAlignments.Add(elementAlignment) == 0
+            || fieldCaptureTypeCodes.Add(elementTypeCode) == 0
+            || fieldCaptureMemberFactRows.Add(fieldMemberFactRow) == 0
+            || fieldCaptureNameTokens.Add(captureNameToken) == 0)
+        {
+            return false;
+        }
+
+        addedCaptureCount = addedCaptureCount + 1;
+        offset = offset + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryAppendSourceStructSwitchFieldPatternFromTypedMemberRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] fieldCount,
+    u32[0 max] memberRow,
+    mut borrow IrTable<u32[0 max]> fieldPatternIndices,
+    mut borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    mut borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    mut borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldPatternKinds,
+    mut borrow IrTable<i64[min max]> fieldPatternMinValues,
+    mut borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out bool addedPattern,
+    out u32[0 max] addedCaptureCount,
+    out bool addedNested)
+{
+    addedPattern = false;
+    addedCaptureCount = 0;
+    addedNested = false;
+    if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+    stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+    stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+    stack mut u32[0 max] fieldNameToken = 0;
+    if (fieldOrdinal >= fieldCount
+        || !TryGetSourceStructPatternFieldNameByOrdinal(stream, source, ownerTypeToken, fieldOrdinal, fieldNameToken))
+    {
+        return false;
+    }
+
+    if (memberKind == TypedSwitchPatternKind.Discard)
+    {
+        return true;
+    }
+
+    if (TypedSwitchPatternKindIsNestedShape(memberKind))
+    {
+        addedNested = true;
+        if (memberKind == TypedSwitchPatternKind.Aggregate)
+        {
+            return TryAppendSourceStructNestedAggregateCaptureRowsFromTypedMemberRow(
+                stream,
+                source,
+                moduleFacts,
+                ownerTypeToken,
+                memberRow,
+                fieldCaptureIndices,
+                fieldCaptureOffsets,
+                fieldCaptureAlignments,
+                fieldCaptureTypeCodes,
+                fieldCaptureMemberFactRows,
+                fieldCaptureNameTokens,
+                addedCaptureCount);
+        }
+
+        if (memberKind == TypedSwitchPatternKind.List)
+        {
+            return TryAppendSourceStructNestedListCaptureRowsFromTypedMemberRow(
+                stream,
+                source,
+                moduleFacts,
+                ownerTypeToken,
+                memberRow,
+                fieldCaptureIndices,
+                fieldCaptureOffsets,
+                fieldCaptureAlignments,
+                fieldCaptureTypeCodes,
+                fieldCaptureMemberFactRows,
+                fieldCaptureNameTokens,
+                addedCaptureCount);
+        }
+
+        return true;
+    }
+
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut MirType ignoredFieldType = MirType.I64;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] memberFactRow = 0;
+    if (!TryFindStructFieldLayout(
+            stream,
+            source,
+            moduleFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            fieldOffset,
+            fieldAlignment,
+            ignoredFieldType,
+            fieldTypeCode)
+        || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || !SourceMemberPathFactMatchesFieldStep(
+            stream,
+            source,
+            moduleFacts.MemberFactRowsByToken,
+            moduleFacts.MemberPathFacts,
+            ownerTypeToken,
+            fieldNameToken,
+            memberFactRow)
+        || !SourceMemberPathFactAgreesWithFieldTypeCode(moduleFacts.MemberPathFacts, memberFactRow, fieldTypeCode))
+    {
+        return false;
+    }
+
+    if (memberKind == TypedSwitchPatternKind.Capture)
+    {
+        stack u32[0 max] captureNameToken = moduleFacts.SwitchPatterns.Members.CaptureNameTokenAt(memberIndex);
+        stack mut u32[0 max] captureFieldIndex = fieldOrdinal;
+        stack mut u32[0 max] flatFieldTypeToken = 0;
+        stack mut u32[0 max] flatFieldStart = 0;
+        stack mut u32[0 max] flatFieldCount = 0;
+        stack mut u32[0 max] ignoredFlatShapeCode = 0;
+        if (TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                stream,
+                source,
+                ownerTypeToken,
+                fieldOrdinal,
+                flatFieldTypeToken,
+                flatFieldStart,
+                flatFieldCount,
+                ignoredFlatShapeCode)
+            && flatFieldCount == 1)
+        {
+            captureFieldIndex = flatFieldStart;
+        }
+
+        if (captureNameToken == 0
+            || fieldCaptureIndices.Add(captureFieldIndex) == 0
+            || fieldCaptureOffsets.Add(fieldOffset) == 0
+            || fieldCaptureAlignments.Add(fieldAlignment) == 0
+            || fieldCaptureTypeCodes.Add(fieldTypeCode) == 0
+            || fieldCaptureMemberFactRows.Add(memberFactRow) == 0
+            || fieldCaptureNameTokens.Add(captureNameToken) == 0)
+        {
+            return false;
+        }
+
+        addedCaptureCount = 1;
+        return true;
+    }
+
+    if (memberKind == TypedSwitchPatternKind.Literal
+        || memberKind == TypedSwitchPatternKind.Range)
+    {
+        stack u32[0 max] memberPatternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+        stack u32[0 max] memberPatternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+        stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+        stack mut i64[min max] minValue = 0;
+        stack mut i64[min max] maxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterPattern = memberPatternStart;
+        if (memberPatternStart == 0
+            || memberPatternEnd <= memberPatternStart
+            || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                stream,
+                source,
+                fieldTypeCode,
+                memberPatternStart,
+                patternKind,
+                minValue,
+                maxValue,
+                afterPattern)
+            || afterPattern != (u64[0 2 ** 63 - 1])memberPatternEnd
+            || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval()
+            || fieldPatternIndices.Add(fieldOrdinal) == 0
+            || fieldPatternOffsets.Add(fieldOffset) == 0
+            || fieldPatternAlignments.Add(fieldAlignment) == 0
+            || fieldPatternTypeCodes.Add(fieldTypeCode) == 0
+            || fieldPatternMemberFactRows.Add(memberFactRow) == 0
+            || fieldPatternKinds.Add(patternKind) == 0
+            || fieldPatternMinValues.Add(minValue) == 0
+            || fieldPatternMaxValues.Add(maxValue) == 0)
+        {
+            return false;
+        }
+
+        addedPattern = true;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryAppendSourceStructAggregateCaseLabelFromTypedRow(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerTypeToken,
+    TokenKind suffixKind,
+    u32[0 max] valueStartToken,
+    u32[0 max] fieldCount,
+    u32[0 max] typedRow,
+    mut borrow IrTable<u32[0 max]> fieldPatternIndices,
+    mut borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    mut borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    mut borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldPatternKinds,
+    mut borrow IrTable<i64[min max]> fieldPatternMinValues,
+    mut borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u32[0 max] captureStart,
+    out u32[0 max] captureCount,
+    out u32[0 max] nestedStart,
+    out u32[0 max] nestedCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])fieldPatternIndices.Count() + 1;
+    patternCount = 0;
+    captureStart = (u32[0 max])fieldCaptureNameTokens.Count() + 1;
+    captureCount = 0;
+    nestedStart = 0;
+    nestedCount = 0;
+    nextToken = valueStartToken;
+    if ((suffixKind != TokenKind.LParen && suffixKind != TokenKind.LBrace)
+        || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedRow - 1);
+    stack u32[0 max] typedEndToken = moduleFacts.SwitchPatterns.AggregatePatterns.PatternEndTokenAt(typedIndex);
+    stack u32[0 max] typedMemberStart = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(typedIndex);
+    stack u32[0 max] typedMemberCount = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(typedIndex);
+    if (!SourceSwitchTypedStructAggregatePatternRowMatchesParsedLabel(
+            moduleFacts,
+            valueStartToken,
+            typedEndToken,
+            ownerTypeToken,
+            fieldCount)
+        || typedMemberCount != fieldCount
+        || (typedMemberCount != 0 && typedMemberStart == 0))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> seenFieldOrdinals = new();
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < typedMemberCount)
+    {
+        if (offset > 4294967295 - typedMemberStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = typedMemberStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        if (fieldOrdinal >= fieldCount)
+        {
+            return false;
+        }
+
+        if (suffixKind == TokenKind.LParen)
+        {
+            if (fieldOrdinal != offset)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (SourceSwitchEnumPayloadOrdinalListContains(seenFieldOrdinals, fieldOrdinal)
+                || seenFieldOrdinals.Add(fieldOrdinal) == 0)
+            {
+                return false;
+            }
+        }
+
+        stack mut bool addedPattern = false;
+        stack mut u32[0 max] addedCaptureCount = 0;
+        stack mut bool addedNested = false;
+        if (!TryAppendSourceStructSwitchFieldPatternFromTypedMemberRow(
+                stream,
+                source,
+                moduleFacts,
+                ownerTypeToken,
+                fieldCount,
+                memberRow,
+                fieldPatternIndices,
+                fieldPatternOffsets,
+                fieldPatternAlignments,
+                fieldPatternTypeCodes,
+                fieldPatternMemberFactRows,
+                fieldPatternKinds,
+                fieldPatternMinValues,
+                fieldPatternMaxValues,
+                fieldCaptureIndices,
+                fieldCaptureOffsets,
+                fieldCaptureAlignments,
+                fieldCaptureTypeCodes,
+                fieldCaptureMemberFactRows,
+                fieldCaptureNameTokens,
+                addedPattern,
+                addedCaptureCount,
+                addedNested))
+        {
+            return false;
+        }
+
+        if (addedPattern)
+        {
+            patternCount = patternCount + 1;
+        }
+
+        if (addedCaptureCount != 0)
+        {
+            if (captureCount > 4294967295 - addedCaptureCount)
+            {
+                return false;
+            }
+
+            captureCount = captureCount + addedCaptureCount;
+        }
+
+        if (addedNested)
+        {
+            nestedStart = typedMemberStart;
+            nestedCount = typedMemberCount;
+        }
+
+        offset = offset + 1;
+    }
+
+    nextToken = typedEndToken;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchStructAggregateCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerTypeToken,
+    u64[0 2 ** 63 - 1] valueStart,
+    mut borrow IrTable<u32[0 max]> fieldPatternIndices,
+    mut borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    mut borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    mut borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldPatternKinds,
+    mut borrow IrTable<i64[min max]> fieldPatternMinValues,
+    mut borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out u32[0 max] patternStart,
+    out u32[0 max] patternCount,
+    out u32[0 max] captureStart,
+    out u32[0 max] captureCount,
+    out u32[0 max] nestedStart,
+    out u32[0 max] nestedCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    patternStart = (u32[0 max])fieldPatternIndices.Count() + 1;
+    patternCount = 0;
+    captureStart = (u32[0 max])fieldCaptureNameTokens.Count() + 1;
+    captureCount = 0;
+    nestedStart = 0;
+    nestedCount = 0;
+    nextToken = valueStart;
+    if (stream.KindAt(valueStart) == TokenKind.Discard)
+    {
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    stack TokenKind labelKind = stream.KindAt(valueStart);
+    if (labelKind != TokenKind.Var && labelKind != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fieldCount = 0;
+    if (!TryGetSourceStructPatternFieldCount(stream, source, ownerTypeToken, fieldCount))
+    {
+        return false;
+    }
+
+    if (labelKind == TokenKind.Var
+        && stream.KindAt(valueStart + 1) == TokenKind.Identifier)
+    {
+        if (fieldCaptureIndices.Add(fieldCount) == 0
+            || fieldCaptureOffsets.Add(0) == 0
+            || fieldCaptureAlignments.Add(0) == 0
+            || fieldCaptureTypeCodes.Add(SourceLocalTypeCodeForStructValueTypeToken(ownerTypeToken)) == 0
+            || fieldCaptureMemberFactRows.Add(0) == 0
+            || fieldCaptureNameTokens.Add((u32[0 max])(valueStart + 1)) == 0)
+        {
+            return false;
+        }
+
+        captureCount = 1;
+        nextToken = valueStart + 2;
+        return true;
+    }
+
+    if (!TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])valueStart, ownerTypeToken))
+    {
+        return false;
+    }
+
+    stack TokenKind suffixKind = stream.KindAt(valueStart + 1);
+    if (suffixKind != TokenKind.LParen && suffixKind != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    if (valueStart > 4294967295)
+    {
+        return false;
+    }
+
+    stack u32[0 max] typedRow = SourceSwitchAggregatePatternRowForStartToken(moduleFacts, (u32[0 max])valueStart);
+    return TryAppendSourceStructAggregateCaseLabelFromTypedRow(
+        stream,
+        source,
+        moduleFacts,
+        ownerTypeToken,
+        suffixKind,
+        (u32[0 max])valueStart,
+        fieldCount,
+        typedRow,
+        fieldPatternIndices,
+        fieldPatternOffsets,
+        fieldPatternAlignments,
+        fieldPatternTypeCodes,
+        fieldPatternMemberFactRows,
+        fieldPatternKinds,
+        fieldPatternMinValues,
+        fieldPatternMaxValues,
+        fieldCaptureIndices,
+        fieldCaptureOffsets,
+        fieldCaptureAlignments,
+        fieldCaptureTypeCodes,
+        fieldCaptureMemberFactRows,
+        fieldCaptureNameTokens,
+        patternStart,
+        patternCount,
+        captureStart,
+        captureCount,
+        nestedStart,
+        nestedCount,
+        nextToken);
+}
+
+internal fn bool TryResolveStructValueParamSwitchScrutineeFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] scrutineeStart,
+    u64[0 2 ** 63 - 1] scrutineeEnd,
+    out ExprParseResult scrutinee,
+    out u32[0 max] structParamIndex,
+    out u32[0 max] structTypeToken,
+    out ParamAbiFacts structValueFacts)
+{
+    scrutinee = new();
+    structParamIndex = 0;
+    structTypeToken = 0;
+    structValueFacts = new();
+    if (scrutineeStart + 1 != scrutineeEnd || stream.KindAt(scrutineeStart) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack i64[min max] rawParamIndex = ParamIndexOf(
+        params,
+        source,
+        stream.StartAt(scrutineeStart),
+        stream.LengthAt(scrutineeStart));
+    if (rawParamIndex < 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] paramIndex = (u32[0 max])rawParamIndex;
+    stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, paramIndex + 1);
+    if (!facts.IsStructValue
+        || facts.StructValueTypeToken == 0
+        || facts.StructValueFieldCount == 0
+        || facts.StructValueFieldCount > StructValueShapeMaxFields())
+    {
+        return false;
+    }
+
+    scrutinee = MakeParseResult(MakeName(nodes, paramIndex), scrutineeEnd);
+    structParamIndex = paramIndex;
+    structTypeToken = facts.StructValueTypeToken;
+    structValueFacts = facts;
+    return true;
+}
+
+internal fn bool TryBuildStorageBackedStructSwitchValueFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out ParamAbiFacts facts)
+{
+    facts = new();
+    stack u32[0 max] byteSize = TypeKnownByteExtentForLocal(stream, source, typeToken);
+    stack u32[0 max] byteAlignment = TypeKnownByteAlignment(stream, source, typeToken);
+    stack mut u32[0 max] fieldCount = 0;
+    stack mut u32[0 max] shapeCode = 0;
+    if (typeToken == 0
+        || byteSize == 0
+        || byteAlignment == 0
+        || !TryReadStructKnownLlvmScalarShape(stream, source, typeToken, fieldCount, shapeCode)
+        || fieldCount == 0
+        || fieldCount > StructValueShapeMaxFields())
+    {
+        return false;
+    }
+
+    facts.IsStructValue = true;
+    facts.StructValueTypeToken = typeToken;
+    facts.StructValueSize = byteSize;
+    facts.StructValueAlignment = byteAlignment;
+    facts.StructValueFieldCount = fieldCount;
+    facts.StructValueShapeCode = shapeCode;
+    return true;
+}
+
+internal fn bool TryResolveStructAggregateSwitchScrutineeFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] scrutineeStart,
+    u64[0 2 ** 63 - 1] scrutineeEnd,
+    out ExprParseResult scrutinee,
+    out u32[0 max] structParamIndex,
+    out u32[0 max] structTypeToken,
+    out u32[0 max] structBaseByteOffset,
+    out bool useStructValueParam,
+    out ParamAbiFacts structValueFacts)
+    where overlap(constructedObjectLocals, source)
+{
+    scrutinee = new();
+    structParamIndex = 0;
+    structTypeToken = 0;
+    structBaseByteOffset = 0;
+    useStructValueParam = false;
+    structValueFacts = new();
+    if (scrutineeStart + 1 == scrutineeEnd && stream.KindAt(scrutineeStart) == TokenKind.Identifier)
+    {
+        stack mut ConstructedObjectLocal objectLocal = new();
+        if (TryFindConstructedObjectLocal(
+            constructedObjectLocals,
+            source,
+            stream.StartAt(scrutineeStart),
+            stream.LengthAt(scrutineeStart),
+            objectLocal))
+        {
+            stack mut ParamAbiFacts objectStructValueFacts = new();
+            if (!TryBuildStorageBackedStructSwitchValueFacts(
+                stream,
+                source,
+                objectLocal.TypeToken,
+                objectStructValueFacts))
+            {
+                return false;
+            }
+
+            scrutinee = MakeParseResult(MakeName(nodes, objectLocal.ParamIndex), scrutineeEnd);
+            structParamIndex = objectLocal.ParamIndex;
+            structTypeToken = objectLocal.TypeToken;
+            structValueFacts = objectStructValueFacts;
+            return true;
+        }
+
+        stack mut ExprParseResult paramScrutinee = new();
+        stack mut u32[0 max] paramStructIndex = 0;
+        stack mut u32[0 max] paramStructTypeToken = 0;
+        stack mut ParamAbiFacts paramStructFacts = new();
+        if (!TryResolveStructValueParamSwitchScrutineeFacts(
+            stream,
+            source,
+            nodes,
+            params,
+            paramAbiFacts,
+            scrutineeStart,
+            scrutineeEnd,
+            paramScrutinee,
+            paramStructIndex,
+            paramStructTypeToken,
+            paramStructFacts))
+        {
+            return false;
+        }
+
+        scrutinee = paramScrutinee;
+        structParamIndex = paramStructIndex;
+        structTypeToken = paramStructTypeToken;
+        useStructValueParam = true;
+        structValueFacts = paramStructFacts;
+        return true;
+    }
+
+    stack mut ConstructedObjectLocal objectLocal = new();
+    if (scrutineeStart + 2 >= scrutineeEnd
+        || stream.KindAt(scrutineeStart) != TokenKind.Identifier
+        || stream.KindAt(scrutineeStart + 1) != TokenKind.Dot
+        || stream.KindAt(scrutineeStart + 2) != TokenKind.Identifier
+        || !TryFindConstructedObjectLocal(
+            constructedObjectLocals,
+            source,
+            stream.StartAt(scrutineeStart),
+            stream.LengthAt(scrutineeStart),
+            objectLocal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] nextToken = scrutineeStart;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] leafMemberFactRow = 0;
+    if (!TryResolveConstructedObjectMemberChainStorageField(
+        stream,
+        source,
+        moduleFacts,
+        objectLocal.TypeToken,
+        scrutineeStart + 2,
+        nextToken,
+        fieldOffset,
+        fieldAlignment,
+        fieldTypeToken,
+        leafMemberFactRow)
+        || nextToken != scrutineeEnd
+        || !SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, fieldTypeToken))
+    {
+        return false;
+    }
+
+    stack mut ParamAbiFacts fieldStructValueFacts = new();
+    if (!TryBuildStorageBackedStructSwitchValueFacts(
+        stream,
+        source,
+        fieldTypeToken,
+        fieldStructValueFacts)
+        || fieldAlignment == 0)
+    {
+        return false;
+    }
+
+    fieldStructValueFacts.StructValueAlignment = fieldAlignment;
+    scrutinee = MakeParseResult(MakeName(nodes, objectLocal.ParamIndex), scrutineeEnd);
+    structParamIndex = objectLocal.ParamIndex;
+    structTypeToken = fieldTypeToken;
+    structBaseByteOffset = fieldOffset;
+    structValueFacts = fieldStructValueFacts;
+    return true;
+}
+
+internal fn bool TryLowerStructAggregateSwitchCaseCondition(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] structParamIndex,
+    u32[0 max] structBaseByteOffset,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    out MirValueId condition)
+{
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!localOverrides.Contains(structParamIndex + 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] storageValue = localOverrides.Get(structParamIndex + 1);
+    if (storageValue == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < patternCount)
+    {
+        stack u32[0 max] row = patternStart + offset;
+        if (!fieldPatternIndices.Contains(row)
+            || !fieldPatternOffsets.Contains(row)
+            || !fieldPatternAlignments.Contains(row)
+            || !fieldPatternTypeCodes.Contains(row)
+            || !fieldPatternMemberFactRows.Contains(row)
+            || !fieldPatternKinds.Contains(row)
+            || !fieldPatternMinValues.Contains(row)
+            || !fieldPatternMaxValues.Contains(row))
+        {
+            return false;
+        }
+
+        stack u32[0 max] patternKind = fieldPatternKinds.Get(row);
+        if (patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldTypeCode = fieldPatternTypeCodes.Get(row);
+        stack MirType fieldType = MirTypeForResolvedFieldTypeCode(fieldTypeCode);
+        stack u32[0 max] patternFieldOffset = fieldPatternOffsets.Get(row);
+        if (patternFieldOffset > 4294967295 - structBaseByteOffset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldOffset = structBaseByteOffset + patternFieldOffset;
+        stack u32[0 max] fieldAlignment = fieldPatternAlignments.Get(row);
+        stack u32[0 max] fieldMemberFactRow = fieldPatternMemberFactRows.Get(row);
+        stack MirValueId fieldPointer = MirPtrOffset(
+            instrs,
+            MirValueIdOf(storageValue),
+            fieldOffset,
+            fieldAlignment);
+        stack mut MirValueId fieldValue = MirValueIdOf(0);
+        stack mut i64[min max] declaredLower = 0;
+        stack mut i64[min max] declaredUpperExclusive = 0;
+        if (TryDeclaredRangeFactForMemberPathFact(
+                moduleFacts.MemberPathFacts,
+                fieldMemberFactRow,
+                declaredLower,
+                declaredUpperExclusive))
+        {
+            fieldValue = MirLoadPtrAlignedTypedWithDeclaredRange(
+                instrs,
+                fieldType,
+                fieldPointer,
+                fieldAlignment,
+                declaredLower,
+                declaredUpperExclusive);
+        }
+        else
+        {
+            fieldValue = MirLoadPtrAlignedTyped(instrs, fieldType, fieldPointer, fieldAlignment);
+        }
+
+        stack i64[min max] fieldMinValue = fieldPatternMinValues.Get(row);
+        stack i64[min max] fieldMaxValue = fieldPatternMaxValues.Get(row);
+        stack MirValueId fieldCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            fieldValue,
+            fieldMinValue,
+            fieldMaxValue,
+            fieldType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, fieldCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryLowerStructValueParamAggregateSwitchCaseCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] structParamIndex,
+    ParamAbiFacts structValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] patternStart,
+    u32[0 max] patternCount,
+    borrow IrTable<u32[0 max]> fieldPatternIndices,
+    borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> fieldPatternKinds,
+    borrow IrTable<i64[min max]> fieldPatternMinValues,
+    borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    out MirValueId condition)
+{
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!structValueFacts.IsStructValue
+        || structValueFacts.StructValueFieldCount == 0
+        || structValueFacts.StructValueFieldCount > StructValueShapeMaxFields())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < patternCount)
+    {
+        stack u32[0 max] row = patternStart + offset;
+        if (!fieldPatternIndices.Contains(row)
+            || !fieldPatternTypeCodes.Contains(row)
+            || !fieldPatternMemberFactRows.Contains(row)
+            || !fieldPatternKinds.Contains(row)
+            || !fieldPatternMinValues.Contains(row)
+            || !fieldPatternMaxValues.Contains(row))
+        {
+            return false;
+        }
+
+        stack u32[0 max] patternKind = fieldPatternKinds.Get(row);
+        if (patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldIndex = fieldPatternIndices.Get(row);
+        stack mut u32[0 max] ignoredFieldTypeToken = 0;
+        stack mut u32[0 max] flatFieldIndex = 0;
+        stack mut u32[0 max] flatFieldCount = 0;
+        stack mut u32[0 max] ignoredFlatShapeCode = 0;
+        if (!TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                stream,
+                source,
+                structValueFacts.StructValueTypeToken,
+                fieldIndex,
+                ignoredFieldTypeToken,
+                flatFieldIndex,
+                flatFieldCount,
+                ignoredFlatShapeCode)
+            || flatFieldCount != 1
+            || flatFieldIndex >= structValueFacts.StructValueFieldCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldTypeCode = fieldPatternTypeCodes.Get(row);
+        stack MirType fieldType = MirTypeForResolvedFieldTypeCode(fieldTypeCode);
+        if (!StructValueShapeTypeIsSupported(fieldType)
+            || StructValueShapeFieldStorageCodeAt(structValueFacts, flatFieldIndex) != StructValueShapeTypeCode(fieldType))
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldMemberFactRow = fieldPatternMemberFactRows.Get(row);
+        stack mut MirValueId fieldValue = MirValueIdOf(0);
+        stack mut i64[min max] declaredLower = 0;
+        stack mut i64[min max] declaredUpperExclusive = 0;
+        if (TryDeclaredRangeFactForMemberPathFact(
+                moduleFacts.MemberPathFacts,
+                fieldMemberFactRow,
+                declaredLower,
+                declaredUpperExclusive))
+        {
+            fieldValue = MirStructParamFieldWithDeclaredRange(
+                instrs,
+                structParamIndex,
+                flatFieldIndex,
+                structValueFacts.StructValueFieldCount,
+                structValueFacts.StructValueShapeCode,
+                fieldType,
+                declaredLower,
+                declaredUpperExclusive);
+        }
+        else
+        {
+            fieldValue = MirStructParamField(
+                instrs,
+                structParamIndex,
+                flatFieldIndex,
+                structValueFacts.StructValueFieldCount,
+                structValueFacts.StructValueShapeCode,
+                fieldType);
+        }
+
+        stack i64[min max] fieldMinValue = fieldPatternMinValues.Get(row);
+        stack i64[min max] fieldMaxValue = fieldPatternMaxValues.Get(row);
+        stack MirValueId fieldCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            fieldValue,
+            fieldMinValue,
+            fieldMaxValue,
+            fieldType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, fieldCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal struct SourceSwitchValueAggregateConditionFrame
+{
+    u32[0 max] OwnerTypeToken;
+    u32[0 max] TypedAggregateRow;
+    u32[0 max] FlatBaseIndex;
+    u32[0 max] FlatCount;
+
+    SourceSwitchValueAggregateConditionFrame()
+    {
+        self.OwnerTypeToken = 0;
+        self.TypedAggregateRow = 0;
+        self.FlatBaseIndex = 0;
+        self.FlatCount = 0;
+    }
+}
+
+internal finite law SourceSwitchValueAggregateConditionFrame MakeSourceSwitchValueAggregateConditionFrame(
+    u32[0 max] ownerTypeToken,
+    u32[0 max] typedAggregateRow,
+    u32[0 max] flatBaseIndex,
+    u32[0 max] flatCount)
+{
+    stack mut SourceSwitchValueAggregateConditionFrame frame = new();
+    frame.OwnerTypeToken = ownerTypeToken;
+    frame.TypedAggregateRow = typedAggregateRow;
+    frame.FlatBaseIndex = flatBaseIndex;
+    frame.FlatCount = flatCount;
+    return frame;
+}
+internal fn bool TryLowerStructValueParamTypedFixedArrayListPatternCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] structParamIndex,
+    ParamAbiFacts structValueFacts,
+    u32[0 max] flatBaseIndex,
+    MirType elementType,
+    u32[0 max] elementTypeCode,
+    u32[0 max] arrayLength,
+    bool hasDeclaredElementRange,
+    i64[min max] declaredElementRangeLower,
+    i64[min max] declaredElementRangeUpperExclusive,
+    u32[0 max] typedListRow,
+    out MirValueId condition)
+{
+    condition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!structValueFacts.IsStructValue
+        || arrayLength == 0
+        || elementTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || !StructValueShapeTypeIsSupported(elementType)
+        || flatBaseIndex > structValueFacts.StructValueFieldCount
+        || arrayLength > structValueFacts.StructValueFieldCount - flatBaseIndex
+        || !moduleFacts.SwitchPatterns.ListPatterns.ContainsRow(typedListRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedListRow - 1);
+    stack u32[0 max] typedElementStart = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternStartAt(typedIndex);
+    stack u32[0 max] typedElementCount = moduleFacts.SwitchPatterns.ListPatterns.ElementPatternCountAt(typedIndex);
+    if (!moduleFacts.SwitchPatterns.ListPatterns.HasFixedLengthAt(typedIndex)
+        || moduleFacts.SwitchPatterns.ListPatterns.FixedLengthAt(typedIndex) != arrayLength
+        || typedElementStart == 0
+        || typedElementCount != arrayLength)
+    {
+        return false;
+    }
+
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < typedElementCount)
+    {
+        if (typedElementStart > 4294967295 - offset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = typedElementStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack u32[0 max] elementOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+        if (elementOrdinal != offset)
+        {
+            return false;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Discard)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (memberKind == TypedSwitchPatternKind.Capture)
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (memberKind != TypedSwitchPatternKind.Literal
+            && memberKind != TypedSwitchPatternKind.Range)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberPatternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+        stack u32[0 max] memberPatternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+        stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+        stack mut i64[min max] minValue = 0;
+        stack mut i64[min max] maxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterPattern = memberPatternStart;
+        if (memberPatternStart == 0
+            || memberPatternEnd <= memberPatternStart
+            || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                stream,
+                source,
+                elementTypeCode,
+                memberPatternStart,
+                patternKind,
+                minValue,
+                maxValue,
+                afterPattern)
+            || afterPattern != (u64[0 2 ** 63 - 1])memberPatternEnd
+            || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval()
+            || elementOrdinal >= arrayLength
+            || flatBaseIndex > 4294967295 - elementOrdinal)
+        {
+            return false;
+        }
+
+        stack u32[0 max] flatElementIndex = flatBaseIndex + elementOrdinal;
+        if (flatElementIndex >= structValueFacts.StructValueFieldCount
+            || StructValueShapeFieldStorageCodeAt(structValueFacts, flatElementIndex) != StructValueShapeTypeCode(elementType))
+        {
+            return false;
+        }
+
+        stack mut MirValueId elementValue = MirValueIdOf(0);
+        if (hasDeclaredElementRange)
+        {
+            elementValue = MirStructParamFieldWithDeclaredRange(
+                instrs,
+                structParamIndex,
+                flatElementIndex,
+                structValueFacts.StructValueFieldCount,
+                structValueFacts.StructValueShapeCode,
+                elementType,
+                declaredElementRangeLower,
+                declaredElementRangeUpperExclusive);
+        }
+        else
+
+        {
+            elementValue = MirStructParamField(
+                instrs,
+                structParamIndex,
+                flatElementIndex,
+                structValueFacts.StructValueFieldCount,
+                structValueFacts.StructValueShapeCode,
+                elementType);
+        }
+
+        stack MirValueId elementCondition = LowerIntegerSwitchCaseConditionTyped(
+            instrs,
+            elementValue,
+            minValue,
+            maxValue,
+            elementType);
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, elementCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryLowerStructValueParamTypedAggregatePatternCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] structParamIndex,
+    ParamAbiFacts structValueFacts,
+    u32[0 max] flatBaseIndex,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] typedAggregateRow,
+    out MirValueId condition)
+{
+    condition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!structValueFacts.IsStructValue
+        || structValueFacts.StructValueFieldCount == 0
+        || structValueFacts.StructValueFieldCount > StructValueShapeMaxFields()
+        || ownerTypeToken == 0
+        || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedAggregateRow))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rootFlatCount = 0;
+    stack mut u32[0 max] rootShapeCode = 0;
+    if (!TryReadStructKnownLlvmScalarShape(
+            stream,
+            source,
+            ownerTypeToken,
+            rootFlatCount,
+            rootShapeCode)
+        || rootFlatCount == 0
+        || rootFlatCount > structValueFacts.StructValueFieldCount
+        || flatBaseIndex > 4294967295 - rootFlatCount
+        || flatBaseIndex + rootFlatCount > structValueFacts.StructValueFieldCount)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rootShapeIndex = 0;
+    while willexit (rootShapeIndex < rootFlatCount)
+    {
+        if (StructValueShapeFieldStorageCodeAt(structValueFacts, flatBaseIndex + rootShapeIndex)
+            != StructValueShapeCodeFieldStorageCodeAt(rootShapeCode, rootShapeIndex))
+        {
+            return false;
+        }
+
+        rootShapeIndex = rootShapeIndex + 1;
+    }
+
+    stack mut List<SourceSwitchValueAggregateConditionFrame> frames = new();
+    if (frames.Push(MakeSourceSwitchValueAggregateConditionFrame(
+            ownerTypeToken,
+            typedAggregateRow,
+            flatBaseIndex,
+            rootFlatCount)) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    while willexit (!frames.IsEmpty())
+    {
+        stack mut SourceSwitchValueAggregateConditionFrame frame = new();
+        if (!frames.TryPop(frame)
+            || frame.OwnerTypeToken == 0
+            || frame.FlatCount == 0
+            || !moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(frame.TypedAggregateRow)
+            || frame.FlatCount > structValueFacts.StructValueFieldCount
+            || frame.FlatBaseIndex > 4294967295 - frame.FlatCount
+            || frame.FlatBaseIndex + frame.FlatCount > structValueFacts.StructValueFieldCount)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(frame.TypedAggregateRow - 1);
+        stack mut u32[0 max] descriptorOwnerTypeToken = 0;
+        if (!TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                moduleFacts,
+                frame.TypedAggregateRow,
+                descriptorOwnerTypeToken)
+            || !TokenTextEqualsToken(stream, source, frame.OwnerTypeToken, descriptorOwnerTypeToken)
+            || moduleFacts.SwitchPatterns.AggregatePatterns.EnumVariantOrdinalPlusOneAt(typedIndex) != 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] typedMemberStart = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternStartAt(typedIndex);
+        stack u32[0 max] typedMemberCount = moduleFacts.SwitchPatterns.AggregatePatterns.MemberPatternCountAt(typedIndex);
+        if (typedMemberCount != 0 && typedMemberStart == 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] offset = 0;
+        while willexit (offset < typedMemberCount)
+        {
+            if (typedMemberStart > 4294967295 - offset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] memberRow = typedMemberStart + offset;
+            if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+            stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+            if (memberKind == TypedSwitchPatternKind.Discard)
+            {
+                offset = offset + 1;
+                continue;
+            }
+
+            if (memberKind == TypedSwitchPatternKind.Capture)
+            {
+                offset = offset + 1;
+                continue;
+            }
+
+            stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+            stack mut u32[0 max] fieldTypeToken = 0;
+            stack mut u32[0 max] fieldFlatStart = 0;
+            stack mut u32[0 max] fieldFlatCount = 0;
+            stack mut u32[0 max] fieldFlatShapeCode = 0;
+            if (!TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                    stream,
+                    source,
+                    frame.OwnerTypeToken,
+                    fieldOrdinal,
+                    fieldTypeToken,
+                    fieldFlatStart,
+                    fieldFlatCount,
+                    fieldFlatShapeCode)
+                || fieldFlatCount == 0
+                || fieldFlatCount > frame.FlatCount
+                || fieldFlatStart > frame.FlatCount - fieldFlatCount
+                || fieldFlatStart > 4294967295 - frame.FlatBaseIndex)
+            {
+                return false;
+            }
+
+            stack u32[0 max] flatFieldIndex = frame.FlatBaseIndex + fieldFlatStart;
+            if (memberKind == TypedSwitchPatternKind.Aggregate)
+            {
+                stack mut u32[0 max] flatShapeIndex = 0;
+                while willexit (flatShapeIndex < fieldFlatCount)
+                {
+                    if (StructValueShapeFieldStorageCodeAt(structValueFacts, flatFieldIndex + flatShapeIndex)
+                        != StructValueShapeCodeFieldStorageCodeAt(fieldFlatShapeCode, flatShapeIndex))
+                    {
+                        return false;
+                    }
+
+                    flatShapeIndex = flatShapeIndex + 1;
+                }
+
+                stack u32[0 max] nestedAggregateRow = moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(memberIndex);
+                stack mut u32[0 max] nestedOwnerTypeToken = 0;
+                if (nestedAggregateRow == 0
+                    || !SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, fieldTypeToken)
+                    || !TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                        moduleFacts,
+                        nestedAggregateRow,
+                        nestedOwnerTypeToken)
+                    || !TokenTextEqualsToken(stream, source, fieldTypeToken, nestedOwnerTypeToken)
+                    || frames.Push(MakeSourceSwitchValueAggregateConditionFrame(
+                        nestedOwnerTypeToken,
+                        nestedAggregateRow,
+                        flatFieldIndex,
+                        fieldFlatCount)) != MemoryStatus.Ok)
+                {
+                    return false;
+                }
+
+                offset = offset + 1;
+                continue;
+            }
+
+            if (memberKind == TypedSwitchPatternKind.List)
+            {
+                stack mut u32[0 max] fieldNameToken = 0;
+                stack mut u32[0 max] fieldMemberFactRow = 0;
+                stack mut u32[0 max] arrayBaseByteOffset = 0;
+                stack mut u32[0 max] elementSize = 0;
+                stack mut u32[0 max] elementAlignment = 0;
+                stack mut MirType elementType = MirType.I64;
+                stack mut u32[0 max] arrayLength = 0;
+                if (!TryGetSourceStructPatternFieldNameByOrdinal(
+                        stream,
+                        source,
+                        frame.OwnerTypeToken,
+                        fieldOrdinal,
+                        fieldNameToken)
+                    || !SourceMemberPathFactMatchesFieldStep(
+                        stream,
+                        source,
+                        moduleFacts.MemberFactRowsByToken,
+                        moduleFacts.MemberPathFacts,
+                        frame.OwnerTypeToken,
+                        fieldNameToken,
+                        fieldMemberFactRow)
+                    || !SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, fieldMemberFactRow)
+                    || !TryResolveFixedArrayFieldLayoutAtField(
+                        stream,
+                        source,
+                        fieldTypeToken,
+                        0,
+                        arrayBaseByteOffset,
+                        elementSize,
+                        elementAlignment,
+                        elementType,
+                        arrayLength)
+                    || arrayLength == 0
+                    || fieldFlatCount != arrayLength)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] elementStorageCode = StructValueShapeTypeCode(elementType);
+                stack mut u32[0 max] fieldShapeIndex = 0;
+                while willexit (fieldShapeIndex < fieldFlatCount)
+                {
+                    if (StructValueShapeCodeFieldStorageCodeAt(fieldFlatShapeCode, fieldShapeIndex) != elementStorageCode)
+                    {
+                        return false;
+                    }
+
+                    fieldShapeIndex = fieldShapeIndex + 1;
+                }
+
+                stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                stack mut bool hasDeclaredElementRange = false;
+                stack mut i64[min max] declaredElementRangeLower = 0;
+                stack mut i64[min max] declaredElementRangeUpperExclusive = 0;
+                if (TryDeclaredElementRangeFactForMemberPathFact(
+                        moduleFacts.MemberPathFacts,
+                        fieldMemberFactRow,
+                        declaredElementRangeLower,
+                        declaredElementRangeUpperExclusive))
+                {
+                    hasDeclaredElementRange = true;
+                }
+
+                stack u32[0 max] nestedListRow = moduleFacts.SwitchPatterns.Members.NestedListPatternRowAt(memberIndex);
+                stack mut MirValueId nestedCondition = MirValueIdOf(0);
+                if (nestedListRow == 0
+                    || !TryLowerStructValueParamTypedFixedArrayListPatternCondition(
+                        stream,
+                        source,
+                        moduleFacts,
+                        instrs,
+                        structParamIndex,
+                        structValueFacts,
+                        flatFieldIndex,
+                        elementType,
+                        elementTypeCode,
+                        arrayLength,
+                        hasDeclaredElementRange,
+                        declaredElementRangeLower,
+                        declaredElementRangeUpperExclusive,
+                        nestedListRow,
+                        nestedCondition))
+                {
+                    return false;
+                }
+
+                currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, nestedCondition);
+                offset = offset + 1;
+                continue;
+            }
+
+            if (TypedSwitchPatternKindIsNestedShape(memberKind))
+            {
+                return false;
+            }
+
+            if ((memberKind != TypedSwitchPatternKind.Literal
+                    && memberKind != TypedSwitchPatternKind.Range)
+                || fieldFlatCount != 1)
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] fieldNameToken = 0;
+            stack mut MirType fieldType = MirType.I64;
+            stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] fieldMemberFactRow = 0;
+            stack u32[0 max] memberPatternStart = moduleFacts.SwitchPatterns.Members.PatternStartTokenAt(memberIndex);
+            stack u32[0 max] memberPatternEnd = moduleFacts.SwitchPatterns.Members.PatternEndTokenAt(memberIndex);
+            stack mut u32[0 max] patternKind = SourceSwitchEnumPayloadPatternKindDiscard();
+            stack mut i64[min max] minValue = 0;
+            stack mut i64[min max] maxValue = 0;
+            stack mut u64[0 2 ** 63 - 1] afterPattern = memberPatternStart;
+            if (!TryGetSourceStructPatternFieldNameByOrdinal(
+                    stream,
+                    source,
+                    frame.OwnerTypeToken,
+                    fieldOrdinal,
+                    fieldNameToken)
+                || !TryGetSourceValueTypeCodeWithEnums(
+                    stream,
+                    source,
+                    moduleFacts,
+                    fieldTypeToken,
+                    fieldType,
+                    fieldTypeCode)
+                || !SourceMemberPathFactMatchesFieldStep(
+                    stream,
+                    source,
+                    moduleFacts.MemberFactRowsByToken,
+                    moduleFacts.MemberPathFacts,
+                    frame.OwnerTypeToken,
+                    fieldNameToken,
+                    fieldMemberFactRow)
+                || !SourceMemberPathFactAgreesWithFieldTypeCode(
+                    moduleFacts.MemberPathFacts,
+                    fieldMemberFactRow,
+                    fieldTypeCode)
+                || flatFieldIndex >= structValueFacts.StructValueFieldCount
+                || !StructValueShapeTypeIsSupported(fieldType)
+                || StructValueShapeFieldStorageCodeAt(structValueFacts, flatFieldIndex) != StructValueShapeTypeCode(fieldType)
+                || memberPatternStart == 0
+                || memberPatternEnd <= memberPatternStart
+                || !TryParseSourceSwitchEnumPayloadScalarPattern(
+                    stream,
+                    source,
+                    fieldTypeCode,
+                    memberPatternStart,
+                    patternKind,
+                    minValue,
+                    maxValue,
+                    afterPattern)
+                || afterPattern != (u64[0 2 ** 63 - 1])memberPatternEnd
+                || patternKind != SourceSwitchEnumPayloadPatternKindScalarInterval())
+            {
+                return false;
+            }
+
+            stack mut MirValueId fieldValue = MirValueIdOf(0);
+            stack mut i64[min max] declaredLower = 0;
+            stack mut i64[min max] declaredUpperExclusive = 0;
+            if (TryDeclaredRangeFactForMemberPathFact(
+                    moduleFacts.MemberPathFacts,
+                    fieldMemberFactRow,
+                    declaredLower,
+                    declaredUpperExclusive))
+            {
+                fieldValue = MirStructParamFieldWithDeclaredRange(
+                    instrs,
+                    structParamIndex,
+                    flatFieldIndex,
+                    structValueFacts.StructValueFieldCount,
+                    structValueFacts.StructValueShapeCode,
+                    fieldType,
+                    declaredLower,
+                    declaredUpperExclusive);
+            }
+            else
+            {
+                fieldValue = MirStructParamField(
+                    instrs,
+                    structParamIndex,
+                    flatFieldIndex,
+                    structValueFacts.StructValueFieldCount,
+                    structValueFacts.StructValueShapeCode,
+                    fieldType);
+            }
+
+            stack MirValueId fieldCondition = LowerIntegerSwitchCaseConditionTyped(
+                instrs,
+                fieldValue,
+                minValue,
+                maxValue,
+                fieldType);
+            currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, fieldCondition);
+            offset = offset + 1;
+        }
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryLowerStructValueParamTypedNestedAggregateSwitchCaseCondition(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] structParamIndex,
+    ParamAbiFacts structValueFacts,
+    u32[0 max] ownerTypeToken,
+    u32[0 max] nestedStart,
+    u32[0 max] nestedCount,
+    out MirValueId condition)
+{
+    condition = MirConstIntTyped(instrs, MirType.I1, 1);
+    if (!structValueFacts.IsStructValue
+        || structValueFacts.StructValueTypeToken == 0
+        || !TokenTextEqualsToken(stream, source, structValueFacts.StructValueTypeToken, ownerTypeToken))
+    {
+        return false;
+    }
+
+    stack mut MirValueId currentCondition = MirConstIntTyped(instrs, MirType.I1, 1);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < nestedCount)
+    {
+        if (nestedStart > 4294967295 - offset)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberRow = nestedStart + offset;
+        if (!moduleFacts.SwitchPatterns.Members.ContainsRow(memberRow))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberRow - 1);
+        stack TypedSwitchPatternKind memberKind = moduleFacts.SwitchPatterns.Members.KindAt(memberIndex);
+        if (!TypedSwitchPatternKindIsNestedShape(memberKind))
+        {
+            offset = offset + 1;
+            continue;
+        }
+
+        if (memberKind != TypedSwitchPatternKind.Aggregate)
+        {
+            return false;
+        }
+
+        stack u32[0 max] fieldOrdinal = moduleFacts.SwitchPatterns.Members.MemberOrdinalAt(memberIndex);
+        stack mut u32[0 max] fieldTypeToken = 0;
+        stack mut u32[0 max] fieldFlatStart = 0;
+        stack mut u32[0 max] fieldFlatCount = 0;
+        stack mut u32[0 max] fieldFlatShapeCode = 0;
+        if (!TryGetSourceStructValueFlatScalarFieldSpanByOrdinal(
+                stream,
+                source,
+                ownerTypeToken,
+                fieldOrdinal,
+                fieldTypeToken,
+                fieldFlatStart,
+                fieldFlatCount,
+                fieldFlatShapeCode)
+            || fieldFlatCount == 0
+            || fieldFlatStart >= structValueFacts.StructValueFieldCount
+            || fieldFlatCount > structValueFacts.StructValueFieldCount - fieldFlatStart)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] flatShapeIndex = 0;
+        while willexit (flatShapeIndex < fieldFlatCount)
+        {
+            if (StructValueShapeFieldStorageCodeAt(structValueFacts, fieldFlatStart + flatShapeIndex)
+                != StructValueShapeCodeFieldStorageCodeAt(fieldFlatShapeCode, flatShapeIndex))
+            {
+                return false;
+            }
+
+            flatShapeIndex = flatShapeIndex + 1;
+        }
+
+        stack u32[0 max] nestedAggregateRow = moduleFacts.SwitchPatterns.Members.NestedAggregatePatternRowAt(memberIndex);
+        stack mut u32[0 max] nestedOwnerTypeToken = 0;
+        stack mut MirValueId nestedCondition = MirValueIdOf(0);
+        if (nestedAggregateRow == 0
+            || !SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, fieldTypeToken)
+            || !TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+                moduleFacts,
+                nestedAggregateRow,
+                nestedOwnerTypeToken)
+            || !TokenTextEqualsToken(stream, source, fieldTypeToken, nestedOwnerTypeToken)
+            || !TryLowerStructValueParamTypedAggregatePatternCondition(
+                stream,
+                source,
+                moduleFacts,
+                instrs,
+                structParamIndex,
+                structValueFacts,
+                fieldFlatStart,
+                nestedOwnerTypeToken,
+                nestedAggregateRow,
+                nestedCondition))
+        {
+            return false;
+        }
+
+        currentCondition = MirAndTyped(instrs, MirType.I1, currentCondition, nestedCondition);
+        offset = offset + 1;
+    }
+
+    condition = currentCondition;
+    return true;
+}
+
+internal fn bool TryGetSourceSwitchAggregatePatternDescriptorOwnerTypeToken(
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typedAggregateRow,
+    out u32[0 max] ownerTypeToken)
+{
+    ownerTypeToken = 0;
+    if (!moduleFacts.SwitchPatterns.AggregatePatterns.ContainsRow(typedAggregateRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] typedIndex = (u64[0 2 ** 63 - 1])(typedAggregateRow - 1);
+    ownerTypeToken = moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypeHeadTokenAt(typedIndex);
+    if (ownerTypeToken == 0)
+    {
+        ownerTypeToken = moduleFacts.SwitchPatterns.AggregatePatterns.OwnerTypePrimaryTokenAt(typedIndex);
+    }
+
+    return ownerTypeToken != 0;
+}
+
+internal struct SourceStructNestedAggregateCaptureFrame
+{
+    u32[0 max] OwnerTypeToken;
+    u32[0 max] TypedAggregateRow;
+    u32[0 max] BaseByteOffset;
+    u32[0 max] FlatBaseIndex;
+    u32[0 max] FlatCount;
+
+    SourceStructNestedAggregateCaptureFrame()
+    {
+        self.OwnerTypeToken = 0;
+        self.TypedAggregateRow = 0;
+        self.BaseByteOffset = 0;
+        self.FlatBaseIndex = 0;
+        self.FlatCount = 0;
+    }
+}
+
+internal finite law SourceStructNestedAggregateCaptureFrame MakeSourceStructNestedAggregateCaptureFrame(
+    u32[0 max] ownerTypeToken,
+    u32[0 max] typedAggregateRow,
+    u32[0 max] baseByteOffset,
+    u32[0 max] flatBaseIndex,
+    u32[0 max] flatCount)
+{
+    stack mut SourceStructNestedAggregateCaptureFrame frame = new();
+    frame.OwnerTypeToken = ownerTypeToken;
+    frame.TypedAggregateRow = typedAggregateRow;
+    frame.BaseByteOffset = baseByteOffset;
+    frame.FlatBaseIndex = flatBaseIndex;
+    frame.FlatCount = flatCount;
+    return frame;
+}
