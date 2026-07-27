@@ -180,15 +180,15 @@ public sealed partial class VendorBindingAuditTests
         Assert.Contains("-Destination $compilerBinRoot -ExcludedDirectoryNames @()", packageScript, StringComparison.Ordinal);
         Assert.Contains("$compilerRelativePath = \"bin/$commandName\"", packageScript, StringComparison.Ordinal);
         Assert.Contains("-CompilerPath (Join-Path $compilerBinRoot $commandName)", packageScript, StringComparison.Ordinal);
-        Assert.Contains("Add the extracted archive's bin directory to PATH", packageScript, StringComparison.Ordinal);
-        Assert.Contains("__ARCHIVE_ROOT__/bin:$PATH", packageScript, StringComparison.Ordinal);
-        Assert.Contains("__ARCHIVE_ROOT__\\bin;$env:Path", packageScript, StringComparison.Ordinal);
+        Assert.Contains("generate-release-docs.ps1", packageScript, StringComparison.Ordinal);
+        Assert.Contains("-PackagedRuntimeIdentifier $RuntimeIdentifier", packageScript, StringComparison.Ordinal);
+        Assert.Contains("-PackagedTargetTriple $TargetTriple", packageScript, StringComparison.Ordinal);
         Assert.Contains("compiler = $CompilerRelativePath", packageScript, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "Copy-TreeFiltered -Source $publishPath -Destination $stageRoot -ExcludedDirectoryNames @()",
             packageScript,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("__ARCHIVE_ROOT__:$PATH", packageScript, StringComparison.Ordinal);
+        Assert.DoesNotContain("Write-InstallDocument", packageScript, StringComparison.Ordinal);
 
         var smokeScript = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1"));
         Assert.Contains("$artifactTargetId", smokeScript, StringComparison.Ordinal);
@@ -239,34 +239,84 @@ public sealed partial class VendorBindingAuditTests
     public async Task VendorExamplesCheckThroughBuiltPackageImages()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var vendorDistRoot = Path.Combine(repositoryRoot, "vendor", "dist");
-        var stdlibRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var vendorSourceRoot = Path.Combine(repositoryRoot, "vendor", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-package-image-check-");
+        var packageDirectory = Directory.CreateDirectory(Path.Combine(tempDirectory.FullName, "packages"));
 
-        foreach (var binding in Bindings)
+        try
         {
-            var packagePath = Path.Combine(repositoryRoot, binding.PackageRelativePath);
-            if (!File.Exists(packagePath))
+            foreach (var binding in Bindings)
             {
-                Assert.False(
-                    await RequiredPkgConfigPackagesExistAsync(binding.RequiredPkgConfigPackages),
-                    $"{binding.Name} can resolve its native dependency but {binding.PackageRelativePath} has not been built.");
-                continue;
+                var packageFileName = Path.GetFileName(binding.PackageRelativePath);
+                var packagePath = Path.Combine(packageDirectory.FullName, packageFileName);
+                var packageLibraryFileName = Path.GetFileNameWithoutExtension(packageFileName)
+                    + (OperatingSystem.IsWindows() ? ".lib" : ".a");
+                var packageLibraryPath = Path.Combine(packageDirectory.FullName, packageLibraryFileName);
+                var packageStdout = new StringWriter();
+                var packageStderr = new StringWriter();
+                var packageExitCode = await CompilerCli.RunAsync(
+                    [
+                        Path.Combine(repositoryRoot, binding.RootSourceRelativePath),
+                        "--emit-pkg",
+                        "--package-library-file", packageLibraryFileName,
+                        "--package-profile", "release",
+                        "--sdk-root", repositoryRoot,
+                        "--no-stark-path",
+                        "-I", vendorSourceRoot,
+                        "-o", packagePath
+                    ],
+                    new StringReader(string.Empty),
+                    packageStdout,
+                    packageStderr);
+
+                Assert.True(
+                    packageExitCode == 0,
+                    $"{binding.Name} package-image build failed."
+                    + Environment.NewLine
+                    + packageStdout
+                    + Environment.NewLine
+                    + packageStderr);
+                Assert.True(File.Exists(packagePath), $"{binding.Name} did not emit '{packagePath}'.");
+                await File.WriteAllBytesAsync(packageLibraryPath, []);
+
+                var sourcePath = Path.Combine(repositoryRoot, binding.ExampleRelativePath);
+                Assert.True(File.Exists(sourcePath), $"{binding.Name} is missing example {binding.ExampleRelativePath}.");
+
+                var stdout = new StringWriter();
+                var stderr = new StringWriter();
+                var exitCode = await CompilerCli.RunAsync(
+                    [
+                        sourcePath,
+                        "--check",
+                        "--sdk-root", repositoryRoot,
+                        "--no-stark-path",
+                        "-I", packageDirectory.FullName
+                    ],
+                    new StringReader(string.Empty),
+                    stdout,
+                    stderr);
+
+                Assert.True(
+                    exitCode == 0,
+                    $"{binding.Name} example check failed."
+                    + Environment.NewLine
+                    + stdout
+                    + Environment.NewLine
+                    + stderr);
+                AssertOnlySlowPassWarnings(stderr.ToString());
+                Assert.Contains("Check succeeded.", stdout.ToString(), StringComparison.Ordinal);
             }
-
-            var sourcePath = Path.Combine(repositoryRoot, binding.ExampleRelativePath);
-            Assert.True(File.Exists(sourcePath), $"{binding.Name} is missing example {binding.ExampleRelativePath}.");
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [sourcePath, "--check", "-I", vendorDistRoot, "-I", stdlibRoot],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            AssertOnlySlowPassWarnings(stderr.ToString());
-            Assert.Contains("Check succeeded.", stdout.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
         }
     }
 
@@ -847,8 +897,8 @@ public sealed partial class VendorBindingAuditTests
         var auditText = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "docs",
-            "Self-host-Prep",
-            "29-missing-vendor-api-bindings.md"));
+            "Internals",
+            "VendorLibraryApiCoverage.md"));
         var sqliteTypesText = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "vendor",
@@ -1016,8 +1066,8 @@ public sealed partial class VendorBindingAuditTests
         var auditText = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "docs",
-            "Self-host-Prep",
-            "29-missing-vendor-api-bindings.md"));
+            "Internals",
+            "VendorLibraryApiCoverage.md"));
 
         Assert.DoesNotContain("export import Vendor.SQLite.Raw", sqliteRootText, StringComparison.Ordinal);
         Assert.Contains("import Vendor.SQLite.Raw", sqliteCoreText, StringComparison.Ordinal);

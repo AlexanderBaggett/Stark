@@ -644,7 +644,9 @@ internal static class CompilerCli
             LinkerTool: linkerTool,
             ArchiverTool: archiverTool,
             LlvmLibraryPath: llvmLibraryPath,
-            SdkRootDirectory: activeSdk.Root?.RootPath));
+            SdkRootDirectory: activeSdk.Root?.RootPath,
+            AllowAmbientCompilerBackendFallback:
+                activeSdk.Manifest?.Manifest?.Kind != SdkDistributionKind.Release));
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
@@ -4370,7 +4372,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  build          Build the current Stark project or solution from a manifest");
         await stdout.WriteLineAsync("  run            Build and run the current Stark project or solution target");
         await stdout.WriteLineAsync("  test           Run tests for the current Stark project or solution");
-        await stdout.WriteLineAsync("  doctor         Inspect compiler, runtime, target, toolchain, SDK, stdlib, and vendor setup");
+        await stdout.WriteLineAsync("  doctor         Inspect compiler, private backend, host development layer, SDK, stdlib, and vendor setup");
         await stdout.WriteLineAsync("  inspect-pkg    Inspect and validate a Stark package image");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");

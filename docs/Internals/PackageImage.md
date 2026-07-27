@@ -135,7 +135,9 @@ Historical note:
   feature started as a smaller package-manifest slice
 - the current host file extension is `.starkpkg` (binary); `.starkpkg.json`
   remains the legacy/inspection JSON form
-- self-hosting format work is tracked in `docs/Self-host-Prep/20-package-image-format.md`
+- remaining self-hosting format work is maintained in the source repository's
+  internal compiler work tracker and is not part of the release package-format
+  contract
 - user-facing docs and tooling should treat package images as compiler-owned
   artifacts regardless of the concrete file format
 
@@ -223,6 +225,16 @@ Package images carry package-owned native dependency metadata. This lets an
 interop package own its optional C shims and link requirements instead of making
 every downstream user repeat a long command line.
 
+There are two consumption modes:
+
+- an official `Vendor.*` release package is already resolved and bundled by the
+  target-specific SDK; its `sdk.json` descriptor supplies checksummed,
+  SDK-relative package/native artifacts and ordered link facts without
+  `pkg-config`, user configuration, or `-I`/`-L` flags
+- a custom or source-built native package may retain discovery inputs such as
+  `pkg-config`, explicit paths, or user-configured fallbacks while its author
+  produces a package image
+
 The current package-author CLI surface is:
 
 ```bash
@@ -277,6 +289,23 @@ a Stark diagnostic that points users toward installing the library or adding a
 package-owned discovery name, the compiler reports the package name and suggests
 installing that native package, setting `PKG_CONFIG_PATH`, or using explicit
 native metadata instead.
+
+That diagnostic applies to a custom or development package that still declares
+native discovery. It is not a valid fallback for an installed official SDK
+package. If an advertised official package lacks a required archive or its
+checksum does not match, the compiler reports an SDK-integrity error and points
+to `stark doctor --strict`; it must not silently search the host for a substitute.
+
+Package ABI facts and the compiled wrapper archive are a matched pair. Whenever
+the compiler's target C ABI classification changes, affected official package
+images and archives must be regenerated before SDK publication. This is
+observable even when the source signature is unchanged: on AArch64 a four-byte
+integer-like C struct has an exact-width `i32` return carrier but a rounded
+`i64` parameter carrier. Package serialization therefore preserves return and
+physical parameter carriers separately. A distinct parameter-carrier list is
+serialized even when it contains only one value (`[i64]` here); treating that
+field as multi-value-only would discard an ABI fact and make a downstream
+package emit the wrong native declaration.
 
 ## Loading Rules
 

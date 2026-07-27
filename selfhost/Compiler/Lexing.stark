@@ -1,7 +1,7 @@
 import System.Text
 module Compiler.Lexing
 
-// Stage 1 handwritten lexer (docs/Self-host-Prep/09: handwritten lexer/token
+// Stage 1 handwritten lexer (docs/Internals/SelfHostedCompilerArchitecture.md: handwritten lexer/token
 // stream with exact source spans; Stark.g4 stays the grammar authority and
 // this file mirrors its lexer rules, including ANTLR's longest-match and
 // rule-order behavior).

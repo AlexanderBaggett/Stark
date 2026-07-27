@@ -1,0 +1,39 @@
+name: Feature or design proposal
+description: Propose a language, compiler, SDK, library, or tooling change.
+title: "[Proposal]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user or implementation problem without assuming a particular solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Semantics, safety, ABI, and package effects
+      description: Explain ownership, borrowing, layout, compatibility, diagnostics, and cross-package consequences.
+    validations:
+      required: true
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance and optimization effects
+      description: Describe runtime, compile-time, memory, code-size, and LLVM fact-preservation implications.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true

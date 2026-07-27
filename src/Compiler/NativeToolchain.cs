@@ -29,7 +29,8 @@ internal sealed record NativeToolchainResolutionOptions(
     string? LinkerTool = null,
     string? ArchiverTool = null,
     string? LlvmLibraryPath = null,
-    string? SdkRootDirectory = null);
+    string? SdkRootDirectory = null,
+    bool AllowAmbientCompilerBackendFallback = true);
 
 internal sealed record NativeResolvedTool(
     string Role,
@@ -77,7 +78,8 @@ internal static class NativeToolchain
             ["clang"],
             options.ClangTool,
             "STARK_CLANG",
-            searchRoots);
+            searchRoots,
+            allowPathFallback: options.AllowAmbientCompilerBackendFallback);
         var linker = ResolveTool(
             "linker",
             ["clang"],
@@ -89,13 +91,15 @@ internal static class NativeToolchain
             OperatingSystem.IsWindows() ? ["llvm-lib", "lib"] : ["llvm-ar", "ar"],
             options.ArchiverTool,
             "STARK_ARCHIVER",
-            searchRoots);
+            searchRoots,
+            allowPathFallback: options.AllowAmbientCompilerBackendFallback);
         var lld = ResolveTool(
             "lld",
             OperatingSystem.IsWindows() ? ["lld-link"] : ["ld.lld"],
             explicitOverride: null,
             environmentVariableName: null,
-            searchRoots);
+            searchRoots,
+            allowPathFallback: options.AllowAmbientCompilerBackendFallback);
         var pkgConfig = ResolveTool(
             "pkg-config",
             ["pkg-config"],
@@ -599,7 +603,8 @@ internal static class NativeToolchain
         IReadOnlyList<string> defaultNames,
         string? explicitOverride,
         string? environmentVariableName,
-        IReadOnlyList<NativeToolchainSearchRoot> searchRoots)
+        IReadOnlyList<NativeToolchainSearchRoot> searchRoots,
+        bool allowPathFallback = true)
     {
         if (!string.IsNullOrWhiteSpace(explicitOverride))
         {
@@ -634,11 +639,14 @@ internal static class NativeToolchain
             }
         }
 
-        foreach (var defaultName in defaultNames)
+        if (allowPathFallback)
         {
-            if (FindExecutable(defaultName) is { } path)
+            foreach (var defaultName in defaultNames)
             {
-                return new NativeResolvedTool(role, defaultName, path, NativeToolchainResolutionSource.Path);
+                if (FindExecutable(defaultName) is { } path)
+                {
+                    return new NativeResolvedTool(role, defaultName, path, NativeToolchainResolutionSource.Path);
+                }
             }
         }
 

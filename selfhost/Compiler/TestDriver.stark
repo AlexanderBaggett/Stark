@@ -4,7 +4,7 @@ import System.Text
 module Compiler.TestDriver
 
 // Stage1 port of the `stark test` driver's runner-execution half
-// (docs/Self-host-Prep/30-test-progress-streaming.md §3.4/§5.2, T30.9).
+// (docs/Internals/TestProgressProtocol.md §3.4/§5.2).
 // Runs a generated test runner, forwarding its stdout/stderr transcripts
 // line-by-line as they arrive: with progress enabled it passes `--progress`
 // in the runner argv and stamps every forwarded line with a driver-side

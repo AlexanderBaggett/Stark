@@ -159,7 +159,15 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [
+                    appPath,
+                    "--emit-exe",
+                    "--sdk-root", repositoryRoot,
+                    "--no-stark-path",
+                    "-I", packageDirectory,
+                    "-o", outputPath,
+                    "--target", targetInfo.Triple
+                ],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

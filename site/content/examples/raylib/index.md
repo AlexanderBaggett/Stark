@@ -16,7 +16,10 @@ Follow the local setup notes in the checked-in README:
 bash examples/raylib/build-package.sh
 ```
 
-Raylib must be available through `pkg-config` or configured native paths.
+That helper is a binding-author/source-checkout workflow and acquires or locates
+Raylib as described in the README. An installed release SDK already owns the
+advertised `Vendor.Raylib` package and native payload; applications simply
+`import Vendor.Raylib` and do not configure `pkg-config` or native paths.
 Graphical execution is intentionally manual.
 
 Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNativeExecution` and package-linked by `ExamplesCompileRunTests.BreakoutRaylibBuildsThroughPackageOwnedNativeMetadataWithoutGraphicalExecution`.

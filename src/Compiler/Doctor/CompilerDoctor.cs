@@ -74,6 +74,19 @@ internal sealed record DoctorToolchainReport(
     IReadOnlyList<DoctorResolvedToolReport> Tools,
     IReadOnlyList<DoctorResolvedFileReport> Files);
 
+internal sealed record DoctorCompilerBackendReport(
+    string Mode,
+    string Status,
+    IReadOnlyList<DoctorResolvedToolReport> Tools,
+    IReadOnlyList<DoctorResolvedFileReport> Files);
+
+internal sealed record DoctorHostDevelopmentReport(
+    string Name,
+    string Status,
+    string Requirement,
+    DoctorResolvedToolReport Linker,
+    DoctorPlatformSdkReport PlatformSdk);
+
 internal sealed record DoctorPlatformSdkReport(
     string Name,
     string Status,
@@ -101,6 +114,8 @@ internal sealed record CompilerDoctorReport(
     DoctorCompilerReport Compiler,
     DoctorRuntimeReport Runtime,
     DoctorTargetReport Target,
+    DoctorCompilerBackendReport CompilerBackend,
+    DoctorHostDevelopmentReport HostDevelopment,
     DoctorToolchainReport Toolchain,
     SdkDoctorReport Sdk,
     DoctorPlatformSdkReport PlatformSdk,
@@ -208,6 +223,8 @@ internal static class CompilerDoctor
                 RuntimeInformation.OSDescription,
                 RuntimeInformation.ProcessArchitecture.ToString()),
             target,
+            BuildCompilerBackendReport(options, tools, llvm),
+            BuildHostDevelopmentReport(options.TargetInfo, tools, platformSdk),
             new DoctorToolchainReport(
                 options.Toolchain.SearchRoots.ToArray(),
                 tools,
@@ -238,6 +255,27 @@ internal static class CompilerDoctor
         stdout.WriteLine($"  relocation model: {report.Target.RelocationModel}");
         stdout.WriteLine($"  code model: {report.Target.CodeModel ?? "<default>"}");
         stdout.WriteLine($"  c data model: {FormatCDataModel(report.Target.CDataModel)}");
+        stdout.WriteLine("compiler-private backend:");
+        stdout.WriteLine($"  mode: {report.CompilerBackend.Mode}");
+        stdout.WriteLine($"  status: {report.CompilerBackend.Status}");
+        foreach (var tool in report.CompilerBackend.Tools)
+        {
+            WriteResolvedTool(stdout, tool, "  ");
+        }
+
+        foreach (var file in report.CompilerBackend.Files)
+        {
+            WriteResolvedFile(stdout, file, "  ");
+        }
+
+        stdout.WriteLine("host development layer:");
+        stdout.WriteLine($"  name: {report.HostDevelopment.Name}");
+        stdout.WriteLine($"  status: {report.HostDevelopment.Status}");
+        stdout.WriteLine($"  requirement: {report.HostDevelopment.Requirement}");
+        WriteResolvedTool(stdout, report.HostDevelopment.Linker, "  ");
+        stdout.WriteLine(report.HostDevelopment.PlatformSdk.Required
+            ? $"  platform sdk: {report.HostDevelopment.PlatformSdk.Path ?? "<missing>"}"
+            : "  platform sdk: not separately probed for this target");
         stdout.WriteLine("toolchain:");
 
         if (report.Toolchain.SearchRoots.Count == 0)
@@ -255,26 +293,12 @@ internal static class CompilerDoctor
 
         foreach (var tool in report.Toolchain.Tools)
         {
-            if (tool.Status == "ok")
-            {
-                stdout.WriteLine($"  {tool.Role}: {tool.Path} ({FormatSource(tool.Source)}, {tool.Version})");
-            }
-            else
-            {
-                stdout.WriteLine($"  {tool.Role}: <missing> ({tool.RequestedName}, {FormatSource(tool.Source)})");
-            }
+            WriteResolvedTool(stdout, tool, "  ");
         }
 
         foreach (var file in report.Toolchain.Files)
         {
-            if (file.Status == "ok")
-            {
-                stdout.WriteLine($"  {file.Role}: {file.Path} ({FormatSource(file.Source)})");
-            }
-            else
-            {
-                stdout.WriteLine($"  {file.Role}: <missing> ({file.RequestedName}, {FormatSource(file.Source)})");
-            }
+            WriteResolvedFile(stdout, file, "  ");
         }
 
         stdout.WriteLine("sdk:");
@@ -336,6 +360,113 @@ internal static class CompilerDoctor
             (targetInfo?.RelocationModel ?? requestedRelocationModel).ToString().ToLowerInvariant(),
             (targetInfo?.CodeModel ?? requestedCodeModel)?.ToString().ToLowerInvariant(),
             cDataModel);
+    }
+
+    private static DoctorCompilerBackendReport BuildCompilerBackendReport(
+        CompilerDoctorOptions options,
+        IReadOnlyList<DoctorResolvedToolReport> tools,
+        DoctorResolvedFileReport llvm)
+    {
+        var clang = FindTool(tools, "clang");
+        var archiver = FindTool(tools, "archiver");
+        var lld = FindTool(tools, "lld");
+        var primaryAvailable = options.RequiresLlvmLibrary
+            ? string.Equals(llvm.Status, "ok", StringComparison.Ordinal)
+            : string.Equals(clang.Status, "ok", StringComparison.Ordinal);
+        var archiveAvailable = string.Equals(archiver.Status, "ok", StringComparison.Ordinal);
+        var optimizedLinkAvailable = string.Equals(lld.Status, "ok", StringComparison.Ordinal);
+        var status = !primaryAvailable || !archiveAvailable
+            ? "missing"
+            : optimizedLinkAvailable
+                ? "ok"
+                : "degraded";
+
+        return new DoctorCompilerBackendReport(
+            options.RequiresLlvmLibrary ? "direct-libllvm" : "stage0-textual-llvm",
+            status,
+            [clang, archiver, lld],
+            [llvm]);
+    }
+
+    private static DoctorHostDevelopmentReport BuildHostDevelopmentReport(
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyList<DoctorResolvedToolReport> tools,
+        DoctorPlatformSdkReport platformSdk)
+    {
+        var linker = FindTool(tools, "linker");
+        var linkerAvailable = string.Equals(linker.Status, "ok", StringComparison.Ordinal);
+        if (NativeToolchain.ShouldUseMacOSPlatformSdkForTarget(targetInfo))
+        {
+            return new DoctorHostDevelopmentReport(
+                "macos",
+                linkerAvailable && string.Equals(platformSdk.Status, "ok", StringComparison.Ordinal)
+                    ? "ok"
+                    : "missing",
+                "Xcode Command Line Tools or full Xcode supplies the macOS SDK and platform link surface.",
+                linker,
+                platformSdk);
+        }
+
+        if (IsWindowsTarget(targetInfo))
+        {
+            return new DoctorHostDevelopmentReport(
+                "windows-msvc",
+                linkerAvailable ? "unverified-sdk" : "missing",
+                "A supported MSVC Build Tools and Windows SDK installation supplies SDK/UCRT import libraries; the final link verifies the selected installation.",
+                linker,
+                platformSdk);
+        }
+
+        if (IsLinuxTarget(targetInfo))
+        {
+            return new DoctorHostDevelopmentReport(
+                "linux-native",
+                linkerAvailable ? "ok" : "missing",
+                "A supported Clang/native development environment and system ABI libraries supply the final host link layer.",
+                linker,
+                platformSdk);
+        }
+
+        return new DoctorHostDevelopmentReport(
+            "target-native",
+            linkerAvailable ? "unverified" : "missing",
+            "The target's documented native development environment supplies final-link platform inputs.",
+            linker,
+            platformSdk);
+    }
+
+    private static DoctorResolvedToolReport FindTool(
+        IReadOnlyList<DoctorResolvedToolReport> tools,
+        string role) => tools.Single(tool => string.Equals(tool.Role, role, StringComparison.Ordinal));
+
+    private static void WriteResolvedTool(
+        TextWriter stdout,
+        DoctorResolvedToolReport tool,
+        string indent)
+    {
+        if (tool.Status == "ok")
+        {
+            stdout.WriteLine($"{indent}{tool.Role}: {tool.Path} ({FormatSource(tool.Source)}, {tool.Version})");
+        }
+        else
+        {
+            stdout.WriteLine($"{indent}{tool.Role}: <missing> ({tool.RequestedName}, {FormatSource(tool.Source)})");
+        }
+    }
+
+    private static void WriteResolvedFile(
+        TextWriter stdout,
+        DoctorResolvedFileReport file,
+        string indent)
+    {
+        if (file.Status == "ok")
+        {
+            stdout.WriteLine($"{indent}{file.Role}: {file.Path} ({FormatSource(file.Source)})");
+        }
+        else
+        {
+            stdout.WriteLine($"{indent}{file.Role}: <missing> ({file.RequestedName}, {FormatSource(file.Source)})");
+        }
     }
 
     private static async Task<DoctorResolvedToolReport> ProbeToolAsync(
@@ -436,51 +567,63 @@ internal static class CompilerDoctor
                 "default target facts could not be detected; pass --target and --target-data-layout when building without a detectable clang target.");
         }
 
-        if (!clangOk)
+        if (!clangOk && !options.RequiresLlvmLibrary)
         {
             yield return Warning(
-                "toolchain",
-                "clang is missing; install a Stark archive with the bundled toolchain, pass --toolchain-dir, set STARK_TOOLCHAIN_DIR, or set STARK_CLANG.");
+                "compiler backend",
+                "the Stage0 private Clang backend is missing; repair or re-extract the complete Stark SDK, or use the advanced --toolchain-dir/STARK_TOOLCHAIN_DIR/STARK_CLANG override while developing the compiler.");
+        }
+        else if (!clangOk && options.HasNativeDependencies)
+        {
+            yield return Warning(
+                "host native compiler",
+                "Clang is missing; the direct libLLVM backend can emit Stark objects, but native source dependencies cannot be compiled for this invocation.");
+        }
+        else if (!clangOk)
+        {
+            yield return Note(
+                "host native compiler",
+                "Clang is not selected; the direct libLLVM backend remains usable, but packages with native source inputs require the documented host native compiler.");
         }
 
         if (!linkerOk)
         {
             var overrideHint = string.IsNullOrWhiteSpace(options.LinkerTool)
-                ? "pass --linker or provide the bundled linker through --toolchain-dir/STARK_TOOLCHAIN_DIR"
+                ? "install the target's documented host development layer or pass the advanced --linker override"
                 : $"the --linker override '{options.LinkerTool.Trim()}' was not found";
             yield return Warning(
-                "linker",
+                "host linker",
                 $"executable links cannot run because the linker is missing; {overrideHint}.");
         }
 
         if (!archiverOk)
         {
             var overrideHint = string.IsNullOrWhiteSpace(options.ArchiverTool)
-                ? "pass --archiver or provide the bundled archiver through --toolchain-dir/STARK_TOOLCHAIN_DIR"
+                ? "repair the compiler-private backend or pass the advanced --archiver override"
                 : $"the --archiver override '{options.ArchiverTool.Trim()}' was not found";
             yield return Warning(
-                "archiver",
+                "compiler backend",
                 $"static-library output cannot run because the archiver is missing; {overrideHint}.");
         }
 
         if (!lldOk)
         {
             yield return Warning(
-                "link-time optimization",
-                "lld is missing, so ThinLTO and the fastest executable link path are unavailable; use the bundled LLVM toolchain or put ld.lld/lld-link on PATH.");
+                "compiler backend optimization",
+                "the private LLD component is missing, so ThinLTO and the fastest executable link path are unavailable; repair the Stark SDK or use an advanced compiler-development override.");
         }
 
         if (!llvmOk && options.RequiresLlvmLibrary)
         {
             yield return Warning(
-                "libLLVM",
-                "the libLLVM backend library is missing; pass --llvm-lib, set STARK_LLVM_LIB, or use --toolchain-dir/STARK_TOOLCHAIN_DIR.");
+                "compiler backend",
+                "the compiler-private libLLVM runtime is missing; repair or re-extract the Stark SDK, or use the advanced --llvm-lib/STARK_LLVM_LIB/--toolchain-dir override while developing the compiler.");
         }
         else if (!llvmOk)
         {
             yield return Note(
-                "libLLVM",
-                "libLLVM is not bundled, but the active Stage0 textual LLVM backend does not require it; a direct libLLVM backend must provide the matching library.");
+                "compiler backend",
+                "the active Stage0 textual LLVM backend does not require libLLVM; a direct Stage1 backend must carry its matching private libLLVM runtime.");
         }
 
         if (!xcrunOk)
@@ -555,7 +698,7 @@ internal static class CompilerDoctor
 
         yield return Note(
             "native/vendor dependencies",
-            "package images may require pkg-config packages, explicit include/library directories, native sources, runtime DLL staging, or platform fallbacks; Stark releases remain relocatable archives and do not use package managers.");
+            "official SDK package images carry their native payloads and ordered link facts without pkg-config; package-author source builds may still use explicit discovery inputs and platform fallbacks.");
     }
 
     private static async Task<string> ReadToolVersionAsync(string toolPath, string versionArgument)

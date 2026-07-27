@@ -328,6 +328,12 @@ On x86_64 System V this emits the same carrier forms Clang uses: `Vector2` as
 `<2 x float>` carriers, and four-byte integer structs such as `Color` as one
 integer carrier. Larger aggregates use the target ABI's indirect form.
 
+Parameter and result carriers are separate facts. On AArch64 AAPCS64, a
+non-HFA/HVA integer-like aggregate of up to eight bytes uses an `i64` parameter
+carrier and an exact-width return carrier. Raylib `Color` is therefore passed
+as `i64` and returned as `i32`; 9-16 byte integer-like aggregates use
+`[2 x i64]`, and larger values are indirect.
+
 Packed-field safety: a packed (misaligned) field reads/writes through unaligned
 loads and stores; taking a **safe borrow** of one is a compile-time error;
 taking a **raw pointer** to one is allowed in unsafe code and preserves the
@@ -396,6 +402,11 @@ public unsafe fn ReadNumberResult ReadNumber()
 ## Native Package Metadata
 
 Put native requirements in the package that owns the wrapper:
+
+The following is a custom/source package authoring form. Official `Vendor.*`
+SDK packages already contain target-resolved, relative, checksummed native
+payload and link facts; applications import them without repeating metadata or
+running `pkg-config`.
 
 ```toml
 [native]

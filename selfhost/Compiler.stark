@@ -21,5 +21,6 @@ module Compiler
 
 // Stage 1 self-hosted Stark compiler (pre-/src-cutover staging package).
 // The C# host under src/ remains Stage 0 and the conformance oracle; this
-// package grows pass by pass per docs/Self-host-Prep/09 and moves to /src
+// package grows pass by pass per docs/Internals/SelfHostedCompilerArchitecture.md
+// and remains under /selfhost
 // (host renamed to /old_src) at the agreed cutover milestone.

@@ -2,7 +2,7 @@ namespace Stark.Compiler;
 
 /// <summary>
 /// The atomic operation surface shared by every System.Threading atomic type
-/// (docs/Self-host-Prep/12-atomics.md). RMW operations return the previous value;
+/// (docs/StandardLibrary/System.Threading.md). RMW operations return the previous value;
 /// CompareExchange returns whether the swap happened.
 /// </summary>
 internal enum SystemThreadingAtomicOperation

@@ -4,7 +4,7 @@ import System.Text
 module Compiler.TestRunner
 
 // Stage1 port of the generated-test-runner source emission
-// (docs/Self-host-Prep/30-test-progress-streaming.md §5.1). The emitted main
+// (docs/Internals/TestProgressProtocol.md §5.1). The emitted main
 // block is a cross-stage contract: for the same entry plan it must be
 // byte-identical to the stage0 generator's output
 // (src/Compiler/StarkTestRunnerGenerator.cs BuildRunnerSource), including the

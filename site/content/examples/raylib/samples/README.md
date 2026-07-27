@@ -17,6 +17,12 @@ carrier lowering for C-layout Raylib structs.
 The binding uses `[LinkName("...")]`, `[StructLayout(C)]`, and `ffi(c)` for
 direct calls, including small by-value structs such as `Vector2`, `Rectangle`,
 and `Color`. No Raylib-specific C shim is required for these aggregate carriers.
+On AArch64, `Color` is passed through an `i64` carrier and returned through
+`i32`; those directions intentionally use different ABI facts.
+
+An application using an installed SDK imports `Vendor.Raylib` and runs ordinary
+`stark build`/`stark run` commands. The local build steps below are specifically
+for binding authors rebuilding this standalone source package.
 
 Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. Callback typedefs are exposed as raw callback pointers until Stark has a dedicated C-callable callback ABI. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
 

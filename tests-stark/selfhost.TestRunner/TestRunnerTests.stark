@@ -6,7 +6,7 @@ import System.Testing
 module SelfhostTestRunnerTests
 
 // Regression facts for the stage1 generated-runner emission
-// (docs/Self-host-Prep/30-test-progress-streaming.md §5.1, T30.8). The plan
+// (docs/Internals/TestProgressProtocol.md §5.1). The plan
 // below mirrors tests/fixtures/test-progress/conformance exactly; the emitted
 // main block was byte-diffed against stage0's generated runner when this
 // landed, and these needles pin every protocol-bearing line so drift in
@@ -181,7 +181,7 @@ fn bool DriverStreamsSpawnedRunnerWithPrefixes()
     // /bin/echo stands in for a generated runner: with progress enabled the
     // driver appends `--progress` to the argv (echo prints it back) and
     // stamps every forwarded line with a `[N.Ns] ` monotonic prefix
-    // (30-test-progress-streaming.md §3.4). Full transcript parity against
+    // (docs/Internals/TestProgressProtocol.md §3.4). Full transcript parity against
     // the conformance-fixture goldens is exercised by the stage0 harness
     // (TestProgressProtocolTests) and was probe-verified for this component
     // when it landed.

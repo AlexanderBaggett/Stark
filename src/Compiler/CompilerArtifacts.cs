@@ -3774,8 +3774,11 @@ public sealed record AbiParameterSymbol(
             ? LlvmParameterTypes
             : [LlvmType];
 
+    public bool HasDistinctLlvmParameterCarriers =>
+        Kind == AbiParameterKind.Direct && LlvmParameterTypes is { Count: > 0 };
+
     public bool IsExpandedDirectParameter =>
-        Kind == AbiParameterKind.Direct && EffectiveLlvmParameterTypes.Count > 1;
+        HasDistinctLlvmParameterCarriers && LlvmParameterTypes!.Count > 1;
 
     public string GetLlvmValueName(int carrierIndex) =>
         IsExpandedDirectParameter
@@ -3807,7 +3810,7 @@ public sealed record AbiFunctionSignature(
         .ToArray();
 
     public IReadOnlyList<AbiParameterSymbol> LlvmParameters => Parameters
-        .SelectMany(static parameter => parameter.IsExpandedDirectParameter
+        .SelectMany(static parameter => parameter.HasDistinctLlvmParameterCarriers
             ? parameter.EffectiveLlvmParameterTypes.Select((carrierType, carrierIndex) => parameter with
             {
                 LlvmName = parameter.GetLlvmValueName(carrierIndex),

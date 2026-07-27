@@ -154,7 +154,7 @@ internal sealed class AbiLowerer
                 ? ffiParameterClassification!.EffectiveLlvmParameterTypes
                 : null;
             var llvmType = hasFfiParameterClassification
-                ? ffiParameterTypes![0]
+                ? ffiParameterClassification!.LlvmType
                 : LowerAbiValueType(parameter.Type, isFfi, forReturnValue: false);
 
             parameters.Add(new AbiParameterSymbol(
@@ -167,7 +167,8 @@ internal sealed class AbiLowerer
                 Kind: kind,
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression,
                 LlvmParameterTypes: kind == AbiParameterKind.Direct
-                    && ffiParameterTypes is { Count: > 1 }
+                    && ffiParameterTypes is { Count: > 0 }
+                    && (ffiParameterTypes.Count > 1 || ffiParameterTypes[0] != llvmType)
                     ? ffiParameterTypes
                     : null));
         }

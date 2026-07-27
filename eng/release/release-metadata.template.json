@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "outputPath": "release.json",
+  "staticValues": {
+    "releaseSchemaVersion": 2,
+    "sdkCompatibility": "stark-sdk-v1",
+    "packageImageFormat": "stark-package-v2",
+    "architecturePolicy": "64-bit-only",
+    "distributionModel": "odin-compatible-compiler-sdk"
+  },
+  "bindings": [
+    { "output": "releaseVersion", "source": "release.version", "required": true },
+    { "output": "starkVersion", "source": "release.version", "required": true },
+    { "output": "compilerVersion", "source": "compiler.informationalVersion", "required": true },
+    { "output": "gitCommit", "source": "source.commit", "required": true },
+    { "output": "source", "source": "source", "required": true },
+    { "output": "workflowIdentity", "source": "build.identity", "required": true },
+    { "output": "buildIdentity", "source": "build.identity", "required": true },
+    { "output": "buildOptions", "source": "build.options", "required": true },
+    { "output": "configuration", "source": "build.configurationInputs", "required": true },
+    { "output": "schemas", "source": "release.schemaVersions", "required": true },
+    { "output": "targetId", "source": "target.id", "required": true },
+    { "output": "targetFacts", "source": "target.releaseAndSdkFacts", "required": true },
+    { "output": "runtimeIdentifier", "source": "target.runtimeIdentifier", "required": true },
+    { "output": "defaultTargetTriple", "source": "target.targetTriple", "required": true },
+    { "output": "assetSuffix", "source": "target.assetSuffix", "required": true },
+    { "output": "archiveKind", "source": "target.archiveKind", "required": true },
+    { "output": "minimumOs", "source": "target.minimumOs", "required": true },
+    { "output": "minimumOsPolicyStatus", "source": "targets.minimumOsPolicyStatus", "required": true },
+    { "output": "hostPrerequisite", "source": "target.hostPrerequisite", "required": true },
+    { "output": "installerKind", "source": "target.installerKind", "required": true },
+    { "output": "supportTier", "source": "target.supportTier", "required": true },
+    { "output": "privateBackend", "source": "target.privateBackendSelection", "required": true },
+    { "output": "llvmVersion", "source": "dependency.llvm-22.1.8.version", "required": true },
+    { "output": "paths", "source": "archive.paths", "required": true },
+    { "output": "compilerPrivateBackend", "source": "archive.compilerPrivateBackend", "required": true },
+    { "output": "contentChecksumManifest", "source": "archive.contentChecksumManifest", "required": true },
+    { "output": "files", "source": "archive.fileInventory", "required": true },
+    { "output": "contentIdentities", "source": "archive.contentIdentities", "required": true },
+    { "output": "sdk", "source": "sdk.manifestIdentity", "required": true },
+    { "output": "packages", "source": "sdk.packageInventory", "required": true },
+    { "output": "packageSchemaFacts", "source": "sdk.packageSchemaFacts", "required": true },
+    { "output": "dependencies", "source": "release.dependencyInventory", "required": true },
+    { "output": "vendorCatalog", "source": "release.vendorCatalogInventory", "required": true }
+  ],
+  "installerDefaults": {
+    "installRootSource": "installer.platformDefaultRoot",
+    "pathMutation": "opt-in",
+    "installHostPrerequisites": "explicit-consent-only",
+    "networkRequiredForSdkPayload": false,
+    "preserveRelocatableTree": true
+  }
+}

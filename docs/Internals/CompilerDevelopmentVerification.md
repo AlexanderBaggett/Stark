@@ -213,7 +213,7 @@ normative artifacts are the fixtures and byte-exact goldens under
 `Compiler.TestDriver` for streaming/prefix/timeout execution) are
 golden-parity verified and pinned by `tests-stark/selfhost.TestRunner`;
 the full design record is
-docs/Self-host-Prep/30-test-progress-streaming.md.
+[Per-Test Progress Streaming Protocol](TestProgressProtocol.md).
 
 ## Diagnostic Probes
 

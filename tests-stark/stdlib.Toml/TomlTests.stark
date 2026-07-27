@@ -469,10 +469,10 @@ fn bool MultilineLiteralStringIsVerbatim()
 {
     // Multiline literal strings apply no escapes and no line continuation; the
     // leading newline after `'''` is trimmed and everything else is verbatim.
-    //   path = '''<newline>C:\Users\nodejs\templates'''
+    //   path = '''<newline>C:\workspace\templates'''
     unsafe
     {
-        switch (ParseText("path = '''\nC:\\Users\\nodejs\\templates'''\n"))
+        switch (ParseText("path = '''\nC:\\workspace\\templates'''\n"))
         {
             case TomlResult<TomlDocument>.Err(var error):
                 return false;
@@ -485,7 +485,7 @@ fn bool MultilineLiteralStringIsVerbatim()
                 }
 
                 return document.KindAt(path) == TomlKind.Text
-                    && document.TextAt(path) == "C:\\Users\\nodejs\\templates";
+                    && document.TextAt(path) == "C:\\workspace\\templates";
         }
     }
 }

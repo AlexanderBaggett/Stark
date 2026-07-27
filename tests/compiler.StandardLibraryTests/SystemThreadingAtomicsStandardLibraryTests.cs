@@ -3,7 +3,7 @@ using Stark.Compiler;
 namespace compiler.StandardLibraryTests;
 
 /// <summary>
-/// Atomics (docs/Self-host-Prep/12-atomics.md): the System.Threading atomic types are
+/// Atomics (docs/StandardLibrary/System.Threading.md): the System.Threading atomic types are
 /// stdlib structs whose semicolon-bodied methods lower through compiler-known builtins
 /// onto LLVM atomic instructions (atomicrmw / cmpxchg / load atomic / store atomic),
 /// seq-cst only. Tier 1 (8/16/32/64-bit + bool) must lower to single hardware
@@ -646,7 +646,15 @@ public sealed class SystemThreadingAtomicsStandardLibraryTests : StandardLibrary
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [
+                    appPath,
+                    "--emit-exe",
+                    "--sdk-root", repositoryRoot,
+                    "--no-stark-path",
+                    "-I", packageDirectory,
+                    "-o", outputPath,
+                    "--target", targetInfo.Triple
+                ],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

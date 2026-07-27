@@ -1,0 +1,419 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "stark-official-vendor-v1",
+  "targetPolicy": "Every listed target is release-required; acquisition may use a reviewed binary or a reproducible pinned-source build, never ambient pkg-config.",
+  "packages": [
+    {
+      "id": "Vendor.Raylib",
+      "nativePayloadOwner": "Vendor.Raylib",
+      "modules": [
+        "Vendor.Raylib",
+        "Vendor.Raylib.Core",
+        "Vendor.Raylib.Shapes",
+        "Vendor.Raylib.Textures",
+        "Vendor.Raylib.Text",
+        "Vendor.Raylib.Models",
+        "Vendor.Raylib.Audio",
+        "Vendor.Raylib.Types",
+        "Vendor.Raylib.Owners"
+      ],
+      "version": "6.0",
+      "upstreamUrl": "https://github.com/raysan5/raylib",
+      "sourceIdentity": "tag:6.0",
+      "license": "Zlib",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/raylib/LICENSE"
+      ],
+      "buildRecipe": "scripts/prepare-raylib-release-input.ps1",
+      "acquisitionManifest": "scripts/raylib-6.0-assets.json",
+      "binaryInputs": [
+        { "target": "linux-x64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz", "sha256": "b64ba618a19e7da9e9c0e09bb398ecfd477a77d2d7231901bafc8739d27c08d2" },
+        { "target": "windows-x64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_msvc16.zip", "sha256": "c93c7dc74576e00e3ee57fa2bd5fd109fbfc5aca87e12046dd7ec2c2268b3f78" },
+        { "target": "macos-arm64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_macos.tar.gz", "sha256": "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70" }
+      ],
+      "targetSupport": {
+        "linux-x64": "required-binary",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-binary",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-binary"
+      },
+      "systemLinkFacts": {
+        "linux": ["GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"],
+        "windows": ["opengl32", "gdi32", "winmm"],
+        "macos": ["CoreVideo", "IOKit", "Cocoa", "GLUT", "OpenGL"]
+      }
+    },
+    {
+      "id": "Vendor.Raymath",
+      "nativePayloadOwner": "Vendor.Raylib",
+      "modules": ["Vendor.Raymath"],
+      "version": "6.0",
+      "upstreamUrl": "https://github.com/raysan5/raylib",
+      "sourceIdentity": "tag:6.0",
+      "license": "Zlib",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/raylib/LICENSE"
+      ],
+      "buildRecipe": "scripts/prepare-raylib-release-input.ps1",
+      "dependencies": ["Vendor.Raylib"],
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": { "linux": [], "windows": [], "macos": [] }
+    },
+    {
+      "id": "Vendor.Rlgl",
+      "nativePayloadOwner": "Vendor.Raylib",
+      "modules": ["Vendor.Rlgl"],
+      "version": "6.0",
+      "upstreamUrl": "https://github.com/raysan5/raylib",
+      "sourceIdentity": "tag:6.0",
+      "license": "Zlib",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/raylib/LICENSE"
+      ],
+      "buildRecipe": "scripts/prepare-raylib-release-input.ps1",
+      "dependencies": ["Vendor.Raylib"],
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": { "linux": [], "windows": [], "macos": [] }
+    },
+    {
+      "id": "Vendor.STB.Image",
+      "nativePayloadOwner": "Vendor.STB.Image",
+      "modules": ["Vendor.STB.Image"],
+      "version": "commit-31c1ad37456438565541f4919958214b6e762fb4",
+      "upstreamUrl": "https://github.com/nothings/stb",
+      "sourceIdentity": "commit:31c1ad37456438565541f4919958214b6e762fb4",
+      "license": "MIT OR Unlicense",
+      "licenseEvidencePaths": [
+        "vendor/native/stb/stb_image.h",
+        "vendor/native/stb/stb_image_write.h",
+        "vendor/native/stb/stb_image_resize2.h"
+      ],
+      "sourceFiles": [
+        { "path": "vendor/native/stb/stb_image.h", "sha256": "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3" },
+        { "path": "vendor/native/stb/stb_image_write.h", "sha256": "cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05" },
+        { "path": "vendor/native/stb/stb_image_resize2.h", "sha256": "173e654634f6ccaad98f603e686ea212eec1fe8ea6d2a5e5e8056efa10ae3880" }
+      ],
+      "buildRecipe": "scripts/prepare-core-vendor-release-input.ps1",
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": { "linux": [], "windows": [], "macos": [] }
+    },
+    {
+      "id": "Vendor.Miniaudio",
+      "nativePayloadOwner": "Vendor.Miniaudio",
+      "modules": ["Vendor.Miniaudio"],
+      "version": "0.11.25",
+      "upstreamUrl": "https://github.com/mackron/miniaudio",
+      "sourceIdentity": "commit:9634bedb5b5a2ca38c1ee7108a9358a4e233f14d",
+      "license": "MIT-0 OR Unlicense",
+      "licenseEvidencePaths": ["vendor/native/miniaudio/miniaudio.h"],
+      "sourceFiles": [
+        { "path": "vendor/native/miniaudio/miniaudio.h", "sha256": "ac7af4de748b7e26b777f37e01cee313a308a7296a3eb080e2906b320cc55c89" }
+      ],
+      "buildRecipe": "scripts/prepare-core-vendor-release-input.ps1",
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": {
+        "linux": ["dl", "m", "pthread"],
+        "windows": ["ole32", "user32", "advapi32"],
+        "macos": ["AudioToolbox", "CoreAudio", "CoreFoundation"]
+      }
+    },
+    {
+      "id": "Vendor.Cgltf",
+      "nativePayloadOwner": "Vendor.Cgltf",
+      "modules": ["Vendor.Cgltf"],
+      "version": "1.15",
+      "upstreamUrl": "https://github.com/jkuhlmann/cgltf",
+      "sourceIdentity": "commit:360db1a95480fe102ae9c69b27c5d101167ff5ba",
+      "license": "MIT",
+      "licenseEvidencePaths": ["vendor/native/cgltf/cgltf.h"],
+      "sourceFiles": [
+        { "path": "vendor/native/cgltf/cgltf.h", "sha256": "e378a21c084bf1f288bb799de827bb26906efb024255f1ecf1705ea13f11c6ec" }
+      ],
+      "buildRecipe": "scripts/prepare-core-vendor-release-input.ps1",
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": { "linux": [], "windows": [], "macos": [] }
+    },
+    {
+      "id": "Vendor.GLFW",
+      "nativePayloadOwner": "Vendor.GLFW",
+      "modules": ["Vendor.GLFW"],
+      "version": "3.4",
+      "upstreamUrl": "https://github.com/glfw/glfw",
+      "sourceIdentity": "tag:3.4",
+      "license": "Zlib",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/glfw/LICENSE.md"
+      ],
+      "buildRecipe": "scripts/prepare-glfw-vendor-release-input.ps1",
+      "sourceInput": {
+        "name": "glfw-3.4.zip",
+        "url": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip",
+        "sha256": "b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9",
+        "size": 1653725,
+        "stripPrefix": "glfw-3.4"
+      },
+      "sourceBuildOptions": {
+        "libraryType": "static",
+        "configuration": "release",
+        "optimization": "O3",
+        "lto": "thin",
+        "deterministicArchive": true,
+        "toolchain": "bundled-llvm",
+        "linuxWindowSystem": "x11-only",
+        "wayland": false,
+        "eventBridge": "compiled-into-native-archive",
+        "perApplicationNativeSourceCompilation": false,
+        "linuxBuildHostPrerequisites": [
+          "X11 development headers (compile-time only; GLFW dynamically loads X11 and extensions at runtime)"
+        ]
+      },
+      "binaryInputs": [
+        {
+          "target": "macos-arm64",
+          "name": "glfw-3.4.bin.MACOS.zip",
+          "url": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.MACOS.zip",
+          "sha256": "6775085bdae60312a3002bff2e39779a83bc72a7e1c810bd806fddb00cb35fd0",
+          "size": 1351252,
+          "archiveRoot": "glfw-3.4.bin.MACOS"
+        }
+      ],
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-binary"
+      },
+      "systemLinkFacts": {
+        "linux": ["pthread", "dl", "rt", "m"],
+        "windows": ["gdi32", "user32", "shell32"],
+        "macos": ["Cocoa", "IOKit", "CoreFoundation"]
+      }
+    },
+    {
+      "id": "Vendor.SDL3",
+      "nativePayloadOwner": "Vendor.SDL3",
+      "modules": ["Vendor.SDL3"],
+      "version": "3.4.10",
+      "upstreamUrl": "https://github.com/libsdl-org/SDL",
+      "sourceIdentity": "archive:SDL3-3.4.10.tar.gz",
+      "sourceUrl": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz",
+      "sourceSha256": "12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785",
+      "sourceSize": 15606216,
+      "sourcePayloadRoot": "SDL3-3.4.10",
+      "sourceDateEpoch": 1780249121,
+      "sourceArchiveFiles": [
+        { "path": "CMakeLists.txt", "bytes": 147423, "sha256": "dfee8b830d8b80456a71bd5e91f69c2efac391024d8f65adb6e8714ae694298c" },
+        { "path": "LICENSE.txt", "bytes": 884, "sha256": "1c040b8271b37e5076359f8fd54240e371114112924d2df81ef87c7d6a1dfdfd" },
+        { "path": "include/SDL3/SDL.h", "bytes": 2986, "sha256": "99cfa6d497d1f2bbf973ad0581333e9895f28737b50d4d0cc2d22cdd40c4d11d" }
+      ],
+      "license": "Zlib",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/sdl3/LICENSE.txt"
+      ],
+      "sourceLicensePath": "LICENSE.txt",
+      "buildRecipe": "scripts/prepare-sdl3-vendor-release-input.ps1",
+      "buildTools": {
+        "cmake": { "version": "3.31.6", "acquisition": "workflow-must-provide-reviewed-pinned-binary" },
+        "ninja": { "version": "1.12.1", "acquisition": "workflow-must-provide-reviewed-pinned-binary" }
+      },
+      "sourceBuildOptions": {
+        "configuration": "Release",
+        "optimization": "O3",
+        "lto": "thin",
+        "deterministicArchive": true,
+        "pkgConfigDiscovery": false,
+        "adapterCompiledIntoNativeArchive": true,
+        "commonCmakeOptions": [
+          "SDL_SHARED=OFF", "SDL_STATIC=ON", "SDL_TEST_LIBRARY=OFF", "SDL_TESTS=OFF",
+          "SDL_EXAMPLES=OFF", "SDL_INSTALL=OFF", "SDL_UNINSTALL=OFF", "SDL_PRESEED=OFF",
+          "SDL_ASSERTIONS=disabled", "SDL_ASSEMBLY=ON",
+          "SDL_AUDIO=ON", "SDL_VIDEO=ON", "SDL_GPU=ON", "SDL_RENDER=ON", "SDL_CAMERA=ON",
+          "SDL_JOYSTICK=ON", "SDL_HAPTIC=ON", "SDL_HIDAPI=ON", "SDL_POWER=ON", "SDL_SENSOR=ON",
+          "SDL_DIALOG=ON", "SDL_TRAY=ON", "SDL_LIBC=ON", "SDL_LIBICONV=OFF",
+          "SDL_DISKAUDIO=ON", "SDL_DUMMYAUDIO=ON", "SDL_DUMMYVIDEO=ON", "SDL_DUMMYCAMERA=ON",
+          "SDL_OPENGL=ON", "SDL_OPENGLES=ON", "SDL_RENDER_GPU=ON", "SDL_VULKAN=ON",
+          "SDL_RENDER_VULKAN=ON", "SDL_OPENVR=OFF", "SDL_OFFSCREEN=ON",
+          "SDL_HIDAPI_LIBUSB=OFF", "SDL_HIDAPI_JOYSTICK=ON", "SDL_VIRTUAL_JOYSTICK=ON",
+          "SDL_ASAN=OFF", "SDL_CCACHE=OFF", "SDL_CLANG_TIDY=OFF", "SDL_RPATH=OFF",
+          "SDL_DLOPEN_NOTES=OFF", "SDL_BACKGROUNDING_SIGNAL=OFF", "SDL_FOREGROUNDING_SIGNAL=OFF"
+        ],
+        "targetCmakeOptions": {
+          "linux-x64": [
+            "SDL_DEPS_SHARED=ON", "SDL_SYSTEM_ICONV=ON", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=ON", "SDL_AVX2=ON", "SDL_AVX512F=ON", "SDL_SSE=ON", "SDL_SSE2=ON",
+            "SDL_SSE3=ON", "SDL_SSE4_1=ON", "SDL_SSE4_2=ON", "SDL_MMX=ON", "SDL_ARMNEON=OFF",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=ON",
+            "SDL_PTHREADS_SEM=ON", "SDL_OSS=OFF", "SDL_ALSA=ON", "SDL_ALSA_SHARED=ON",
+            "SDL_JACK=OFF", "SDL_PIPEWIRE=OFF", "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF",
+            "SDL_CLOCK_GETTIME=ON", "SDL_X11=ON", "SDL_X11_SHARED=ON", "SDL_X11_XCURSOR=ON",
+            "SDL_X11_XDBE=ON", "SDL_X11_XINPUT=ON", "SDL_X11_XFIXES=ON", "SDL_X11_XRANDR=ON",
+            "SDL_X11_XSCRNSAVER=ON", "SDL_X11_XSHAPE=ON", "SDL_X11_XSYNC=ON", "SDL_X11_XTEST=ON",
+            "SDL_FRIBIDI=OFF", "SDL_LIBTHAI=OFF", "SDL_WAYLAND=OFF", "SDL_WAYLAND_LIBDECOR=OFF",
+            "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=OFF", "SDL_DIRECTX=OFF", "SDL_XINPUT=OFF",
+            "SDL_WASAPI=OFF", "SDL_RENDER_D3D=OFF", "SDL_RENDER_D3D11=OFF", "SDL_RENDER_D3D12=OFF",
+            "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF", "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF",
+            "SDL_LIBUDEV=ON"
+          ],
+          "windows-x64": [
+            "SDL_DEPS_SHARED=OFF", "SDL_SYSTEM_ICONV=OFF", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=ON", "SDL_AVX2=ON", "SDL_AVX512F=ON", "SDL_SSE=ON", "SDL_SSE2=ON",
+            "SDL_SSE3=ON", "SDL_SSE4_1=ON", "SDL_SSE4_2=ON", "SDL_MMX=ON", "SDL_ARMNEON=OFF",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=OFF",
+            "SDL_OSS=OFF", "SDL_ALSA=OFF", "SDL_JACK=OFF", "SDL_PIPEWIRE=OFF",
+            "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF", "SDL_CLOCK_GETTIME=OFF", "SDL_X11=OFF",
+            "SDL_WAYLAND=OFF", "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=OFF",
+            "SDL_DIRECTX=ON", "SDL_XINPUT=ON", "SDL_WASAPI=ON", "SDL_RENDER_D3D=ON",
+            "SDL_RENDER_D3D11=ON", "SDL_RENDER_D3D12=ON", "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF",
+            "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF", "SDL_LIBUDEV=OFF"
+          ],
+          "macos-arm64": [
+            "SDL_DEPS_SHARED=OFF", "SDL_SYSTEM_ICONV=OFF", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=OFF", "SDL_AVX2=OFF", "SDL_AVX512F=OFF", "SDL_SSE=OFF", "SDL_SSE2=OFF",
+            "SDL_SSE3=OFF", "SDL_SSE4_1=OFF", "SDL_SSE4_2=OFF", "SDL_MMX=OFF", "SDL_ARMNEON=ON",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=ON",
+            "SDL_PTHREADS_SEM=ON", "SDL_OSS=OFF", "SDL_ALSA=OFF", "SDL_JACK=OFF",
+            "SDL_PIPEWIRE=OFF", "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF", "SDL_CLOCK_GETTIME=OFF",
+            "SDL_X11=OFF", "SDL_WAYLAND=OFF", "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=ON",
+            "SDL_DIRECTX=OFF", "SDL_XINPUT=OFF", "SDL_WASAPI=OFF", "SDL_RENDER_D3D=OFF",
+            "SDL_RENDER_D3D11=OFF", "SDL_RENDER_D3D12=OFF", "SDL_RENDER_METAL=ON", "SDL_METAL=ON",
+            "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF", "SDL_LIBUDEV=OFF"
+          ]
+        }
+      },
+      "requiredBuildDefines": {
+        "linux-x64": ["SDL_AUDIO_DRIVER_ALSA", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_LINUX", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_X11", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_VULKAN"],
+        "windows-x64": ["SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DSOUND", "SDL_AUDIO_DRIVER_DUMMY", "SDL_AUDIO_DRIVER_WASAPI", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_RAWINPUT", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_WINDOWS", "SDL_VIDEO_RENDER_D3D", "SDL_VIDEO_RENDER_D3D11", "SDL_VIDEO_RENDER_D3D12", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_D3D12", "SDL_GPU_VULKAN"],
+        "macos-arm64": ["SDL_AUDIO_DRIVER_COREAUDIO", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_CAMERA_DRIVER_COREMEDIA", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_IOKIT", "SDL_VIDEO_DRIVER_COCOA", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_METAL", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_METAL", "SDL_GPU_VULKAN"]
+      },
+      "nativeLinkFacts": {
+        "linux-x64": { "libraries": ["SDL3", "m"], "linkArguments": ["-pthread"] },
+        "windows-x64": { "libraries": ["SDL3", "kernel32", "user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32", "version", "uuid", "advapi32", "setupapi", "shell32", "dinput8"], "linkArguments": [] },
+        "macos-arm64": {
+          "libraries": ["SDL3", "m"],
+          "linkArguments": ["-lpthread", "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "Cocoa", "-weak_framework", "UniformTypeIdentifiers", "-framework", "IOKit", "-framework", "ForceFeedback", "-framework", "Carbon", "-framework", "CoreAudio", "-framework", "AudioToolbox", "-framework", "AVFoundation", "-framework", "Foundation", "-framework", "GameController", "-framework", "Metal", "-framework", "QuartzCore", "-weak_framework", "CoreHaptics"]
+        }
+      },
+      "cmakeStaticInterface": {
+        "linux-x64": {
+          "libraries": ["library:m", "target:SDL3::Headers"],
+          "linkOptions": ["-pthread"]
+        },
+        "windows-x64": {
+          "libraries": ["library:kernel32", "library:user32", "library:gdi32", "library:winmm", "library:imm32", "library:ole32", "library:oleaut32", "library:version", "library:uuid", "library:advapi32", "library:setupapi", "library:shell32", "library:dinput8", "target:SDL3::Headers"],
+          "linkOptions": []
+        },
+        "macos-arm64": {
+          "libraries": ["library:m", "framework:CoreMedia", "framework:CoreVideo", "framework:Cocoa", "weak-framework:UniformTypeIdentifiers", "framework:IOKit", "framework:ForceFeedback", "framework:Carbon", "framework:CoreAudio", "framework:AudioToolbox", "framework:AVFoundation", "framework:Foundation", "framework:GameController", "framework:Metal", "framework:QuartzCore", "weak-framework:CoreHaptics", "target:SDL3::Headers"],
+          "linkOptions": ["-lpthread"]
+        }
+      },
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": {
+        "linux": ["m", "pthread"],
+        "windows": ["kernel32", "user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32", "version", "uuid", "advapi32", "setupapi", "shell32", "dinput8"],
+        "macos": ["m", "pthread", "CoreMedia", "CoreVideo", "Cocoa", "UniformTypeIdentifiers (weak)", "IOKit", "ForceFeedback", "Carbon", "CoreAudio", "AudioToolbox", "AVFoundation", "Foundation", "GameController", "Metal", "QuartzCore", "CoreHaptics (weak)"]
+      }
+    },
+    {
+      "id": "Vendor.SQLite",
+      "nativePayloadOwner": "Vendor.SQLite",
+      "modules": ["Vendor.SQLite", "Vendor.SQLite.Core", "Vendor.SQLite.Raw", "Vendor.SQLite.Types"],
+      "version": "3.53.2",
+      "upstreamUrl": "https://sqlite.org",
+      "sourceIdentity": "archive:sqlite-amalgamation-3530200.zip",
+      "sourceUrl": "https://sqlite.org/2026/sqlite-amalgamation-3530200.zip",
+      "sourceSha256": "8a310d0a16c7a90cacd4c884e70faa51c902afed2a89f63aaa0126ab83558a32",
+      "sourceSize": 2943292,
+      "sourcePayloadRoot": "sqlite-amalgamation-3530200",
+      "sourceDateEpoch": 1780496820,
+      "sourceArchiveFiles": [
+        { "path": "sqlite3.c", "bytes": 9507037, "sha256": "0a409f1633283fa31a9126b11fbfd64a1991c5d30defad07e5745d4667f5e23d" },
+        { "path": "sqlite3.h", "bytes": 690725, "sha256": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e" },
+        { "path": "sqlite3ext.h", "bytes": 39175, "sha256": "ac9645e5c9ff0cf176efdd6e75cb5e98f46295d38e02db5c4d208826a39ab4be" }
+      ],
+      "compileDefinitions": [
+        "SQLITE_THREADSAFE=1",
+        "SQLITE_ENABLE_FTS5=1",
+        "SQLITE_ENABLE_RTREE=1",
+        "SQLITE_ENABLE_GEOPOLY=1",
+        "SQLITE_ENABLE_COLUMN_METADATA=1",
+        "SQLITE_ENABLE_DBSTAT_VTAB=1",
+        "SQLITE_ENABLE_EXPLAIN_COMMENTS=1",
+        "SQLITE_ENABLE_MATH_FUNCTIONS=1",
+        "SQLITE_ENABLE_NORMALIZE=1",
+        "SQLITE_ENABLE_STMT_SCANSTATUS=1",
+        "SQLITE_ENABLE_UNLOCK_NOTIFY=1",
+        "SQLITE_ENABLE_PREUPDATE_HOOK=1",
+        "SQLITE_ENABLE_CARRAY=1",
+        "SQLITE_ENABLE_SNAPSHOT=1"
+      ],
+      "adapterCompileDefinitions": [
+        "STARK_SQLITE_BUNDLED_FEATURES=1"
+      ],
+      "license": "blessing",
+      "licenseEvidencePaths": [
+        "vendor/dist/arm64-apple-macosx26.0.0/native/sqlite/sqlite3.h"
+      ],
+      "buildRecipe": "scripts/prepare-sqlite-vendor-release-input.ps1",
+      "targetSupport": {
+        "linux-x64": "required-source-build",
+        "linux-arm64": "required-source-build",
+        "windows-x64": "required-source-build",
+        "windows-arm64": "required-source-build",
+        "macos-x64": "required-source-build",
+        "macos-arm64": "required-source-build"
+      },
+      "systemLinkFacts": {
+        "linux": ["dl", "m", "pthread"],
+        "windows": [],
+        "macos": []
+      }
+    }
+  ]
+}

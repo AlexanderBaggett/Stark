@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);CS3021</NoWarn>
+    <RuntimeFrameworkVersion>10.0.10</RuntimeFrameworkVersion>
     <AntlrGrammar>$(MSBuildProjectDirectory)/../Stark.g4</AntlrGrammar>
     <!-- Dependency-module compiles run in parallel; workstation GC throttles the
          allocation-heavy concurrent pipelines to roughly two effective cores. -->
@@ -13,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.1" />
+    <PackageReference Include="Antlr4.Runtime.Standard" Version="[4.13.1]" />
     <None Include="$(AntlrGrammar)" Link="Stark.g4" Visible="false" />
   </ItemGroup>
 

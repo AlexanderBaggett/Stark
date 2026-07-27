@@ -1992,7 +1992,7 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .Any(UsesLargeZeroInitializedAggregateStore)
-            || _allAbiFunctions.Values.Any(static function => function.UserParameters.Any(static parameter => parameter.IsExpandedDirectParameter));
+            || _allAbiFunctions.Values.Any(static function => function.UserParameters.Any(static parameter => parameter.HasDistinctLlvmParameterCarriers));
     }
 
     private bool UsesHeapAllocator()

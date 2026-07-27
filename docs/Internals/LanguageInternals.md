@@ -309,13 +309,27 @@ been removed from `stdlib/src`, and package images are expected to contain only
 canonical modules and root re-exports.
 
 Vendor bindings live under a separate bundled `Vendor.*` root rather than inside
-`System.*`. The project driver treats `Vendor` as a second bundled-library
-family backed by the repo or installed `vendor` directory, with the same
-stage-local, `dist` package-image, `src` source-tree, and installed-bundle
-discovery tiers used for `System`/`stdlib`. Native-backed vendor packages are
-expected to carry package-image native dependency metadata so final executable
-links get the required C sources, `pkg-config` packages, libraries, and user
-configured fallback paths without a package manager.
+`System.*`. In a release SDK, both namespaces resolve through the exact
+module-to-package ownership index in `<sdk-root>/sdk.json`; the compiler does
+not scan a nearby `vendor` directory, walk project ancestors, or consult
+`STARK_PATH`. A development or bootstrap SDK may expose source and stage roots,
+but those roots are explicit relative paths in its manifest and do not change
+the namespace ownership rule.
+
+An official native-backed vendor package is a complete, target-specific SDK
+asset. Its package image preserves the Stark/LLVM ABI and optimization facts,
+its Stark archive carries the compiled wrappers, and its package-local native
+directory carries the required native archives, headers, licenses, runtime
+files, and ordered link facts. Every path stored in a release manifest is
+relative to the SDK root, every required file is checksummed, and release
+packages contain no unresolved `pkg-config` query or machine-local path. The
+final linker receives only the selected package graph; unused vendor packages
+are not loaded or linked. `pkg-config`, user paths, and source-native fallback
+remain authoring inputs for custom or development packages, not installation
+steps for an application importing an official `Vendor.*` module.
+The complete discovery and archive contract is in
+[SDK Layout and Resolution](SdkLayoutAndResolution.md); the serialized compiler
+and native fact contract is in [Stark Package Image](PackageImage.md).
 Safe public vendor surfaces should keep raw handles and ABI-only carrier shapes
 inside the binding whenever possible. For example, `Vendor.SDL3` exposes safe
 Stark handles and result enums while its package-owned `Sdl3Binding.c` adapter
@@ -505,17 +519,53 @@ forms:
 - aggregates larger than 16 bytes, misaligned aggregates, and unclassifiable
   shapes use the target ABI's indirect form (`sret`, `byval`, or equivalent).
 
-The ABI model can represent zero, one, or many LLVM values for one Stark source
-parameter. `AbiParameterSymbol.LlvmParameterTypes` stores expanded parameter
-carriers; the return `LlvmType` stores the direct return carrier or the indirect
-source aggregate as appropriate. LLVM declaration, call, return, and function
-pointer emission must render the lowered carrier list rather than the source
-parameter list.
+On AArch64 AAPCS64, the currently implemented non-HFA/HVA integer-like
+aggregate slice follows Clang's distinction between argument and result
+carriers:
 
-Package images preserve these facts. Compiler-facts ABI manifests serialize the
-source type, return carrier, and expanded parameter carrier list so downstream
-packages can emit the same external declaration even when the original Stark
-source file is absent.
+- a parameter no larger than 8 bytes is copied into one general-purpose
+  register and represented as an `i64` carrier, with bytes above the aggregate
+  value treated as padding
+- a return no larger than 8 bytes uses its exact integer width, such as `i32`
+  for a four-byte aggregate
+- a 9-16 byte parameter or return uses `[2 x i64]`
+- an aggregate larger than 16 bytes uses the target ABI's indirect form
+
+Consequently, parameter and return carriers are independent facts even when
+the source type is the same. Raylib's four-byte `Color` is the canonical
+example: a direct C call returns it as `i32` but passes it as `i64`. Reusing the
+return carrier for the parameter would place only the first byte correctly on
+Apple arm64, producing corrupt colors or a zero alpha channel. Homogeneous
+floating-point/vector aggregate classification remains a distinct AAPCS64
+path; it must not be coerced through the integer-like rule.
+
+The ABI model can represent one or many physical LLVM values for one Stark
+source parameter. `AbiParameterSymbol.LlvmType` retains the canonical direct
+aggregate carrier, while `LlvmParameterTypes` records a distinct physical
+parameter-carrier sequence. That sequence is significant even when it contains
+only one value: AArch64 `Color` has canonical `i32` and physical parameter list
+`[i64]`. Multi-register System V aggregates use the same field for sequences
+such as `[<2 x float>, <2 x float>]`. LLVM declarations, definitions, calls,
+function-entry reconstruction, and function pointers must consume the physical
+carrier sequence; return lowering must consume the independently classified
+return carrier.
+
+Package images preserve all three facts. Compiler-facts ABI manifests serialize
+the source type, canonical aggregate carrier, and physical parameter-carrier
+sequence—including a one-element sequence that differs from the canonical
+carrier—so downstream packages emit the same external declaration when the
+original Stark source file is absent.
+
+This makes compiler and SDK publication an atomic ABI operation. If target ABI
+classification or carrier packing changes, every affected official package
+image and wrapper archive must be rebuilt with that compiler before an SDK is
+assembled. Replacing only `bin/stark` while retaining an older
+`Vendor.Raylib.starkpkg` or `libVendorRaylib.a` is unsupported even when the
+source declarations did not change. SDK API/content identities and file
+checksums bind the exact artifacts selected during assembly and prevent later
+substitution. Clean package rebuilding plus release qualification that executes
+native by-value parameter and return round trips are what detect a semantically
+stale wrapper at publication time.
 
 ## 4. Runtime and C-Runtime Boundaries
 

@@ -53,15 +53,20 @@ math-core = { path = "../math-core" }
 Test projects compile to executables. Return `0` for success.
 
 Project manifests do not list the bundled standard library or official vendor
-library as dependencies. `System.*` imports resolve through the `stdlib`
-bundled-library search path, and `Vendor.*` imports resolve through the
-`vendor` bundled-library search path. Use `[dependencies]` only for ordinary
-project/package dependencies outside those bundled roots.
+library as dependencies. Installed `System.*` and `Vendor.*` imports resolve
+through the exact ownership index in the active SDK's `sdk.json`; development
+source/package roots are explicit SDK-manifest inputs. Use `[dependencies]`
+only for ordinary project/package dependencies outside those reserved roots.
 
 ## Native-Backed Library
 
 Native-backed packages own their native metadata so consumers do not repeat
 linker flags.
+
+The example below is a custom/source package authoring surface. An installed
+official `Vendor.Raylib` package is already target-built and carries relative,
+checksummed native payload and link facts in the SDK; applications import it
+without this manifest, `pkg-config`, or user native paths.
 
 ```toml
 [project]
@@ -218,8 +223,8 @@ module App
 geometry = { path = "../geometry" }
 ```
 
-`System.*` and `Vendor.*` imports are the exception: they are routed through
-bundled-library discovery and do not get `[dependencies]` entries.
+`System.*` and official `Vendor.*` imports are the exception: they are routed
+through the active SDK index and do not get `[dependencies]` entries.
 
 ## Output Layout
 
@@ -236,15 +241,13 @@ build/<profile>/<target-triple>/stage0/vendor
 .stark/packages
 ```
 
-Project builds search bundled library roots by import family: `System.*` uses
-`stdlib`, and `Vendor.*` uses `vendor`. For each root, discovery checks the
-active stage directory first, then nearest repo `dist` package images, then
-nearest repo `src` source tree for source-tree development, then bundled
-artifacts next to the active compiler distribution. Project builds ignore
-`STARK_PATH`; declare package dependencies in manifests or use direct compiler
-`-I` for low-level compiler invocations.
-Failed `System.*` and `Vendor.*` imports report every searched bundled-library
-path plus the active profile, target, and stage.
+Project builds resolve installed `System.*` and official `Vendor.*` modules from
+the exact active `sdk.json` package index. Stage and development source/package
+roots are explicit SDK-manifest inputs; project ancestors and nearby
+`stdlib`/`vendor` directories are not searched. Project builds ignore
+`STARK_PATH`; declare ordinary dependencies in manifests or use direct compiler
+`-I` for low-level development invocations. Failed reserved imports report the
+selected SDK/stage context plus the active profile, target, and stage.
 
 When a normal source/package search root is indexed, nested `.stark` build
 artifact manifests are ignored so stale package images under a project's build

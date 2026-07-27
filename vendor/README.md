@@ -5,6 +5,19 @@ native libraries. It is separate from `System` so the standard library can stay
 small and portable while common native bindings are still available without a
 package manager.
 
+For an installed release SDK, using one of these bindings is an application
+operation, not a native-library setup task:
+
+```stark
+import Vendor.Raylib
+```
+
+Do not add an official vendor package to `[dependencies]`, install a second copy
+of its native library, or configure `pkg-config`, `STARK_PATH`, `-I`, or `-L`.
+The SDK's `sdk.json` selects the exact target package and supplies all link
+facts. The build scripts documented below are for compiler contributors and
+source-package authors rebuilding the vendor artifacts themselves.
+
 ## Native Payloads
 
 Native-backed vendor packages ship target-local headers, static libraries, and
@@ -18,7 +31,9 @@ namespace below that directory. The current macOS arm64 payload is under
 and SQLite.
 
 Build scripts prefer bundled target-local payloads when present, then fall back
-to `pkg-config` or explicit environment variables for local development.
+to `pkg-config` or explicit environment variables for local development. A
+release SDK never performs that fallback: a missing or mismatched advertised
+payload is an SDK-integrity error reported by `stark doctor --strict`.
 
 ## Miniaudio
 
@@ -188,6 +203,10 @@ as `Vector2`, `Vector3`, `Vector4`, `Rectangle`, and `Color` bind directly
 through Stark's C ABI aggregate carrier lowering. Platform C types stay
 header-shaped at the FFI boundary; for example `GetFileModTime` returns
 `System.C.c_long` internally and widens to the public Stark `i64` wrapper.
+On AArch64, the four-byte `Color` type is returned with an exact `i32` carrier
+but passed with the ABI-rounded `i64` parameter carrier. The package image and
+wrapper archive must therefore be rebuilt whenever compiler carrier lowering
+changes; copying a new compiler over an older SDK package is unsupported.
 
 Build the package image with:
 

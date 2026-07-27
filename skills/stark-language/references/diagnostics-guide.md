@@ -383,6 +383,12 @@ geometry = { path = "../geometry" }
 
 For native package errors, fix the package that owns the FFI boundary.
 
+For an installed official `Vendor.*` package, first run
+`stark doctor --strict`. A missing native artifact or checksum mismatch is an
+SDK-integrity failure; do not add `pkg-config`, `STARK_PATH`, `-I`, or `-L` as a
+workaround. The custom/source package example below is the case where discovery
+metadata belongs in the package manifest.
+
 ```toml
 [native]
 pkg-config = ["raylib"]

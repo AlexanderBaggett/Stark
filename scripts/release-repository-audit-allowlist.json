@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "ruleId": "private-url",
+      "path": "README.md",
+      "fingerprint": "25da64b6f20f58a762b050404aed7024237207007020f297e16dd43f34396e85",
+      "source": "current-tree",
+      "reason": "Documented loopback URL for the local-only Hugo development server."
+    },
+    {
+      "ruleId": "personal-absolute-path",
+      "path": "vendor/dist/arm64-apple-macosx26.0.0/native/sdl3/SDL3/SDL_filesystem.h",
+      "fingerprint": "373573360131597f3ff6bb2484592aab21bd02e9dde726665da29a41eb6d5968",
+      "source": "current-tree",
+      "reason": "Verbatim upstream SDL API documentation showing a generic platform path."
+    },
+    {
+      "ruleId": "personal-absolute-path",
+      "path": "vendor/dist/arm64-apple-macosx26.0.0/native/sdl3/SDL3/SDL_filesystem.h",
+      "fingerprint": "3e84738ba7c9501c8c008d65748c821370cb4fbb6d2534a0b13e9ca0b3867735",
+      "source": "current-tree",
+      "reason": "Verbatim upstream SDL API documentation showing a generic platform path."
+    },
+    {
+      "ruleId": "personal-absolute-path",
+      "path": "vendor/dist/arm64-apple-macosx26.0.0/native/sqlite/sqlite3.h",
+      "fingerprint": "3b33d58238badec02f6bd3acae8ab20b34f5314873a59591a492b122aa533141",
+      "source": "current-tree",
+      "reason": "Verbatim upstream SQLite API documentation showing a generic URI filename."
+    },
+    {
+      "ruleId": "personal-absolute-path",
+      "path": "vendor/dist/arm64-apple-macosx26.0.0/native/sqlite/sqlite3.h",
+      "fingerprint": "e0278038a3f928e605b7e45e600f21d38b679be1b3dd3717666403bf39adec62",
+      "source": "current-tree",
+      "reason": "Verbatim upstream SQLite API documentation showing a generic URI filename."
+    }
+  ]
+}

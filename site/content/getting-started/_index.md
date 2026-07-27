@@ -13,17 +13,22 @@ The intended beginner path is:
 
 1. Download the Stark compiler archive for your platform from the [Releases page](/releases/).
 2. Extract the complete SDK and add its `bin` directory to `PATH`.
-3. Run `stark --version`.
+3. Run `stark doctor --strict` and `stark --version`.
 4. Compile and run a small program.
 
-Binary releases should include the compiler and the matching standard-library
-package image. A basic `hello world` should not require users to build the
-compiler from source.
+Following Odin's distribution model, each target archive will include the
+compiler and its runtime, its compiler-private LLVM backend, the System library,
+the complete official Vendor collection advertised for that target, examples,
+offline reference files, licenses, and manifests. A basic `hello world` or
+official Vendor import will not require users to build Stark or install a
+separate LLVM SDK or Vendor library.
 
-Stark emits native code through the platform toolchain. The exact packaged
-toolchain policy still needs to be finalized, but users should expect a system
-linker or C toolchain to be required for native executable output unless the
-release bundle explicitly includes one.
+The archive intentionally does not contain a complete LLVM development
+distribution or an operating-system SDK. Native executable linking uses the
+narrow host development layer: Xcode Command Line Tools/full Xcode on macOS,
+the supported MSVC/Windows SDK components on Windows, and a supported Clang/
+native development environment plus system ABI libraries on Linux. The optional
+installer and `stark doctor` will detect and explain those platform prerequisites.
 
 ## Current Source Build
 
@@ -79,10 +84,11 @@ the system C development headers/libraries. Keep `clang` and the linker on
 `PATH`; Stark uses the host toolchain to discover target details and emit native
 executables.
 
-For examples that use the standard library, build the standard-library package
+For source-checkout examples that use the standard library, build the standard-library package
 first and pass `-I stdlib/dist` when compiling directly. Raylib examples also
-need Raylib development files available through `pkg-config` or an explicit
-native path.
+need the development SDK's native acquisition/build step or an explicitly
+configured authoring fallback. Published official Vendor packages do not use
+ambient `pkg-config`.
 
 ### Windows
 
@@ -97,15 +103,16 @@ point `-I` at the directory containing that package artifact.
 
 ## Optional Requirements
 
-Some examples need more than the basic compiler path:
+When working from a source checkout rather than an installed release SDK, some
+examples need more than the basic compiler path:
 
-- Raylib examples need Raylib available through `pkg-config` or a configured
-  local path.
+- Raylib examples need the repository's native acquisition/build inputs or an
+  explicitly configured package-author fallback.
 - Networking examples may require local firewall permission.
 - Benchmarks will need locked compiler flags and platform details once the
   benchmark suite is published.
-- Source builds and compiler tests require the .NET SDK; compiler binaries
-  should not require it for ordinary use.
+- Source builds and compiler tests require the .NET SDK; release archives carry
+  the Stage0 runtime and do not require a separate .NET installation.
 
 ## First Diagnostic Check
 

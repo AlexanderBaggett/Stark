@@ -1,8 +1,9 @@
 # SDK Layout and Resolution
 
 This document is the durable Stage0 contributor contract for relocatable Stark
-SDK discovery. Release assembly details and unfinished cross-stage work remain
-tracked under `docs/Self-host-Prep`.
+SDK discovery. Short-lived release assembly tasks and unfinished cross-stage
+work remain repository planning concerns and are not part of this shipped SDK
+contract.
 
 ## Identity and precedence
 
@@ -59,6 +60,14 @@ facts, optimization hints, alias/memory facts, linkage, and native metadata.
 The index must never reconstruct a reduced interface. Artifact validation is
 lazy per selected package; `doctor` validates the complete advertised set.
 
+For an official native-backed package, selection produces one coherent link
+plan: the Stark wrapper archive, relative native library directories and
+artifacts, libraries, runtime files, license files, and ordered platform link
+arguments all come from the package descriptor. Release descriptors contain no
+unresolved discovery query or host path. `pkg-config` and local native path
+fallbacks are valid while authoring custom/source packages, but are not part of
+resolving an installed official `Vendor.*` package.
+
 ## Incremental identity
 
 Project `.stark-build-stamp` values include the canonical SDK root and a
@@ -80,8 +89,12 @@ at the SDK root:
   sdk.json
   release.json
   stdlib/dist/<sdk-target>/...
-  vendor/dist/<sdk-target>/...
-  toolchain/...
+  vendor/dist/<sdk-target>/
+    <all target-advertised Vendor package images>
+    <all target-advertised Vendor wrapper archives>
+    native/<package>/
+      <headers, runtime files, licenses>
+  toolchain/<compiler-private-backend>...
   licenses/...
   docs/...
 ```
@@ -96,6 +109,36 @@ The resolver follows paths and ownership recorded in `sdk.json`; directory
 names are an archive convention, never a discovery algorithm. All runtime paths
 are relative and relocation-safe. `release.json` records provenance; it does
 not replace the runtime SDK manifest.
+
+`toolchain/` is the existing internal path for the compiler-private LLVM backend,
+not a bundled general-purpose LLVM development distribution. A Stage0 release
+indexes only its allowlisted Clang/backend runtime closure; a Stage1 release
+indexes its qualified libLLVM runtime closure. Compiler-backend resolution and
+final host-link prerequisite discovery are separate decisions and separate
+`doctor` results. For a `release` manifest, a missing private Clang, LLD,
+archiver, or libLLVM component is an SDK-integrity failure: the resolver does
+not silently substitute an ambient `PATH` tool. Explicit compiler-development
+overrides remain available and are reported as such. Host linker and platform
+SDK discovery retain their documented host search policy. macOS still uses
+Xcode Command Line Tools/Xcode, Windows still uses the supported MSVC/Windows
+SDK installation, and Linux still uses its documented Clang/native development
+layer and system ABI libraries.
+
+`bin/` is the conventional command directory, not a catch-all native-library
+directory. Users add it to `PATH`; official native payloads stay beside their
+owning package under `vendor/dist/<sdk-target>/native/...`. This keeps ownership
+and checksum coverage explicit and prevents unrelated vendor libraries from
+becoming ambient process-wide dependencies.
+
+The compiler, package images, Stark wrapper archives, and native payloads in a
+release are one ABI-coherent set. A change to target ABI lowering requires
+rebuilding affected packages before SDK assembly. In particular, AArch64
+integer-like C aggregates may use different parameter and return carriers, so
+an SDK must never combine a compiler with package objects generated under an
+older carrier rule. Package API/content identities, artifact checksums, strict
+doctor validation, and target-native interop smoke tests bind and qualify this
+boundary; the clean release build is responsible for not indexing stale package
+objects in the first place.
 
 The staged compiler's assembly informational version must exactly equal the
 release version written to `release.json` and `sdk.json`. Release publishing

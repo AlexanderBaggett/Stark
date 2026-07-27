@@ -17,10 +17,17 @@ carrier lowering for C-layout Raylib structs.
 The binding uses `[LinkName("...")]`, `[StructLayout(C)]`, and `ffi(c)` for
 direct calls, including small by-value structs such as `Vector2`, `Rectangle`,
 and `Color`. No Raylib-specific C shim is required for these aggregate carriers.
+On AArch64, `Color` demonstrates why argument and result carriers remain
+separate: it is passed through an `i64` carrier but returned through `i32`.
 
 Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. The standalone example binding still exposes older raw callback aliases, while the bundled `Vendor.Raylib` binding uses typed `fnptr<unsafe ffi(c)>` callback carriers everywhere the C ABI is expressible. `TraceLogCallback` remains an explicit raw edge because Raylib uses `va_list`. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
 
 ## Vendor Safe API Example
+
+With an installed target SDK, an application imports `Vendor.Raylib` and uses
+`stark build` or `stark run`; it does not run the package builder, add `-I`, or
+install Raylib. The commands in this section deliberately exercise repository
+source/package development instead.
 
 `VendorRaylibSafeApis.stark` demonstrates the preferred bundled binding style:
 safe slices for file/data/audio payloads, Raylib-owned byte/text result owners,

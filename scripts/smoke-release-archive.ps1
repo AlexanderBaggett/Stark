@@ -14,6 +14,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$releaseDocumentationContractScript = Join-Path $PSScriptRoot "release-documentation-contract.ps1"
+if (-not (Test-Path -LiteralPath $releaseDocumentationContractScript -PathType Leaf)) {
+    throw "Release documentation contract helper '$releaseDocumentationContractScript' is missing."
+}
+. $releaseDocumentationContractScript
+
+$releaseArchiveExtractionScript = Join-Path $PSScriptRoot "release-archive-extraction.ps1"
+if (-not (Test-Path -LiteralPath $releaseArchiveExtractionScript -PathType Leaf)) {
+    throw "Release archive extraction helper '$releaseArchiveExtractionScript' is missing."
+}
+. $releaseArchiveExtractionScript
+
 function Resolve-ArchivePath {
     param([string] $Path)
 
@@ -128,20 +140,85 @@ function Assert-File {
     }
 }
 
-function Get-ArchiveRoot {
-    param([string] $ExtractRoot)
+function Assert-ReleaseFileChecksums {
+    param([string] $PackageRoot)
 
-    $roots = @(Get-ChildItem -LiteralPath $ExtractRoot -Directory | Sort-Object Name)
-    foreach ($root in $roots) {
-        $binRoot = Join-Path $root.FullName "bin"
-        if ((Test-Path -LiteralPath (Join-Path $root.FullName "sdk.json") -PathType Leaf) -and
-            ((Test-Path -LiteralPath (Join-Path $binRoot "stark") -PathType Leaf) -or
-             (Test-Path -LiteralPath (Join-Path $binRoot "stark.exe") -PathType Leaf))) {
-            return $root.FullName
+    $manifestPath = Join-Path $PackageRoot "release-files.sha256"
+    Assert-File -Path $manifestPath -Name "release file checksum manifest"
+    $pathComparer = if ($IsWindows) {
+        [StringComparer]::OrdinalIgnoreCase
+    } else {
+        [StringComparer]::Ordinal
+    }
+    $pathComparison = if ($IsWindows) {
+        [StringComparison]::OrdinalIgnoreCase
+    } else {
+        [StringComparison]::Ordinal
+    }
+    $expectedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $rootWithSeparator = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\', '/') `
+        + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($line in (Get-Content -LiteralPath $manifestPath)) {
+        if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+            throw "Release file checksum manifest contains malformed line '$line'."
+        }
+
+        $expectedHash = $Matches[1]
+        $relativePath = $Matches[2]
+        if ([System.IO.Path]::IsPathRooted($relativePath) `
+            -or $relativePath.Contains('\') `
+            -or $relativePath -match '(^|/)\.\.?(/|$)') {
+            throw "Release file checksum manifest contains unsafe path '$relativePath'."
+        }
+        if (-not $expectedPaths.Add($relativePath)) {
+            throw "Release file checksum manifest contains duplicate path '$relativePath'."
+        }
+
+        $filePath = [System.IO.Path]::GetFullPath((Join-Path $PackageRoot $relativePath))
+        if (-not $filePath.StartsWith($rootWithSeparator, $pathComparison) `
+            -or -not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+            throw "Release file checksum path '$relativePath' is missing or escapes the SDK root."
+        }
+
+        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath).Hash.ToLowerInvariant()
+        if (-not [string]::Equals($actualHash, $expectedHash, [StringComparison]::Ordinal)) {
+            throw "Release file '$relativePath' failed SHA-256 verification."
         }
     }
 
-    throw "Could not identify an SDK root containing sdk.json and bin/stark[.exe] under '$ExtractRoot'."
+    foreach ($file in (Get-ChildItem -LiteralPath $PackageRoot -File -Recurse | Sort-Object FullName)) {
+        $relativePath = [System.IO.Path]::GetRelativePath($PackageRoot, $file.FullName).Replace('\', '/')
+        if ($relativePath -eq "release-files.sha256") {
+            continue
+        }
+        if (-not $expectedPaths.Contains($relativePath)) {
+            throw "Release archive contains untracked file '$relativePath'."
+        }
+    }
+}
+
+function Get-ArchiveRoot {
+    param([string] $ExtractRoot)
+
+    $entries = @(Get-ChildItem -LiteralPath $ExtractRoot -Force | Sort-Object Name)
+    if ($entries.Count -ne 1 -or -not $entries[0].PSIsContainer) {
+        $entryNames = if ($entries.Count -eq 0) {
+            "<none>"
+        } else {
+            ($entries | ForEach-Object { $_.Name }) -join ", "
+        }
+        throw "Release archive must contain exactly one top-level SDK directory; found $($entries.Count) entries: $entryNames."
+    }
+
+    $root = $entries[0]
+    $binRoot = Join-Path $root.FullName "bin"
+    if (-not (Test-Path -LiteralPath (Join-Path $root.FullName "sdk.json") -PathType Leaf) -or
+        (-not (Test-Path -LiteralPath (Join-Path $binRoot "stark") -PathType Leaf) -and
+         -not (Test-Path -LiteralPath (Join-Path $binRoot "stark.exe") -PathType Leaf))) {
+        throw "The sole archive root '$($root.Name)' must contain sdk.json and bin/stark[.exe]."
+    }
+
+    return $root.FullName
 }
 
 function Get-CompilerPath {
@@ -330,6 +407,235 @@ function Read-OptionalJson {
     }
 }
 
+function Get-SdkPackageIds {
+    param([object] $SdkManifest)
+
+    if ($null -eq $SdkManifest) {
+        return @()
+    }
+    $packages = Get-JsonPropertyValue -Value $SdkManifest -Name "packages"
+    if ($null -eq $packages) {
+        return @()
+    }
+
+    $ids = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($package in @($packages)) {
+        $id = [string](Get-JsonPropertyValue -Value $package -Name "id")
+        if ([string]::IsNullOrWhiteSpace($id) -or -not $seen.Add($id)) {
+            throw "SDK manifest contains a missing or duplicate package id '$id'."
+        }
+        $ids.Add($id)
+    }
+    $ids.Sort([StringComparer]::Ordinal)
+    return [string[]]$ids.ToArray()
+}
+
+function Invoke-AdditionalVendorPackageSmokes {
+    param(
+        [AllowEmptyCollection()][string[]] $SdkPackageIds,
+        [string] $SourceRoot,
+        [AllowEmptyCollection()][string[]] $TargetArguments
+    )
+
+    $specifications = @(
+        [pscustomobject]@{
+            PackageId = "Vendor.GLFW"
+            ProjectName = "ReleaseSmokeVendorGLFW"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.GLFW
+module ReleaseSmokeVendorGLFW
+
+export fn i32[min max] main()
+{
+    stack Version version = GetVersion();
+    ClearEvents();
+    if (version.Major != 3 || DroppedEventCount() != 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.Raymath"
+            ProjectName = "ReleaseSmokeVendorRaymath"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.Raymath
+module ReleaseSmokeVendorRaymath
+
+export fn i32[min max] main()
+{
+    if (Vector2Length(Vector2Zero()) != 0.0f)
+    {
+        return 1;
+    }
+    return 0;
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.Rlgl"
+            ProjectName = "ReleaseSmokeVendorRlgl"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.Rlgl
+module ReleaseSmokeVendorRlgl
+
+export fn i32[min max] main()
+{
+    if (rlGetVersion() < 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.SDL3"
+            ProjectName = "ReleaseSmokeVendorSDL3"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.SDL3
+module ReleaseSmokeVendorSDL3
+
+export fn i32[min max] main()
+{
+    stack Version version = GetVersion();
+    if (version.Major != 3)
+    {
+        return 1;
+    }
+    return 0;
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.STB.Image"
+            ProjectName = "ReleaseSmokeVendorSTBImage"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.STB.Image
+module ReleaseSmokeVendorSTBImage
+
+export fn i32[min max] main()
+{
+    stack mut u8[0 max][1] bytesStorage = { 0 };
+    stack u8[0 max][] bytes = bytesStorage;
+    switch (LoadFromMemory(bytes, ImageChannels.Rgb))
+    {
+        case ImageResult.Err(var error):
+            return 0;
+        case ImageResult.Ok(var image):
+            return 1;
+    }
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.Miniaudio"
+            ProjectName = "ReleaseSmokeVendorMiniaudio"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.Miniaudio
+module ReleaseSmokeVendorMiniaudio
+
+export fn i32[min max] main()
+{
+    stack mut u8[0 max][1] bytesStorage = { 0 };
+    stack u8[0 max][] bytes = bytesStorage;
+    switch (OpenDecoderFromMemory(bytes, SampleFormat.F32, 1, 8000))
+    {
+        case DecoderResult.Err(var error):
+            return 0;
+        case DecoderResult.Ok(var decoder):
+            return 1;
+    }
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.Cgltf"
+            ProjectName = "ReleaseSmokeVendorCgltf"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.Cgltf
+module ReleaseSmokeVendorCgltf
+
+export fn i32[min max] main()
+{
+    stack mut u8[0 max][1] bytesStorage = { 0 };
+    stack u8[0 max][] bytes = bytesStorage;
+    switch (ParseFromMemory(bytes, false))
+    {
+        case DocumentResult.Err(var error):
+            return 0;
+        case DocumentResult.Ok(var document):
+            return 1;
+    }
+}
+'@
+        },
+        [pscustomobject]@{
+            PackageId = "Vendor.SQLite"
+            ProjectName = "ReleaseSmokeVendorSQLite"
+            RunHeadless = $true
+            SourceText = @'
+import Vendor.SQLite
+module ReleaseSmokeVendorSQLite
+
+export fn i32[min max] main()
+{
+    if (LibraryVersionNumber() <= 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+'@
+        }
+    )
+
+    $knownIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    [void]$knownIds.Add("Vendor.Raylib")
+    foreach ($specification in $specifications) {
+        [void]$knownIds.Add([string]$specification.PackageId)
+    }
+    foreach ($id in $SdkPackageIds) {
+        if ($id.StartsWith("Vendor.", [StringComparison]::Ordinal) -and -not $knownIds.Contains($id)) {
+            throw "SDK advertises official package '$id', but the archive smoke has no native link/runtime probe for it."
+        }
+    }
+
+    foreach ($specification in $specifications) {
+        if ($SdkPackageIds -cnotcontains [string]$specification.PackageId) {
+            continue
+        }
+        $projectDirectory = Join-Path $SourceRoot ("vendor-" + ([string]$specification.PackageId).Replace('.', '-').ToLowerInvariant())
+        Write-SmokeExecutableProject `
+            -Directory $projectDirectory `
+            -ProjectName ([string]$specification.ProjectName) `
+            -SourceText ([string]$specification.SourceText)
+        Invoke-StarkFromPath `
+            -Arguments (@("build") + $TargetArguments) `
+            -WorkingDirectory $projectDirectory | Out-Null
+        Assert-ProjectExecutable `
+            -ProjectDirectory $projectDirectory `
+            -OutputName ([string]$specification.ProjectName) `
+            -Name "$($specification.PackageId) project executable"
+        if ([bool]$specification.RunHeadless) {
+            Invoke-StarkFromPath `
+                -Arguments (@("run") + $TargetArguments) `
+                -WorkingDirectory $projectDirectory | Out-Null
+        }
+        Write-Host "$($specification.PackageId) SDK-only link and headless runtime smoke passed."
+    }
+}
+
 function Test-SdkAdvertisesRaylib {
     param([string] $SdkManifestPath)
 
@@ -507,14 +813,11 @@ $outputRoot = Join-Path $smokeRoot "out"
 New-Item -ItemType Directory -Force -Path $extractRoot, $sourceRoot, $outputRoot | Out-Null
 
 try {
-    Write-Host "Extracting $archive"
-    if ($archive.EndsWith(".zip", [StringComparison]::OrdinalIgnoreCase)) {
-        Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot -Force
-    } else {
-        Invoke-CheckedProcess -File "tar" -Arguments @("-xzf", $archive, "-C", $extractRoot) | Out-Null
-    }
+    Write-Host "Preflighting and safely extracting $archive"
+    Expand-ValidatedReleaseArchive -ArchivePath $archive -DestinationPath $extractRoot | Out-Null
 
     $packageRoot = Get-ArchiveRoot -ExtractRoot $extractRoot
+    Assert-ReleaseFileChecksums -PackageRoot $packageRoot
     $script:CompilerPath = Get-CompilerPath -PackageRoot $packageRoot
     $script:CompilerCommand = Split-Path -Leaf $script:CompilerPath
     $stdlibDist = Join-Path $packageRoot "stdlib/dist"
@@ -526,6 +829,18 @@ try {
     $releaseMetadata = Read-OptionalJson `
         -Path (Join-Path $packageRoot "release.json") `
         -Name "Release manifest"
+    if ($null -eq $releaseMetadata) {
+        throw "Release archive does not contain release.json."
+    }
+    $releaseVersion = [string](Get-JsonPropertyValue -Value $releaseMetadata -Name "starkVersion")
+    $releaseAssetSuffix = [string](Get-JsonPropertyValue -Value $releaseMetadata -Name "assetSuffix")
+    $expectedRootName = "stark-$releaseVersion-$releaseAssetSuffix"
+    $actualRootName = Split-Path -Leaf $packageRoot
+    if ([string]::IsNullOrWhiteSpace($releaseVersion) -or
+        [string]::IsNullOrWhiteSpace($releaseAssetSuffix) -or
+        -not [string]::Equals($actualRootName, $expectedRootName, [StringComparison]::Ordinal)) {
+        throw "Release archive root '$actualRootName' does not match release.json identity '$expectedRootName'."
+    }
     $releasePaths = Get-JsonPropertyValue -Value $releaseMetadata -Name "paths"
     $releaseCompilerPath = [string](Get-JsonPropertyValue -Value $releasePaths -Name "compiler")
     $expectedReleaseCompilerPath = if ($IsWindows) { "bin/stark.exe" } else { "bin/stark" }
@@ -551,9 +866,18 @@ try {
 
     $sdkManifestPath = Join-Path $packageRoot "sdk.json"
     $sdkManifest = Read-OptionalJson -Path $sdkManifestPath -Name "SDK manifest"
+    $sdkPackageIds = @(Get-SdkPackageIds -SdkManifest $sdkManifest)
+    $raylibFamilyIds = @("Vendor.Raylib", "Vendor.Raymath", "Vendor.Rlgl")
+    $advertisedRaylibFamilyIds = @($raylibFamilyIds | Where-Object { $sdkPackageIds -ccontains $_ })
+    $legacyRaylibOnly = $advertisedRaylibFamilyIds.Count -eq 1 `
+        -and $advertisedRaylibFamilyIds[0] -ceq "Vendor.Raylib"
+    if ($advertisedRaylibFamilyIds.Count -gt 0 `
+        -and -not $legacyRaylibOnly `
+        -and $advertisedRaylibFamilyIds.Count -ne $raylibFamilyIds.Count) {
+        throw "SDK advertises an incomplete Raylib package family: $($advertisedRaylibFamilyIds -join ', ')."
+    }
     $sdkTarget = Get-JsonPropertyValue -Value $sdkManifest -Name "target"
     $sdkTargetId = [string](Get-JsonPropertyValue -Value $sdkTarget -Name "id")
-    $releaseAssetSuffix = [string](Get-JsonPropertyValue -Value $releaseMetadata -Name "assetSuffix")
     $artifactTargetId = if (-not [string]::IsNullOrWhiteSpace($sdkTargetId)) {
         $sdkTargetId
     } else {
@@ -620,6 +944,19 @@ try {
             throw "Release doctor did not report an ok compiler/SDK state: $($doctorResult.Stdout)"
         }
 
+        $documentedCommandRoot = Copy-ReleaseDocumentationQuickStartInputs `
+            -SdkRoot $packageRoot `
+            -DestinationRoot (Join-Path $sourceRoot "documented-quick-start")
+        [void](Invoke-ReleaseDocumentationCommandContract `
+            -SdkRoot $packageRoot `
+            -ExpectedTargetTriple $effectiveTargetTriple `
+            -ExecutionRoot $documentedCommandRoot `
+            -CompilerInvoker {
+                param([string[]] $Arguments, [string] $WorkingDirectory)
+                Invoke-StarkFromPath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+            })
+        Write-Host "Generated README.md and INSTALL.md quick-start commands passed against the shipped hello example."
+
         $systemProjectName = "ReleaseSmokeSystemProject"
         $systemProjectDir = Join-Path $sourceRoot "system-project"
         Write-SmokeExecutableProject `
@@ -666,7 +1003,6 @@ export fn i32[min max] main()
                 -Directory $raylibProjectDir `
                 -ProjectName $raylibProjectName `
                 -SourceText @'
-import System.Console
 import Vendor.Raylib
 module ReleaseSmokeRaylibProject
 
@@ -694,6 +1030,11 @@ export fn i32[min max] main()
             $variantText = if ($variants.Count -eq 0) { "none" } else { $variants -join ", " }
             Write-Host "Vendor.Raylib project smoke explicitly unsupported: sdk.json does not advertise it and no package image matches target '$targetText'. Available variants: $variantText."
         }
+
+        Invoke-AdditionalVendorPackageSmokes `
+            -SdkPackageIds $sdkPackageIds `
+            -SourceRoot $sourceRoot `
+            -TargetArguments $targetArgs
 
         $basicSource = Join-Path $sourceRoot "ReleaseSmokeBasic.stark"
         Write-SmokeSource -Path $basicSource -Text @'

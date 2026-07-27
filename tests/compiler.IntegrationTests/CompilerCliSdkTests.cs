@@ -313,7 +313,8 @@ public sealed class CompilerCliSdkTests
     [Fact]
     public async Task RelocatedSdkPackagePreservesNativeSourceAndLinkFacts()
     {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || !TryFindExplicitCompilerToolchainDirectory(out var toolchainDirectory))
         {
             return;
         }
@@ -369,6 +370,7 @@ public sealed class CompilerCliSdkTests
                     "-o", packageLibraryPath,
                     "--package-profile", "release",
                     "--native-source", nativeSourcePath,
+                    "--toolchain-dir", toolchainDirectory,
                     "--no-stark-path"
                 ],
                 new StringReader(string.Empty),
@@ -425,7 +427,12 @@ public sealed class CompilerCliSdkTests
                 var projectStdout = new StringWriter();
                 var projectStderr = new StringWriter();
                 var projectExitCode = await CompilerCli.RunAsync(
-                    ["build", "--target", targetInfo.Triple, "--sdk-root", relocatedSdkRoot],
+                    [
+                        "build",
+                        "--target", targetInfo.Triple,
+                        "--sdk-root", relocatedSdkRoot,
+                        "--toolchain-dir", toolchainDirectory
+                    ],
                     new StringReader(string.Empty),
                     projectStdout,
                     projectStderr);
@@ -446,6 +453,7 @@ public sealed class CompilerCliSdkTests
                     "--emit-exe",
                     "-o", executablePath,
                     "--sdk-root", relocatedSdkRoot,
+                    "--toolchain-dir", toolchainDirectory,
                     "--no-stark-path"
                 ],
                 new StringReader(string.Empty),
@@ -488,7 +496,7 @@ public sealed class CompilerCliSdkTests
 
             var doctorStdout = new StringWriter();
             var doctorExitCode = await CompilerCli.RunAsync(
-                ["doctor", "--sdk-root", relocatedSdkRoot],
+                ["doctor", "--sdk-root", relocatedSdkRoot, "--toolchain-dir", toolchainDirectory],
                 new StringReader(string.Empty),
                 doctorStdout,
                 new StringWriter());
@@ -496,8 +504,8 @@ public sealed class CompilerCliSdkTests
             Assert.Contains("package integrity: invalid", doctorStdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("STK7475", doctorStdout.ToString(), StringComparison.Ordinal);
 
-            var firstStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot);
-            var secondStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot);
+            var firstStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot, toolchainDirectory);
+            var secondStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot, toolchainDirectory);
             Assert.Equal(1, firstStrictJson.ExitCode);
             Assert.Equal(string.Empty, firstStrictJson.Stderr);
             Assert.Equal(firstStrictJson.Stdout, secondStrictJson.Stdout);
@@ -538,7 +546,7 @@ public sealed class CompilerCliSdkTests
             Assert.Contains("STK7473", missingCompileStderr.ToString(), StringComparison.Ordinal);
             Assert.Contains("native runtime file is missing", missingCompileStderr.ToString(), StringComparison.Ordinal);
 
-            var missingStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot);
+            var missingStrictJson = await RunStrictJsonDoctorAsync(relocatedSdkRoot, toolchainDirectory);
             Assert.Equal(1, missingStrictJson.ExitCode);
             Assert.Equal(string.Empty, missingStrictJson.Stderr);
             using var missingDocument = JsonDocument.Parse(missingStrictJson.Stdout);
@@ -565,6 +573,42 @@ public sealed class CompilerCliSdkTests
                 // Best-effort cleanup only.
             }
         }
+    }
+
+    private static bool TryFindExplicitCompilerToolchainDirectory(out string toolchainDirectory)
+    {
+        var ambient = NativeToolchain.Resolve();
+        var candidates = new[]
+            {
+                ambient.Clang.Path,
+                ambient.Archiver.Path,
+                ambient.Lld.Path
+            }
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .SelectMany(static path =>
+            {
+                var binaryDirectory = Path.GetDirectoryName(path!)!;
+                return string.Equals(Path.GetFileName(binaryDirectory), "bin", StringComparison.OrdinalIgnoreCase)
+                    ? new[] { Directory.GetParent(binaryDirectory)?.FullName, binaryDirectory }
+                    : new[] { binaryDirectory };
+            })
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+        foreach (var candidate in candidates)
+        {
+            var explicitToolchain = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                CliToolchainDirectory: candidate,
+                AllowAmbientCompilerBackendFallback: false));
+            if (explicitToolchain.Clang.IsAvailable && explicitToolchain.Archiver.IsAvailable)
+            {
+                toolchainDirectory = candidate!;
+                return true;
+            }
+        }
+
+        toolchainDirectory = string.Empty;
+        return false;
     }
 
     [Fact]
@@ -796,12 +840,23 @@ public sealed class CompilerCliSdkTests
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunStrictJsonDoctorAsync(
-        string sdkRoot)
+        string sdkRoot,
+        string? toolchainDirectory = null)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
+        var arguments = new List<string>
+        {
+            "doctor", "--strict", "--format", "json", "--sdk-root", sdkRoot
+        };
+        if (!string.IsNullOrWhiteSpace(toolchainDirectory))
+        {
+            arguments.Add("--toolchain-dir");
+            arguments.Add(toolchainDirectory);
+        }
+
         var exitCode = await CompilerCli.RunAsync(
-            ["doctor", "--strict", "--format", "json", "--sdk-root", sdkRoot],
+            arguments.ToArray(),
             new StringReader(string.Empty),
             stdout,
             stderr);
