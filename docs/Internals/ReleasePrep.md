@@ -306,6 +306,15 @@ improving those rough edges.
     qualified backend, and compiles/runs `examples/hello.stark`. Reports, logs,
     manifests, licenses, and provenance are retained as workflow evidence; no
     SDK archive or GitHub release can be created by this workflow.
+  - First native qualification attempt (2026-07-27):
+    [run 30310035777](https://github.com/AlexanderBaggett/Stark/actions/runs/30310035777)
+    reached the optimized LLVM source build, then failed while linking
+    `llvm-min-tblgen`. The source-build path validator had resolved Apple's
+    `clang++` symlink to its shared `clang` executable and therefore discarded
+    the invocation name that selects C++ driver mode. The repair preserves the
+    `clang++` invocation path after validating its resolved target and checks
+    `CMAKE_CXX_COMPILER` immediately after configuration so the same failure
+    stops before the multi-thousand-step build.
   - [ ] Run the qualification workflow against the intended immutable release
     commit and retain its successful run URL/artifact identity here.
   - [ ] Review `private-backend-report.json` and
