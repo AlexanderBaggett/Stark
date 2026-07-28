@@ -107,10 +107,13 @@ function Resolve-LlvmSourceBuildApplePath {
         [string] $PathType,
 
         [Parameter(Mandatory = $true)]
-        [string] $Label
+        [string] $Label,
+
+        [switch] $PreserveInvocationPath
     )
 
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $invocationPath = [System.IO.Path]::GetFullPath($item.FullName)
     $linkTypeProperty = $item.PSObject.Properties["LinkType"]
     $linkType = if ($null -eq $linkTypeProperty) { "" } else { [string]$linkTypeProperty.Value }
     if (-not [string]::IsNullOrWhiteSpace($linkType)) {
@@ -127,7 +130,51 @@ function Resolve-LlvmSourceBuildApplePath {
         throw "$Label '$resolvedPath' does not have required path type '$PathType'."
     }
 
+    if ($PreserveInvocationPath) {
+        if ($PathType -cne "Leaf" -or
+            -not (Test-Path -LiteralPath $invocationPath -PathType Leaf)) {
+            throw "$Label invocation path '$invocationPath' is not an executable leaf."
+        }
+        return $invocationPath
+    }
+
     return $resolvedPath
+}
+
+function Assert-LlvmSourceBuildCxxCompilerConfiguration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $CMakeCachePath,
+
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedCompilerPath
+    )
+
+    if (-not (Test-Path -LiteralPath $CMakeCachePath -PathType Leaf)) {
+        throw "LLVM source configuration did not produce '$CMakeCachePath'."
+    }
+
+    $configuredCompilers = @(
+        foreach ($line in Get-Content -LiteralPath $CMakeCachePath) {
+            $match = [regex]::Match(
+                [string]$line,
+                '^CMAKE_CXX_COMPILER:[^=]+=(.+)$',
+                [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+            if ($match.Success) {
+                $match.Groups[1].Value
+            }
+        }
+    )
+    if ($configuredCompilers.Count -ne 1) {
+        throw "LLVM source configuration must record exactly one CMAKE_CXX_COMPILER entry."
+    }
+
+    $configuredCompiler = [System.IO.Path]::GetFullPath([string]$configuredCompilers[0])
+    $expectedCompiler = [System.IO.Path]::GetFullPath($ExpectedCompilerPath)
+    if ($configuredCompiler -cne $expectedCompiler -or
+        [System.IO.Path]::GetFileName($configuredCompiler) -cne "clang++") {
+        throw "LLVM source configuration lost Apple Clang++ driver mode: expected '$expectedCompiler', found '$configuredCompiler'."
+    }
 }
 
 function Get-LlvmSourceBuildAppleToolchainVersion {
@@ -215,7 +262,8 @@ function Invoke-LlvmPinnedSourceBuild {
     $clangxxPath = Resolve-LlvmSourceBuildApplePath `
         -Path (Get-XcrunValue -Arguments @("--find", "clang++") -Label "Apple Clang++") `
         -PathType "Leaf" `
-        -Label "LLVM source-build Apple Clang++"
+        -Label "LLVM source-build Apple Clang++" `
+        -PreserveInvocationPath
     $sdkPath = Resolve-LlvmSourceBuildApplePath `
         -Path (Get-XcrunValue -Arguments @("--sdk", "macosx", "--show-sdk-path") -Label "the macOS SDK") `
         -PathType "Container" `
@@ -271,6 +319,9 @@ function Invoke-LlvmPinnedSourceBuild {
             -FileName $cmakeExecutable `
             -Arguments $configureArguments `
             -Label "LLVM $($SourceBuild.configuration) source configuration"
+        Assert-LlvmSourceBuildCxxCompilerConfiguration `
+            -CMakeCachePath (Join-Path $buildRoot "CMakeCache.txt") `
+            -ExpectedCompilerPath $clangxxPath
         Invoke-LlvmSourceBuildProcess `
             -FileName $cmakeExecutable `
             -Arguments @(
