@@ -192,6 +192,16 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("ZERO_AR_DATE", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("Resolve-LlvmSourceBuildApplePath", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("ResolveLinkTarget($true)", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("[switch] $PreserveInvocationPath", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("return $invocationPath", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("-Label \"LLVM source-build Apple Clang++\" `", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("-PreserveInvocationPath", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("Assert-LlvmSourceBuildCxxCompilerConfiguration", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains(
+            "GetFileName($configuredCompiler) -cne \"clang++\"",
+            sourceBuild,
+            StringComparison.Ordinal);
+        Assert.Contains("-ExpectedCompilerPath $clangxxPath", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("com.apple.pkg.CLTools_Executables", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("appleToolchain = [ordered]@{", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("clangSha256", sourceBuild, StringComparison.Ordinal);
