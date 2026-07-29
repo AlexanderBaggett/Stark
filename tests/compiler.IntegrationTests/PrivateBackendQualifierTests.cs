@@ -67,6 +67,25 @@ public sealed class PrivateBackendQualifierTests
         Assert.Contains("source-build lto differs", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void GenericLldVersionProbeSelectsTheMacOsDriverFlavor()
+    {
+        Assert.Equal(
+            ["-flavor", "darwin", "--version"],
+            PrivateBackendQualifier.GetVersionProbeArguments("bin/lld"));
+    }
+
+    [Theory]
+    [InlineData("bin/ld.lld")]
+    [InlineData("bin/ld64.lld")]
+    [InlineData("bin/clang")]
+    public void NamedBackendToolsUseTheirNativeVersionProbe(string relativePath)
+    {
+        Assert.Equal(
+            ["--version"],
+            PrivateBackendQualifier.GetVersionProbeArguments(relativePath));
+    }
+
     private sealed class PrivateBackendFixture : IDisposable
     {
         private PrivateBackendFixture(string repositoryRoot, string temporaryRoot, string toolchainRoot)

@@ -247,6 +247,42 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
+    public void ReleaseWorkflowsPinNode24NativeActions()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflows = string.Join(
+            Environment.NewLine,
+            File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "qualify-private-backend.yml")),
+            File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml")));
+
+        foreach (var retiredReference in new[]
+        {
+            "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
+            "actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9",
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+            "softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+        })
+        {
+            Assert.DoesNotContain(retiredReference, workflows, StringComparison.Ordinal);
+        }
+
+        foreach (var node24Reference in new[]
+        {
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+            "actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228",
+        })
+        {
+            Assert.Contains(node24Reference, workflows, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task EmptyMacRuntimeLibrarySetBindsForACompilerResourceClosureEntry()
     {
         var repositoryRoot = FindRepositoryRoot();
