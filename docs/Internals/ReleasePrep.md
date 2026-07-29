@@ -315,6 +315,15 @@ improving those rough edges.
     `clang++` invocation path after validating its resolved target and checks
     `CMAKE_CXX_COMPILER` immediately after configuration so the same failure
     stops before the multi-thousand-step build.
+  - Second native qualification attempt (2026-07-28):
+    [run 30316120869](https://github.com/AlexanderBaggett/Stark/actions/runs/30316120869)
+    completed the 4-hour-40-minute optimized LLVM build, confirming the C++
+    driver repair, then failed when the qualifier invoked generic `lld` with
+    only `--version`. Unlike `ld64.lld`, generic `lld` requires a driver flavor;
+    qualification now probes it with `-flavor darwin --version` and records the
+    exact probe arguments in its evidence. This run also exposed GitHub's
+    Node.js 20 action deprecation warning; both release workflows now pin
+    immutable Node.js 24-native action releases.
   - [ ] Run the qualification workflow against the intended immutable release
     commit and retain its successful run URL/artifact identity here.
   - [ ] Review `private-backend-report.json` and

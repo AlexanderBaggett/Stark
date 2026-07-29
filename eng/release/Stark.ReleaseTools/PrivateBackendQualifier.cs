@@ -288,7 +288,8 @@ internal static class PrivateBackendQualifier
         foreach (var relativePath in input.RequiredTools.Order(StringComparer.Ordinal))
         {
             var path = PortablePaths.SafeDestination(input.ToolchainRoot, relativePath);
-            var version = RunProcess(path, ["--version"], input.RepositoryRoot, timeout: TimeSpan.FromMinutes(2));
+            var versionArguments = GetVersionProbeArguments(relativePath);
+            var version = RunProcess(path, versionArguments, input.RepositoryRoot, timeout: TimeSpan.FromMinutes(2));
             var architectures = RunProcess("/usr/bin/lipo", ["-archs", path], input.RepositoryRoot, timeout: TimeSpan.FromMinutes(2));
             Validation.Require(ParseArchitectures(architectures.StandardOutput).SetEquals(["x86_64"]), $"Private backend tool '{relativePath}' is not a thin x86_64 Mach-O binary: {architectures.StandardOutput.Trim()}");
             var dependencies = RunProcess("/usr/bin/otool", ["-L", path], input.RepositoryRoot, timeout: TimeSpan.FromMinutes(2));
@@ -302,6 +303,7 @@ internal static class PrivateBackendQualifier
                 ["sha256"] = JsonIO.Sha256File(path),
                 ["architectures"] = new JsonArray("x86_64"),
                 ["version"] = FirstNonEmptyLine(version.StandardOutput, version.StandardError),
+                ["versionArguments"] = new JsonArray(versionArguments.Select(static value => (JsonNode)value).ToArray()),
                 ["dependencies"] = new JsonArray(dependencyPaths.Select(static value => (JsonNode)value).ToArray()),
             });
         }
@@ -318,6 +320,14 @@ internal static class PrivateBackendQualifier
             ["tools"] = tools,
             ["optimizedDeterminismSmoke"] = smoke,
         };
+    }
+
+    internal static IReadOnlyList<string> GetVersionProbeArguments(string relativePath)
+    {
+        var fileName = relativePath[(relativePath.LastIndexOf('/') + 1)..];
+        return fileName == "lld"
+            ? ["-flavor", "darwin", "--version"]
+            : ["--version"];
     }
 
     private static JsonObject RunOptimizedDeterminismSmoke(PrivateBackendQualificationInput input)
