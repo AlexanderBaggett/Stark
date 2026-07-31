@@ -182,8 +182,19 @@ jobs:
             -o artifacts/stage0/macos-x64
           if ($LASTEXITCODE -ne 0) { throw "Native Stage0 publish failed." }
 
+          # Raw publish uses the MSBuild project name. Release packaging later
+          # normalizes this apphost from `compiler` to the public `stark` name.
+          $stage0Compiler = [System.IO.Path]::GetFullPath("artifacts/stage0/macos-x64/compiler")
+          if (-not (Test-Path -LiteralPath $stage0Compiler -PathType Leaf)) {
+            $publishedFiles = @(Get-ChildItem -LiteralPath artifacts/stage0/macos-x64 -File |
+              Sort-Object -Property Name |
+              Select-Object -ExpandProperty Name)
+            throw "Native Stage0 apphost 'compiler' is missing. Published files: $($publishedFiles -join ', ')"
+          }
+          "STAGE0_COMPILER=$stage0Compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
           New-Item -ItemType Directory -Force -Path artifacts/stdlib/macos-x64 | Out-Null
-          & ./artifacts/stage0/macos-x64/stark `
+          & $stage0Compiler `
             stdlib/src/System.stark `
             --emit-lib `
             --target $env:TARGET_TRIPLE `
@@ -196,7 +207,11 @@ jobs:
       - name: Compile and run an external-style Hello World
         shell: pwsh
         run: |
-          & ./artifacts/stage0/macos-x64/stark `
+          if ([string]::IsNullOrWhiteSpace($env:STAGE0_COMPILER) -or
+              -not (Test-Path -LiteralPath $env:STAGE0_COMPILER -PathType Leaf)) {
+            throw "Validated native Stage0 apphost path is missing: '$env:STAGE0_COMPILER'."
+          }
+          & $env:STAGE0_COMPILER `
             examples/hello.stark `
             --emit-exe `
             --target $env:TARGET_TRIPLE `

@@ -69,14 +69,16 @@ function Invoke-LlvmSourceBuildProcess {
         [string] $Label
     )
 
-    $output = @(& $FileName @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
-    foreach ($line in $output) {
-        Write-Host ([string]$line)
+    Write-Host "[$([DateTimeOffset]::UtcNow.ToString('O'))] Starting $Label."
+    & $FileName @Arguments 2>&1 | ForEach-Object {
+        Write-Host ([string]$_)
     }
+    $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "$Label failed with exit code $exitCode."
     }
+
+    Write-Host "[$([DateTimeOffset]::UtcNow.ToString('O'))] Completed $Label."
 }
 
 function Get-XcrunValue {
