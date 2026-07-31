@@ -205,6 +205,10 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("com.apple.pkg.CLTools_Executables", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("appleToolchain = [ordered]@{", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("clangSha256", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("& $FileName @Arguments 2>&1 | ForEach-Object", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("Starting $Label", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("Completed $Label", sourceBuild, StringComparison.Ordinal);
+        Assert.DoesNotContain("$output = @(& $FileName @Arguments 2>&1)", sourceBuild, StringComparison.Ordinal);
         Assert.DoesNotContain("Get-Command cmake", sourceBuild, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Get-Command ninja", sourceBuild, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("binaryArchiveSha256 = if ($null -eq $backendBinaryArchive)", packaging, StringComparison.Ordinal);
@@ -232,6 +236,10 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("qualify-private-backend", workflow, StringComparison.Ordinal);
         Assert.Contains("private-backend-report.json", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet publish src/compiler.csproj", workflow, StringComparison.Ordinal);
+        Assert.Contains("artifacts/stage0/macos-x64/compiler", workflow, StringComparison.Ordinal);
+        Assert.Contains("STAGE0_COMPILER=$stage0Compiler", workflow, StringComparison.Ordinal);
+        Assert.Contains("& $env:STAGE0_COMPILER", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("artifacts/stage0/macos-x64/stark", workflow, StringComparison.Ordinal);
         Assert.Contains("stdlib/src/System.stark", workflow, StringComparison.Ordinal);
         Assert.Contains("--package-profile release", workflow, StringComparison.Ordinal);
         Assert.Contains("examples/hello.stark", workflow, StringComparison.Ordinal);
