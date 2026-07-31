@@ -324,6 +324,17 @@ improving those rough edges.
     exact probe arguments in its evidence. This run also exposed GitHub's
     Node.js 20 action deprecation warning; both release workflows now pin
     immutable Node.js 24-native action releases.
+  - Third native qualification attempt (2026-07-29):
+    [run 30487936413](https://github.com/AlexanderBaggett/Stark/actions/runs/30487936413)
+    completed the 5-hour-16-minute optimized LLVM build and passed the backend
+    closure, native dependency, tool execution, and optimized determinism gate.
+    Its retained evidence is artifact
+    `private-backend-macos-x64-30487936413-1` (artifact ID `8745373257`). The
+    subsequent Stage0 smoke failed because raw `dotnet publish` names the
+    apphost `compiler`, while the workflow tried the public `stark` name that
+    is created only by release packaging. The repair validates and reuses the
+    raw apphost for both smoke stages. LLVM source-build output is now streamed
+    as it is produced instead of being retained in memory until process exit.
   - [ ] Run the qualification workflow against the intended immutable release
     commit and retain its successful run URL/artifact identity here.
   - [ ] Review `private-backend-report.json` and
