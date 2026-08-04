@@ -282,16 +282,18 @@ improving those rough edges.
     and attested LLVM 22.1.8 source archive, CMake 3.31.6, Ninja 1.12.1, a macOS
     11.0 x86-64 deployment target, Release `-O3`, ThinLTO, static LLVM/Clang/LLD,
     PIC, AArch64 and X86 code generators, prefix-map/no-UUID reproducibility
-    flags, bounded compile/link parallelism, and `install/strip`. The workflow
-    and local release driver pass only the pinned build-tool executables into the
-    source build, and backend/release manifests preserve source-build and Apple
-    toolchain provenance through packaging and staged-SDK validation.
+    flags, bounded compile/link parallelism, and a stripped distribution install
+    containing only Clang, Clang resource headers, LLD, llvm-ar, and llvm-ranlib.
+    The workflow and local release driver pass only the pinned build-tool
+    executables into the source build, and backend/release manifests preserve
+    source-build and Apple toolchain provenance through packaging and staged-SDK
+    validation.
   - Configuration probe (2026-07-23): the hash-matched source and pinned tools
     configured LLVM successfully from an arm64 macOS host for x86-64, retained
     all declared optimization/static/backend facts in `CMakeCache.txt`, and
-    generated `install/strip`, `clang`, and `lld` targets with no unused-option
-    warning. This proves recipe/configuration feasibility, not native binary
-    qualification.
+    generated the original broad install and compiler/linker targets with no
+    unused-option warning. This proves recipe/configuration feasibility, not
+    native binary qualification.
   - Qualification automation implemented (2026-07-23):
     `.github/workflows/qualify-private-backend.yml` is a non-publishing,
     read-only, manual workflow pinned to `macos-15-intel`. It resolves one
@@ -335,6 +337,22 @@ improving those rough edges.
     is created only by release packaging. The repair validates and reuses the
     raw apphost for both smoke stages. LLVM source-build output is now streamed
     as it is produced instead of being retained in memory until process exit.
+  - Fourth and fifth native qualification attempts (2026-07-31 and 2026-08-04):
+    [run 30655566724](https://github.com/AlexanderBaggett/Stark/actions/runs/30655566724)
+    and
+    [run 30869476675](https://github.com/AlexanderBaggett/Stark/actions/runs/30869476675)
+    remained active through approximately 4,430 of 4,478 Ninja actions, then
+    GitHub canceled each job at its six-hour hosted-runner limit. The underlying
+    binaries for all backend tools required by Stark had linked after
+    approximately 3 hours 18 minutes; the remaining work was unrelated LLVM
+    tooling pulled in by the broad `install/strip` target. The reviewed recipe
+    now uses LLVM's
+    `LLVM_DISTRIBUTION_COMPONENTS` mechanism and
+    `install-distribution-stripped` target to build and install exactly Clang,
+    Clang resource headers, LLD, llvm-ar, and llvm-ranlib. Release `-O3`,
+    ThinLTO, static linkage, reproducibility settings, and both AArch64 and X86
+    code generators remain unchanged, and the exact component set is covered by
+    configuration validation and integration tests.
   - [ ] Run the qualification workflow against the intended immutable release
     commit and retain its successful run URL/artifact identity here.
   - [ ] Review `private-backend-report.json` and
