@@ -149,10 +149,16 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Equal("Release", build.GetProperty("configuration").GetString());
         Assert.Equal("O3", build.GetProperty("optimization").GetString());
         Assert.Equal("Thin", build.GetProperty("lto").GetString());
-        Assert.Equal("install/strip", build.GetProperty("buildTarget").GetString());
+        Assert.Equal("install-distribution-stripped", build.GetProperty("buildTarget").GetString());
         Assert.Equal(["clang", "lld"], build.GetProperty("projects").EnumerateArray().Select(static item => item.GetString()));
         Assert.Equal(["AArch64", "X86"], build.GetProperty("targetsToBuild").EnumerateArray().Select(static item => item.GetString()));
         var cmakeOptions = build.GetProperty("cmakeOptions").EnumerateArray().Select(static item => item.GetString()).ToArray();
+        var distributionOption = Assert.Single(
+            cmakeOptions,
+            static option => option!.StartsWith("-DLLVM_DISTRIBUTION_COMPONENTS=", StringComparison.Ordinal));
+        Assert.Equal(
+            ["clang", "clang-resource-headers", "lld", "llvm-ar", "llvm-ranlib"],
+            distributionOption!["-DLLVM_DISTRIBUTION_COMPONENTS=".Length..].Split(';'));
         Assert.Contains("-DCMAKE_OSX_ARCHITECTURES=x86_64", cmakeOptions);
         Assert.Contains("-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0", cmakeOptions);
         Assert.Contains("-DLLVM_ENABLE_LTO=Thin", cmakeOptions);

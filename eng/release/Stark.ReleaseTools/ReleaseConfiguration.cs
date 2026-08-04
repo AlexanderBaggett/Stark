@@ -63,6 +63,7 @@ internal static class ReleaseConfiguration
         "-DLLVM_BUILD_EXAMPLES=OFF",
         "-DLLVM_BUILD_LLVM_DYLIB=OFF",
         "-DLLVM_BUILD_TESTS=OFF",
+        "-DLLVM_DISTRIBUTION_COMPONENTS=clang;clang-resource-headers;lld;llvm-ar;llvm-ranlib",
         "-DLLVM_ENABLE_ASSERTIONS=OFF",
         "-DLLVM_ENABLE_BINDINGS=OFF",
         "-DLLVM_ENABLE_CURL=OFF",
@@ -457,7 +458,7 @@ internal static class ReleaseConfiguration
         Validation.Require(build.RequiredString("optimization", $"LLVM/{targetId} source build") == "O3", "LLVM/macos-x64 source build must retain O3 optimization.");
         Validation.Require(build.RequiredString("lto", $"LLVM/{targetId} source build") == "Thin", "LLVM/macos-x64 source build must retain ThinLTO.");
         Validation.Require(build.RequiredString("sourceSubdirectory", $"LLVM/{targetId} source build") == "llvm", "LLVM/macos-x64 source subdirectory is invalid.");
-        Validation.Require(build.RequiredString("buildTarget", $"LLVM/{targetId} source build") == "install/strip", "LLVM/macos-x64 source build must install stripped release binaries.");
+        Validation.Require(build.RequiredString("buildTarget", $"LLVM/{targetId} source build") == "install-distribution-stripped", "LLVM/macos-x64 source build must install only the reviewed stripped distribution components.");
         Validation.Require(Validation.Strings(build["projects"], $"LLVM/{targetId} projects", nonEmpty: true).SequenceEqual(["clang", "lld"]), "LLVM/macos-x64 source build must include exactly Clang and LLD.");
         Validation.Require(Validation.Strings(build["targetsToBuild"], $"LLVM/{targetId} targets", nonEmpty: true).SequenceEqual(["AArch64", "X86"]), "LLVM/macos-x64 source build must preserve AArch64 and X86 code-generation support.");
         Validation.Require(Validation.Strings(build["cmakeOptions"], $"LLVM/{targetId} CMake options", nonEmpty: true).SequenceEqual(ExpectedMacOsX64LlvmCMakeOptions), "LLVM/macos-x64 source-build optimization or closure options drifted.");
