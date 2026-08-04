@@ -185,7 +185,7 @@
           "AArch64",
           "X86"
         ],
-        "buildTarget": "install/strip",
+        "buildTarget": "install-distribution-stripped",
         "sourceDateEpoch": 0,
         "maxParallelCompileJobs": 8,
         "parallelLinkJobs": 1,
@@ -201,6 +201,7 @@
           "-DLLVM_BUILD_EXAMPLES=OFF",
           "-DLLVM_BUILD_LLVM_DYLIB=OFF",
           "-DLLVM_BUILD_TESTS=OFF",
+          "-DLLVM_DISTRIBUTION_COMPONENTS=clang;clang-resource-headers;lld;llvm-ar;llvm-ranlib",
           "-DLLVM_ENABLE_ASSERTIONS=OFF",
           "-DLLVM_ENABLE_BINDINGS=OFF",
           "-DLLVM_ENABLE_CURL=OFF",
