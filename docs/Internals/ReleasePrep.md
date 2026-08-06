@@ -92,9 +92,9 @@ runtime files, license, and ordered link facts—must already be inside the SDK.
     upstream binary inputs in total. The missing macOS x64 upstream binary is
     now covered by a pinned, repository-controlled source-build recipe.
   - Remaining: execute and qualify the real closure on the Linux arm64 and
-    Windows arm64 native runners, execute and qualify the configured macOS x64
-    source build on its native runner, and requalify every enabled closure from
-    the final release commit.
+    Windows arm64 native runners, run the complete release/archive/install path
+    for macOS x64, and requalify every enabled closure from the final release
+    commit.
 - [x] Keep backend discovery archive-relative by default and label it as an
   internal compiler dependency in diagnostics and release metadata, not as a
   bundled general-purpose toolchain.
@@ -204,8 +204,8 @@ improving those rough edges.
   and attestation in `scripts/llvm-22.1.8-assets.json`; this is reviewed input
   identity, not target-native runtime qualification. The same manifest now
   defines the macOS x64 native source-build recipe and its exact CMake/Ninja
-  inputs; that recipe remains an unqualified build until a native x64 runner
-  produces and exercises its closure.
+  inputs. A native Intel runner has now qualified that recipe, its minimized
+  closure, optimized determinism, System archive, and Hello World behavior.
 - [x] Confirm Raylib 6.0 publishes Linux x64/arm64, Windows x64/arm64, and a
   macOS package containing both architectures. The current Stark acquisition
   manifest uses only Linux x64, Windows x64, and macOS arm64.
@@ -353,15 +353,31 @@ improving those rough edges.
     ThinLTO, static linkage, reproducibility settings, and both AArch64 and X86
     code generators remain unchanged, and the exact component set is covered by
     configuration validation and integration tests.
-  - [ ] Run the qualification workflow against the intended immutable release
-    commit and retain its successful run URL/artifact identity here.
-  - [ ] Review `private-backend-report.json` and
+  - Successful native qualification baseline (2026-08-06):
+    [run 30944641351](https://github.com/AlexanderBaggett/Stark/actions/runs/30944641351)
+    qualified commit `ddf24627821fb02322ddfcd253715cc8343472ff` in approximately
+    1 hour 44 minutes on native Intel macOS. Its
+    retained evidence is artifact `private-backend-macos-x64-30944641351-1`
+    (artifact ID `8909655368`). The qualified closure contains 321 files and
+    477,257,369 logical bytes. All seven required tools are x86-64 Mach-O and
+    depend only on `/usr/lib/libSystem.B.dylib` and `/usr/lib/libc++.1.dylib`.
+    Repeat `-O3` ThinLTO compilation produced identical objects and archives;
+    optimized System contained 30 members, and the external Hello World smoke
+    printed the expected output. The build used Xcode 16.4 (16F6), macOS SDK
+    15.5, and Apple Clang 17.0.0; those identities and executable hashes are now
+    locked in the source-build recipe and checked before a costly build starts.
+    The dependency selection is therefore `qualified-build`. It remains a
+    planned target until the full release/archive/install smoke and oldest-host
+    compatibility gate pass.
+  - [ ] Re-run qualification against the final immutable release commit and
+    retain that successful run URL/artifact identity here.
+  - [x] Review `private-backend-report.json` and
     `stage0-smoke-report.json`; confirm the closure size, every `otool`
     dependency, x86-64 identity, repeat-build digests, optimized System archive,
     and Hello World result are acceptable.
   - [ ] Run the output on the oldest supported macOS x64 host, compare its
-    closure and archive-size envelope with the other platforms, and only then
-    change the dependency status from `unqualified-build` to `qualified-build`.
+    closure and archive-size envelope with the other platforms before promoting
+    the target from `planned` to `tier-1` and enabling release publication.
 - [ ] Measure compressed archive size and peak CI disk use for all six complete
   candidates before choosing runner sizes or artifact transport.
 - [ ] Add a native-dependency inventory gate using platform tools (`otool`,
@@ -531,14 +547,15 @@ repository-owned data and scripts.
 Implementation checkpoint (2026-07-16): `eng/release/` now records all six
 64-bit rows, the dependency/private-backend inputs, all seven official Vendor
 upstream families (represented by nine Stark package images), mandatory archive
-contents, and release metadata. Validation emits
-the enabled matrix used by both build and install-smoke jobs. Three rows remain
-planned: Linux arm64 and Windows arm64 now have qualified upstream LLVM input
-identities but still need full native package qualification, while macOS x64
-has a pinned reproducible private-backend source-build recipe and successful
-configuration probe but still needs a native x64 build and runtime
-qualification. The dependency validator reports that remaining unqualified
-build instead of inventing a green state.
+contents, and release metadata. Validation emits the enabled matrix used by
+both build and install-smoke jobs, or all six rows only under the explicit
+nonpublishing `include_planned` diagnostic gate. Three rows remain planned:
+Linux arm64 and Windows arm64 have qualified upstream LLVM input identities but
+still need full native package qualification; macOS x64 has a natively
+qualified pinned source-built backend but still needs the complete SDK archive,
+Vendor, installer, oldest-host, and independent install-smoke gates. Planned
+status remains separate from backend-input/build qualification so no successful
+backend probe can make a target publishable by itself.
 
 #### Implemented managed-dependency pin contract (2026-07-21)
 
@@ -674,8 +691,8 @@ qualification also remains required.
     upstream families. Five official LLVM binary inputs are pinned with their
     upstream signature and attestation assets; the validator requires every
     `qualified-input` selection to match that acquisition manifest exactly. The
-    macOS x64 selection is an explicit `pinned-source-build` with a validated
-    exact recipe and remains `unqualified-build`.
+    macOS x64 selection is an explicit `pinned-source-build` with a validated,
+    native-runner-qualified exact recipe and is now `qualified-build`.
     Keep this task open until every planned target's compiler-private backend
     and native payload selection is built and qualified.
 - [x] Add an official Vendor package manifest covering the Raylib upstream
@@ -730,6 +747,11 @@ qualification also remains required.
 - [x] Default manual runs to non-publishing draft prerelease candidates and all
   currently enabled supported targets; require
   an explicit choice to create a public stable release.
+- [x] Add an explicit `include_planned` diagnostic input. It is accepted only
+  for `publish=false`, expands `all` to the six intended targets, and carries a
+  narrowly scoped `AllowPlannedTarget` switch through Vendor preparation and
+  packaging. The planner rejects planned targets without opt-in and rejects the
+  opt-in before writing a plan whenever publication is requested.
 - [x] Add a prepare job that validates the version/ref/manifests, emits the
   dynamic matrix, and refuses a dirty, moving, or mismatched release identity.
   It resolves one immutable commit, rejects expected-SHA mismatches, requires an
@@ -745,8 +767,14 @@ qualification also remains required.
     native Intel qualification workflow are wired. The qualification workflow
     also publishes native Stage0, builds the optimized System package, and
     compiles/runs Hello World without weakening the release workflow's
-    planned-target guard. Execution and review of that native workflow remain
-    open.
+    planned-target guard. The native qualification workflow has passed; the
+    complete archive/install-smoke route remains open for this planned row.
+  - The release workflow now carries each row's backend acquisition kind in the
+    generated matrix, caches only checksum-verified source inputs, re-runs the
+    full private-backend qualifier for every pinned source build, and retains
+    backend manifests/provenance/logs as build evidence. It validates the native
+    runner OS/architecture and uses the exact self-contained published Stage0
+    apphost—not `dotnet run`—to build optimized System before packaging.
 - [ ] Build or acquire every official Vendor native payload before package-image
   generation. Upstream binary absence must select a reproducible pinned-source
   build; it must never select `pkg-config` or omit the package silently.
