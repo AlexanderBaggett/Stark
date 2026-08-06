@@ -247,8 +247,14 @@ public sealed class ReleaseToolsTests
         var configuration = ReleaseConfiguration.Validate(FindRepositoryRoot());
         Assert.Equal(6, configuration.Targets.Count);
         Assert.Equal(3, configuration.Targets.Count(target => target.ReleaseEnabled));
-        Assert.Equal(3, ReleaseConfiguration.GenerateMatrix(configuration, includePlanned: false).RequiredArray("include", "matrix").Count);
-        Assert.Equal(6, ReleaseConfiguration.GenerateMatrix(configuration, includePlanned: true).RequiredArray("include", "matrix").Count);
+        var enabled = ReleaseConfiguration.GenerateMatrix(configuration, includePlanned: false).RequiredArray("include", "matrix").OfType<JsonObject>().ToArray();
+        var complete = ReleaseConfiguration.GenerateMatrix(configuration, includePlanned: true).RequiredArray("include", "matrix").OfType<JsonObject>().ToArray();
+        Assert.Equal(3, enabled.Length);
+        Assert.Equal(6, complete.Length);
+        Assert.All(enabled, entry => Assert.True(entry.RequiredBool("release_enabled", "matrix entry")));
+        var macOsX64 = complete.Single(entry => entry.RequiredString("target_id", "matrix entry") == "macos-x64");
+        Assert.False(macOsX64.RequiredBool("release_enabled", "matrix entry"));
+        Assert.Equal("pinned-source-build", macOsX64.RequiredString("private_backend_acquisition", "matrix entry"));
     }
 
     [Fact]
@@ -288,6 +294,54 @@ public sealed class ReleaseToolsTests
             "--input-commit", new string('1', 40), "--input-targets", "macos-arm64", "--input-publish", "true",
             "--input-draft", "true", "--input-prerelease", "false", "--plan-output", plan])));
         Assert.False(File.Exists(plan));
+    }
+
+    [Fact]
+    public void ReleasePlanningAllowsAllPlannedTargetsOnlyForDiagnostics()
+    {
+        using var temporary = new TemporaryDirectory();
+        var planPath = Path.Combine(temporary.Path, "plan.json");
+        ReleasePlanPreparer.Run(CommandLine.Parse([
+            "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
+            "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
+            "--input-commit", new string('1', 40), "--input-targets", "all", "--input-publish", "false",
+            "--input-draft", "true", "--input-prerelease", "true", "--input-include-planned", "true",
+            "--plan-output", planPath]));
+
+        var plan = JsonIO.LoadObject(planPath, "test release plan");
+        Assert.True(plan.RequiredBool("includePlanned", "test release plan"));
+        Assert.False(plan.RequiredBool("publish", "test release plan"));
+        Assert.Equal(6, plan.RequiredArray("targetIds", "test release plan").Count);
+        Assert.Equal(6, plan.RequiredObject("matrix", "test release plan").RequiredArray("include", "test release matrix").Count);
+    }
+
+    [Fact]
+    public void ReleasePlanningRejectsPlannedTargetsWithoutDiagnosticOptIn()
+    {
+        using var temporary = new TemporaryDirectory();
+        var planPath = Path.Combine(temporary.Path, "plan.json");
+        Assert.Throws<ReleaseToolException>(() => ReleasePlanPreparer.Run(CommandLine.Parse([
+            "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
+            "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
+            "--input-commit", new string('1', 40), "--input-targets", "macos-x64", "--input-publish", "false",
+            "--input-draft", "true", "--input-prerelease", "true", "--input-include-planned", "false",
+            "--plan-output", planPath])));
+        Assert.False(File.Exists(planPath));
+    }
+
+    [Fact]
+    public void ReleasePlanningRejectsPlannedTargetsInPublicationMode()
+    {
+        using var temporary = new TemporaryDirectory();
+        var planPath = Path.Combine(temporary.Path, "plan.json");
+        var error = Assert.Throws<ReleaseToolException>(() => ReleasePlanPreparer.Run(CommandLine.Parse([
+            "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
+            "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
+            "--input-commit", new string('1', 40), "--input-targets", "all", "--input-publish", "true",
+            "--input-draft", "true", "--input-prerelease", "false", "--input-include-planned", "true",
+            "--plan-output", planPath])));
+        Assert.Contains("diagnostic-only", error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(planPath));
     }
 
     [Fact]

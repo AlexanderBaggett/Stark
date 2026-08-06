@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("linux-x64", "windows-x64", "macos-arm64")]
+    [ValidateSet("linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64")]
     [string] $AssetSuffix,
 
     [Parameter(Mandatory = $true)]
@@ -37,7 +37,9 @@ param(
 
     [string] $NormalizedContributionOutput = "",
 
-    [switch] $Force
+    [switch] $Force,
+
+    [switch] $AllowPlannedTarget
 )
 
 Set-StrictMode -Version Latest
@@ -638,9 +640,16 @@ if ($matchingTargets.Count -ne 1) {
     throw "Release target manifest does not define exactly one '$AssetSuffix' target."
 }
 $releaseTarget = $matchingTargets[0]
-if (-not [bool](Get-RequiredProperty -Object $releaseTarget -Name "releaseEnabled") -or
-    -not [string]::Equals([string](Get-RequiredProperty -Object $releaseTarget -Name "targetTriple"), $TargetTriple, [StringComparison]::Ordinal)) {
-    throw "Target '$AssetSuffix' is disabled or does not match requested triple '$TargetTriple'."
+$releaseEnabled = [bool](Get-RequiredProperty -Object $releaseTarget -Name "releaseEnabled")
+$supportTier = [string](Get-RequiredProperty -Object $releaseTarget -Name "supportTier")
+if (-not [string]::Equals([string](Get-RequiredProperty -Object $releaseTarget -Name "targetTriple"), $TargetTriple, [StringComparison]::Ordinal)) {
+    throw "Target '$AssetSuffix' does not match requested triple '$TargetTriple'."
+}
+if ($releaseEnabled -and $AllowPlannedTarget) {
+    throw "-AllowPlannedTarget is valid only for a release-disabled planned target."
+}
+if (-not $releaseEnabled -and (-not $AllowPlannedTarget -or $supportTier -cne "planned")) {
+    throw "Target '$AssetSuffix' is disabled; planned targets require the explicit diagnostic-only -AllowPlannedTarget switch."
 }
 Assert-MatchingHost -OperatingSystem ([string](Get-RequiredProperty -Object $releaseTarget -Name "operatingSystem")) -Architecture ([string](Get-RequiredProperty -Object $releaseTarget -Name "architecture"))
 
@@ -806,6 +815,7 @@ try {
         ContributionManifestPath = $glfwContributionPath
         CacheDir = (Join-Path $cacheRoot "glfw")
         Force = [bool]$Force
+        AllowPlannedTarget = [bool]$AllowPlannedTarget
     }
     & $glfwScript @glfwArguments
     if ($LASTEXITCODE -ne 0) {
@@ -824,6 +834,7 @@ try {
         ContributionManifestPath = $sdl3ContributionPath
         CacheDir = (Join-Path $cacheRoot "sdl3")
         Force = [bool]$Force
+        AllowPlannedTarget = [bool]$AllowPlannedTarget
     }
     & $sdl3Script @sdl3Arguments
     if ($LASTEXITCODE -ne 0) {

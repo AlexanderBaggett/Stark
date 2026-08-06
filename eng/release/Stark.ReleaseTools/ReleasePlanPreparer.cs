@@ -11,7 +11,7 @@ internal static partial class ReleasePlanPreparer
         command.RejectUnknown(
             "--root", "--event-name", "--resolved-commit", "--github-ref", "--github-ref-name", "--github-sha",
             "--input-version", "--input-ref", "--input-commit", "--input-targets", "--input-publish",
-            "--input-draft", "--input-prerelease", "--require-release-tool", "--plan-output", "--github-output");
+            "--input-draft", "--input-prerelease", "--input-include-planned", "--require-release-tool", "--plan-output", "--github-output");
         var root = Path.GetFullPath(command.Optional("--root", Directory.GetCurrentDirectory()));
         var configuration = ReleaseConfiguration.Validate(root);
         var tool = ReleaseToolIdentity.Current();
@@ -30,14 +30,17 @@ internal static partial class ReleasePlanPreparer
         bool publish;
         bool draft;
         bool prerelease;
+        bool includePlanned;
         if (eventName == "workflow_dispatch")
         {
             version = ValidateVersion(command.Optional("--input-version"));
             requestedRef = ValidateRef(command.Optional("--input-ref"));
-            targetIds = SelectTargets(command.Optional("--input-targets"), configuration.Targets);
             publish = ParseBool(command.Optional("--input-publish"), "publish input");
             draft = ParseBool(command.Optional("--input-draft"), "draft input");
             prerelease = ParseBool(command.Optional("--input-prerelease"), "prerelease input");
+            includePlanned = ParseBool(command.Optional("--input-include-planned", "false"), "include_planned input");
+            Validation.Require(!includePlanned || !publish, "Planned targets are diagnostic-only and cannot be included in a publication run.");
+            targetIds = SelectTargets(command.Optional("--input-targets"), configuration.Targets, includePlanned);
             var requestedCommit = command.Optional("--input-commit").Trim();
             expected = requestedCommit.Length != 0 ? ValidateCommit(requestedCommit, "expected commit") : FullCommit().IsMatch(requestedRef) ? requestedRef.ToLowerInvariant() : null;
             if (publish)
@@ -52,7 +55,8 @@ internal static partial class ReleasePlanPreparer
             version = ValidateVersion(command.Optional("--github-ref-name"));
             requestedRef = ValidateRef(githubRef);
             expected = ValidateCommit(command.Optional("--github-sha"), "GitHub event commit");
-            targetIds = SelectTargets("all", configuration.Targets);
+            includePlanned = false;
+            targetIds = SelectTargets("all", configuration.Targets, includePlanned);
             publish = true;
             draft = false;
             prerelease = version.Contains('-');
@@ -69,7 +73,7 @@ internal static partial class ReleasePlanPreparer
             Validation.Require(targetIds.SequenceEqual(enabled), "Publication requires every release-enabled target; target subsets are diagnostic builds only.");
         }
 
-        var complete = ReleaseConfiguration.GenerateMatrix(configuration, includePlanned: false).RequiredArray("include", "release matrix");
+        var complete = ReleaseConfiguration.GenerateMatrix(configuration, includePlanned).RequiredArray("include", "release matrix");
         var selected = targetIds.ToHashSet(StringComparer.Ordinal);
         var include = new JsonArray(complete.OfType<JsonObject>().Where(entry => selected.Contains(entry.RequiredString("target_id", "release matrix entry"))).Select(entry => entry.DeepClone()).ToArray());
         Validation.Require(include.Count == targetIds.Count && include.Count != 0, "Selected target matrix is empty or incomplete.");
@@ -87,6 +91,7 @@ internal static partial class ReleasePlanPreparer
             ["publish"] = publish,
             ["draft"] = draft,
             ["prerelease"] = prerelease,
+            ["includePlanned"] = includePlanned,
             ["releaseTool"] = tool,
             ["matrix"] = new JsonObject { ["include"] = include },
             ["configurationWarnings"] = warningArray,
@@ -103,6 +108,7 @@ internal static partial class ReleasePlanPreparer
                 $"version={version}", $"source_ref={requestedRef}", $"commit_sha={resolved}",
                 $"target_ids={string.Join(',', targetIds)}", $"publish={publish.ToString().ToLowerInvariant()}",
                 $"draft={draft.ToString().ToLowerInvariant()}", $"prerelease={prerelease.ToString().ToLowerInvariant()}",
+                $"include_planned={includePlanned.ToString().ToLowerInvariant()}",
             };
             File.AppendAllText(githubOutput, string.Join('\n', lines) + "\n", new UTF8Encoding(false));
         }
@@ -139,19 +145,19 @@ internal static partial class ReleasePlanPreparer
         return result;
     }
 
-    private static List<string> SelectTargets(string selection, IReadOnlyList<ReleaseTarget> targets)
+    private static List<string> SelectTargets(string selection, IReadOnlyList<ReleaseTarget> targets, bool includePlanned)
     {
         var requested = selection.Trim();
-        Validation.Require(requested.Length != 0, "Target selection must be 'all' or a comma-separated list of enabled target IDs.");
-        var enabled = targets.Where(target => target.ReleaseEnabled).Select(target => target.Id).ToArray();
-        if (requested == "all") return [.. enabled];
+        Validation.Require(requested.Length != 0, "Target selection must be 'all' or a comma-separated list of permitted target IDs.");
+        var permitted = targets.Where(target => includePlanned || target.ReleaseEnabled).Select(target => target.Id).ToArray();
+        if (requested == "all") return [.. permitted];
         var pieces = requested.Split(',').Select(piece => piece.Trim()).ToArray();
         Validation.Require(pieces.All(piece => piece.Length != 0) && pieces.Length == pieces.Distinct(StringComparer.Ordinal).Count(), "Target selection contains an empty or duplicate target ID.");
         var all = targets.Select(target => target.Id).ToHashSet(StringComparer.Ordinal);
         Validation.Require(pieces.All(all.Contains), $"Target selection contains unknown target(s): {string.Join(", ", pieces.Where(piece => !all.Contains(piece)))}");
-        Validation.Require(pieces.All(enabled.Contains), $"Target selection contains release-disabled target(s): {string.Join(", ", pieces.Where(piece => !enabled.Contains(piece)))}");
+        Validation.Require(pieces.All(permitted.Contains), $"Target selection contains release-disabled target(s): {string.Join(", ", pieces.Where(piece => !permitted.Contains(piece)))}");
         var selected = pieces.ToHashSet(StringComparer.Ordinal);
-        return enabled.Where(selected.Contains).ToList();
+        return permitted.Where(selected.Contains).ToList();
     }
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")]

@@ -13,7 +13,7 @@ public sealed class ReleaseVendorPreparationScriptTests
         var repositoryRoot = FindRepositoryRoot();
         var script = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "prepare-vendor-release-input.ps1"));
 
-        Assert.Contains("[ValidateSet(\"linux-x64\", \"windows-x64\", \"macos-arm64\")]", script, StringComparison.Ordinal);
+        Assert.Contains("[ValidateSet(\"linux-x64\", \"linux-arm64\", \"windows-x64\", \"windows-arm64\", \"macos-x64\", \"macos-arm64\")]", script, StringComparison.Ordinal);
         Assert.Contains("[string] $OutputVendorRoot", script, StringComparison.Ordinal);
         Assert.Contains("[string] $StdlibPackageDir", script, StringComparison.Ordinal);
         Assert.Contains("[string] $ToolchainDir", script, StringComparison.Ordinal);

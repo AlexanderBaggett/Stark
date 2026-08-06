@@ -29,6 +29,7 @@ internal sealed record ReleaseConfigurationResult(
     IReadOnlyDictionary<string, string> NuGetLockFiles,
     string LlvmVersion,
     string LlvmManifest,
+    IReadOnlyDictionary<string, string> PrivateBackendAcquisitions,
     string RaylibManifest);
 
 internal static class ReleaseConfiguration
@@ -162,6 +163,12 @@ internal static class ReleaseConfiguration
 
         var dependencies = documents["dependencies"].RequiredArray("dependencies", "dependencies.json").OfType<JsonObject>().ToArray();
         var llvm = dependencies.Single(item => item.RequiredString("kind", "dependency") == "compiler-private-backend");
+        var privateBackendAcquisitions = llvm.RequiredArray("selections", "LLVM dependency")
+            .OfType<JsonObject>()
+            .ToDictionary(
+                item => item.RequiredString("target", "LLVM dependency selection"),
+                item => item.RequiredString("acquisition", "LLVM dependency selection"),
+                StringComparer.Ordinal);
         var raylib = documents["vendor"].RequiredArray("packages", "vendor-packages.json").OfType<JsonObject>().Single(item => item.RequiredString("id", "Vendor package") == "Vendor.Raylib");
         return new ReleaseConfigurationResult(
             targets,
@@ -172,6 +179,7 @@ internal static class ReleaseConfiguration
             managed.LockFiles,
             llvm.RequiredString("version", "LLVM dependency"),
             llvm.RequiredString("acquisitionManifest", "LLVM dependency"),
+            privateBackendAcquisitions,
             raylib.RequiredString("acquisitionManifest", "Vendor.Raylib"));
     }
 
@@ -184,6 +192,7 @@ internal static class ReleaseConfiguration
             {
                 ["target_id"] = target.Id,
                 ["os"] = target.GitHubRunner,
+                ["operating_system"] = target.OperatingSystem,
                 ["rid"] = target.RuntimeIdentifier,
                 ["asset_suffix"] = target.AssetSuffix,
                 ["archive_kind"] = target.ArchiveKind,
@@ -191,6 +200,7 @@ internal static class ReleaseConfiguration
                 ["target_triple"] = target.TargetTriple,
                 ["architecture"] = target.Architecture,
                 ["support_tier"] = target.SupportTier,
+                ["release_enabled"] = target.ReleaseEnabled,
                 ["dotnet_version"] = result.DotNetVersion,
                 ["dotnet_runtime_version"] = result.DotNetRuntimeVersion,
                 ["nuget_config"] = result.NuGetConfig,
@@ -198,6 +208,7 @@ internal static class ReleaseConfiguration
                 ["llvm_version"] = result.LlvmVersion,
                 ["llvm_manifest"] = result.LlvmManifest,
                 ["private_backend_selection"] = target.PrivateBackendSelection,
+                ["private_backend_acquisition"] = result.PrivateBackendAcquisitions[target.Id],
                 ["raylib_manifest"] = result.RaylibManifest,
             });
         }
@@ -303,6 +314,15 @@ internal static class ReleaseConfiguration
                 {
                     _ = selection.RequiredString("archiveUrl", $"{id}/{targetId}");
                     Validation.Require(Validation.IsSha256(selection.RequiredString("archiveSha256", $"{id}/{targetId}")), $"{id}/{targetId} archive SHA-256 is invalid.");
+                }
+                else if (qualification == "qualified-build")
+                {
+                    Validation.Require(selection.RequiredString("acquisition", $"{id}/{targetId}") == "pinned-source-build", $"{id}/{targetId} qualified-build must identify a pinned source build.");
+                    var commit = selection.RequiredString("qualificationCommit", $"{id}/{targetId}");
+                    Validation.Require(commit.Length == 40 && commit.All(char.IsAsciiHexDigit), $"{id}/{targetId} qualification commit is invalid.");
+                    var workflow = selection.RequiredString("qualificationWorkflow", $"{id}/{targetId}");
+                    Validation.Require(Uri.TryCreate(workflow, UriKind.Absolute, out var workflowUri) && workflowUri.Scheme == Uri.UriSchemeHttps && workflowUri.Host == "github.com", $"{id}/{targetId} qualification workflow URL is invalid.");
+                    Validation.Require(long.TryParse(selection.RequiredString("qualificationArtifactId", $"{id}/{targetId}"), out var artifactId) && artifactId > 0, $"{id}/{targetId} qualification artifact ID is invalid.");
                 }
                 else if (qualification?.StartsWith("unqualified-", StringComparison.Ordinal) == true)
                 {
@@ -465,6 +485,23 @@ internal static class ReleaseConfiguration
         Validation.Require(build["sourceDateEpoch"] is JsonValue epoch && epoch.TryGetValue<long>(out var sourceDateEpoch) && sourceDateEpoch == 0, "LLVM/macos-x64 SOURCE_DATE_EPOCH must be fixed at zero.");
         Validation.Require(build["maxParallelCompileJobs"] is JsonValue jobs && jobs.TryGetValue<int>(out var compileJobs) && compileJobs is > 0 and <= 8, "LLVM/macos-x64 compile parallelism must be bounded.");
         Validation.Require(build["parallelLinkJobs"] is JsonValue links && links.TryGetValue<int>(out var linkJobs) && linkJobs == 1, "LLVM/macos-x64 ThinLTO linking must be serialized for bounded CI memory use.");
+
+        var apple = build.RequiredObject("qualifiedAppleToolchain", $"LLVM/{targetId} source build");
+        Validation.Require(
+            apple.Select(item => item.Key).ToHashSet(StringComparer.Ordinal).SetEquals([
+                "xcodeVersion", "sdkVersion", "clangVersionLine", "clangSha256", "clangxxSha256",
+            ]),
+            "LLVM/macos-x64 qualified Apple toolchain must contain exactly the reviewed identity fields.");
+        Validation.Require(apple.RequiredString("xcodeVersion", "LLVM/macos-x64 qualified Apple toolchain") == "Xcode 16.4\nBuild version 16F6", "LLVM/macos-x64 qualified Xcode identity drifted.");
+        Validation.Require(apple.RequiredString("sdkVersion", "LLVM/macos-x64 qualified Apple toolchain") == "15.5", "LLVM/macos-x64 qualified SDK identity drifted.");
+        Validation.Require(apple.RequiredString("clangVersionLine", "LLVM/macos-x64 qualified Apple toolchain") == "Apple clang version 17.0.0 (clang-1700.0.13.5)", "LLVM/macos-x64 qualified Apple Clang identity drifted.");
+        foreach (var field in new[] { "clangSha256", "clangxxSha256" })
+        {
+            var sha256 = apple.RequiredString(field, "LLVM/macos-x64 qualified Apple toolchain");
+            Validation.Require(sha256 == sha256.ToLowerInvariant() && Validation.IsSha256(sha256), $"LLVM/macos-x64 qualified Apple toolchain {field} is invalid.");
+        }
+        Validation.Require(apple.RequiredString("clangSha256", "LLVM/macos-x64 qualified Apple toolchain") == "4c458256bcdf913774de1bb4a37768244d3b41f32ad55afb2dfec3432f46f4fe", "LLVM/macos-x64 qualified Apple Clang hash drifted.");
+        Validation.Require(apple.RequiredString("clangxxSha256", "LLVM/macos-x64 qualified Apple toolchain") == "4c458256bcdf913774de1bb4a37768244d3b41f32ad55afb2dfec3432f46f4fe", "LLVM/macos-x64 qualified Apple Clang++ hash drifted.");
 
         var tools = buildTools.RequiredObject("tools", "build-tools.json");
         Validation.Require(build.RequiredString("cmakeVersion", $"LLVM/{targetId} source build") == tools.RequiredObject("cmake", "build-tools.json").RequiredString("version", "CMake"), "LLVM/macos-x64 CMake version differs from the pinned build-tool manifest.");
