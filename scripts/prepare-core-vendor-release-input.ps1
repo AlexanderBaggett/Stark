@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("linux-x64", "windows-x64", "macos-arm64")]
+    [ValidateSet("linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64")]
     [string] $AssetSuffix,
 
     [Parameter(Mandatory = $true)]

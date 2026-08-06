@@ -36,9 +36,10 @@ lock them.
 validated manifests into an immutable plan containing the exact source commit
 and selected matrix. A manual run defaults to `publish=false`, `draft=true`,
 `prerelease=true`, and all release-enabled targets. Target subsets are allowed
-for nonpublishing diagnostics only. Publishing requires either an expected full
-commit SHA or a full SHA as the requested ref, and always requires the complete
-enabled matrix.
+for nonpublishing diagnostics only. Setting `include_planned=true` permits the
+three release-disabled rows in that diagnostic matrix; the request is rejected
+if `publish=true`. Publishing requires either an expected full commit SHA or a
+full SHA as the requested ref, and always requires the complete enabled matrix.
 
 ## Run a release candidate from GitHub
 
@@ -49,15 +50,30 @@ enabled matrix.
    `version`, such as `v0.1.0-rc.1`.
 4. Set `ref` to the branch, tag, or full 40-character commit to build. For a
    review-only candidate, leave `commit` empty, keep `targets=all`, and retain
-   the safe defaults: `publish=false`, `draft=true`, `prerelease=true`.
+   the safe defaults: `publish=false`, `include_planned=false`, `draft=true`,
+   `prerelease=true`.
 5. Choose **Run workflow**. Review the `release-plan` artifact first, especially
    its resolved commit, target IDs, warnings, and configuration identity. Then
    review every `release-candidate-<target>-attempt-<N>` artifact and independent
    `install-smoke-<target>-attempt-<N>` artifact from the same run attempt.
 
 A nonpublishing diagnostic run may select a comma-separated subset of enabled
-target IDs. It still builds immutable candidate artifacts, but it cannot create
-or update a GitHub Release.
+target IDs. To exercise planned targets, keep `publish=false`, set
+`include_planned=true`, and select `all` or a comma-separated subset that may
+include `linux-arm64`, `windows-arm64`, or `macos-x64`. Such a run follows the
+same archive and independent install-smoke pipeline and produces immutable
+candidate artifacts, but it cannot create or update a GitHub Release. Planned
+rows are not made publishable by a successful diagnostic run; their manifest
+status must be reviewed and promoted separately.
+
+Rows whose matrix declares `private_backend_acquisition=pinned-source-build`
+rebuild that backend from checksum-verified source inputs and immediately run
+the same closure, architecture, native-dependency, tool, `-O3`, ThinLTO, and
+determinism qualifier used by the dedicated backend workflow. The release build
+job has a six-hour bound, retains the acquisition/qualification evidence, and
+uses the exact self-contained Stage0 apphost produced for that row to build the
+optimized System package. Compiled LLVM build directories are never cached;
+only immutable downloaded inputs are.
 
 ## Mandatory source quality gate
 

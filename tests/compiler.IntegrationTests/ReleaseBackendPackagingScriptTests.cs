@@ -131,7 +131,7 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
-    public void MacOsX64BackendHasAPinnedOptimizedSourceBuildWithoutFalseQualification()
+    public void MacOsX64BackendHasAQualifiedPinnedOptimizedSourceBuild()
     {
         var repositoryRoot = FindRepositoryRoot();
         using var acquisitionDocument = JsonDocument.Parse(
@@ -164,6 +164,10 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("-DLLVM_ENABLE_LTO=Thin", cmakeOptions);
         Assert.Contains("-DLLVM_BUILD_LLVM_DYLIB=OFF", cmakeOptions);
         Assert.Contains("-DLLVM_LINK_LLVM_DYLIB=OFF", cmakeOptions);
+        var apple = build.GetProperty("qualifiedAppleToolchain");
+        Assert.Equal("Xcode 16.4\nBuild version 16F6", apple.GetProperty("xcodeVersion").GetString());
+        Assert.Equal("15.5", apple.GetProperty("sdkVersion").GetString());
+        Assert.Equal("Apple clang version 17.0.0 (clang-1700.0.13.5)", apple.GetProperty("clangVersionLine").GetString());
 
         var privateBackend = dependencyDocument.RootElement.GetProperty("dependencies")
             .EnumerateArray()
@@ -171,8 +175,10 @@ public sealed class ReleaseBackendPackagingScriptTests
         var selection = privateBackend.GetProperty("selections").EnumerateArray()
             .Single(static item => item.GetProperty("target").GetString() == "macos-x64");
         Assert.Equal("pinned-source-build", selection.GetProperty("acquisition").GetString());
-        Assert.Equal("unqualified-build", selection.GetProperty("qualificationStatus").GetString());
-        Assert.Contains("not yet been qualified", selection.GetProperty("qualificationReason").GetString(), StringComparison.Ordinal);
+        Assert.Equal("qualified-build", selection.GetProperty("qualificationStatus").GetString());
+        Assert.Equal("ddf24627821fb02322ddfcd253715cc8343472ff", selection.GetProperty("qualificationCommit").GetString());
+        Assert.Equal("https://github.com/AlexanderBaggett/Stark/actions/runs/30944641351", selection.GetProperty("qualificationWorkflow").GetString());
+        Assert.Equal("8909655368", selection.GetProperty("qualificationArtifactId").GetString());
     }
 
     [Fact]
@@ -210,6 +216,8 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("-ExpectedCompilerPath $clangxxPath", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("com.apple.pkg.CLTools_Executables", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("appleToolchain = [ordered]@{", sourceBuild, StringComparison.Ordinal);
+        Assert.Contains("qualifiedAppleToolchain", sourceBuild, StringComparison.Ordinal);
+        Assert.True(sourceBuild.IndexOf("qualifiedAppleToolchain", StringComparison.Ordinal) < sourceBuild.IndexOf("Invoke-LlvmSourceBuildProcess", sourceBuild.IndexOf("function Invoke-LlvmPinnedSourceBuild", StringComparison.Ordinal), StringComparison.Ordinal));
         Assert.Contains("clangSha256", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("& $FileName @Arguments 2>&1 | ForEach-Object", sourceBuild, StringComparison.Ordinal);
         Assert.Contains("Starting $Label", sourceBuild, StringComparison.Ordinal);
@@ -257,7 +265,49 @@ public sealed class ReleaseBackendPackagingScriptTests
 
         Assert.Contains("GenerateMatrix(result, command.HasFlag(\"--include-planned\"))", File.ReadAllText(
             Path.Combine(repositoryRoot, "eng", "release", "Stark.ReleaseTools", "ReleaseConfiguration.cs")), StringComparison.Ordinal);
-        Assert.DoesNotContain("include-planned", releaseWorkflow, StringComparison.Ordinal);
+        Assert.Contains("include_planned:", releaseWorkflow, StringComparison.Ordinal);
+        Assert.Contains("Planned targets are diagnostic-only", File.ReadAllText(
+            Path.Combine(repositoryRoot, "eng", "release", "Stark.ReleaseTools", "ReleasePlanPreparer.cs")), StringComparison.Ordinal);
+        Assert.Contains("matrix.private_backend_acquisition == 'pinned-source-build'", releaseWorkflow, StringComparison.Ordinal);
+        Assert.Contains("qualify-private-backend", releaseWorkflow, StringComparison.Ordinal);
+        Assert.Contains("& $env:STAGE0_COMPILER", releaseWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet run --no-restore --project src", releaseWorkflow, StringComparison.Ordinal);
+        Assert.Contains("-AllowPlannedTarget", releaseWorkflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlannedTargetPackagingRequiresAnExplicitDiagnosticOverride()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var scripts = new[]
+        {
+            "prepare-vendor-release-input.ps1",
+            "prepare-core-vendor-release-input.ps1",
+            "prepare-raylib-release-input.ps1",
+            "prepare-glfw-vendor-release-input.ps1",
+            "prepare-sdl3-vendor-release-input.ps1",
+            "prepare-sqlite-vendor-release-input.ps1",
+        }.Select(name => File.ReadAllText(Path.Combine(repositoryRoot, "scripts", name))).ToArray();
+
+        foreach (var script in scripts)
+        {
+            foreach (var target in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64" })
+            {
+                Assert.Contains(target, script, StringComparison.Ordinal);
+            }
+        }
+
+        var vendor = scripts[0];
+        var glfw = scripts[3];
+        var sdl3 = scripts[4];
+        var packaging = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "package-release.ps1"));
+        foreach (var guardedScript in new[] { vendor, glfw, sdl3, packaging })
+        {
+            Assert.Contains("[switch] $AllowPlannedTarget", guardedScript, StringComparison.Ordinal);
+            Assert.Contains("supportTier", guardedScript, StringComparison.Ordinal);
+        }
+        Assert.Contains("diagnostic-only", vendor, StringComparison.Ordinal);
+        Assert.Contains("diagnostic-only", packaging, StringComparison.Ordinal);
     }
 
     [Fact]

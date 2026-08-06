@@ -68,6 +68,24 @@ public sealed class PrivateBackendQualifierTests
     }
 
     [Fact]
+    public void StaticQualificationRejectsAppleToolchainIdentityDrift()
+    {
+        using var fixture = PrivateBackendFixture.Create();
+        var manifestPath = Path.Combine(fixture.ToolchainRoot, "manifest.json");
+        var manifest = JsonIO.LoadObject(manifestPath, "test manifest");
+        manifest.RequiredObject("sourceBuild", "test manifest")
+            .RequiredObject("appleToolchain", "source-build evidence")["sdkVersion"] = "99.0";
+        JsonIO.Write(manifestPath, manifest);
+
+        var error = Assert.Throws<ReleaseToolException>(() => PrivateBackendQualifier.ValidateManifest(
+            fixture.RepositoryRoot,
+            "macos-x64",
+            fixture.ToolchainRoot));
+
+        Assert.Contains("SDK identity differs", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GenericLldVersionProbeSelectsTheMacOsDriverFlavor()
     {
         Assert.Equal(
@@ -173,11 +191,11 @@ public sealed class PrivateBackendQualifierTests
                 },
                 ["appleToolchain"] = new JsonObject
                 {
-                    ["xcodeVersion"] = "Command Line Tools 17.0",
-                    ["sdkVersion"] = "15.5",
-                    ["clangVersion"] = "Apple clang version 17.0.0",
-                    ["clangSha256"] = new string('3', 64),
-                    ["clangxxSha256"] = new string('4', 64),
+                    ["xcodeVersion"] = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe")["xcodeVersion"]!.DeepClone(),
+                    ["sdkVersion"] = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe")["sdkVersion"]!.DeepClone(),
+                    ["clangVersion"] = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe")["clangVersionLine"]!.DeepClone(),
+                    ["clangSha256"] = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe")["clangSha256"]!.DeepClone(),
+                    ["clangxxSha256"] = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe")["clangxxSha256"]!.DeepClone(),
                 },
             };
 

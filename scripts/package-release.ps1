@@ -40,7 +40,9 @@ param(
     [ValidateSet("zip", "targz")]
     [string] $ArchiveKind = "zip",
 
-    [string] $LlvmVersion = "22.1.8"
+    [string] $LlvmVersion = "22.1.8",
+
+    [switch] $AllowPlannedTarget
 )
 
 Set-StrictMode -Version Latest
@@ -1120,8 +1122,13 @@ if ($targetMatches.Count -ne 1) {
     throw "Release target manifest must contain exactly one '$AssetSuffix' entry."
 }
 $releaseTarget = $targetMatches[0]
-if (-not [bool](Get-RequiredJsonPropertyValue -Object $releaseTarget -Name "releaseEnabled")) {
-    throw "Release target '$AssetSuffix' is not enabled."
+$releaseEnabled = [bool](Get-RequiredJsonPropertyValue -Object $releaseTarget -Name "releaseEnabled")
+$supportTier = [string](Get-RequiredJsonPropertyValue -Object $releaseTarget -Name "supportTier")
+if ($releaseEnabled -and $AllowPlannedTarget) {
+    throw "-AllowPlannedTarget is valid only for a release-disabled planned target."
+}
+if (-not $releaseEnabled -and (-not $AllowPlannedTarget -or $supportTier -cne "planned")) {
+    throw "Release target '$AssetSuffix' is disabled; planned targets require the explicit diagnostic-only -AllowPlannedTarget switch."
 }
 $targetExpectations = [ordered]@{
     assetSuffix = $AssetSuffix

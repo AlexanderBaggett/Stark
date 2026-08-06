@@ -76,7 +76,7 @@ public sealed class GlfwReleaseInputScriptTests
     {
         var script = ReadScript();
 
-        Assert.Contains("[ValidateSet(\"linux-x64\", \"windows-x64\", \"macos-arm64\")]", script, StringComparison.Ordinal);
+        Assert.Contains("[ValidateSet(\"linux-x64\", \"linux-arm64\", \"windows-x64\", \"windows-arm64\", \"macos-x64\", \"macos-arm64\")]", script, StringComparison.Ordinal);
         Assert.Contains("$digestCacheRoot = Join-Path $CacheRoot $sha256", script, StringComparison.Ordinal);
         Assert.Contains(".download-$([Guid]::NewGuid().ToString('N'))", script, StringComparison.Ordinal);
         Assert.Contains("Assert-Sha256 -Path $downloadPath", script, StringComparison.Ordinal);

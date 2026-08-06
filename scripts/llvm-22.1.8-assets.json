@@ -189,6 +189,13 @@
         "sourceDateEpoch": 0,
         "maxParallelCompileJobs": 8,
         "parallelLinkJobs": 1,
+        "qualifiedAppleToolchain": {
+          "xcodeVersion": "Xcode 16.4\nBuild version 16F6",
+          "sdkVersion": "15.5",
+          "clangVersionLine": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+          "clangSha256": "4c458256bcdf913774de1bb4a37768244d3b41f32ad55afb2dfec3432f46f4fe",
+          "clangxxSha256": "4c458256bcdf913774de1bb4a37768244d3b41f32ad55afb2dfec3432f46f4fe"
+        },
         "cmakeOptions": [
           "-DBUILD_SHARED_LIBS=OFF",
           "-DCLANG_INCLUDE_DOCS=OFF",

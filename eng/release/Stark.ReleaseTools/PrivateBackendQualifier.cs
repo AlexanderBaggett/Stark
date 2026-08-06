@@ -199,11 +199,15 @@ internal static class PrivateBackendQualifier
 
         var apple = evidence.RequiredObject("appleToolchain", "source-build evidence");
         RequireExactProperties(apple, ["xcodeVersion", "sdkVersion", "clangVersion", "clangSha256", "clangxxSha256"], "source-build Apple toolchain");
-        _ = apple.RequiredString("xcodeVersion", "source-build Apple toolchain");
-        _ = apple.RequiredString("sdkVersion", "source-build Apple toolchain");
-        _ = apple.RequiredString("clangVersion", "source-build Apple toolchain");
+        var qualifiedApple = recipe.RequiredObject("qualifiedAppleToolchain", "source-build recipe");
+        Validation.Require(apple.RequiredString("xcodeVersion", "source-build Apple toolchain") == qualifiedApple.RequiredString("xcodeVersion", "qualified Apple toolchain"), "Source-build Xcode identity differs from the qualified recipe.");
+        Validation.Require(apple.RequiredString("sdkVersion", "source-build Apple toolchain") == qualifiedApple.RequiredString("sdkVersion", "qualified Apple toolchain"), "Source-build macOS SDK identity differs from the qualified recipe.");
+        var clangVersion = apple.RequiredString("clangVersion", "source-build Apple toolchain");
+        Validation.Require(clangVersion.Split('\n')[0].TrimEnd('\r') == qualifiedApple.RequiredString("clangVersionLine", "qualified Apple toolchain"), "Source-build Apple Clang identity differs from the qualified recipe.");
         RequireLowerSha256(apple.RequiredString("clangSha256", "source-build Apple toolchain"), "Apple Clang");
         RequireLowerSha256(apple.RequiredString("clangxxSha256", "source-build Apple toolchain"), "Apple Clang++");
+        Validation.Require(apple.RequiredString("clangSha256", "source-build Apple toolchain") == qualifiedApple.RequiredString("clangSha256", "qualified Apple toolchain"), "Source-build Apple Clang hash differs from the qualified recipe.");
+        Validation.Require(apple.RequiredString("clangxxSha256", "source-build Apple toolchain") == qualifiedApple.RequiredString("clangxxSha256", "qualified Apple toolchain"), "Source-build Apple Clang++ hash differs from the qualified recipe.");
     }
 
     private static void ValidateRuntimeClosure(
