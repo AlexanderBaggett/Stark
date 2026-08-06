@@ -156,8 +156,10 @@
         {
           "target": "macos-x64",
           "acquisition": "pinned-source-build",
-          "qualificationStatus": "unqualified-build",
-          "qualificationReason": "The pinned Release/O3/ThinLTO macOS x64 source-build recipe is configured, but its output closure and native compiler behavior have not yet been qualified on the Intel runner."
+          "qualificationStatus": "qualified-build",
+          "qualificationCommit": "ddf24627821fb02322ddfcd253715cc8343472ff",
+          "qualificationWorkflow": "https://github.com/AlexanderBaggett/Stark/actions/runs/30944641351",
+          "qualificationArtifactId": "8909655368"
         },
         {
           "target": "macos-arm64",

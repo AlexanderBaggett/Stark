@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("linux-x64", "windows-x64", "macos-arm64")]
+    [ValidateSet("linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64")]
     [string] $AssetSuffix,
 
     [Parameter(Mandatory = $true)]
@@ -26,7 +26,9 @@ param(
 
     [string] $CacheDir = "artifacts/vendor-cache/glfw",
 
-    [switch] $Force
+    [switch] $Force,
+
+    [switch] $AllowPlannedTarget
 )
 
 Set-StrictMode -Version Latest
@@ -719,9 +721,16 @@ if ($targetMatches.Count -ne 1) {
     throw "Release target manifest must define exactly one '$AssetSuffix' target."
 }
 $releaseTarget = $targetMatches[0]
-if (-not [bool](Get-RequiredProperty -Object $releaseTarget -Name "releaseEnabled") -or
-    [string](Get-RequiredProperty -Object $releaseTarget -Name "targetTriple") -cne $TargetTriple) {
-    throw "GLFW target '$AssetSuffix' is disabled or does not exactly match '$TargetTriple'."
+$releaseEnabled = [bool](Get-RequiredProperty -Object $releaseTarget -Name "releaseEnabled")
+$supportTier = [string](Get-RequiredProperty -Object $releaseTarget -Name "supportTier")
+if ([string](Get-RequiredProperty -Object $releaseTarget -Name "targetTriple") -cne $TargetTriple) {
+    throw "GLFW target '$AssetSuffix' does not exactly match '$TargetTriple'."
+}
+if ($releaseEnabled -and $AllowPlannedTarget) {
+    throw "GLFW -AllowPlannedTarget is valid only for a release-disabled planned target."
+}
+if (-not $releaseEnabled -and (-not $AllowPlannedTarget -or $supportTier -cne "planned")) {
+    throw "GLFW target '$AssetSuffix' is disabled; planned targets require -AllowPlannedTarget."
 }
 $hostFacts = Get-TargetHostFacts -Target $releaseTarget
 

@@ -271,6 +271,28 @@ function Invoke-LlvmPinnedSourceBuild {
         -PathType "Container" `
         -Label "LLVM source-build macOS SDK"
     $sdkVersion = Get-XcrunValue -Arguments @("--sdk", "macosx", "--show-sdk-version") -Label "the macOS SDK version"
+    $clangVersion = @(& $clangPath --version 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $clangVersion.Count -eq 0) {
+        throw "Apple Clang could not report source-build provenance."
+    }
+    $xcodeVersion = Get-LlvmSourceBuildAppleToolchainVersion
+    $clangSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $clangPath).Hash.ToLowerInvariant()
+    $clangxxSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $clangxxPath).Hash.ToLowerInvariant()
+    $qualifiedAppleToolchain = Get-JsonProperty -Object $SourceBuild -Name "qualifiedAppleToolchain"
+    $actualAppleToolchain = [ordered]@{
+        xcodeVersion = $xcodeVersion
+        sdkVersion = $sdkVersion
+        clangVersionLine = ([string]$clangVersion[0]).Trim()
+        clangSha256 = $clangSha256
+        clangxxSha256 = $clangxxSha256
+    }
+    foreach ($field in @("xcodeVersion", "sdkVersion", "clangVersionLine", "clangSha256", "clangxxSha256")) {
+        $expected = [string](Get-JsonProperty -Object $qualifiedAppleToolchain -Name $field)
+        $actual = [string]$actualAppleToolchain[$field]
+        if (-not [string]::Equals($actual, $expected, [StringComparison]::Ordinal)) {
+            throw "Apple source-build identity '$field' is '$actual'; expected the qualified value '$expected'."
+        }
+    }
 
     $projects = @(Get-ArrayValues -Value (Get-JsonProperty -Object $SourceBuild -Name "projects") |
         ForEach-Object { [string]$_ })
@@ -337,12 +359,6 @@ function Invoke-LlvmPinnedSourceBuild {
         }
     }
 
-    $clangVersion = @(& $clangPath --version 2>&1)
-    if ($LASTEXITCODE -ne 0 -or $clangVersion.Count -eq 0) {
-        throw "Apple Clang could not report source-build provenance."
-    }
-    $xcodeVersion = Get-LlvmSourceBuildAppleToolchainVersion
-
     return [pscustomobject]@{
         PayloadRoot = $installRoot
         Evidence = [ordered]@{
@@ -377,8 +393,8 @@ function Invoke-LlvmPinnedSourceBuild {
                 xcodeVersion = $xcodeVersion
                 sdkVersion = $sdkVersion
                 clangVersion = ($clangVersion -join "`n").Trim()
-                clangSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $clangPath).Hash.ToLowerInvariant()
-                clangxxSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $clangxxPath).Hash.ToLowerInvariant()
+                clangSha256 = $clangSha256
+                clangxxSha256 = $clangxxSha256
             }
         }
     }

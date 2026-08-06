@@ -16,9 +16,14 @@ on:
         required: false
         default: ""
       targets:
-        description: "all, or a comma-separated subset of release-enabled target IDs for diagnostic builds."
+        description: "all, or a comma-separated subset of targets permitted by include_planned."
         required: true
         default: all
+      include_planned:
+        description: Include release-disabled planned targets in this diagnostic run. Illegal when publish is enabled.
+        type: boolean
+        required: true
+        default: false
       draft:
         description: Create the GitHub release as a draft.
         type: boolean
@@ -62,6 +67,7 @@ jobs:
       publish: ${{ steps.release_plan.outputs.publish }}
       draft: ${{ steps.release_plan.outputs.draft }}
       prerelease: ${{ steps.release_plan.outputs.prerelease }}
+      include_planned: ${{ steps.release_plan.outputs.include_planned }}
       build_configuration_sha256: ${{ steps.release_plan.outputs.build_configuration_sha256 }}
       build_plan_sha256: ${{ steps.release_plan.outputs.build_plan_sha256 }}
     steps:
@@ -99,6 +105,7 @@ jobs:
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_DRAFT: ${{ inputs.draft }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_INCLUDE_PLANNED: ${{ inputs.include_planned }}
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           & dotnet $env:RELEASE_TOOLS_DLL prepare-release `
@@ -114,6 +121,7 @@ jobs:
             --input-publish $env:INPUT_PUBLISH `
             --input-draft $env:INPUT_DRAFT `
             --input-prerelease $env:INPUT_PRERELEASE `
+            --input-include-planned $env:INPUT_INCLUDE_PLANNED `
             --require-release-tool `
             --plan-output artifacts/release-plan.json `
             --github-output $env:GITHUB_OUTPUT `
@@ -171,6 +179,7 @@ jobs:
   build:
     name: Build ${{ matrix.asset_suffix }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
     needs: [prepare, quality]
     env:
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -256,6 +265,13 @@ jobs:
           path: artifacts/release-build-tool-cache
           key: release-build-tools-${{ runner.os }}-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'scripts/resolve-release-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
 
+      - name: Cache checksum-verified LLVM source inputs
+        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/llvm-cache
+          key: llvm-source-input-${{ matrix.llvm_version }}-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+
       - name: Acquire pinned release build tools
         id: build_tools
         shell: pwsh
@@ -294,73 +310,119 @@ jobs:
 
       - name: Publish compiler
         shell: pwsh
-        run: >
-          dotnet publish src/compiler.csproj
-          -c Release
-          -r ${{ matrix.rid }}
-          --self-contained true
-          --no-restore
-          -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }}
-          -p:PublishSingleFile=false
-          -p:InformationalVersion=$env:RELEASE_VERSION
-          -p:IncludeSourceRevisionInInformationalVersion=false
-          -p:WriteCompilerLauncherToRepoRoot=false
-          -o artifacts/publish/${{ matrix.asset_suffix }}
+        run: |
+          & dotnet publish src/compiler.csproj `
+            -c Release `
+            -r "${{ matrix.rid }}" `
+            --self-contained true `
+            --no-restore `
+            -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }} `
+            -p:PublishSingleFile=false `
+            -p:InformationalVersion=$env:RELEASE_VERSION `
+            -p:IncludeSourceRevisionInInformationalVersion=false `
+            -p:WriteCompilerLauncherToRepoRoot=false `
+            -o "artifacts/publish/${{ matrix.asset_suffix }}"
+          if ($LASTEXITCODE -ne 0) { throw "Native Stage0 publish failed for ${{ matrix.target_id }}." }
+
+          $actualArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
+          if ($actualArchitecture -cne "${{ matrix.architecture }}") {
+            throw "Release build for ${{ matrix.target_id }} requires a native ${{ matrix.architecture }} process; found '$actualArchitecture'."
+          }
+          $actualOperatingSystem = if ($IsWindows) { "windows" } elseif ($IsMacOS) { "macos" } elseif ($IsLinux) { "linux" } else { "unknown" }
+          if ($actualOperatingSystem -cne "${{ matrix.operating_system }}") {
+            throw "Release build for ${{ matrix.target_id }} requires ${{ matrix.operating_system }}; found '$actualOperatingSystem'."
+          }
+          $compilerName = if ($IsWindows) { "compiler.exe" } else { "compiler" }
+          $stage0Compiler = [System.IO.Path]::GetFullPath((Join-Path "artifacts/publish/${{ matrix.asset_suffix }}" $compilerName))
+          if (-not (Test-Path -LiteralPath $stage0Compiler -PathType Leaf)) {
+            throw "Published native Stage0 apphost '$compilerName' is missing for ${{ matrix.target_id }}."
+          }
+          "STAGE0_COMPILER=$stage0Compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Acquire LLVM toolchain
         shell: pwsh
-        run: >
-          ./scripts/acquire-llvm-toolchain.ps1
-          -AssetSuffix ${{ matrix.asset_suffix }}
-          -ManifestPath ${{ matrix.llvm_manifest }}
-          -OutputDir artifacts/toolchain/${{ matrix.asset_suffix }}
-          -CMakePath "${{ steps.build_tools.outputs.cmake_path }}"
-          -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}"
+        run: |
+          $evidenceRoot = "artifacts/backend-qualification/${{ matrix.asset_suffix }}"
+          New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+          & ./scripts/acquire-llvm-toolchain.ps1 `
+            -AssetSuffix "${{ matrix.asset_suffix }}" `
+            -ManifestPath "${{ matrix.llvm_manifest }}" `
+            -OutputDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -CacheDir "artifacts/llvm-cache/${{ matrix.asset_suffix }}" `
+            -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
+            -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
+            2>&1 | Tee-Object -FilePath (Join-Path $evidenceRoot "llvm-acquisition.log")
+          if ($LASTEXITCODE -ne 0) { throw "LLVM acquisition failed for ${{ matrix.target_id }}." }
+
+      - name: Qualify source-built compiler-private backend
+        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+        shell: pwsh
+        run: |
+          $evidenceRoot = "artifacts/backend-qualification/${{ matrix.asset_suffix }}"
+          & dotnet $env:RELEASE_TOOLS_DLL qualify-private-backend `
+            --root . `
+            --target-id "${{ matrix.target_id }}" `
+            --toolchain-root "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            --output (Join-Path $evidenceRoot "private-backend-report.json") `
+            2>&1 | Tee-Object -FilePath (Join-Path $evidenceRoot "private-backend-qualification.log")
+          if ($LASTEXITCODE -ne 0) { throw "Compiler-private backend qualification failed for ${{ matrix.target_id }}." }
 
       - name: Build standard library package
-        run: >
-          dotnet run --no-restore --project src --
-          stdlib/src/System.stark
-          --emit-lib
-          --target ${{ matrix.target_triple }}
-          --package-profile release
-          --toolchain-dir artifacts/toolchain/${{ matrix.asset_suffix }}
-          -o artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:STAGE0_COMPILER) -or -not (Test-Path -LiteralPath $env:STAGE0_COMPILER -PathType Leaf)) {
+            throw "Published native Stage0 apphost is unavailable: '$env:STAGE0_COMPILER'."
+          }
+          New-Item -ItemType Directory -Force -Path "artifacts/stdlib/${{ matrix.asset_suffix }}" | Out-Null
+          & $env:STAGE0_COMPILER `
+            stdlib/src/System.stark `
+            --emit-lib `
+            --target "${{ matrix.target_triple }}" `
+            --package-profile release `
+            --toolchain-dir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -o "artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}"
+          if ($LASTEXITCODE -ne 0) { throw "Native Stage0 could not build optimized System for ${{ matrix.target_id }}." }
 
       - name: Prepare pinned official Vendor release input
         shell: pwsh
-        run: >
-          ./scripts/prepare-vendor-release-input.ps1
-          -AssetSuffix ${{ matrix.asset_suffix }}
-          -TargetTriple ${{ matrix.target_triple }}
-          -OutputVendorRoot artifacts/vendor/${{ matrix.asset_suffix }}
-          -StdlibPackageDir artifacts/stdlib/${{ matrix.asset_suffix }}
-          -RaylibManifestPath ${{ matrix.raylib_manifest }}
-          -ToolchainDir artifacts/toolchain/${{ matrix.asset_suffix }}
-          -CMakePath "${{ steps.build_tools.outputs.cmake_path }}"
-          -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}"
+        run: |
+          $arguments = @(
+            "-AssetSuffix", "${{ matrix.asset_suffix }}",
+            "-TargetTriple", "${{ matrix.target_triple }}",
+            "-OutputVendorRoot", "artifacts/vendor/${{ matrix.asset_suffix }}",
+            "-StdlibPackageDir", "artifacts/stdlib/${{ matrix.asset_suffix }}",
+            "-RaylibManifestPath", "${{ matrix.raylib_manifest }}",
+            "-ToolchainDir", "artifacts/toolchain/${{ matrix.asset_suffix }}",
+            "-CMakePath", "${{ steps.build_tools.outputs.cmake_path }}",
+            "-NinjaPath", "${{ steps.build_tools.outputs.ninja_path }}")
+          if (-not [bool]::Parse("${{ matrix.release_enabled }}")) { $arguments += "-AllowPlannedTarget" }
+          & ./scripts/prepare-vendor-release-input.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Vendor preparation failed for ${{ matrix.target_id }}." }
 
       - name: Package release archive
         id: package
         shell: pwsh
-        run: >
-          ./scripts/package-release.ps1
-          -Version $env:RELEASE_VERSION
-          -AssetSuffix ${{ matrix.asset_suffix }}
-          -PublishDir artifacts/publish/${{ matrix.asset_suffix }}
-          -StdlibPackageDir artifacts/stdlib/${{ matrix.asset_suffix }}
-          -ManagedLicenseDir artifacts/managed-licenses/${{ matrix.asset_suffix }}
-          -VendorRoot artifacts/vendor/${{ matrix.asset_suffix }}
-          -ToolchainDir artifacts/toolchain/${{ matrix.asset_suffix }}
-          -ReleaseToolsPath "$env:RELEASE_TOOLS_DLL"
-          -RuntimeIdentifier ${{ matrix.rid }}
-          -TargetTriple ${{ matrix.target_triple }}
-          -CommitSha $env:RELEASE_COMMIT
-          -OutputDir artifacts/release
-          -ArchiveKind ${{ matrix.archive_kind }}
-          -LlvmVersion ${{ matrix.llvm_version }}
-          -BuildConfigurationSha256 "${{ needs.prepare.outputs.build_configuration_sha256 }}"
-          -BuildPlanSha256 "${{ needs.prepare.outputs.build_plan_sha256 }}"
+        run: |
+          $arguments = @(
+            "-Version", $env:RELEASE_VERSION,
+            "-AssetSuffix", "${{ matrix.asset_suffix }}",
+            "-PublishDir", "artifacts/publish/${{ matrix.asset_suffix }}",
+            "-StdlibPackageDir", "artifacts/stdlib/${{ matrix.asset_suffix }}",
+            "-ManagedLicenseDir", "artifacts/managed-licenses/${{ matrix.asset_suffix }}",
+            "-VendorRoot", "artifacts/vendor/${{ matrix.asset_suffix }}",
+            "-ToolchainDir", "artifacts/toolchain/${{ matrix.asset_suffix }}",
+            "-ReleaseToolsPath", $env:RELEASE_TOOLS_DLL,
+            "-RuntimeIdentifier", "${{ matrix.rid }}",
+            "-TargetTriple", "${{ matrix.target_triple }}",
+            "-CommitSha", $env:RELEASE_COMMIT,
+            "-OutputDir", "artifacts/release",
+            "-ArchiveKind", "${{ matrix.archive_kind }}",
+            "-LlvmVersion", "${{ matrix.llvm_version }}",
+            "-BuildConfigurationSha256", "${{ needs.prepare.outputs.build_configuration_sha256 }}",
+            "-BuildPlanSha256", "${{ needs.prepare.outputs.build_plan_sha256 }}")
+          if (-not [bool]::Parse("${{ matrix.release_enabled }}")) { $arguments += "-AllowPlannedTarget" }
+          & ./scripts/package-release.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Release packaging failed for ${{ matrix.target_id }}." }
 
       - name: Validate staged SDK completeness
         shell: pwsh
@@ -438,6 +500,11 @@ jobs:
           name: release-build-evidence-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/managed-restore-preflight-${{ matrix.asset_suffix }}.json
+            artifacts/backend-qualification/${{ matrix.asset_suffix }}
+            artifacts/toolchain/${{ matrix.asset_suffix }}/manifest.json
+            artifacts/toolchain/${{ matrix.asset_suffix }}/provenance
+            artifacts/toolchain/${{ matrix.asset_suffix }}/licenses
+            artifacts/release-build-tools/${{ matrix.asset_suffix }}/manifest.json
           if-no-files-found: warn
 
       - name: Upload release candidate and diagnostics

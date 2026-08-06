@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("linux-x64", "windows-x64", "macos-arm64")]
+    [ValidateSet("linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64")]
     [string] $AssetSuffix,
 
     [Parameter(Mandatory = $true)]
@@ -35,7 +35,9 @@ param(
     [ValidateRange(1, 3600)]
     [int] $WorkLockTimeoutSeconds = 900,
 
-    [switch] $Force
+    [switch] $Force,
+
+    [switch] $AllowPlannedTarget
 )
 
 Set-StrictMode -Version Latest
@@ -628,8 +630,13 @@ if ($targetMatches.Count -ne 1) {
     throw "Release target manifest must contain exactly one '$AssetSuffix' entry."
 }
 $targetEntry = $targetMatches[0]
-if (-not [bool](Get-RequiredProperty -Object $targetEntry -Name "releaseEnabled")) {
-    throw "SDL3 release target '$AssetSuffix' is not enabled."
+$releaseEnabled = [bool](Get-RequiredProperty -Object $targetEntry -Name "releaseEnabled")
+$supportTier = [string](Get-RequiredProperty -Object $targetEntry -Name "supportTier")
+if ($releaseEnabled -and $AllowPlannedTarget) {
+    throw "SDL3 -AllowPlannedTarget is valid only for a release-disabled planned target."
+}
+if (-not $releaseEnabled -and (-not $AllowPlannedTarget -or $supportTier -cne "planned")) {
+    throw "SDL3 release target '$AssetSuffix' is disabled; planned targets require -AllowPlannedTarget."
 }
 $manifestTargetTriple = [string](Get-RequiredProperty -Object $targetEntry -Name "targetTriple")
 if ($TargetTriple.Trim() -cne $manifestTargetTriple) {
