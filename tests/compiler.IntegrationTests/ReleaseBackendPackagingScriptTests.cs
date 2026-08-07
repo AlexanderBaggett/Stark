@@ -276,6 +276,38 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
+    public void ReleaseQualityGateUsesThePinnedBackendInsteadOfRunnerClang()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml"));
+        var qualityStart = workflow.IndexOf("  quality:", StringComparison.Ordinal);
+        var buildStart = workflow.IndexOf("  build:", qualityStart, StringComparison.Ordinal);
+
+        Assert.True(qualityStart >= 0 && buildStart > qualityStart, "Release workflow quality/build boundaries are missing.");
+        var qualityJob = workflow[qualityStart..buildStart];
+        var acquireIndex = qualityJob.IndexOf("Acquire and verify pinned LLVM for repository quality", StringComparison.Ordinal);
+        var gateIndex = qualityJob.IndexOf("Run mandatory repository quality gate", StringComparison.Ordinal);
+
+        Assert.True(acquireIndex >= 0 && gateIndex > acquireIndex, "Pinned LLVM must be verified before the quality suite starts.");
+        Assert.Contains("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("-AssetSuffix \"linux-x64\"", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("scripts/llvm-22.1.8-assets.json", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("stark-compiler-private-backend", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("clang version $expectedVersion", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("STARK_TOOLCHAIN_DIR=$toolchainRoot", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("STARK_CLANG=$clangPath", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("STARK_LINKER=$clangPath", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("STARK_ARCHIVER=$llvmArPath", qualityJob, StringComparison.Ordinal);
+        Assert.Contains("$env:GITHUB_PATH", qualityJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("apt-get", qualityJob, StringComparison.OrdinalIgnoreCase);
+
+        var buildJob = workflow[buildStart..];
+        Assert.Contains("matrix.target_id == 'linux-x64' || matrix.private_backend_acquisition == 'pinned-source-build'", buildJob, StringComparison.Ordinal);
+        Assert.Contains("key: llvm-input-${{ matrix.target_id }}-", buildJob, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlannedTargetPackagingRequiresAnExplicitDiagnosticOverride()
     {
         var repositoryRoot = FindRepositoryRoot();

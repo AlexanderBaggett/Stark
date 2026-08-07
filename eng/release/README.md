@@ -80,8 +80,15 @@ only immutable downloaded inputs are.
 Every release graph is ordered `prepare -> quality -> build -> install-smoke ->
 publish`. The matrix build cannot start until the repository-wide `quality` job
 passes, and publication independently requires that successful result. The job
-checks out the immutable commit selected by `prepare` and invokes the same
-repository-owned runner used by local release builds:
+checks out the immutable commit selected by `prepare`, acquires the
+checksum-verified Linux x64 LLVM backend pinned by
+`scripts/llvm-22.1.8-assets.json`, and rejects any backend whose manifest or
+Clang version differs from that pin. It exports the verified backend through
+the compiler's explicit toolchain environment and prepends its `bin` directory
+to `PATH`, so native tests never consume the older ambient Clang supplied by the
+GitHub runner. Immutable backend downloads are cached and reused by the later
+Linux x64 matrix build. The job then invokes the same repository-owned runner
+used by local release builds:
 
 ```sh
 pwsh -NoProfile -File scripts/run-release-quality-gate.ps1 \
