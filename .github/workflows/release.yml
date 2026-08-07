@@ -160,6 +160,70 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Restore checksum-verified Linux x64 LLVM inputs
+        id: quality_llvm_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/llvm-cache
+          key: llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+
+      - name: Acquire and verify pinned LLVM for repository quality
+        id: quality_llvm
+        shell: pwsh
+        run: |
+          $diagnosticsRoot = [System.IO.Path]::GetFullPath("artifacts/quality/backend")
+          $toolchainRoot = [System.IO.Path]::GetFullPath("artifacts/toolchain/linux-x64")
+          $cacheRoot = [System.IO.Path]::GetFullPath("artifacts/llvm-cache/linux-x64")
+          New-Item -ItemType Directory -Force -Path $diagnosticsRoot | Out-Null
+
+          & ./scripts/acquire-llvm-toolchain.ps1 `
+            -AssetSuffix "linux-x64" `
+            -OutputDir $toolchainRoot `
+            -CacheDir $cacheRoot `
+            2>&1 | Tee-Object -FilePath (Join-Path $diagnosticsRoot "llvm-acquisition.log")
+          if ($LASTEXITCODE -ne 0) { throw "LLVM acquisition failed for the repository quality gate." }
+
+          $expectedManifest = Get-Content -LiteralPath "scripts/llvm-22.1.8-assets.json" -Raw | ConvertFrom-Json
+          $backendManifestPath = Join-Path $toolchainRoot "manifest.json"
+          $backendManifest = Get-Content -LiteralPath $backendManifestPath -Raw | ConvertFrom-Json
+          $expectedVersion = [string]$expectedManifest.llvmVersion
+          if ([int]$backendManifest.schemaVersion -ne 2 -or
+              [string]$backendManifest.payloadKind -cne "stark-compiler-private-backend" -or
+              [string]$backendManifest.llvmVersion -cne $expectedVersion -or
+              [string]$backendManifest.assetSuffix -cne "linux-x64" -or
+              [string]$backendManifest.acquisitionKind -cne "upstream-archive") {
+            throw "Repository quality acquired an unexpected compiler-private backend."
+          }
+
+          $clangPath = Join-Path $toolchainRoot "bin/clang"
+          $llvmArPath = Join-Path $toolchainRoot "bin/llvm-ar"
+          $versionLines = @(& $clangPath --version 2>&1 | ForEach-Object { [string]$_ })
+          if ($LASTEXITCODE -ne 0 -or $versionLines.Count -eq 0) {
+            throw "The pinned quality-gate Clang executable could not report its version."
+          }
+          $expectedPrefix = "clang version $expectedVersion"
+          $firstVersionLine = $versionLines[0].Trim()
+          if ($firstVersionLine -cne $expectedPrefix -and
+              -not $firstVersionLine.StartsWith($expectedPrefix + " ", [StringComparison]::Ordinal)) {
+            throw "Repository quality requires '$expectedPrefix'; acquired '$firstVersionLine'."
+          }
+
+          $versionLines | Set-Content -LiteralPath (Join-Path $diagnosticsRoot "clang-version.log") -Encoding utf8
+          Copy-Item -LiteralPath $backendManifestPath -Destination (Join-Path $diagnosticsRoot "private-backend-manifest.json") -Force
+          "STARK_TOOLCHAIN_DIR=$toolchainRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "STARK_CLANG=$clangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "STARK_LINKER=$clangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "STARK_ARCHIVER=$llvmArPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $toolchainRoot "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "cache_key=llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Save checksum-verified Linux x64 LLVM inputs
+        if: ${{ steps.quality_llvm_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/llvm-cache
+          key: ${{ steps.quality_llvm.outputs.cache_key }}
+
       - name: Run mandatory repository quality gate
         shell: pwsh
         run: >
@@ -265,12 +329,12 @@ jobs:
           path: artifacts/release-build-tool-cache
           key: release-build-tools-${{ runner.os }}-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'scripts/resolve-release-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
 
-      - name: Cache checksum-verified LLVM source inputs
-        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+      - name: Cache checksum-verified LLVM inputs
+        if: ${{ matrix.target_id == 'linux-x64' || matrix.private_backend_acquisition == 'pinned-source-build' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: artifacts/llvm-cache
-          key: llvm-source-input-${{ matrix.llvm_version }}-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+          key: llvm-input-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
 
       - name: Acquire pinned release build tools
         id: build_tools
