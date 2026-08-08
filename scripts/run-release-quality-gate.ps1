@@ -252,6 +252,24 @@ try {
         ) `
         -LogName "release-build.log")
 
+    $compilerAssembly = Join-Path $repositoryRootPath "src/bin/Release/net10.0/compiler.dll"
+    if (-not (Test-Path -LiteralPath $compilerAssembly -PathType Leaf)) {
+        throw "The Release compiler assembly needed to create the development SDK manifest is missing: '$compilerAssembly'."
+    }
+    [void](Invoke-QualityProcess `
+        -Label "Write development SDK manifest for repository tests" `
+        -Executable $dotnet `
+        -Arguments @(
+            $compilerAssembly,
+            "--write-development-sdk-manifest", $repositoryRootPath
+        ) `
+        -LogName "development-sdk-manifest.log")
+
+    $developmentSdkManifest = Join-Path $repositoryRootPath "sdk.json"
+    if (-not (Test-Path -LiteralPath $developmentSdkManifest -PathType Leaf)) {
+        throw "The compiler did not create the development SDK manifest: '$developmentSdkManifest'."
+    }
+
     $fullTestResults = Join-Path $outputDirectory "full-solution-test-results"
     New-Item -ItemType Directory -Force -Path $fullTestResults | Out-Null
     [void](Invoke-QualityProcess `

@@ -349,12 +349,21 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("scripts/llvm-22.1.8-assets.json", qualityJob, StringComparison.Ordinal);
         Assert.Contains("stark-compiler-private-backend", qualityJob, StringComparison.Ordinal);
         Assert.Contains("clang version $expectedVersion", qualityJob, StringComparison.Ordinal);
-        Assert.Contains("STARK_TOOLCHAIN_DIR=$toolchainRoot", qualityJob, StringComparison.Ordinal);
-        Assert.Contains("STARK_CLANG=$clangPath", qualityJob, StringComparison.Ordinal);
-        Assert.Contains("STARK_LINKER=$clangPath", qualityJob, StringComparison.Ordinal);
-        Assert.Contains("STARK_ARCHIVER=$llvmArPath", qualityJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("STARK_TOOLCHAIN_DIR=$toolchainRoot", qualityJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("STARK_CLANG=$clangPath", qualityJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("STARK_LINKER=$clangPath", qualityJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("STARK_ARCHIVER=$llvmArPath", qualityJob, StringComparison.Ordinal);
         Assert.Contains("$env:GITHUB_PATH", qualityJob, StringComparison.Ordinal);
         Assert.DoesNotContain("apt-get", qualityJob, StringComparison.OrdinalIgnoreCase);
+
+        var qualityRunner = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "run-release-quality-gate.ps1"));
+        var buildIndex = qualityRunner.IndexOf("Build the complete solution in Release", StringComparison.Ordinal);
+        var manifestIndex = qualityRunner.IndexOf("Write development SDK manifest for repository tests", StringComparison.Ordinal);
+        var testIndex = qualityRunner.IndexOf("Run the complete solution test suite in Release", StringComparison.Ordinal);
+        Assert.True(buildIndex >= 0 && manifestIndex > buildIndex && testIndex > manifestIndex,
+            "The development SDK manifest must be generated from the built compiler before repository tests start.");
+        Assert.Contains("--write-development-sdk-manifest", qualityRunner, StringComparison.Ordinal);
+        Assert.Contains("Test-Path -LiteralPath $developmentSdkManifest -PathType Leaf", qualityRunner, StringComparison.Ordinal);
 
         var buildJob = workflow[buildStart..];
         Assert.Contains("matrix.target_id == 'linux-x64' || matrix.private_backend_acquisition == 'pinned-source-build'", buildJob, StringComparison.Ordinal);
