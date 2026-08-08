@@ -1169,10 +1169,7 @@ internal static class NativeToolchain
             arguments.Add(targetInfo.Triple);
         }
 
-        if (!string.IsNullOrWhiteSpace(targetInfo.Cpu))
-        {
-            arguments.Add($"-mcpu={targetInfo.Cpu}");
-        }
+        AppendTargetCpuArgument(arguments, targetInfo);
 
         foreach (var feature in targetInfo.Features ?? [])
         {
@@ -1188,6 +1185,28 @@ internal static class NativeToolchain
         }
 
         AppendCodegenModelArguments(arguments, targetInfo, compileOnly);
+    }
+
+    private static void AppendTargetCpuArgument(ICollection<string> arguments, LlvmTargetInfo targetInfo)
+    {
+        var cpu = targetInfo.Cpu?.Trim();
+        if (string.IsNullOrWhiteSpace(cpu)
+            || string.Equals(cpu, "generic", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var architecture = targetInfo.Triple.Split('-', 2, StringSplitOptions.TrimEntries)[0];
+        var option = architecture.Equals("x86", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("amd64", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("x86_64", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("i386", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("i486", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("i586", StringComparison.OrdinalIgnoreCase)
+            || architecture.Equals("i686", StringComparison.OrdinalIgnoreCase)
+                ? "-march"
+                : "-mcpu";
+        arguments.Add($"{option}={cpu}");
     }
 
     private static void AppendMacOSPlatformSdkArguments(
