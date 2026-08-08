@@ -482,7 +482,8 @@ foreach ($entry in $matrixEntries) {
             "--dotnet-version", $requiredDotnetVersion,
             "--restore-only",
             "--output", $managedRestoreReport
-        )
+        ) `
+        -Environment $dotnetEnvironment
     $commands += New-ReleaseCommand `
         -PhaseName "Build" `
         -TargetId $targetId `
@@ -513,7 +514,8 @@ foreach ($entry in $matrixEntries) {
             "--target-id", $targetId,
             "--assets", (Join-Path $repositoryRoot "src/obj/project.assets.json"),
             "--output-root", $managedLicenseRoot
-        )
+        ) `
+        -Environment $dotnetEnvironment
     $commands += New-ReleaseCommand `
         -PhaseName "Build" `
         -TargetId $targetId `
@@ -570,13 +572,19 @@ foreach ($entry in $matrixEntries) {
 foreach ($entry in $matrixEntries) {
     $targetId = [string]$entry.target_id
     $stageRoot = Join-Path $releaseRoot ("stage/stark-$Version-$($entry.asset_suffix)")
-    $commands += New-ReleaseCommand -PhaseName "Validate" -TargetId $targetId -Label "Validate staged SDK completeness" -Executable $dotnetExecutable -Arguments @(
-        $releaseToolsAssembly,
-        "validate-stage",
-        "--sdk-root", $stageRoot,
-        "--target-id", $targetId,
-        "--output", (Join-Path $diagnosticsRoot ("stage-validation-$targetId.json"))
-    )
+    $commands += New-ReleaseCommand `
+        -PhaseName "Validate" `
+        -TargetId $targetId `
+        -Label "Validate staged SDK completeness" `
+        -Executable $dotnetExecutable `
+        -Arguments @(
+            $releaseToolsAssembly,
+            "validate-stage",
+            "--sdk-root", $stageRoot,
+            "--target-id", $targetId,
+            "--output", (Join-Path $diagnosticsRoot ("stage-validation-$targetId.json"))
+        ) `
+        -Environment $dotnetEnvironment
     $commands += New-ReleaseCommand -PhaseName "Validate" -TargetId $targetId -Label "Audit native dependency closure" -Executable $powerShellPath -Arguments @(
         "-NoProfile", "-NonInteractive", "-File", (Join-Path $repositoryRoot "scripts/audit-release-native-dependencies.ps1"),
         "-SdkRoot", $stageRoot,

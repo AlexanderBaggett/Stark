@@ -218,10 +218,11 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
         Directory.CreateDirectory(testRoot);
         var lockPath = Path.Combine(testRoot, ".build.lock");
         var markerPath = Path.Combine(testRoot, "first-acquired");
+        var releasePath = Path.Combine(testRoot, "release-first");
         var helperPath = Path.Combine(repositoryRoot, "scripts", "sdl3-work-root-lock.ps1");
         const string command = """
             & {
-                param($HelperPath, $LockPath, $OwnerLabel, $MarkerPath, [int] $HoldMilliseconds, [int] $TimeoutSeconds)
+                param($HelperPath, $LockPath, $OwnerLabel, $MarkerPath, $ReleasePath, [int] $TimeoutSeconds)
                 function Assert-NoReparsePointPath { param([string] $Path) }
                 . $HelperPath
                 $lock = Enter-Sdl3WorkRootLock `
@@ -236,7 +237,15 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
                     if ($MarkerPath -cne "-") {
                         [IO.File]::WriteAllText($MarkerPath, "acquired")
                     }
-                    Start-Sleep -Milliseconds $HoldMilliseconds
+                    if ($ReleasePath -cne "-") {
+                        $releaseDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+                        while (-not (Test-Path -LiteralPath $ReleasePath -PathType Leaf)) {
+                            if ([DateTimeOffset]::UtcNow -ge $releaseDeadline) {
+                                throw "Timed out waiting for the lock-test release marker."
+                            }
+                            Start-Sleep -Milliseconds 50
+                        }
+                    }
                 } finally {
                     Exit-Sdl3WorkRootLock -Lock $lock
                 }
@@ -248,7 +257,7 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
         {
             first = StartProcess(
                 powershell,
-                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "first-owner", markerPath, "2500", "5"],
+                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "first-owner", markerPath, releasePath, "5"],
                 repositoryRoot);
             var firstStdout = first.StandardOutput.ReadToEndAsync();
             var firstStderr = first.StandardError.ReadToEndAsync();
@@ -260,13 +269,14 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
 
             var second = await RunProcessAsync(
                 powershell,
-                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "second-owner", "-", "0", "1"],
+                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "second-owner", "-", "-", "1"],
                 repositoryRoot);
             Assert.NotEqual(0, second.ExitCode);
             Assert.Contains("Timed out after 1 seconds", second.Stderr, StringComparison.Ordinal);
             Assert.Contains("first-owner", second.Stderr, StringComparison.Ordinal);
             Assert.Contains("\"pid\"", second.Stderr, StringComparison.Ordinal);
 
+            await File.WriteAllTextAsync(releasePath, "release");
             await first.WaitForExitAsync();
             Assert.True(first.ExitCode == 0, (await firstStdout) + (await firstStderr));
             first.Dispose();
@@ -274,7 +284,7 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
 
             var third = await RunProcessAsync(
                 powershell,
-                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "third-owner", "-", "0", "1"],
+                ["-NoProfile", "-NonInteractive", "-Command", command, helperPath, lockPath, "third-owner", "-", "-", "1"],
                 repositoryRoot);
             Assert.True(third.ExitCode == 0, third.Stderr);
         }

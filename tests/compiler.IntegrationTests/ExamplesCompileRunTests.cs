@@ -2904,7 +2904,7 @@ public sealed class ExamplesCompileRunTests
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
             || OperatingSystem.IsWindows()
-            || !await PkgConfigPackageExistsAsync("sqlite3"))
+            || !await PkgConfigPackageExistsAsync("sqlite3", minimumVersion: "3.53.2"))
         {
             return;
         }
@@ -3376,7 +3376,7 @@ public sealed class ExamplesCompileRunTests
 
         return (process.ExitCode, standardOutput, standardError);
     }
-private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)
+    private static async Task<bool> PkgConfigPackageExistsAsync(string packageName, string? minimumVersion = null)
     {
         try
         {
@@ -3388,7 +3388,9 @@ private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            startInfo.ArgumentList.Add("--exists");
+            startInfo.ArgumentList.Add(minimumVersion is null
+                ? "--exists"
+                : $"--atleast-version={minimumVersion}");
             startInfo.ArgumentList.Add(packageName);
 
             using var process = System.Diagnostics.Process.Start(startInfo);
