@@ -288,6 +288,7 @@ internal sealed class LlvmIrEmitter
 
         LogSpecializationCodegenStrategies();
         _moduleSurfaceEmitter.Emit(builder);
+        EmitCompilerUsedAsmSymbols(builder);
         EmitIntrinsicDeclarations(builder);
         EmitInternalHelperDefinitions(builder);
 
@@ -1866,6 +1867,42 @@ internal sealed class LlvmIrEmitter
     private void EmitIntrinsicDeclarations(StringBuilder builder)
     {
         _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, EnumerateBuiltinDefinitionSignatures());
+    }
+
+    private void EmitCompilerUsedAsmSymbols(StringBuilder builder)
+    {
+        var symbols = _syntaxModel.Declarations
+            .Where(static declaration => declaration.Function?.Asm is not null)
+            .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration))
+            .Where(resolvedName => _ownedFunctionDefinitionFilter is null
+                                   || _ownedFunctionDefinitionFilter.Contains(resolvedName))
+            .Select(resolvedName => _abiModel.Functions[resolvedName].SymbolName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+        if (symbols.Length == 0)
+        {
+            return;
+        }
+
+        // Stark asm functions are ordinary callable definitions, but their raw ABI
+        // symbols also form the boundary between architecture-specific source and
+        // other ThinLTO partitions. Keep the definitions visible to LLVM's compile
+        // and LTO optimizers. The linker still sees the real call graph and remains
+        // free to discard unreferenced symbols, unlike the stronger @llvm.used root.
+        builder.Append($"@llvm.compiler.used = appending global [{symbols.Length} x ptr] [");
+        for (var index = 0; index < symbols.Length; index++)
+        {
+            if (index != 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append($"ptr @{symbols[index]}");
+        }
+
+        builder.AppendLine("], section \"llvm.metadata\"");
+        builder.AppendLine();
     }
 
     private void EmitInternalHelperDefinitions(StringBuilder builder)
