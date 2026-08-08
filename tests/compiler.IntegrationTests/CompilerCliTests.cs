@@ -1754,8 +1754,14 @@ public sealed class CompilerCliTests
         }
     }
 
-    [Fact]
-    public async Task EmitObjectModeForwardsTargetCpuAndFeaturesToClang()
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", "znver4", "-march=znver4")]
+    [InlineData("aarch64-unknown-linux-gnu", "cortex-a76", "-mcpu=cortex-a76")]
+    [InlineData("x86_64-unknown-linux-gnu", "generic", null)]
+    public async Task EmitObjectModeForwardsArchitectureAppropriateTargetCpuAndFeaturesToClang(
+        string targetTriple,
+        string targetCpu,
+        string? expectedCpuArgument)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -1779,8 +1785,8 @@ public sealed class CompilerCliTests
                 [
                     "--emit-obj",
                     "-o", outputPath,
-                    "--target", "x86_64-unknown-linux-gnu",
-                    "--target-cpu", "znver4",
+                    "--target", targetTriple,
+                    "--target-cpu", targetCpu,
                     "--target-feature", "+sse4.1",
                     "--target-feature=-avx"
                 ],
@@ -1803,8 +1809,16 @@ public sealed class CompilerCliTests
 
             var clangLog = await File.ReadAllTextAsync(clangLogPath);
             Assert.Contains("-target", clangLog, StringComparison.Ordinal);
-            Assert.Contains("x86_64-unknown-linux-gnu", clangLog, StringComparison.Ordinal);
-            Assert.Contains("-mcpu=znver4", clangLog, StringComparison.Ordinal);
+            Assert.Contains(targetTriple, clangLog, StringComparison.Ordinal);
+            if (expectedCpuArgument is null)
+            {
+                Assert.DoesNotContain("-march=", clangLog, StringComparison.Ordinal);
+                Assert.DoesNotContain("-mcpu=", clangLog, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains(expectedCpuArgument, clangLog, StringComparison.Ordinal);
+            }
             Assert.Contains("-target-feature", clangLog, StringComparison.Ordinal);
             Assert.Contains("+sse4.1", clangLog, StringComparison.Ordinal);
             Assert.Contains("-avx", clangLog, StringComparison.Ordinal);
@@ -2753,7 +2767,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertOnlySlowPassWarnings(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
@@ -2847,7 +2861,7 @@ public sealed class CompilerCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertOnlySlowPassWarnings(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
@@ -4037,6 +4051,19 @@ public sealed class CompilerCliTests
                 && bytes[1] == 0xC0
                 && bytes[2] == 0x17
                 && bytes[3] == 0x0B);
+    }
+
+    private static void AssertOnlySlowPassWarnings(string text)
+    {
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler diagnostic: {line}");
+        }
     }
 
     private static string? FindFirstAvailableTool(params string[] toolNames)

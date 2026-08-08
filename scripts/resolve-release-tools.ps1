@@ -54,7 +54,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseToolsPath)) {
 if (-not $NoBuild) {
     $buildOutput = @(& $dotnet.Source build $project --configuration Release --nologo --verbosity minimal 2>&1)
     foreach ($line in $buildOutput) {
-        Write-Host $line
+        [Console]::Error.WriteLine([string]$line)
     }
     if ($LASTEXITCODE -ne 0) {
         throw "Building Stark.ReleaseTools failed with exit code $LASTEXITCODE."

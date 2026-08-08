@@ -67,6 +67,10 @@ public sealed class ReleaseLocalBuildScriptTests
         Assert.Contains("publicationAction = $false", script, StringComparison.Ordinal);
         Assert.Contains("[string] $ReleaseToolsPath", script, StringComparison.Ordinal);
         Assert.Contains("releaseToolsAssembly", script, StringComparison.Ordinal);
+        var releaseToolsResolver = File.ReadAllText(
+            Path.Combine(repositoryRoot, "scripts", "resolve-release-tools.ps1"));
+        Assert.Contains("[Console]::Error.WriteLine([string]$line)", releaseToolsResolver, StringComparison.Ordinal);
+        Assert.DoesNotContain("Write-Host $line", releaseToolsResolver, StringComparison.Ordinal);
         Assert.DoesNotContain("python", releaseContract, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("linux-x64\"", script, StringComparison.Ordinal);
         Assert.DoesNotContain("windows-x64\"", script, StringComparison.Ordinal);
@@ -388,7 +392,8 @@ public sealed class ReleaseLocalBuildScriptTests
             repositoryRoot);
 
         Assert.NotEqual(0, result.ExitCode);
-        Assert.Contains("ambient tool discovery is forbidden", result.Stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ambient build-tool", result.Stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("discovery is forbidden", result.Stderr, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
