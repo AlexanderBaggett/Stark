@@ -46,6 +46,60 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
+    public async Task LlvmAcquisitionAcceptsEmptyHardLinkAliasSets()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var powershell = await FindPowerShellAsync(repositoryRoot);
+        if (powershell is null)
+        {
+            return;
+        }
+
+        var script = Path.Combine(repositoryRoot, "scripts", "acquire-llvm-toolchain.ps1");
+        var scriptText = File.ReadAllText(script);
+        Assert.Contains("$hardlinkAliases = @(\n        Convert-ToVerifiedHardLinkAliases", scriptText, StringComparison.Ordinal);
+
+        const string command = """
+            & {
+                param([string] $ScriptPath)
+                Set-StrictMode -Version Latest
+                $tokens = $null
+                $errors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+                    $ScriptPath,
+                    [ref] $tokens,
+                    [ref] $errors)
+                if ($errors.Count -ne 0) {
+                    throw "acquire-llvm-toolchain.ps1 did not parse: $($errors[0].Message)"
+                }
+
+                $function = $ast.Find({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
+                        -and $node.Name -eq 'Convert-ToVerifiedHardLinkAliases'
+                }, $true)
+                if ($null -eq $function) {
+                    throw 'Convert-ToVerifiedHardLinkAliases was not found.'
+                }
+
+                Invoke-Expression $function.Extent.Text
+                $omitted = @(Convert-ToVerifiedHardLinkAliases -DestinationRoot $PWD)
+                $explicitNull = @(Convert-ToVerifiedHardLinkAliases -DestinationRoot $PWD -Aliases $null)
+                $explicitEmpty = @(Convert-ToVerifiedHardLinkAliases -DestinationRoot $PWD -Aliases @())
+                if ($omitted.Count -ne 0 -or $explicitNull.Count -ne 0 -or $explicitEmpty.Count -ne 0) {
+                    throw 'Empty hard-link alias inputs must produce an empty array.'
+                }
+            }
+            """;
+
+        var result = await RunProcessAsync(
+            powershell,
+            ["-NoProfile", "-NonInteractive", "-Command", command, script],
+            repositoryRoot);
+        Assert.True(result.ExitCode == 0, result.Stderr);
+    }
+
+    [Fact]
     public void ReleasePackagingCopiesOnlyHashVerifiedClosureMembers()
     {
         var repositoryRoot = FindRepositoryRoot();
