@@ -618,8 +618,13 @@ function Convert-ToVerifiedHardLinkAliases {
         [object[]] $Aliases = @()
     )
 
-    if ($Aliases.Count -eq 0) {
-        return @()
+    # An empty PowerShell function result emits no pipeline objects. When that
+    # result is passed directly as an argument, the parameter binder supplies
+    # $null rather than an empty Object[]. Normalize at the function boundary
+    # so platforms without configured aliases remain valid under strict mode.
+    $aliasValues = @($Aliases | Where-Object { $null -ne $_ })
+    if ($aliasValues.Count -eq 0) {
+        return
     }
 
     if ($IsWindows) {
@@ -627,7 +632,7 @@ function Convert-ToVerifiedHardLinkAliases {
     }
 
     $records = @()
-    foreach ($alias in $Aliases) {
+    foreach ($alias in $aliasValues) {
         $relativePath = [string](Get-JsonProperty -Object $alias -Name "path")
         $targetRelativePath = [string](Get-JsonProperty -Object $alias -Name "target")
         Assert-SafeRelativePath -Path $relativePath -Name "LLVM hard-link alias path"
@@ -975,9 +980,11 @@ try {
     $excludedDevelopmentPatterns = @(Get-SortedUniqueStrings -Values $excludedDevelopmentPatterns)
 
     $hardlinkProperty = $platform.PSObject.Properties["hardlinkAliases"]
-    $hardlinkAliases = Convert-ToVerifiedHardLinkAliases `
-        -DestinationRoot $stageRoot `
-        -Aliases (Get-ArrayValues -Value $(if ($null -eq $hardlinkProperty) { $null } else { $hardlinkProperty.Value }))
+    $hardlinkAliases = @(
+        Convert-ToVerifiedHardLinkAliases `
+            -DestinationRoot $stageRoot `
+            -Aliases (Get-ArrayValues -Value $(if ($null -eq $hardlinkProperty) { $null } else { $hardlinkProperty.Value }))
+    )
 
     $provenanceRoot = Join-Path $stageRoot "provenance"
     New-Item -ItemType Directory -Force -Path $provenanceRoot | Out-Null
