@@ -210,10 +210,6 @@ jobs:
 
           $versionLines | Set-Content -LiteralPath (Join-Path $diagnosticsRoot "clang-version.log") -Encoding utf8
           Copy-Item -LiteralPath $backendManifestPath -Destination (Join-Path $diagnosticsRoot "private-backend-manifest.json") -Force
-          "STARK_TOOLCHAIN_DIR=$toolchainRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "STARK_CLANG=$clangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "STARK_LINKER=$clangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "STARK_ARCHIVER=$llvmArPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           (Join-Path $toolchainRoot "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "cache_key=llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
