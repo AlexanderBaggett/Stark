@@ -288,7 +288,7 @@ internal sealed class LlvmIrEmitter
 
         LogSpecializationCodegenStrategies();
         _moduleSurfaceEmitter.Emit(builder);
-        EmitCompilerUsedAsmSymbols(builder);
+        EmitUsedAsmSymbols(builder);
         EmitIntrinsicDeclarations(builder);
         EmitInternalHelperDefinitions(builder);
 
@@ -1869,7 +1869,7 @@ internal sealed class LlvmIrEmitter
         _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, EnumerateBuiltinDefinitionSignatures());
     }
 
-    private void EmitCompilerUsedAsmSymbols(StringBuilder builder)
+    private void EmitUsedAsmSymbols(StringBuilder builder)
     {
         var symbols = _syntaxModel.Declarations
             .Where(static declaration => declaration.Function?.Asm is not null)
@@ -1887,10 +1887,11 @@ internal sealed class LlvmIrEmitter
 
         // Stark asm functions are ordinary callable definitions, but their raw ABI
         // symbols also form the boundary between architecture-specific source and
-        // other ThinLTO partitions. Keep the definitions visible to LLVM's compile
-        // and LTO optimizers. The linker still sees the real call graph and remains
-        // free to discard unreferenced symbols, unlike the stronger @llvm.used root.
-        builder.Append($"@llvm.compiler.used = appending global [{symbols.Length} x ptr] [");
+        // other ThinLTO partitions. llvm.compiler.used only constrains compiler
+        // optimization; an LTO-aware linker may still discard those definitions
+        // before resolving calls from another partition. llvm.used provides the
+        // required compiler, assembler, and linker retention boundary.
+        builder.Append($"@llvm.used = appending global [{symbols.Length} x ptr] [");
         for (var index = 0; index < symbols.Length; index++)
         {
             if (index != 0)
