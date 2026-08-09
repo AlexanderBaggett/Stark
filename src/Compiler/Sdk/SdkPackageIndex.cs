@@ -2,8 +2,8 @@ namespace Stark.Compiler;
 
 internal sealed class SdkPackageIndex
 {
-    private readonly SortedDictionary<string, SdkPackageDescriptor> _packages;
-    private readonly SortedDictionary<string, SdkModuleOwnership> _modules;
+    private readonly Dictionary<string, SdkPackageDescriptor> _packages;
+    private readonly Dictionary<string, SdkModuleOwnership> _modules;
 
     internal SdkPackageIndex(
         string sdkRoot,
@@ -13,21 +13,32 @@ internal sealed class SdkPackageIndex
     {
         SdkRoot = SdkRootResolver.CanonicalizeRootPath(sdkRoot);
         PackageFormatVersion = packageFormatVersion;
-        _packages = new SortedDictionary<string, SdkPackageDescriptor>(StringComparer.Ordinal);
-        _modules = new SortedDictionary<string, SdkModuleOwnership>(StringComparer.Ordinal);
+        var packageSnapshot = packages.ToArray();
+        var moduleSnapshot = modules.ToArray();
+        _packages = new Dictionary<string, SdkPackageDescriptor>(packageSnapshot.Length, StringComparer.Ordinal);
+        _modules = new Dictionary<string, SdkModuleOwnership>(moduleSnapshot.Length, StringComparer.Ordinal);
 
-        foreach (var package in packages)
+        foreach (var package in packageSnapshot)
         {
             _packages.Add(package.Id, package);
         }
 
-        foreach (var module in modules)
+        foreach (var module in moduleSnapshot)
         {
             _modules.Add(module.ModuleName, module);
         }
 
-        Packages = _packages.Values.ToArray();
-        Modules = _modules.Values.ToArray();
+        // Dictionary lookup is the index's hot path. Keep deterministic public
+        // enumeration as separate compact snapshots instead of paying tree-node
+        // allocation and O(log n) insertion/lookup costs for every SDK entry.
+        Array.Sort(
+            packageSnapshot,
+            static (left, right) => StringComparer.Ordinal.Compare(left.Id, right.Id));
+        Array.Sort(
+            moduleSnapshot,
+            static (left, right) => StringComparer.Ordinal.Compare(left.ModuleName, right.ModuleName));
+        Packages = packageSnapshot;
+        Modules = moduleSnapshot;
     }
 
     public string SdkRoot { get; }
