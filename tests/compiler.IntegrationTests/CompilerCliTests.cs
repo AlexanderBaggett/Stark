@@ -2712,6 +2712,108 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitExecutableModePreservesReferencedAsmDefinitionsThroughDependencyThinLto()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-asm-dependency-");
+        var dependencyPath = Path.Combine(tempDirectory.FullName, "Syscall.stark");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixAppendCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var lldPath = Path.Combine(tempDirectory.FullName, "ld.lld");
+        await File.WriteAllTextAsync(lldPath, "#!/usr/bin/env bash\nexit 0\n");
+        System.Diagnostics.Process.Start("chmod", $"+x {lldPath}")!.WaitForExit();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                dependencyPath,
+                """
+                module Syscall
+
+                internal unsafe ffi asm(x86_64) fn i64[min max] Syscall0(i64[min max] number)
+                    in("rax") number,
+                    out("rax") return,
+                    clobber("rcx", "r11")
+                {
+                    "syscall"
+                }
+
+                public unsafe fn i64[min max] ProcessId()
+                {
+                    return Syscall0(39);
+                }
+                """);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import Syscall
+                module App
+
+                export unsafe fn i32[min max] main()
+                {
+                    return (i32[min max])Syscall.ProcessId();
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-I", tempDirectory.FullName,
+                    "-o", outputPath,
+                    "--target", "x86_64-unknown-linux-gnu",
+                    "--save-temps", saveTempsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var dependencyLlvm = await File.ReadAllTextAsync(Path.Combine(saveTempsPath, "Syscall.ll"));
+            Assert.Contains("define i64 @Syscall0(", dependencyLlvm, StringComparison.Ordinal);
+            Assert.Contains(
+                "@llvm.compiler.used = appending global [1 x ptr] [ptr @Syscall0], section \"llvm.metadata\"",
+                dependencyLlvm,
+                StringComparison.Ordinal);
+
+            var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
+            Assert.Contains(
+                clangLogLines,
+                static line => line.Contains("Syscall.ll", StringComparison.Ordinal)
+                    && line.Contains("-flto=thin", StringComparison.Ordinal)
+                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeAllowsSystemTextDependencyThinLto()
     {
         if (OperatingSystem.IsWindows())
