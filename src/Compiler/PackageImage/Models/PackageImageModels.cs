@@ -181,7 +181,16 @@ internal sealed record StarkPackageAsmManifest(
     string TemplateText,
     IReadOnlyList<StarkPackageAsmInputManifest> Inputs,
     IReadOnlyList<StarkPackageAsmOutputManifest> Outputs,
-    IReadOnlyList<string> Clobbers);
+    IReadOnlyList<string> Clobbers,
+    StarkPackageAsmMemoryManifest? Memory = null,
+    IReadOnlyList<string>? SymbolReferences = null);
+
+internal sealed record StarkPackageAsmMemoryManifest(
+    IReadOnlyList<StarkPackageAsmMemoryOperandManifest> Operands);
+
+internal sealed record StarkPackageAsmMemoryOperandManifest(
+    string ValueName,
+    string Access);
 
 internal sealed record StarkPackageAsmInputManifest(
     string RegisterName,

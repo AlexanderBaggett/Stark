@@ -631,13 +631,35 @@ public sealed record AsmOutputOperandModel(
     string ValueName,
     bool BindsReturnValue);
 
+public enum StarkAsmMemoryAccessKind
+{
+    Read,
+    Write,
+    ReadWrite
+}
+
+public sealed record AsmMemoryOperandModel(
+    string ValueName,
+    StarkAsmMemoryAccessKind AccessKind);
+
+public sealed record AsmMemoryEffectModel(
+    IReadOnlyList<AsmMemoryOperandModel> Operands);
+
+public sealed record AsmSymbolReferenceModel(
+    string SourceName);
+
 public sealed record AsmFunctionModel(
     StarkAsmArchitecture Architecture,
     string ArchitectureText,
     string TemplateText,
     IReadOnlyList<AsmInputOperandModel> Inputs,
     IReadOnlyList<AsmOutputOperandModel> Outputs,
-    IReadOnlyList<string> Clobbers);
+    IReadOnlyList<string> Clobbers,
+    AsmMemoryEffectModel? MemoryEffects = null,
+    IReadOnlyList<AsmSymbolReferenceModel>? SymbolReferences = null)
+{
+    public IReadOnlyList<AsmSymbolReferenceModel> Symbols => SymbolReferences ?? [];
+}
 
 public sealed record ParameterModel(
     string Name,

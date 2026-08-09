@@ -188,47 +188,57 @@ finite law i32[min max] SeekOriginCode(SeekOrigin origin)
     }
 }
 
-internal unsafe ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
+internal unsafe ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8[min max]>[length] destination, rawptr<i8[min max]>[length] source, u32[0 max] length)
+    where disjoint(destination, source)
     in("r8") destination,
     in("r9") source,
     in("r10") length,
-    clobber("rdi", "rsi", "rcx")
+    clobber("rdi", "rsi", "rcx"),
+    memory(read(source), write(destination))
 {
     "cld\nmovq %r8, %rdi\nmovq %r9, %rsi\nmovl %r10d, %ecx\nrep movsb"
 }
 
-internal unsafe ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
+internal unsafe ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8[min max]>[length] destination, rawptr<i8[min max]>[length] source, u32[0 max] length)
+    where disjoint(destination, source)
     in("x0") destination,
     in("x1") source,
     in("w2") length,
-    clobber("w9", "w10", "w11")
+    clobber("w9", "w10", "w11"),
+    memory(read(source), write(destination))
 {
     "cbz w2, 2f\nmov w9, wzr\n1:\nldrb w10, [x1, w9, uxtw]\nstrb w10, [x0, w9, uxtw]\nadd w9, w9, #1\nsub w11, w2, w9\ncbnz w11, 1b\n2:"
 }
 
-internal unsafe ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
+internal unsafe ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8[min max]>[length] destination, rawptr<i8[min max]>[length] source, u32[0 max] length)
+    where disjoint(destination, source)
     in("a0") destination,
     in("a1") source,
     in("a2") length,
-    clobber("t0", "t1", "t2", "t3", "t4")
+    clobber("t0", "t1", "t2", "t3", "t4"),
+    memory(read(source), write(destination))
 {
     "beq a2, zero, 2f\nli t0, 0\n1:\nadd t1, a1, t0\nlbu t2, 0(t1)\nadd t3, a0, t0\nsb t2, 0(t3)\naddi t0, t0, 1\nsub t4, a2, t0\nbne t4, zero, 1b\n2:"
 }
 
-internal unsafe ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
+internal unsafe ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8[min max]>[length] destination, rawptr<i8[min max]>[length] source, u32[0 max] length)
+    where disjoint(destination, source)
     in("eax") destination,
     in("edx") source,
     in("ebx") length,
-    clobber("edi", "esi", "ecx")
+    clobber("edi", "esi", "ecx"),
+    memory(read(source), write(destination))
 {
     "cld\nmovl %eax, %edi\nmovl %edx, %esi\nmovl %ebx, %ecx\nrep movsb"
 }
 
-internal unsafe ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
+internal unsafe ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8[min max]>[length] destination, rawptr<i8[min max]>[length] source, u32[0 max] length)
+    where disjoint(destination, source)
     in("r0") destination,
     in("r1") source,
     in("r2") length,
-    clobber("r3", "r12")
+    clobber("r3", "r12"),
+    memory(read(source), write(destination))
 {
     "cmp r2, #0\nbeq 2f\nmov r3, #0\n1:\nldrb r12, [r1, r3]\nstrb r12, [r0, r3]\nadd r3, r3, #1\nsub r12, r2, r3\ncmp r12, #0\nbne 1b\n2:"
 }
@@ -703,7 +713,7 @@ public struct File
                 return false;
             }
 
-            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], textData, (i32[min max])textLength);
+            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], textData, (u32[0 max])textLength);
             self.WriteBufferLength = existingLength + textLength;
             return true;
         }
@@ -739,7 +749,7 @@ public struct File
                 return false;
             }
 
-            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], data, (i32[min max])count);
+            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], data, (u32[0 max])count);
             self.WriteBufferLength = existingLength + (i64[min max])count;
             return true;
         }

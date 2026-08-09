@@ -4,6 +4,8 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmEmissionContext
 {
+    private readonly IReadOnlyDictionary<string, AsmFunctionModel> _asmFunctions;
+    private readonly HashSet<OpaqueAsmSymbolUse> _opaqueAsmSymbolUses = [];
     private readonly Func<StarkTypeSymbol, string> _mapType;
     private readonly Func<StarkTypeSymbol, ConcreteTypeLayout?> _tryGetConcreteTypeLayout;
     private readonly Func<StarkTypeSymbol, NamedTypeSymbol?> _resolveNamedTypeSymbol;
@@ -73,6 +75,7 @@ internal sealed class LlvmEmissionContext
         EnumLayouts = enumLayouts;
         StringConstants = stringConstants.ToArray();
         TargetInfo = targetInfo;
+        _asmFunctions = BuildAsmFunctionIndex(loadedModules);
         _mapType = mapType;
         _tryGetConcreteTypeLayout = tryGetConcreteTypeLayout;
         _resolveNamedTypeSymbol = resolveNamedTypeSymbol;
@@ -191,9 +194,48 @@ internal sealed class LlvmEmissionContext
 
     public FunctionEffectProfile? TryGetFunctionEffects(string functionName) => _tryGetFunctionEffects(functionName);
 
+    public bool TryGetAsmFunction(string functionName, out AsmFunctionModel asmFunction) =>
+        _asmFunctions.TryGetValue(functionName, out asmFunction!);
+
+    public IReadOnlyCollection<OpaqueAsmSymbolUse> OpaqueAsmSymbolUses => _opaqueAsmSymbolUses;
+
+    public void RegisterOpaqueAsmSymbolUses(
+        string asmFunctionName,
+        IReadOnlyList<AsmSymbolReferenceModel> symbols)
+    {
+        foreach (var symbol in symbols)
+        {
+            _opaqueAsmSymbolUses.Add(new OpaqueAsmSymbolUse(asmFunctionName, symbol.SourceName));
+        }
+    }
+
     public StarkParser.PrimaryExpressionContext? TryUnwrapSimplePrimaryExpression(StarkParser.ExpressionContext expression) =>
         _tryUnwrapSimplePrimaryExpression(expression);
 
     public TypedConstructorShape? ResolveObjectCreationConstructor(StarkParser.ObjectCreationExpressionContext objectCreation) =>
         _resolveObjectCreationConstructor(objectCreation);
+
+    private static IReadOnlyDictionary<string, AsmFunctionModel> BuildAsmFunctionIndex(LoadedModuleSet loadedModules)
+    {
+        var functions = new Dictionary<string, AsmFunctionModel>(StringComparer.Ordinal);
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.SyntaxModel.Declarations)
+            {
+                if (declaration.Function?.Asm is not { } asmFunction)
+                {
+                    continue;
+                }
+
+                var resolvedLocalName = FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration);
+                functions[FunctionOverloadFacts.QualifyResolvedName(module, resolvedLocalName)] = asmFunction;
+            }
+        }
+
+        return functions;
+    }
 }
+
+internal sealed record OpaqueAsmSymbolUse(
+    string AsmFunctionName,
+    string SourceName);

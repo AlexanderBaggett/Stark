@@ -937,6 +937,15 @@ internal static partial class PackageImageLoader
             clauses.Add($"clobber({string.Join(", ", asm.Clobbers.Select(static register => $"\"{EscapeStarkStringLiteral(register)}\""))})");
         }
 
+        clauses.AddRange((asm.SymbolReferences ?? []).Select(static sourceName => $"symbol({sourceName})"));
+
+        if (asm.Memory is { } memory)
+        {
+            clauses.Add(memory.Operands.Count == 0
+                ? "memory(none)"
+                : $"memory({string.Join(", ", memory.Operands.Select(static operand => $"{operand.Access}({operand.ValueName})"))})");
+        }
+
         for (var index = 0; index < clauses.Count; index++)
         {
             builder.Append("    ");
@@ -2844,8 +2853,28 @@ internal static partial class PackageImageLoader
             asm.TemplateText,
             asm.Inputs.Select(static input => new AsmInputOperandModel(input.RegisterName, input.ValueName)).ToArray(),
             asm.Outputs.Select(static output => new AsmOutputOperandModel(output.RegisterName, output.ValueName, output.BindsReturnValue)).ToArray(),
-            asm.Clobbers);
+            asm.Clobbers,
+            asm.Memory is null
+                ? null
+                : new AsmMemoryEffectModel(
+                    asm.Memory.Operands
+                        .Select(static operand => new AsmMemoryOperandModel(
+                            operand.ValueName,
+                            ParseAsmMemoryAccess(operand.Access)))
+                        .ToArray()),
+            (asm.SymbolReferences ?? [])
+                .Select(static sourceName => new AsmSymbolReferenceModel(sourceName))
+                .ToArray());
     }
+
+    private static StarkAsmMemoryAccessKind ParseAsmMemoryAccess(string access) =>
+        access switch
+        {
+            "read" => StarkAsmMemoryAccessKind.Read,
+            "write" => StarkAsmMemoryAccessKind.Write,
+            "readwrite" => StarkAsmMemoryAccessKind.ReadWrite,
+            _ => throw new InvalidDataException($"Package asm manifest contains unsupported memory access '{access}'.")
+        };
 
     private static bool TryParseVisibility(string visibility, out StarkVisibility parsed)
     {

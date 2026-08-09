@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
 
-public sealed class LlvmIrEmissionTests
+public sealed partial class LlvmIrEmissionTests
 {
     [Fact]
     public void StraightLineFunctionEmitsOptimizedLlvmBody()
@@ -3711,7 +3711,9 @@ public sealed class LlvmIrEmissionTests
                     )
                 ])));
 
-        Assert.True(result.Succeeded);
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @System_Runtime_Platform_ExitProcess(i32 %arg_code)", llvm);
@@ -13104,16 +13106,18 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define i64 @Syscall2(i64 %arg_number, ptr readonly %arg_path) nounwind inlinehint", llvm);
-        Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @Syscall2], section \"llvm.metadata\"", llvm);
+        Assert.Contains("; direct-only asm definition omitted: Syscall2", llvm);
+        Assert.DoesNotContain("@llvm.used", llvm);
         Assert.DoesNotContain("@llvm.compiler.used", llvm);
-        Assert.Contains("call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 %arg_number, ptr %arg_path)", llvm);
-        Assert.Contains("ret i64 %asm_result", llvm);
+        Assert.Contains("call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 2, ptr %arg_path)", llvm);
+        Assert.Contains(") nounwind, !srcloc !", llvm);
+        Assert.Contains("!{i64 14}", llvm);
+        Assert.DoesNotContain("call i64 @Syscall2", llvm);
         Assert.DoesNotContain("declare i64 @Syscall2", llvm);
     }
 
     [Fact]
-    public void ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls()
+    public void ImportedSourceAsmFunctionsLowerDirectlyWithoutExternalDeclarations()
     {
         var result = Compile(
             """
@@ -13150,8 +13154,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("declare i64 @Syscall2", llvm);
-        Assert.Contains("call i64 @Syscall2(i64 range(i64 2, 3) 2, ptr readonly", llvm);
+        Assert.Contains("; direct-only imported asm declaration omitted: Syscall.Syscall2", llvm);
+        Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
+        Assert.DoesNotContain("declare i64 @Syscall_Syscall2", llvm);
+        Assert.DoesNotContain("call i64 @Syscall_Syscall2", llvm);
+        Assert.DoesNotContain("declare i64 @Syscall2", llvm);
         Assert.DoesNotContain("; imported asm definition: Syscall.Syscall2", llvm);
         Assert.DoesNotContain("define i64 @Syscall2", llvm);
     }
@@ -13181,9 +13188,10 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define double @Identity(double %arg_value) nounwind inlinehint", llvm);
+        Assert.Contains("; direct-only asm definition omitted: Identity", llvm);
         Assert.Contains("call double asm sideeffect \"nop\", \"={xmm0},0,~{memory},~{dirflag},~{fpsr},~{flags}\"(double %arg_value)", llvm);
-        Assert.Contains("ret double %asm_result", llvm);
+        Assert.Contains(") nounwind, !srcloc !", llvm);
+        Assert.DoesNotContain("call double @Identity", llvm);
         Assert.DoesNotContain("declare double @Identity", llvm);
     }
 

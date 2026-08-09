@@ -273,6 +273,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitAsmClobberClause([NotNull] StarkParser.AsmClobberClauseContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmSymbolClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmSymbolClause([NotNull] StarkParser.AsmSymbolClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmMemoryClause"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmMemoryClause([NotNull] StarkParser.AsmMemoryClauseContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.asmMemoryAccess"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAsmMemoryAccess([NotNull] StarkParser.AsmMemoryAccessContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.asmFunctionBody"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
