@@ -4559,27 +4559,40 @@ public static class DefaultCompilerPipeline
                 ssaValueFacts = facts;
             }
 
-            var llvmModule = new LlvmIrEmitter(
-                context.Input,
-                parseResult,
-                syntaxModel,
-                loadedModules,
-                effectModel,
-                typeModel,
-                enumLayoutModel,
-                abiModel,
-                ssa,
-                context.Options.TargetInfo,
-                internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
-                isOptimizedBuild: true,
-                enableOptimizedRawPointerLoopIntrinsics: true,
-                semanticValidation: validationModel,
-                closedWorldModel: closedWorldModel,
-                specializationCodegenStrategy: specializationCodegenStrategy,
-                logs: context.Logs,
-                ssaValueFacts: ssaValueFacts,
-                importedInlineCloneSeedFunctions: context.Options.ImportedInlineCloneSeedFunctions,
-                emitFallbackDeclarationsForSourceBodies: false).Emit();
+            LlvmIrModule llvmModule;
+            try
+            {
+                llvmModule = new LlvmIrEmitter(
+                    context.Input,
+                    parseResult,
+                    syntaxModel,
+                    loadedModules,
+                    effectModel,
+                    typeModel,
+                    enumLayoutModel,
+                    abiModel,
+                    ssa,
+                    context.Options.TargetInfo,
+                    internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
+                    isOptimizedBuild: true,
+                    enableOptimizedRawPointerLoopIntrinsics: true,
+                    semanticValidation: validationModel,
+                    closedWorldModel: closedWorldModel,
+                    specializationCodegenStrategy: specializationCodegenStrategy,
+                    logs: context.Logs,
+                    ssaValueFacts: ssaValueFacts,
+                    importedInlineCloneSeedFunctions: context.Options.ImportedInlineCloneSeedFunctions,
+                    emitFallbackDeclarationsForSourceBodies: false).Emit();
+            }
+            catch (OpaqueAsmSymbolResolutionException exception)
+            {
+                context.Diagnostics.Error(
+                    "STK2109",
+                    exception.Message,
+                    "emit-llvm",
+                    SourceLocation.Synthetic(context.Input.FilePath));
+                return;
+            }
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
             EmitFallbackLogDiagnostics(context, "STK5001", BackendFallbackEventIds);
 

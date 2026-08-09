@@ -316,6 +316,9 @@ internal static class SyntaxModelFactory
         var outputRegisters = new HashSet<string>(StringComparer.Ordinal);
         var returnOutputRegisters = new HashSet<string>(StringComparer.Ordinal);
         var clobberRegisters = new HashSet<string>(StringComparer.Ordinal);
+        var opaqueSymbolReferences = new HashSet<string>(StringComparer.Ordinal);
+        var memoryBindings = new HashSet<string>(StringComparer.Ordinal);
+        var memoryClauseCount = 0;
         var returnBindingCount = 0;
         var valid = true;
 
@@ -487,6 +490,132 @@ internal static class SyntaxModelFactory
                 continue;
             }
 
+            if (clause.asmSymbolClause() is { } symbol)
+            {
+                var sourceName = symbol.qualifiedName().GetText();
+                if (!opaqueSymbolReferences.Add(sourceName))
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2109",
+                        $"Asm declaration '{declaration.Name}' lists opaque symbol reference '{sourceName}' more than once.",
+                        symbol.qualifiedName().Start.Line,
+                        symbol.qualifiedName().Start.Column + 1));
+                    valid = false;
+                }
+
+                continue;
+            }
+
+            if (clause.asmMemoryClause() is { } memory)
+            {
+                memoryClauseCount++;
+                if (memoryClauseCount > 1)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2109",
+                        $"Asm declaration '{declaration.Name}' may specify at most one memory-effect clause.",
+                        memory.Start.Line,
+                        memory.Start.Column + 1));
+                    valid = false;
+                }
+
+                var accesses = memory.asmMemoryAccess();
+                if (accesses.Length == 0)
+                {
+                    var accessName = memory.Identifier().Last().GetText();
+                    if (!string.Equals(accessName, "none", StringComparison.Ordinal))
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' uses unsupported memory effect '{accessName}'. Use 'memory(none)' or name raw-pointer accesses with read(...), write(...), or readwrite(...).",
+                            memory.Identifier().Last().Symbol.Line,
+                            memory.Identifier().Last().Symbol.Column + 1));
+                        valid = false;
+                    }
+
+                    continue;
+                }
+
+                foreach (var access in accesses)
+                {
+                    var accessName = access.Identifier(0).GetText();
+                    var valueName = access.Identifier(1).GetText();
+                    if (!TryParseAsmMemoryAccess(accessName, out var accessKind))
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' uses unsupported memory access '{accessName}'. Use read(...), write(...), or readwrite(...).",
+                            access.Identifier(0).Symbol.Line,
+                            access.Identifier(0).Symbol.Column + 1));
+                        valid = false;
+                        continue;
+                    }
+
+                    if (!parameters.TryGetValue(valueName, out var parameter))
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' describes memory through '{valueName}', but no parameter with that name exists.",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                        continue;
+                    }
+
+                    var rawPointerType = parameter.type_().nonArrayType().rawPointerType();
+                    if (rawPointerType is null)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' memory operand '{valueName}' must be a rawptr or rawmutptr parameter.",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                    }
+                    else if (TryGetBoundedRawPointerElementCount(parameter.type_()) is null)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' memory operand '{valueName}' must use a bounded raw-pointer region such as rawptr<T>[length].",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                    }
+                    else if (accessKind is StarkAsmMemoryAccessKind.Write or StarkAsmMemoryAccessKind.ReadWrite
+                             && rawPointerType.RAWMUTPTR() is null)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' cannot declare writes through immutable rawptr parameter '{valueName}'. Use rawmutptr for write or readwrite access.",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                    }
+
+                    if (!asm.Inputs.Any(input => string.Equals(input.ValueName, valueName, StringComparison.Ordinal)))
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' memory operand '{valueName}' must also be passed with an in(\"reg\") operand so LLVM can associate the access with argument memory.",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                    }
+
+                    if (!memoryBindings.Add(valueName))
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2109",
+                            $"Asm declaration '{declaration.Name}' describes memory operand '{valueName}' more than once. Use readwrite({valueName}) for combined access.",
+                            access.Identifier(1).Symbol.Line,
+                            access.Identifier(1).Symbol.Column + 1));
+                        valid = false;
+                    }
+                }
+
+                continue;
+            }
+
             if (clause.asmClobberClause() is not { } clobber)
             {
                 continue;
@@ -531,6 +660,27 @@ internal static class SyntaxModelFactory
         }
 
         return valid;
+    }
+
+    private static bool TryParseAsmMemoryAccess(
+        string accessName,
+        out StarkAsmMemoryAccessKind accessKind)
+    {
+        switch (accessName)
+        {
+            case "read":
+                accessKind = StarkAsmMemoryAccessKind.Read;
+                return true;
+            case "write":
+                accessKind = StarkAsmMemoryAccessKind.Write;
+                return true;
+            case "readwrite":
+                accessKind = StarkAsmMemoryAccessKind.ReadWrite;
+                return true;
+            default:
+                accessKind = default;
+                return false;
+        }
     }
 
     private static bool ValidateOperandRegister(
@@ -2446,6 +2596,8 @@ internal static class SyntaxModelFactory
         var inputs = new List<AsmInputOperandModel>();
         var outputs = new List<AsmOutputOperandModel>();
         var clobbers = new List<string>();
+        var symbols = new List<AsmSymbolReferenceModel>();
+        AsmMemoryEffectModel? memoryEffects = null;
 
         if (asmClauseList is not null)
         {
@@ -2475,6 +2627,24 @@ internal static class SyntaxModelFactory
                     {
                         clobbers.Add(DecodeAsmString(registerLiteral.GetText()));
                     }
+
+                    continue;
+                }
+
+                if (clause.asmSymbolClause() is { } symbol)
+                {
+                    symbols.Add(new AsmSymbolReferenceModel(symbol.qualifiedName().GetText()));
+                    continue;
+                }
+
+                if (clause.asmMemoryClause() is { } memory)
+                {
+                    memoryEffects = new AsmMemoryEffectModel(
+                        memory.asmMemoryAccess()
+                            .Select(static access => new AsmMemoryOperandModel(
+                                access.Identifier(1).GetText(),
+                                ParseAsmMemoryAccess(access.Identifier(0).GetText())))
+                            .ToArray());
                 }
             }
         }
@@ -2489,7 +2659,16 @@ internal static class SyntaxModelFactory
             templateText,
             inputs,
             outputs,
-            clobbers);
+            clobbers,
+            memoryEffects,
+            symbols);
+    }
+
+    private static StarkAsmMemoryAccessKind ParseAsmMemoryAccess(string accessName)
+    {
+        return TryParseAsmMemoryAccess(accessName, out var accessKind)
+            ? accessKind
+            : default;
     }
 
     private static string DecodeAsmString(string literalText)

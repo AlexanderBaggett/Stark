@@ -1161,6 +1161,18 @@ open; PowerShell parsing alone is not target qualification.
   and `prerelease=true`.
 - [ ] Confirm all build and independent install-smoke jobs pass for the complete
   target matrix.
+  - Review each target's uploaded
+    `backend-qualification-<target>/assembly-bridge/assembly-bridge-qualification.json`
+    evidence. It must prove an optimized package archive containing LLVM
+    bitcode was consumed without source through the real target toolchain,
+    linked with ThinLTO, retained an explicit opaque `symbol(...)` reference,
+    preserved the declared `memory(...)` effect, and produced the expected
+    native exit code.
+  - Review each target's `archive-smoke-<target>.json` evidence. Its
+    `packagedSystemAssembly` fields must prove a System-using program compiled
+    with the extracted SDK's `stdlib/src` unavailable, lowered a direct
+    standard-library assembly call with precise `memory(argmem: readwrite)`,
+    and ran successfully.
 - [ ] Download the exact draft-release assets and independently verify filenames,
   contents, checksums, signatures/attestations where used, and clean-machine
   behavior.

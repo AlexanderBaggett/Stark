@@ -2853,9 +2853,110 @@ The implemented v1 surface is:
 visibility unsafe ffi asm(architecture) fn ReturnType Name(parameters)
     in("register") parameterName,
     out("register") return,
-    clobber("register1", "register2")
+    clobber("register1", "register2"),
+    symbol(qualifiedName),
+    memory(none | read(pointer) | write(pointer) | readwrite(pointer))
 {
     "assembly template"
+}
+```
+
+#### What changed in the current assembly syntax
+
+Earlier Stark assembly declarations could list only `in(...)`, `out(...)`, and
+`clobber(...)`. The current grammar adds two optional clause forms:
+
+* `symbol(Name)` tells the compiler about a typed function or global referenced
+  only by the opaque assembly string.
+* `memory(...)` replaces the default arbitrary-memory assumption with an
+  explicit, narrower memory contract.
+
+The complete clause grammar is:
+
+```text
+asm-clause-list  := asm-clause ("," asm-clause)* ","?
+asm-clause       := in-clause | out-clause | clobber-clause
+                  | symbol-clause | memory-clause
+symbol-clause    := "symbol" "(" qualified-name ")"
+memory-clause    := "memory" "(" "none" ")"
+                  | "memory" "(" memory-access ("," memory-access)* ","? ")"
+memory-access    := "read" "(" parameter-name ")"
+                  | "write" "(" parameter-name ")"
+                  | "readwrite" "(" parameter-name ")"
+```
+
+These clauses appear after any `where` contracts and before the assembly body.
+Clause kinds may appear in any order and the list may end with a trailing comma.
+You may write multiple distinct `symbol(...)` clauses. You may write at most one
+`memory(...)` clause. `symbol` and `memory` remain usable as ordinary identifiers
+outside this contextual assembly-clause position.
+
+Existing assembly remains valid without either new clause. In particular,
+omitting `memory(...)` preserves the previous safe, conservative behavior; it
+does not mean "no memory". It means the template may access arbitrary memory.
+
+When updating existing assembly:
+
+1. Use `memory(none)` only for a template proven to access registers/flags and
+   no memory at all.
+2. If the template accesses only bounded raw-pointer parameters, bind every
+   such pointer with `in("reg")` and list every access as `read`, `write`, or
+   `readwrite`.
+3. If the template also accesses hidden stack memory, globals, MMIO, a pointer
+   encoded as an integer, or any other unlisted memory, omit `memory(...)`.
+4. If the template names a function/global symbol that no normal Stark
+   expression references, add `symbol(The.Name)` for it.
+5. Rebuild any package image containing the changed declaration so downstream
+   consumers receive the same structured clauses.
+
+The memory declaration is an unsafe promise to the optimizer. A false
+`memory(none)` or incomplete access list may allow legal LLVM transformations
+that change program behavior.
+
+Register-only assembly should say so explicitly:
+
+```stark
+internal unsafe ffi asm(x86_64) fn u64[0 max] Identity(u64[0 max] value)
+    in("rax") value,
+    out("rax") return,
+    memory(none)
+{
+    ""
+}
+```
+
+Assembly that reads and writes caller-provided memory needs bounded pointer
+regions, input bindings, access effects, and any relevant alias contract:
+
+```stark
+internal unsafe ffi asm(x86_64) fn void CopyBytes(
+    rawmutptr<i8[min max]>[length] destination,
+    rawptr<i8[min max]>[length] source,
+    u64[0 max] length)
+    where disjoint(destination, source)
+    in("r8") destination,
+    in("r9") source,
+    in("r10") length,
+    clobber("rdi", "rsi", "rcx"),
+    memory(read(source), write(destination))
+{
+    "cld\nmovq %r8, %rdi\nmovq %r9, %rsi\nmovq %r10, %rcx\nrep movsb"
+}
+```
+
+A Linux x86_64 template-only call to a stable exported symbol uses
+`symbol(...)`. Its memory effect stays conservative because the called function
+may access memory:
+
+```stark
+export fn void DispatchTarget()
+{
+}
+
+internal unsafe ffi asm(x86_64) fn void InvokeDispatch()
+    symbol(DispatchTarget)
+{
+    "call DispatchTarget"
 }
 ```
 
@@ -2901,6 +3002,10 @@ Operands are explicit:
 * `in("reg") parameterName` binds a parameter to an input register.
 * `out("reg") return` binds the function return value to an output register.
 * `clobber("reg1", "reg2")` lists registers the template may modify.
+* `symbol(Name)` declares a typed function/global name referenced only inside
+  the opaque assembly template.
+* `memory(...)` declares the complete memory effect when it is narrower than
+  arbitrary memory.
 
 Non-void assembly functions must bind exactly one return value with
 `out("reg") return`. Void assembly functions must not bind `return`.
@@ -2926,6 +3031,38 @@ Stark non-overlap contract for memory-backed parameters, so write explicit
 `where disjoint(...)`, `where overlap(...)`, or `where same(...)` contracts when
 the wrapper needs those facts.
 
+If `memory(...)` is omitted, the compiler assumes the template may access
+arbitrary memory. Use `memory(none)` only for register-only assembly. Otherwise,
+name every accessed pointer with `read(pointer)`, `write(pointer)`, or
+`readwrite(pointer)`. Such a pointer must be a bounded `rawptr<T>[count]` or
+`rawmutptr<T>[count]` parameter and must also have an `in("reg")` binding;
+writes require `rawmutptr`. These facts lower to LLVM argument-memory effects,
+while the raw region and explicit alias contracts preserve their normal
+optimization meaning.
+
+Use `symbol(Name)` when a function or global is named only by assembly text.
+`Name` is a source-level qualified name rather than a string. An unqualified
+name resolves relative to the assembly declaration's module; qualify imported
+or ambiguous names. It must resolve to exactly one accessible function or
+global, and the same symbol may not be listed twice. The reference is preserved
+in package images. The compiler emits retention only when the containing
+assembly is live and never tries to discover names by parsing target-specific
+template strings.
+
+`symbol(Name)` does not insert, rewrite, or target-mangle text in the assembly
+template. The template must still use the correct symbol spelling for its
+target assembler. Prefer an explicitly exported or otherwise stable ABI symbol
+for a cross-symbol assembly reference. Normal Stark calls and function-address
+uses do not need `symbol(...)` because they already provide ordinary linker
+reachability.
+
+The `memory(...)` clause and a function `where` contract have separate jobs.
+The memory clause says which regions the template accesses and whether it reads
+or writes them. `where disjoint(...)`, `where overlap(...)`, and
+`where same(...)` say how those regions may alias. Precise assembly generally
+needs both kinds of fact. Do not spell `clobber("memory")`; leave
+`memory(...)` out when the template can access arbitrary memory.
+
 Calls to assembly functions require an unsafe context:
 
 ```stark
@@ -2935,9 +3072,23 @@ unsafe fn i64[min max] RawSyscall1(i64[min max] number, i64[min max] value)
 }
 ```
 
-The compiler lowers root source assembly bodies to LLVM inline assembly with
-side effects. It also adds an implicit `memory` clobber, and on x86/x86_64 it
-adds the standard direction-flag, floating-point-status, and flags clobbers.
+The compiler lowers a direct assembly-function call to LLVM inline assembly at
+the call site, so the call does not pay for a separate wrapper function. Package
+images preserve the selected template and all operand/clobber metadata, giving
+source and package consumers the same lowering.
+
+A callable bridge symbol is kept only when code takes the function's address or
+the declaration is `export`. Non-exported bridges use a module-qualified hidden
+symbol; exported declarations keep their exact external symbol. Direct-only
+assembly declarations can be removed by normal dead-code elimination.
+
+Inline assembly is side-effecting and non-unwinding. An omitted memory clause
+adds the conservative LLVM `memory` clobber. `memory(none)` and named bounded
+pointer accesses remove it and emit the corresponding `memory(none)` or
+`memory(argmem: ...)` fact. On x86/x86_64 the compiler also adds the standard
+direction-flag, floating-point-status, and flags clobbers. Ordinary calls and
+function addresses use normal reachability; only explicit `symbol(...)`
+references are rooted through `@llvm.used`.
 
 ### 13.3 Unsafe Operations
 

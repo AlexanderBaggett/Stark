@@ -35,6 +35,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
         {
             var abiCallee = _resolveCallAbi(_function.Name, directCall.FunctionName)
                 ?? throw new UnsupportedBodyEmissionException($"Missing ABI lowering for tail-call target '{directCall.FunctionName}'.");
+            if (_context.TryGetAsmFunction(directCall.FunctionName, out var asmFunction)
+                && TryEmitDirectAsmTailCall(directCall, abiCallee, asmFunction))
+            {
+                return;
+            }
+
             EmitTailCall(
                 abiCallee,
                 RenderCallTarget(abiCallee),
@@ -68,6 +74,37 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         throw new UnsupportedBodyEmissionException("SSA tail-call terminator is missing its call operation.");
+    }
+
+    private bool TryEmitDirectAsmTailCall(
+        ISsaDirectCallOperation call,
+        AbiFunctionSignature abiCallee,
+        AsmFunctionModel asmFunction)
+    {
+        if (MapType(abiCallee.LlvmReturnType) != MapType(_abiFunction.LlvmReturnType))
+        {
+            return false;
+        }
+
+        if (_function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            if (!TryEmitDirectAsmCall(result: null, call, abiCallee, asmFunction))
+            {
+                return false;
+            }
+
+            AppendLine("  ret void");
+            return true;
+        }
+
+        var result = $"%{EscapeIdentifier(CreateAbiTempName("asm_tail"))}";
+        if (!TryEmitDirectAsmCall(result, call, abiCallee, asmFunction))
+        {
+            return false;
+        }
+
+        AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {result}");
+        return true;
     }
 
     private void EmitTailCall(
@@ -255,6 +292,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (result is not null
             && call is SsaCallRValue dictionaryCall
             && TryEmitDictionaryKeyCallSiteSpecialization(result, dictionaryCall, abiCallee))
+        {
+            return;
+        }
+
+        if (_context.TryGetAsmFunction(call.FunctionName, out var asmFunction)
+            && TryEmitDirectAsmCall(result, call, abiCallee, asmFunction))
         {
             return;
         }
@@ -470,6 +513,58 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         var callRangeMetadataSuffix = abiCallee.IsFfi ? string.Empty : GetValueRangeMetadataSuffix(resultName, call.Type);
         AppendLine($"  {result} = {callPrefix} {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callRangeMetadataSuffix}{callMetadataSuffix}");
+    }
+
+    private bool TryEmitDirectAsmCall(
+        string? result,
+        ISsaDirectCallOperation call,
+        AbiFunctionSignature abiCallee,
+        AsmFunctionModel asmFunction)
+    {
+        if (!LlvmInlineAsmLowering.TryCreatePlan(abiCallee, asmFunction, out var plan, out _))
+        {
+            return false;
+        }
+
+        _context.RegisterOpaqueAsmSymbolUses(abiCallee.Name, asmFunction.Symbols);
+
+        var userParameters = abiCallee.UserParameters;
+        if (abiCallee.IsVarargs || userParameters.Count != call.Arguments.Count)
+        {
+            return false;
+        }
+
+        var argumentFragments = new List<string>(plan.InputParameterIndices.Count);
+        foreach (var parameterIndex in plan.InputParameterIndices)
+        {
+            var parameter = userParameters[parameterIndex];
+            argumentFragments.Add($"{MapType(parameter.LlvmType)} {FormatValue(call.Arguments[parameterIndex])}");
+        }
+
+        var returnType = abiCallee.SourceReturnType.Kind == StarkTypeKind.Void
+            ? "void"
+            : MapType(abiCallee.LlvmReturnType);
+        var assignment = result is null ? string.Empty : $"{result} = ";
+        var sourceLocationMetadataSuffix = BuildDirectAsmSourceLocationMetadataSuffix(asmFunction);
+        AppendLine(
+            $"  {assignment}call {returnType} asm sideeffect \"{plan.EscapedTemplate}\", \"{plan.EscapedConstraints}\"({string.Join(", ", argumentFragments)}) nounwind{plan.MemoryAttributeSuffix}{sourceLocationMetadataSuffix}");
+        return true;
+    }
+
+    private string BuildDirectAsmSourceLocationMetadataSuffix(AsmFunctionModel asmFunction)
+    {
+        if (_currentDebugLocation is not { } location)
+        {
+            return string.Empty;
+        }
+
+        var templateLineCount = Math.Max(
+            1,
+            asmFunction.TemplateText.Count(static character => character == '\n') + 1);
+        var locationCookies = Enumerable.Range(0, templateLineCount)
+            .Select(offset => $"i64 {location.Line + offset}")
+            .ToArray();
+        return $", !srcloc {_context.GetMetadataTupleRef(locationCookies)}";
     }
 
     private enum DictionaryKeyCallSiteOperation

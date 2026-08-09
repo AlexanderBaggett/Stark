@@ -371,6 +371,31 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
+    public void ReleaseMatrixQualifiesAssemblyBridgeArchivesOnEverySelectedTarget()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml"));
+        var script = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "qualify-assembly-bridge.ps1"));
+
+        Assert.Contains("Qualify assembly bridge archive and ThinLTO lowering", workflow, StringComparison.Ordinal);
+        Assert.Contains("./scripts/qualify-assembly-bridge.ps1", workflow, StringComparison.Ordinal);
+        Assert.Contains("-TargetId \"${{ matrix.target_id }}\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("-TargetTriple \"${{ matrix.target_triple }}\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("artifacts/backend-qualification/${{ matrix.asset_suffix }}/assembly-bridge", workflow, StringComparison.Ordinal);
+        Assert.Contains("producerObjectIsLlvmBitcode = $true", script, StringComparison.Ordinal);
+        Assert.Contains("sourceRemovedBeforeConsumerBuild = $true", script, StringComparison.Ordinal);
+        Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @OpaqueTarget]", script, StringComparison.Ordinal);
+        Assert.Contains("-ExpectedExitCode 73", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("OperatingSystem.IsWindows", script, StringComparison.Ordinal);
+
+        var archiveSmoke = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1"));
+        Assert.Contains("[string] $ReportPath", archiveSmoke, StringComparison.Ordinal);
+        Assert.Contains("packagedSystemAssembly = [ordered]@{", archiveSmoke, StringComparison.Ordinal);
+        Assert.Contains("memory(argmem: readwrite)", archiveSmoke, StringComparison.Ordinal);
+        Assert.Contains("archive-smoke-${{ matrix.asset_suffix }}.json", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlannedTargetPackagingRequiresAnExplicitDiagnosticOverride()
     {
         var repositoryRoot = FindRepositoryRoot();
