@@ -288,7 +288,6 @@ internal sealed class LlvmIrEmitter
 
         LogSpecializationCodegenStrategies();
         _moduleSurfaceEmitter.Emit(builder);
-        EmitUsedAsmSymbols(builder);
         EmitIntrinsicDeclarations(builder);
         EmitInternalHelperDefinitions(builder);
 
@@ -379,13 +378,19 @@ internal sealed class LlvmIrEmitter
             var definitionInternalize = ShouldInternalize(declaration.Visibility);
             if (function.Asm is not null)
             {
+                if (!RequiresAddressableAsmBridge(resolvedName, signature))
+                {
+                    builder.AppendLine($"; direct-only asm definition omitted: {resolvedName}");
+                    builder.AppendLine();
+                    continue;
+                }
+
                 if (TryEmitAsmFunctionDefinition(
                         builder,
                         definitionInternalize,
                         signature,
                         abiSignature,
                         effects,
-                        memoryEffects,
                         function.Asm,
                         parameterEffects,
                         out var asmFailureReason))
@@ -622,6 +627,45 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
+            if (_emissionContext.TryGetAsmFunction(abiFunction.Name, out var importedAsmFunction))
+            {
+                var isAddressTaken = IsAsmFunctionAddressTaken(abiFunction.Name);
+                var referenceOwningExportedBridge = isAddressTaken
+                    && signature.Visibility == StarkVisibility.Export;
+                if (!referenceOwningExportedBridge && isAddressTaken)
+                {
+                    builder.AppendLine($"; materialized imported asm bridge: {abiFunction.Name}");
+                    if (!TryEmitAsmFunctionDefinition(
+                            builder,
+                            internalize: false,
+                            signature,
+                            abiFunction,
+                            effects,
+                            importedAsmFunction,
+                            parameterEffects,
+                            out var asmFailureReason,
+                            specializationLinkage: MonomorphizationLinkageKind.LinkOnceOdrComdat))
+                    {
+                        throw new UnsupportedBodyEmissionException(
+                            $"Cannot materialize addressable asm bridge '{abiFunction.Name}': {asmFailureReason}");
+                    }
+                }
+                else if (!referenceOwningExportedBridge)
+                {
+                    builder.AppendLine($"; direct-only imported asm declaration omitted: {abiFunction.Name}");
+                }
+
+                if (!referenceOwningExportedBridge)
+                {
+                    builder.AppendLine();
+                    continue;
+                }
+
+                // An exported bridge has a strong owner in its package archive.
+                // Keep an ordinary declaration/reference so archive extraction
+                // and the explicit external ABI contract remain authoritative.
+            }
+
             // Distinct Stark FFI declarations (for example per-platform modules) can share one
             // binary symbol; LLVM allows only a single declaration per symbol in a module.
             if (!emittedDeclarationSymbols.Add(abiFunction.SymbolName))
@@ -638,9 +682,172 @@ internal sealed class LlvmIrEmitter
 
         EmitReferencedImportedFunctionDeclarations(builder, handledFunctionNames, emittedDeclarationSymbols);
 
+        EmitOpaqueAsmSymbolRetention(builder, emittedDeclarationSymbols);
+
         _debugInfo.EmitModuleMetadata(builder);
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd(), _ssa.AddressTakenFunctions);
+    }
+
+    private void EmitOpaqueAsmSymbolRetention(
+        StringBuilder builder,
+        ISet<string> emittedDeclarationSymbols)
+    {
+        if (_emissionContext.OpaqueAsmSymbolUses.Count == 0)
+        {
+            return;
+        }
+
+        var retainedSymbols = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var use in _emissionContext.OpaqueAsmSymbolUses
+                     .OrderBy(static use => use.AsmFunctionName, StringComparer.Ordinal)
+                     .ThenBy(static use => use.SourceName, StringComparer.Ordinal))
+        {
+            if (TryResolveOpaqueAsmFunction(use, out var functionName, out var function, out var abiFunction))
+            {
+                retainedSymbols.Add(abiFunction.SymbolName);
+                if (!ModuleTextContainsFunctionSymbol(builder, abiFunction.SymbolName)
+                    && emittedDeclarationSymbols.Add(abiFunction.SymbolName))
+                {
+                    if (!_allFunctionEffects.TryGetValue(functionName, out var effects))
+                    {
+                        throw new UnsupportedBodyEmissionException(
+                            $"Opaque asm symbol reference '{use.SourceName}' resolved to function '{functionName}' without published effect facts.");
+                    }
+
+                    var hasBody = _ssaFunctionsByName.TryGetValue(functionName, out var ssaFunction)
+                        && ssaFunction.HasBody;
+                    var parameterEffects = GetParameterEffects(functionName, hasBody)
+                        ?? GetBuiltinParameterEffects(string.Empty, functionName, function);
+                    var memoryEffects = GetFunctionMemoryEffects(functionName, hasBody);
+                    builder.AppendLine($"; declaration retained for opaque asm symbol: {functionName}");
+                    builder.AppendLine(BuildDeclarationSignature(
+                        internalize: false,
+                        function,
+                        abiFunction,
+                        effects,
+                        memoryEffects,
+                        parameterEffects));
+                }
+
+                continue;
+            }
+
+            if (TryResolveOpaqueAsmGlobal(use, out var globalName, out var global, out var symbolName))
+            {
+                retainedSymbols.Add(symbolName);
+                if (!ModuleTextContainsGlobalSymbol(builder, symbolName))
+                {
+                    var storageKind = global.IsMutable ? "global" : "constant";
+                    builder.AppendLine($"; declaration retained for opaque asm symbol: {globalName}");
+                    builder.AppendLine($"@{EscapeIdentifier(symbolName)} = external {storageKind} {MapType(global.Type)}");
+                }
+
+                continue;
+            }
+
+            throw new OpaqueAsmSymbolResolutionException(
+                $"Asm function '{use.AsmFunctionName}' has opaque symbol reference '{use.SourceName}', but that name does not resolve to exactly one accessible function or global.");
+        }
+
+        if (retainedSymbols.Count == 0)
+        {
+            return;
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("; Explicit symbol(...) references are invisible inside target assembly text.");
+        builder.AppendLine($"@llvm.used = appending global [{retainedSymbols.Count} x ptr] [{string.Join(", ", retainedSymbols.Select(symbol => $"ptr @{EscapeIdentifier(symbol)}"))}], section \"llvm.metadata\"");
+        builder.AppendLine();
+    }
+
+    private bool TryResolveOpaqueAsmFunction(
+        OpaqueAsmSymbolUse use,
+        out string functionName,
+        out TypedFunctionSignature function,
+        out AbiFunctionSignature abiFunction)
+    {
+        var candidates = BuildOpaqueAsmSourceNameCandidates(use);
+        foreach (var candidate in candidates)
+        {
+            if (_allFunctionSignatures.TryGetValue(candidate, out function!)
+                && _allAbiFunctions.TryGetValue(candidate, out abiFunction!))
+            {
+                functionName = candidate;
+                return true;
+            }
+        }
+
+        var matches = _allFunctionSignatures
+            .Where(pair => candidates.Contains(pair.Value.DisplaySourceName, StringComparer.Ordinal))
+            .Where(pair => _allAbiFunctions.ContainsKey(pair.Key))
+            .ToArray();
+        if (matches.Length == 1)
+        {
+            functionName = matches[0].Key;
+            function = matches[0].Value;
+            abiFunction = _allAbiFunctions[functionName];
+            return true;
+        }
+
+        functionName = string.Empty;
+        function = null!;
+        abiFunction = null!;
+        return false;
+    }
+
+    private bool TryResolveOpaqueAsmGlobal(
+        OpaqueAsmSymbolUse use,
+        out string globalName,
+        out TypedGlobalSymbol global,
+        out string symbolName)
+    {
+        foreach (var candidate in BuildOpaqueAsmSourceNameCandidates(use))
+        {
+            if (TryGetGlobal(candidate, out global!)
+                && _globalSymbols.TryGetValue(candidate, out symbolName!))
+            {
+                globalName = candidate;
+                return true;
+            }
+        }
+
+        globalName = string.Empty;
+        global = null!;
+        symbolName = string.Empty;
+        return false;
+    }
+
+    private IReadOnlyList<string> BuildOpaqueAsmSourceNameCandidates(OpaqueAsmSymbolUse use)
+    {
+        if (use.SourceName.Contains('.', StringComparison.Ordinal))
+        {
+            return [use.SourceName];
+        }
+
+        var ownerModule = _loadedModules.Modules.Keys
+            .Where(moduleName => use.AsmFunctionName.StartsWith($"{moduleName}.", StringComparison.Ordinal))
+            .OrderByDescending(static moduleName => moduleName.Length)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(ownerModule)
+            || string.Equals(ownerModule, _syntaxModel.ModuleName, StringComparison.Ordinal))
+        {
+            return [use.SourceName, $"{_syntaxModel.ModuleName}.{use.SourceName}"];
+        }
+
+        return [$"{ownerModule}.{use.SourceName}", use.SourceName];
+    }
+
+    private static bool ModuleTextContainsFunctionSymbol(StringBuilder builder, string symbolName)
+    {
+        var escaped = EscapeIdentifier(symbolName);
+        return builder.ToString().Contains($"@{escaped}(", StringComparison.Ordinal);
+    }
+
+    private static bool ModuleTextContainsGlobalSymbol(StringBuilder builder, string symbolName)
+    {
+        var escaped = EscapeIdentifier(symbolName);
+        return builder.ToString().Contains($"@{escaped} =", StringComparison.Ordinal);
     }
 
     private void EmitReferencedImportedFunctionDeclarations(
@@ -682,6 +889,41 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
+            if (_emissionContext.TryGetAsmFunction(functionName, out var importedAsmFunction))
+            {
+                var isAddressTaken = IsAsmFunctionAddressTaken(functionName);
+                var referenceOwningExportedBridge = isAddressTaken
+                    && signature.Visibility == StarkVisibility.Export;
+                if (!referenceOwningExportedBridge && isAddressTaken)
+                {
+                    builder.AppendLine($"; materialized referenced imported asm bridge: {functionName}");
+                    if (!TryEmitAsmFunctionDefinition(
+                            builder,
+                            internalize: false,
+                            signature,
+                            abiFunction,
+                            effects,
+                            importedAsmFunction,
+                            parameterEffects,
+                            out var asmFailureReason,
+                            specializationLinkage: MonomorphizationLinkageKind.LinkOnceOdrComdat))
+                    {
+                        throw new UnsupportedBodyEmissionException(
+                            $"Cannot materialize addressable asm bridge '{functionName}': {asmFailureReason}");
+                    }
+                }
+                else if (!referenceOwningExportedBridge)
+                {
+                    builder.AppendLine($"; direct-only referenced imported asm declaration omitted: {functionName}");
+                }
+
+                if (!referenceOwningExportedBridge)
+                {
+                    builder.AppendLine();
+                    continue;
+                }
+            }
+
             if (!emittedDeclarationSymbols.Add(abiFunction.SymbolName))
             {
                 builder.AppendLine($"; referenced imported declaration merged into earlier declaration of '@{abiFunction.SymbolName}': {functionName}");
@@ -697,6 +939,13 @@ internal sealed class LlvmIrEmitter
 
     private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
         signature.IsGeneric && !signature.IsGenericInstantiation;
+
+    private bool RequiresAddressableAsmBridge(string functionName, TypedFunctionSignature signature) =>
+        signature.Visibility == StarkVisibility.Export
+        || IsAsmFunctionAddressTaken(functionName);
+
+    private bool IsAsmFunctionAddressTaken(string functionName) =>
+        _ssa.AddressTakenFunctions.Contains(functionName, StringComparer.Ordinal);
 
     private static bool IsOwnedModuleFunctionName(string functionName) =>
         !functionName.Contains('.', StringComparison.Ordinal);
@@ -1869,43 +2118,6 @@ internal sealed class LlvmIrEmitter
         _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, EnumerateBuiltinDefinitionSignatures());
     }
 
-    private void EmitUsedAsmSymbols(StringBuilder builder)
-    {
-        var symbols = _syntaxModel.Declarations
-            .Where(static declaration => declaration.Function?.Asm is not null)
-            .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration))
-            .Where(resolvedName => _ownedFunctionDefinitionFilter is null
-                                   || _ownedFunctionDefinitionFilter.Contains(resolvedName))
-            .Select(resolvedName => _abiModel.Functions[resolvedName].SymbolName)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(static symbol => symbol, StringComparer.Ordinal)
-            .ToArray();
-        if (symbols.Length == 0)
-        {
-            return;
-        }
-
-        // Stark asm functions are ordinary callable definitions, but their raw ABI
-        // symbols also form the boundary between architecture-specific source and
-        // other ThinLTO partitions. llvm.compiler.used only constrains compiler
-        // optimization; an LTO-aware linker may still discard those definitions
-        // before resolving calls from another partition. llvm.used provides the
-        // required compiler, assembler, and linker retention boundary.
-        builder.Append($"@llvm.used = appending global [{symbols.Length} x ptr] [");
-        for (var index = 0; index < symbols.Length; index++)
-        {
-            if (index != 0)
-            {
-                builder.Append(", ");
-            }
-
-            builder.Append($"ptr @{symbols[index]}");
-        }
-
-        builder.AppendLine("], section \"llvm.metadata\"");
-        builder.AppendLine();
-    }
-
     private void EmitInternalHelperDefinitions(StringBuilder builder)
     {
         _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, EnumerateBuiltinDefinitionSignatures());
@@ -2354,50 +2566,38 @@ internal sealed class LlvmIrEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
         FunctionEffectProfile effects,
-        FunctionMemoryEffectSummary? memoryEffects,
         AsmFunctionModel asmFunction,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
-        out string failureReason)
+        out string failureReason,
+        MonomorphizationLinkageKind? specializationLinkage = null)
     {
-        if (abiFunction.ReturnsIndirect)
+        if (!LlvmInlineAsmLowering.TryCreatePlan(abiFunction, asmFunction, out var asmPlan, out failureReason))
         {
-            failureReason = "v1 asm body emission does not support indirect return ABIs.";
             return false;
         }
 
-        if (asmFunction.Outputs.Any(static output => !output.BindsReturnValue))
-        {
-            failureReason = "v1 asm body emission currently supports only direct return bindings and no out/init parameter outputs.";
-            return false;
-        }
-
-        if (function.ReturnType.Kind == StarkTypeKind.Void)
-        {
-            if (asmFunction.Outputs.Count != 0)
-            {
-                failureReason = "void asm functions cannot bind a return register.";
-                return false;
-            }
-        }
-        else if (asmFunction.Outputs.Count != 1)
-        {
-            failureReason = "non-void asm functions must bind exactly one return register.";
-            return false;
-        }
-
-        foreach (var parameter in abiFunction.UserParameters)
-        {
-            if (parameter.Kind != AbiParameterKind.Direct)
-            {
-                failureReason = $"v1 asm body emission requires direct ABI parameters, but '{parameter.SourceName}' lowers indirectly.";
-                return false;
-            }
-        }
+        _emissionContext.RegisterOpaqueAsmSymbolUses(abiFunction.Name, asmFunction.Symbols);
 
         var functionBuilder = new StringBuilder();
-        functionBuilder.AppendLine(BuildDefinitionSignatureCore(internalize, availableExternally: false, function, abiFunction, effects, memoryEffects, parameterEffects));
+        var bridgeEffects = function.Visibility == StarkVisibility.Export
+            ? effects
+            : effects with { UseFastCallingConvention = true };
+        functionBuilder.AppendLine(BuildDefinitionSignatureCore(
+            internalize,
+            availableExternally: false,
+            function,
+            abiFunction,
+            bridgeEffects,
+            // Assembly memory effects are appended from the explicit asm plan below.
+            // Passing null here avoids inferring pointer access merely from parameter
+            // types and keeps the explicit memory(...) clause authoritative.
+            memoryEffects: null,
+            parameterEffects,
+            specializationLinkage,
+            forceDsoLocal: function.Visibility != StarkVisibility.Export,
+            forceHiddenVisibility: function.Visibility != StarkVisibility.Export) + asmPlan.MemoryAttributeSuffix);
         functionBuilder.AppendLine("{");
-        EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction);
+        EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction, asmPlan);
         functionBuilder.AppendLine("}");
         builder.Append(functionBuilder);
 
@@ -2409,86 +2609,48 @@ internal sealed class LlvmIrEmitter
         StringBuilder builder,
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction,
-        AsmFunctionModel asmFunction)
+        AsmFunctionModel asmFunction,
+        LlvmInlineAsmPlan asmPlan)
     {
-        var abiParametersByName = abiFunction.UserParameters.ToDictionary(static parameter => parameter.SourceName, StringComparer.Ordinal);
-        var outputOperand = asmFunction.Outputs.SingleOrDefault(static output => output.BindsReturnValue);
-        var constraintFragments = new List<string>();
+        var userParameters = abiFunction.UserParameters;
         var argumentFragments = new List<string>();
-        string? returnRegister = null;
 
-        if (outputOperand is not null)
+        foreach (var parameterIndex in asmPlan.InputParameterIndices)
         {
-            returnRegister = StarkAsmRegisterFacts.Normalize(outputOperand.RegisterName);
-            constraintFragments.Add($"={{{returnRegister}}}");
-        }
-
-        foreach (var input in asmFunction.Inputs)
-        {
-            if (!abiParametersByName.TryGetValue(input.ValueName, out var parameter))
-            {
-                throw new InvalidOperationException($"Missing ABI parameter '{input.ValueName}' for asm declaration '{function.Name}'.");
-            }
-
-            var inputRegister = StarkAsmRegisterFacts.Normalize(input.RegisterName);
-            constraintFragments.Add(string.Equals(returnRegister, inputRegister, StringComparison.Ordinal)
-                ? "0"
-                : $"{{{inputRegister}}}");
+            var parameter = userParameters[parameterIndex];
             argumentFragments.Add($"{MapType(parameter.LlvmType)} %{EscapeIdentifier(parameter.LlvmName)}");
         }
-
-        foreach (var clobber in BuildAsmConstraintClobbers(asmFunction))
-        {
-            constraintFragments.Add($"~{{{clobber}}}");
-        }
-
-        var escapedTemplate = EscapeInlineAsmString(asmFunction.TemplateText);
-        var escapedConstraints = EscapeInlineAsmString(string.Join(",", constraintFragments));
+        var sourceLocationMetadataSuffix = BuildAsmSourceLocationMetadataSuffix(function, asmFunction);
 
         builder.AppendLine("entry:");
         if (function.ReturnType.Kind == StarkTypeKind.Void)
         {
             builder.AppendLine(
-                $"  call void asm sideeffect \"{escapedTemplate}\", \"{escapedConstraints}\"({string.Join(", ", argumentFragments)})");
+                $"  call void asm sideeffect \"{asmPlan.EscapedTemplate}\", \"{asmPlan.EscapedConstraints}\"({string.Join(", ", argumentFragments)}) nounwind{asmPlan.MemoryAttributeSuffix}{sourceLocationMetadataSuffix}");
             builder.AppendLine("  ret void");
             return;
         }
 
         var llvmReturnType = MapType(abiFunction.LlvmReturnType);
         builder.AppendLine(
-            $"  %asm_result = call {llvmReturnType} asm sideeffect \"{escapedTemplate}\", \"{escapedConstraints}\"({string.Join(", ", argumentFragments)})");
+            $"  %asm_result = call {llvmReturnType} asm sideeffect \"{asmPlan.EscapedTemplate}\", \"{asmPlan.EscapedConstraints}\"({string.Join(", ", argumentFragments)}) nounwind{asmPlan.MemoryAttributeSuffix}{sourceLocationMetadataSuffix}");
         builder.AppendLine($"  ret {llvmReturnType} %asm_result");
     }
 
-    private static IReadOnlyList<string> BuildAsmConstraintClobbers(AsmFunctionModel asmFunction)
+    private string BuildAsmSourceLocationMetadataSuffix(
+        TypedFunctionSignature function,
+        AsmFunctionModel asmFunction)
     {
-        var clobbers = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        void Add(string name)
-        {
-            var normalized = StarkAsmRegisterFacts.Normalize(name);
-            if (seen.Add(normalized))
-            {
-                clobbers.Add(normalized);
-            }
-        }
-
-        foreach (var clobber in asmFunction.Clobbers)
-        {
-            Add(clobber);
-        }
-
-        Add("memory");
-
-        if (asmFunction.Architecture is StarkAsmArchitecture.X86_64 or StarkAsmArchitecture.X86)
-        {
-            Add("dirflag");
-            Add("fpsr");
-            Add("flags");
-        }
-
-        return clobbers;
+        var location = ResolveDebugLocation(
+            function.DeclarationLocation
+            ?? (_functionLocations.TryGetValue(function.Name, out var functionLocation) ? functionLocation : null));
+        var templateLineCount = Math.Max(
+            1,
+            asmFunction.TemplateText.Count(static character => character == '\n') + 1);
+        var locationCookies = Enumerable.Range(0, templateLineCount)
+            .Select(offset => $"i64 {location.Line + offset}")
+            .ToArray();
+        return $", !srcloc {_debugInfo.GetMetadataTupleRef(locationCookies)}";
     }
 
     private string BuildDeclarationSignature(
@@ -2538,7 +2700,9 @@ internal sealed class LlvmIrEmitter
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         MonomorphizationLinkageKind? specializationLinkage = null,
-        SsaIntegerRangeFact? returnRange = null)
+        SsaIntegerRangeFact? returnRange = null,
+        bool forceDsoLocal = false,
+        bool forceHiddenVisibility = false)
     {
         var signature = _functionSignatureBuilder.BuildDefinitionSignature(
             internalize,
@@ -2548,7 +2712,9 @@ internal sealed class LlvmIrEmitter
             memoryEffects,
             parameterEffects,
             specializationLinkage,
-            returnRange);
+            returnRange,
+            forceDsoLocal,
+            forceHiddenVisibility);
 
         return availableExternally
             ? PrefixAvailableExternally(signature)
@@ -2790,20 +2956,7 @@ internal sealed class LlvmIrEmitter
 
     private static string EscapeInlineAsmString(string text)
     {
-        var builder = new StringBuilder(text.Length);
-        foreach (var ch in text)
-        {
-            if (ch >= 0x20 && ch <= 0x7E && ch is not '\\' and not '"')
-            {
-                builder.Append(ch);
-                continue;
-            }
-
-            builder.Append('\\');
-            builder.Append(((int)ch).ToString("X2"));
-        }
-
-        return builder.ToString();
+        return LlvmInlineAsmLowering.EscapeString(text);
     }
 
     private static string EscapeIdentifier(string identifier)
@@ -3425,4 +3578,12 @@ internal sealed class LlvmIrEmitter
         return $"define available_externally {remainder}";
     }
 
+}
+
+internal sealed class OpaqueAsmSymbolResolutionException : Exception
+{
+    public OpaqueAsmSymbolResolutionException(string message)
+        : base(message)
+    {
+    }
 }

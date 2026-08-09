@@ -93,6 +93,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,
             SsaStoreGlobalInstruction storeGlobal => storeGlobal.Location,
+            SsaCallInstruction call => call.Location,
+            SsaIndirectCallInstruction indirectCall => indirectCall.Location,
             _ => null
         };
     }

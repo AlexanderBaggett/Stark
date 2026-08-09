@@ -2785,11 +2785,8 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(outputPath));
 
             var dependencyLlvm = await File.ReadAllTextAsync(Path.Combine(saveTempsPath, "Syscall.ll"));
-            Assert.Contains("define i64 @Syscall0(", dependencyLlvm, StringComparison.Ordinal);
-            Assert.Contains(
-                "@llvm.used = appending global [1 x ptr] [ptr @Syscall0], section \"llvm.metadata\"",
-                dependencyLlvm,
-                StringComparison.Ordinal);
+            Assert.Contains("define dso_local i64 @Syscall_Syscall0(", dependencyLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("@llvm.used", dependencyLlvm, StringComparison.Ordinal);
 
             var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
             Assert.Contains(
@@ -3367,7 +3364,7 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitExecutableModeLinksManifestBackedAsmLibrariesWithoutSource()
+    public async Task EmitExecutableModeLowersManifestBackedAsmCallsWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
             || !OperatingSystem.IsLinux()
@@ -3387,6 +3384,8 @@ public sealed class CompilerCliTests
         var libraryPath = Path.Combine(packageDirectory, "libSyscall.a");
         var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg");
         var outputPath = Path.Combine(appDirectory, "app");
+        var buildTempsPath = Path.Combine(packageDirectory, "temps");
+        var consumerTempsPath = Path.Combine(appDirectory, "temps");
 
         try
         {
@@ -3407,7 +3406,7 @@ public sealed class CompilerCliTests
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [syscallPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                [syscallPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple, "--save-temps", buildTempsPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -3416,6 +3415,11 @@ public sealed class CompilerCliTests
             Assert.Equal(string.Empty, buildStderr.ToString());
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
+            Assert.True(await ArchiveContainsSymbolTableAsync(libraryPath));
+            if (NativeToolchain.SupportsExecutableThinLto())
+            {
+                Assert.True(await IsLlvmBitcodeFileAsync(Path.Combine(buildTempsPath, "root.o")));
+            }
 
             {
                 Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
@@ -3427,10 +3431,15 @@ public sealed class CompilerCliTests
                     : syscallModule.SourceSurface?.Functions ?? [];
                 var syscallFunction = syscallFunctions
                     .Single(static function => function.Name == "Syscall0");
+                Assert.Equal("Syscall.Syscall0", syscallFunction.SymbolName);
                 Assert.NotNull(syscallFunction.Asm);
                 Assert.Equal("x86_64", syscallFunction.Asm!.ArchitectureText);
                 Assert.Equal("syscall", syscallFunction.Asm.TemplateText);
             }
+
+            var producerLlvm = await File.ReadAllTextAsync(Path.Combine(buildTempsPath, "root.ll"));
+            Assert.Contains("; direct-only asm definition omitted: Syscall0", producerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("define", producerLlvm, StringComparison.Ordinal);
 
             File.Delete(syscallPath);
 
@@ -3455,7 +3464,14 @@ public sealed class CompilerCliTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [
+                    appPath,
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-o", outputPath,
+                    "--target", targetInfo.Triple,
+                    "--save-temps", consumerTempsPath
+                ],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -3464,6 +3480,11 @@ public sealed class CompilerCliTests
             Assert.Contains("Emitted executable:", stdout.ToString());
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
+
+            var consumerLlvm = await File.ReadAllTextAsync(Path.Combine(consumerTempsPath, "root.ll"));
+            Assert.Contains("call i64 asm sideeffect \"syscall\"", consumerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("declare i64 @Syscall_Syscall0", consumerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("call i64 @Syscall_Syscall0", consumerLlvm, StringComparison.Ordinal);
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
@@ -3480,6 +3501,219 @@ public sealed class CompilerCliTests
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableModeLinksManifestBackedIdentityAsmLibrariesThroughThinLto()
+    {
+        if (OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var (architecture, valueRegister) = targetInfo.Triple switch
+        {
+            var triple when triple.StartsWith("x86_64", StringComparison.Ordinal) => ("x86_64", "rax"),
+            var triple when triple.StartsWith("aarch64", StringComparison.Ordinal)
+                            || triple.StartsWith("arm64", StringComparison.Ordinal) => ("aarch64", "x0"),
+            _ => (string.Empty, string.Empty)
+        };
+        if (architecture.Length == 0)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-asm-thinlto-manifest-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var bridgePath = Path.Combine(packageDirectory, "Bridge.stark");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var libraryPath = Path.Combine(packageDirectory, "libBridge.a");
+        var manifestPath = Path.Combine(packageDirectory, "libBridge.starkpkg");
+        var outputPath = Path.Combine(appDirectory, "app");
+        var buildTempsPath = Path.Combine(packageDirectory, "temps");
+        var consumerTempsPath = Path.Combine(appDirectory, "temps");
+
+        try
+        {
+            var bridgeSource = """
+                module Bridge
+
+                public unsafe ffi asm(__ARCH__) fn i64[min max] Identity(i64[min max] value)
+                    in("__REGISTER__") value,
+                    out("__REGISTER__") return,
+                    memory(none)
+                {
+                    ""
+                }
+
+                export fn void OpaqueTarget()
+                {
+                }
+
+                public unsafe ffi asm(__ARCH__) fn i64[min max] AddressablePublic(i64[min max] value)
+                    in("__REGISTER__") value,
+                    out("__REGISTER__") return,
+                    symbol(OpaqueTarget),
+                    memory(none)
+                {
+                    ""
+                }
+
+                export unsafe ffi asm(__ARCH__) fn i64[min max] AddressableIdentity(i64[min max] value)
+                    in("__REGISTER__") value,
+                    out("__REGISTER__") return,
+                    memory(none)
+                {
+                    ""
+                }
+                """
+                .Replace("__ARCH__", architecture, StringComparison.Ordinal)
+                .Replace("__REGISTER__", valueRegister, StringComparison.Ordinal);
+            await File.WriteAllTextAsync(bridgePath, bridgeSource);
+
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [bridgePath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple, "--save-temps", buildTempsPath],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.Equal(0, buildExitCode);
+            Assert.Equal(string.Empty, buildStderr.ToString());
+            Assert.True(File.Exists(libraryPath));
+            Assert.True(File.Exists(manifestPath));
+            Assert.True(await ArchiveContainsSymbolTableAsync(libraryPath));
+            if (NativeToolchain.SupportsExecutableThinLto())
+            {
+                Assert.True(await IsLlvmBitcodeFileAsync(Path.Combine(buildTempsPath, "root.o")));
+            }
+
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            var bridgeModule = Assert.Single(
+                manifest.Modules,
+                static module => module.ModuleName == "Bridge");
+            var bridgeFunctions = bridgeModule.Functions.Count != 0
+                ? bridgeModule.Functions
+                : bridgeModule.SourceSurface?.Functions ?? [];
+            var identityFunction = bridgeFunctions.Single(static function => function.Name == "Identity");
+            Assert.Equal("Bridge.Identity", identityFunction.SymbolName);
+            Assert.NotNull(identityFunction.Asm?.Memory);
+            Assert.Empty(identityFunction.Asm!.Memory!.Operands);
+            Assert.Contains(
+                bridgeFunctions,
+                static function => function.Name == "AddressablePublic"
+                    && function.SymbolName == "Bridge.AddressablePublic"
+                    && function.Asm != null
+                    && function.Asm.SymbolReferences != null
+                    && function.Asm.SymbolReferences.Contains("OpaqueTarget"));
+            Assert.Contains(
+                bridgeFunctions,
+                static function => function.Name == "AddressableIdentity"
+                    && function.SymbolName == "AddressableIdentity");
+
+            var producerLlvm = await File.ReadAllTextAsync(Path.Combine(buildTempsPath, "root.ll"));
+            Assert.Contains("; direct-only asm definition omitted: Identity", producerLlvm, StringComparison.Ordinal);
+            Assert.Contains("define i64 @AddressableIdentity(i64 %arg_value)", producerLlvm, StringComparison.Ordinal);
+
+            File.Delete(bridgePath);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import Bridge
+                module App
+
+                noinline unsafe fn i64[min max] CallAddressable(
+                    fnptr<unsafe fn i64[min max](i64[min max])> callback,
+                    i64[min max] value)
+                {
+                    return callback(value);
+                }
+
+                noinline unsafe fn i64[min max] KeepAddressable(
+                    fnptr<unsafe fn i64[min max](i64[min max])> callback,
+                    i64[min max] value)
+                {
+                    return value;
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    return (i32[min max])(
+                        Bridge.Identity(73)
+                        + CallAddressable(Bridge.AddressablePublic, 0)
+                        + KeepAddressable(Bridge.AddressableIdentity, 0));
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    appPath,
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-o", outputPath,
+                    "--target", targetInfo.Triple,
+                    "--save-temps", consumerTempsPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var consumerLlvm = await File.ReadAllTextAsync(Path.Combine(consumerTempsPath, "root.ll"));
+            Assert.Contains("call i64 asm sideeffect", consumerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("~{memory}", consumerLlvm, StringComparison.Ordinal);
+            Assert.Contains(
+                "define linkonce_odr dso_local hidden fastcc i64 @Bridge_AddressablePublic(i64 %arg_value)",
+                consumerLlvm,
+                StringComparison.Ordinal);
+            Assert.Contains("declare i64 @AddressableIdentity(i64)", consumerLlvm, StringComparison.Ordinal);
+            Assert.Contains("declare void @OpaqueTarget()", consumerLlvm, StringComparison.Ordinal);
+            Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @OpaqueTarget]", consumerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("declare i64 @Bridge_Identity", consumerLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("call i64 @Bridge_Identity", consumerLlvm, StringComparison.Ordinal);
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(73, process.ExitCode);
             Assert.Equal(string.Empty, processStdout);
             Assert.Equal(string.Empty, processStderr);
         }
@@ -3923,6 +4157,77 @@ public sealed class CompilerCliTests
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static async Task<bool> ArchiveContainsSymbolTableAsync(string archivePath)
+    {
+        var bytes = await File.ReadAllBytesAsync(archivePath);
+        if (bytes.Length < 8
+            || !bytes.AsSpan(0, 8).SequenceEqual("!<arch>\n"u8))
+        {
+            return false;
+        }
+
+        var offset = 8;
+        while (offset + 60 <= bytes.Length)
+        {
+            var header = bytes.AsSpan(offset, 60);
+            if (!header[58..60].SequenceEqual("`\n"u8))
+            {
+                return false;
+            }
+
+            var rawName = System.Text.Encoding.ASCII.GetString(header[..16]).TrimEnd();
+            if (rawName is "/" or "/SYM64/")
+            {
+                return true;
+            }
+
+            var sizeText = System.Text.Encoding.ASCII.GetString(header[48..58]).Trim();
+            if (!long.TryParse(
+                    sizeText,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var memberSize)
+                || memberSize < 0
+                || memberSize > int.MaxValue)
+            {
+                return false;
+            }
+
+            var dataOffset = offset + 60;
+            if (dataOffset + memberSize > bytes.Length)
+            {
+                return false;
+            }
+
+            if (rawName.StartsWith("#1/", StringComparison.Ordinal)
+                && int.TryParse(
+                    rawName.AsSpan(3),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var extendedNameLength)
+                && extendedNameLength >= 0
+                && extendedNameLength <= memberSize)
+            {
+                var extendedName = System.Text.Encoding.ASCII
+                    .GetString(bytes, dataOffset, extendedNameLength)
+                    .TrimEnd('\0');
+                if (extendedName.StartsWith("__.SYMDEF", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            else if (rawName.TrimEnd('/').StartsWith("__.SYMDEF", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var nextOffset = dataOffset + (int)memberSize;
+            offset = (nextOffset & 1) == 0 ? nextOffset : nextOffset + 1;
+        }
+
+        return false;
     }
 
     private static async Task<string> CreateUnixCaptureLinkerAsync(string directory, string logPath)

@@ -443,6 +443,18 @@ jobs:
             -o "artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}"
           if ($LASTEXITCODE -ne 0) { throw "Native Stage0 could not build optimized System for ${{ matrix.target_id }}." }
 
+      - name: Qualify assembly bridge archive and ThinLTO lowering
+        shell: pwsh
+        run: |
+          $evidenceRoot = "artifacts/backend-qualification/${{ matrix.asset_suffix }}/assembly-bridge"
+          & ./scripts/qualify-assembly-bridge.ps1 `
+            -CompilerPath $env:STAGE0_COMPILER `
+            -TargetId "${{ matrix.target_id }}" `
+            -TargetTriple "${{ matrix.target_triple }}" `
+            -ToolchainDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -OutputDir $evidenceRoot
+          if ($LASTEXITCODE -ne 0) { throw "Assembly bridge archive/ThinLTO qualification failed for ${{ matrix.target_id }}." }
+
       - name: Prepare pinned official Vendor release input
         shell: pwsh
         run: |
@@ -737,6 +749,7 @@ jobs:
             & ./scripts/smoke-release-archive.ps1 `
               -ArchivePath $archive.FullName `
               -TargetTriple "${{ matrix.target_triple }}" `
+              -ReportPath "artifacts/install-smoke/archive-smoke-${{ matrix.asset_suffix }}.json" `
               -IsolatePath `
               2>&1 | Tee-Object -FilePath $logPath
           } catch {

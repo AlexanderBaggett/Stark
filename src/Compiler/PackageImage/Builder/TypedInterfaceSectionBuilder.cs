@@ -562,7 +562,16 @@ internal static partial class PackageImageBuilder
             asm.Outputs
                 .Select(static output => new StarkPackageAsmOutputManifest(output.RegisterName, output.ValueName, output.BindsReturnValue))
                 .ToArray(),
-            asm.Clobbers.ToArray());
+            asm.Clobbers.ToArray(),
+            asm.MemoryEffects is null
+                ? null
+                : new StarkPackageAsmMemoryManifest(
+                    asm.MemoryEffects.Operands
+                        .Select(static operand => new StarkPackageAsmMemoryOperandManifest(
+                            operand.ValueName,
+                            operand.AccessKind.ToString().ToLowerInvariant()))
+                        .ToArray()),
+            asm.Symbols.Select(static symbol => symbol.SourceName).ToArray());
     }
 
     private static IReadOnlyList<StarkPackageMethodManifest>? BuildTypeMethodManifests(

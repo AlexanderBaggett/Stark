@@ -6,6 +6,8 @@ param(
 
     [string] $WorkDir = "",
 
+    [string] $ReportPath = "",
+
     [switch] $KeepWorkDir,
 
     [switch] $IsolatePath
@@ -806,6 +808,11 @@ function Restore-IsolatedEnvironment {
 }
 
 $archive = Resolve-ArchivePath -Path $ArchivePath
+$reportOutputPath = if ([string]::IsNullOrWhiteSpace($ReportPath)) {
+    $null
+} else {
+    [System.IO.Path]::GetFullPath($ReportPath)
+}
 $smokeRoot = New-SmokeRoot
 $extractRoot = Join-Path $smokeRoot "extract"
 $sourceRoot = Join-Path $smokeRoot "src"
@@ -1157,9 +1164,32 @@ export unsafe fn i32[min max] main()
 '@
 
         $runtimeExe = Get-ExecutablePath -Directory $runtimeDir -Name "ReleaseSmokeRuntime"
-        Invoke-Stark -Arguments (@($runtimeSource, "--emit-exe", "-o", $runtimeExe) + $targetArgs) | Out-Null
+        $runtimeTemps = Join-Path $runtimeDir "temps"
+        $packagedStdlibSource = Join-Path $packageRoot "stdlib/src"
+        $disabledStdlibSource = Join-Path $smokeRoot "disabled-stdlib-source"
+        $stdlibSourceWasPresent = Test-Path -LiteralPath $packagedStdlibSource -PathType Container
+        if ($stdlibSourceWasPresent) {
+            Move-Item -LiteralPath $packagedStdlibSource -Destination $disabledStdlibSource
+        }
+        Invoke-Stark -Arguments (@($runtimeSource, "--emit-exe", "--save-temps", $runtimeTemps, "-o", $runtimeExe) + $targetArgs) | Out-Null
         Assert-File -Path $runtimeExe -Name "runtime executable"
         Invoke-CheckedProcess -File $runtimeExe -WorkingDirectory $runtimeDir | Out-Null
+
+        $runtimeLlvmPath = Join-Path $runtimeTemps "root.ll"
+        Assert-File -Path $runtimeLlvmPath -Name "runtime LLVM IR"
+        $runtimeLlvm = [System.IO.File]::ReadAllText($runtimeLlvmPath)
+        $preciseAssemblyLine = $runtimeLlvm.Split([char]10) |
+            Where-Object {
+                $_.Contains("call void asm sideeffect", [StringComparison]::Ordinal) -and
+                $_.Contains("memory(argmem: readwrite)", [StringComparison]::Ordinal)
+            } |
+            Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace($preciseAssemblyLine)) {
+            throw "Packaged System runtime smoke did not preserve its bounded assembly byte-copy bridge and precise LLVM argument-memory effects."
+        }
+        if ($stdlibSourceWasPresent) {
+            Move-Item -LiteralPath $disabledStdlibSource -Destination $packagedStdlibSource
+        }
 
         $nativePackageDir = Join-Path $smokeRoot "native-package"
         $nativeAppDir = Join-Path $smokeRoot "native-app"
@@ -1270,6 +1300,35 @@ export fn i32[min max] main()
         }
     } finally {
         Restore-IsolatedEnvironment -State $environmentState
+    }
+
+    if ($null -ne $reportOutputPath) {
+        $reportDirectory = Split-Path -Parent $reportOutputPath
+        if (-not [string]::IsNullOrWhiteSpace($reportDirectory)) {
+            New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
+        }
+        $report = [ordered]@{
+            schemaVersion = 1
+            qualification = "stark-release-archive-smoke"
+            status = "passed"
+            releaseVersion = $releaseVersion
+            targetId = $artifactTargetId
+            targetTriple = $effectiveTargetTriple
+            archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+            packagedSystemAssembly = [ordered]@{
+                sourceUnavailable = $true
+                optimizedArchiveLinked = $true
+                finalExecutableRan = $true
+                inlineAssemblyObserved = $true
+                preciseArgumentMemoryEffectsObserved = $true
+                llvmIrSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeLlvmPath).Hash.ToLowerInvariant()
+                executableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeExe).Hash.ToLowerInvariant()
+            }
+        }
+        [System.IO.File]::WriteAllText(
+            $reportOutputPath,
+            (($report | ConvertTo-Json -Depth 8).Replace("`r`n", "`n") + "`n"),
+            [System.Text.UTF8Encoding]::new($false))
     }
 
     Write-Host "Release archive smoke passed: $archive"

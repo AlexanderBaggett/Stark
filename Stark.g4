@@ -211,6 +211,8 @@ asmClause
     : asmInputClause
     | asmOutputClause
     | asmClobberClause
+    | asmSymbolClause
+    | asmMemoryClause
     ;
 
 asmInputClause
@@ -223,6 +225,28 @@ asmOutputClause
 
 asmClobberClause
     : CLOBBER LPAREN StringLiteral (COMMA StringLiteral)* COMMA? RPAREN
+    ;
+
+// `symbol(Name)` is deliberately a typed source name rather than a string.
+// LLVM must be told about symbols referenced only by opaque target assembly;
+// the compiler must never infer linker reachability by parsing template text.
+asmSymbolClause
+    : {IsContextualKeyword("symbol")}? Identifier LPAREN qualifiedName RPAREN
+    ;
+
+// Omitting this clause means arbitrary memory may be accessed. `memory(none)`
+// proves register-only behavior. Otherwise every entry names a raw-pointer
+// parameter that is already passed as an input operand, for example
+// `memory(read(source), write(destination))`.
+asmMemoryClause
+    : {IsContextualKeyword("memory")}? Identifier LPAREN (
+          Identifier
+        | asmMemoryAccess (COMMA asmMemoryAccess)* COMMA?
+      ) RPAREN
+    ;
+
+asmMemoryAccess
+    : Identifier LPAREN Identifier RPAREN
     ;
 
 asmFunctionBody

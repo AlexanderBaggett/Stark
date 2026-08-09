@@ -61,7 +61,9 @@ internal sealed class LlvmFunctionSignatureBuilder
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         MonomorphizationLinkageKind? specializationLinkage = null,
-        SsaIntegerRangeFact? returnRange = null)
+        SsaIntegerRangeFact? returnRange = null,
+        bool forceDsoLocal = false,
+        bool forceHiddenVisibility = false)
     {
         var segments = new List<string> { "define" };
 
@@ -70,9 +72,14 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add(linkageKeyword);
         }
 
-        if (ResolveDefinitionPreemptionKeyword(internalize, specializationLinkage) is { } preemptionKeyword)
+        if (ResolveDefinitionPreemptionKeyword(internalize, specializationLinkage, forceDsoLocal) is { } preemptionKeyword)
         {
             segments.Add(preemptionKeyword);
+        }
+
+        if (forceHiddenVisibility && !internalize)
+        {
+            segments.Add("hidden");
         }
 
         if (abiFunction.UsesTailCallingConvention)
@@ -147,9 +154,12 @@ internal sealed class LlvmFunctionSignatureBuilder
 
     private static string? ResolveDefinitionPreemptionKeyword(
         bool internalize,
-        MonomorphizationLinkageKind? specializationLinkage)
+        MonomorphizationLinkageKind? specializationLinkage,
+        bool forceDsoLocal)
     {
-        return internalize || specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+        return internalize
+               || forceDsoLocal
+               || specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
             ? "dso_local"
             : null;
     }

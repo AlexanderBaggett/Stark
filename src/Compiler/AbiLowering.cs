@@ -87,7 +87,7 @@ internal sealed class AbiLowerer
         FunctionEffectProfile effects,
         IReadOnlySet<string> ffiSymbolNames)
     {
-        var (moduleName, sourceName, visibility, isPackageBacked) = ResolveFunctionIdentity(function.Name);
+        var (moduleName, sourceName, visibility, isPackageBacked, isAsm) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
         CAbiAggregateClassification? ffiReturnClassification = null;
@@ -115,6 +115,7 @@ internal sealed class AbiLowerer
             sourceName,
             visibility,
             isFfi,
+            isAsm,
             isOverloaded,
             isPackageBacked,
             function.ExternalLinkName,
@@ -240,7 +241,12 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            var (_, sourceName, _, _) = ResolveFunctionIdentity(functionName);
+            var (_, sourceName, _, _, isAsm) = ResolveFunctionIdentity(functionName);
+            if (isAsm)
+            {
+                continue;
+            }
+
             if (_typeModel.Functions.TryGetValue(functionName, out var function)
                 && !string.IsNullOrWhiteSpace(function.ExternalLinkName))
             {
@@ -258,7 +264,12 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            var (_, sourceName, _, _) = ResolveFunctionIdentity(function.Name);
+            var (_, sourceName, _, _, isAsm) = ResolveFunctionIdentity(function.Name);
+            if (isAsm)
+            {
+                continue;
+            }
+
             symbols.Add(function.Signature.ExternalLinkName ?? sourceName);
         }
 
@@ -271,7 +282,7 @@ internal sealed class AbiLowerer
 
             foreach (var abiSignature in packageImageFacts.AbiFunctions.Values)
             {
-                if (abiSignature.IsFfi)
+                if (abiSignature.IsFfi && !IsAsmFunction(abiSignature.Name))
                 {
                     symbols.Add(abiSignature.SymbolName);
                 }
@@ -280,6 +291,10 @@ internal sealed class AbiLowerer
 
         return symbols;
     }
+
+    private bool IsAsmFunction(string functionName) =>
+        _functionIdentities.TryGetValue(functionName, out var identity)
+        && identity.IsAsm;
 
     private static StarkTypeSymbol LowerAbiValueType(StarkTypeSymbol type, bool isFfi, bool forReturnValue)
     {
@@ -301,20 +316,20 @@ internal sealed class AbiLowerer
         };
     }
 
-    private (string ModuleName, string SourceName, StarkVisibility Visibility, bool IsPackageBacked) ResolveFunctionIdentity(string functionName)
+    private (string ModuleName, string SourceName, StarkVisibility Visibility, bool IsPackageBacked, bool IsAsm) ResolveFunctionIdentity(string functionName)
     {
         if (_functionIdentities.TryGetValue(functionName, out var identity))
         {
-            return (identity.ModuleName, identity.SourceName, identity.Visibility, identity.IsPackageBacked);
+            return (identity.ModuleName, identity.SourceName, identity.Visibility, identity.IsPackageBacked, identity.IsAsm);
         }
 
         var separator = functionName.LastIndexOf('.');
         if (separator < 0)
         {
-            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module, false);
+            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module, false, false);
         }
 
-        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module, false);
+        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module, false, false);
     }
 
     private static Dictionary<string, FunctionIdentity> BuildFunctionIdentityIndex(LoadedModuleSet loadedModules)
@@ -342,7 +357,8 @@ internal sealed class AbiLowerer
                         declaration.Visibility,
                         module.PackageImageFacts is not null
                         || module.Reference.ManifestPath is not null
-                        || module.Reference.LibraryPath is not null));
+                        || module.Reference.LibraryPath is not null,
+                        declaration.Function?.Asm is not null));
             }
         }
 
@@ -373,7 +389,8 @@ internal sealed class AbiLowerer
         string ModuleName,
         string SourceName,
         StarkVisibility Visibility,
-        bool IsPackageBacked);
+        bool IsPackageBacked,
+        bool IsAsm);
 
     private readonly record struct FfiLinkageKey(StarkFfiAbi Abi, string SymbolName)
     {
@@ -400,14 +417,19 @@ internal sealed class AbiLowerer
         string sourceName,
         StarkVisibility visibility,
         bool isFfi,
+        bool isAsm,
         bool isOverloaded,
         bool isPackageBacked,
         string? externalLinkName,
         IReadOnlySet<string> ffiSymbolNames)
     {
-        // FFI declarations must keep the external import name even when Stark
-        // also declares local overloads with the same source name.
-        if (isFfi)
+        // Imported C FFI declarations must keep the external import name even
+        // when Stark also declares local overloads with the same source name.
+        // Assembly functions are Stark-owned definitions, however: treating
+        // them as imported C symbols makes unrelated packages collide on names
+        // such as `Syscall0` and prevents ordinary archive symbol resolution
+        // from expressing the real defining-module identity.
+        if (isFfi && !isAsm)
         {
             return externalLinkName ?? sourceName;
         }

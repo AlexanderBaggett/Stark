@@ -567,6 +567,72 @@ substitution. Clean package rebuilding plus release qualification that executes
 native by-value parameter and return round trips are what detect a semantically
 stale wrapper at publication time.
 
+### 3.4 Assembly Clauses, Opaque Reachability, And Memory Effects
+
+Assembly functions are unsafe FFI boundaries, but their compiler facts must be
+structured rather than inferred from target-specific text. `Stark.g4` therefore
+extends the assembly clause list with these contextual productions:
+
+```text
+asmSymbolClause  : "symbol" "(" qualifiedName ")"
+asmMemoryClause  : "memory" "(" "none" ")"
+                 | "memory" "(" asmMemoryAccess ("," asmMemoryAccess)* ")"
+asmMemoryAccess  : ("read" | "write" | "readwrite")
+                   "(" parameterName ")"
+```
+
+The actual grammar recognizes the words through contextual-keyword predicates,
+so `symbol` and `memory` are not globally reserved identifiers. Semantic
+validation, rather than the permissive identifier tokens in the grammar,
+restricts the accepted words to `none`, `read`, `write`, and `readwrite` and
+reports malformed contracts as STK2109.
+
+The syntax model represents three distinct states:
+
+- no memory clause: unknown/arbitrary memory, retaining LLVM `~{memory}`
+- an explicit memory model with no operands: `memory(none)`
+- an explicit list of bounded raw-pointer argument accesses
+
+Named accesses must refer to a parameter, the parameter must be a bounded
+`rawptr<T>[count]` or `rawmutptr<T>[count]`, it must also be an assembly input,
+and a write requires `rawmutptr`. A parameter occurs at most once in the memory
+list; read plus write is represented as `readwrite`. Only one memory clause is
+accepted. These checks prove that LLVM can associate the declaration with
+argument memory; they cannot prove that the target template is honest or
+complete, which remains part of the unsafe source contract.
+
+`symbol(Name)` holds a typed source name for a function or global that is
+otherwise visible only in the template string. Resolution is relative to the
+assembly owner's module unless the name is qualified. Duplicate and unresolved
+references are STK2109 errors. The clause never edits the template. When a live
+assembly call or bridge is emitted, the resolved LLVM symbol receives one
+deduplicated `@llvm.used` entry. Ordinary calls and address-taking use normal
+LLVM/linker reachability and never need this retention path; dead assembly does
+not retain its opaque references.
+
+Both models are serialized in package-image assembly metadata alongside the
+architecture, template, operands, and clobbers. A source-free package consumer
+must recreate the same inline-assembly plan. Legacy declarations and package
+metadata with no explicit memory model remain conservative rather than being
+silently upgraded to `memory(none)`.
+
+At LLVM lowering:
+
+- a direct call becomes inline assembly at its call site
+- an address-taken or exported assembly function keeps a callable bridge
+- omitted memory keeps `~{memory}` and emits no contradictory memory attribute
+- `memory(none)` removes the barrier and emits `memory(none)`
+- named accesses remove the universal barrier and emit the union as
+  `memory(argmem: read)`, `write`, or `readwrite`
+- an explicit opaque symbol reference alone creates an `@llvm.used` root
+
+The memory-effect clause is independent from Stark's relational parameter
+contracts. `memory(read(source), write(destination))` describes operations;
+`where disjoint(source, destination)` describes aliasing. Preserving both lets
+LLVM optimize aggressively without inventing facts. Full source examples,
+validation rules, bridge linkage, and migration guidance live in
+[`ASMFunctionApproach.md`](ASMFunctionApproach.md).
+
 ## 4. Runtime and C-Runtime Boundaries
 
 Stark should distinguish explicit Stark runtime dependencies from
