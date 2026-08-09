@@ -13105,6 +13105,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define i64 @Syscall2(i64 %arg_number, ptr readonly %arg_path) nounwind inlinehint", llvm);
+        Assert.Contains("@llvm.compiler.used = appending global [1 x ptr] [ptr @Syscall2], section \"llvm.metadata\"", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 %arg_number, ptr %arg_path)", llvm);
         Assert.Contains("ret i64 %asm_result", llvm);
         Assert.DoesNotContain("declare i64 @Syscall2", llvm);
