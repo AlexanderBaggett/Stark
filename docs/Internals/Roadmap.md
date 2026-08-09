@@ -582,7 +582,9 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] MIR/SSA/LLVM lowering for destructor calls
 - [x] Implement ASM Functions
   - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
-  - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`, and `clobber(...)` clauses.
+  - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`,
+    `clobber(...)`, typed opaque `symbol(...)`, and explicit `memory(...)`
+    clauses. Omitted memory remains the conservative compatibility behavior.
   - [x] Carry asm targets, templates, operands, and clobbers through the syntax model and compiler-owned artifacts.
   - [x] Normalize architecture names from the active LLVM target triple into a compiler enum used by asm selection.
   - [x] Select the matching `asm(arch)` declaration for the active target before symbol emission, lowering, and packaging.
@@ -590,15 +592,23 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] Validate legal register names for each supported architecture.
   - [x] Validate operand structure, duplicate bindings, conflicting outputs, and illegal clobbers.
   - [x] Restrict and validate the v1 parameter and return type set for asm functions.
-  - [x] Define conservative semantic and effect-model rules for asm functions, including memory, unwind, and optimization assumptions.
+  - [x] Define semantic and effect-model rules for asm functions, including
+    conservative omitted memory, validated bounded argument-memory effects,
+    unwind behavior, and unsafe author obligations.
   - [x] Integrate selected asm functions with symbol naming and ABI lowering.
   - [x] Add HIR tracking, or an explicit HIR bypass marker, for selected asm declarations.
   - [x] Add MIR lowering support, or an explicit MIR bypass, for asm function bodies.
   - [x] Add SSA lowering support, or an explicit SSA bypass, while preserving correct direct-codegen behavior.
   - [x] Lower structured operands and clobbers into LLVM inline-asm constraint strings.
   - [x] Emit correct LLVM inline-asm calls with target-specific register bindings, side effects, and return handling for the syscall-oriented v1 subset.
-  - [x] Persist asm declarations correctly in package manifests for published packages.
+  - [x] Persist asm declarations, explicit memory effects, and opaque typed
+    symbol references correctly in package manifests for published packages.
   - [x] Support importing and consuming packaged asm declarations from dependent modules.
+  - [x] Lower direct asm calls inline at the call site and retain qualified
+    callable bridges only for exports or address-taking.
+  - [x] Use ordinary linker reachability for calls/addresses and reserve
+    deduplicated `@llvm.used` retention for explicit live `symbol(...)`
+    references that LLVM cannot see in template text.
   - [x] Add parser, semantic, and LLVM emission regression tests for asm functions.
   - [x] Add end-to-end and documentation coverage, including target-selection tests and one minimal asm example.
 - [x] Compiler Logging and Traceability
