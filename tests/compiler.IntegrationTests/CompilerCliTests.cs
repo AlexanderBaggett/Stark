@@ -2787,7 +2787,7 @@ public sealed class CompilerCliTests
             var dependencyLlvm = await File.ReadAllTextAsync(Path.Combine(saveTempsPath, "Syscall.ll"));
             Assert.Contains("define i64 @Syscall0(", dependencyLlvm, StringComparison.Ordinal);
             Assert.Contains(
-                "@llvm.compiler.used = appending global [1 x ptr] [ptr @Syscall0], section \"llvm.metadata\"",
+                "@llvm.used = appending global [1 x ptr] [ptr @Syscall0], section \"llvm.metadata\"",
                 dependencyLlvm,
                 StringComparison.Ordinal);
 
