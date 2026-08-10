@@ -63,7 +63,8 @@ internal sealed class LlvmFunctionSignatureBuilder
         MonomorphizationLinkageKind? specializationLinkage = null,
         SsaIntegerRangeFact? returnRange = null,
         bool forceDsoLocal = false,
-        bool forceHiddenVisibility = false)
+        bool forceHiddenVisibility = false,
+        string? explicitMemoryAttribute = null)
     {
         var segments = new List<string> { "define" };
 
@@ -107,6 +108,16 @@ internal sealed class LlvmFunctionSignatureBuilder
         if (!string.IsNullOrWhiteSpace(attributes))
         {
             segments.Add(attributes);
+        }
+
+        // Function attributes precede section/comdat/alignment clauses in the
+        // LLVM function-definition grammar. Assembly memory facts are already
+        // validated and rendered by the inline-asm lowering, so preserve that
+        // authoritative attribute here instead of appending it to the finished
+        // signature after a possible COMDAT clause.
+        if (!string.IsNullOrWhiteSpace(explicitMemoryAttribute))
+        {
+            segments.Add(explicitMemoryAttribute);
         }
 
         if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat

@@ -101,9 +101,11 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
             "define fastcc noundef i1 @File_TryAppendBufferedAscii(",
             "Expected File.TryAppendBufferedAscii definition in emitted LLVM.");
 
-        Assert.Contains("define void @CopyAsciiBytes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("; direct-only asm definition omitted: CopyAsciiBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("rep movsb", llvm, StringComparison.Ordinal);
-        Assert.Contains("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
+        Assert.Contains("call void asm sideeffect", appendBody, StringComparison.Ordinal);
+        Assert.Contains("nounwind memory(argmem: readwrite)", appendBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@llvm.memcpy", appendBody, StringComparison.Ordinal);
     }
 
