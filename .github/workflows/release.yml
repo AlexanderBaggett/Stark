@@ -59,8 +59,6 @@ jobs:
   prepare:
     name: Validate release configuration
     runs-on: ubuntu-24.04
-    env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
     outputs:
       matrix: ${{ steps.release_plan.outputs.matrix }}
       version: ${{ steps.release_plan.outputs.version }}
@@ -86,6 +84,8 @@ jobs:
         run: echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
@@ -151,8 +151,6 @@ jobs:
     name: Qualify release source
     runs-on: ubuntu-24.04
     needs: prepare
-    env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
     steps:
       - name: Checkout immutable release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,6 +159,8 @@ jobs:
           fetch-depth: 1
 
       - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
@@ -247,7 +247,6 @@ jobs:
     timeout-minutes: 360
     needs: [prepare, quality]
     env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
     strategy:
@@ -262,6 +261,8 @@ jobs:
           fetch-depth: 1
 
       - name: Setup .NET
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ matrix.dotnet_version }}
@@ -609,7 +610,6 @@ jobs:
     permissions:
       contents: write
     env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
@@ -620,6 +620,8 @@ jobs:
           fetch-depth: 1
 
       - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
