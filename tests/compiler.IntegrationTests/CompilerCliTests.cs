@@ -2785,7 +2785,10 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(outputPath));
 
             var dependencyLlvm = await File.ReadAllTextAsync(Path.Combine(saveTempsPath, "Syscall.ll"));
-            Assert.Contains("define dso_local i64 @Syscall_Syscall0(", dependencyLlvm, StringComparison.Ordinal);
+            Assert.Contains("; direct-only asm definition omitted: Syscall0", dependencyLlvm, StringComparison.Ordinal);
+            Assert.Contains("call i64 asm sideeffect \"syscall\"", dependencyLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("define dso_local i64 @Syscall_Syscall0(", dependencyLlvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("call i64 @Syscall_Syscall0(", dependencyLlvm, StringComparison.Ordinal);
             Assert.DoesNotContain("@llvm.used", dependencyLlvm, StringComparison.Ordinal);
 
             var clangLogLines = await File.ReadAllLinesAsync(clangLogPath);
@@ -3681,7 +3684,9 @@ public sealed class CompilerCliTests
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(
+                exitCode == 0,
+                $"Compiler exit code: {exitCode}{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
             Assert.Contains("Emitted executable:", stdout.ToString());
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
@@ -3693,6 +3698,13 @@ public sealed class CompilerCliTests
                 "define linkonce_odr dso_local hidden fastcc i64 @Bridge_AddressablePublic(i64 %arg_value)",
                 consumerLlvm,
                 StringComparison.Ordinal);
+            Assert.Contains("memory(none)", consumerLlvm, StringComparison.Ordinal);
+            if (targetInfo.Triple.Contains("-linux-", StringComparison.Ordinal))
+            {
+                Assert.Contains("$Bridge_AddressablePublic = comdat any", consumerLlvm, StringComparison.Ordinal);
+                Assert.Contains("memory(none) comdat", consumerLlvm, StringComparison.Ordinal);
+            }
+            Assert.DoesNotContain("comdat memory(none)", consumerLlvm, StringComparison.Ordinal);
             Assert.Contains("declare i64 @AddressableIdentity(i64)", consumerLlvm, StringComparison.Ordinal);
             Assert.Contains("declare void @OpaqueTarget()", consumerLlvm, StringComparison.Ordinal);
             Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @OpaqueTarget]", consumerLlvm, StringComparison.Ordinal);
