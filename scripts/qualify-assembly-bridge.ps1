@@ -276,3 +276,4 @@ $reportPath = Join-Path $output "assembly-bridge-qualification.json"
     [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "Assembly bridge archive/ThinLTO qualification passed for $TargetId. Evidence: $reportPath"
+exit 0

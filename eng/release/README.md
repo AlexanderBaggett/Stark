@@ -205,7 +205,10 @@ or a receipt-owned installation.
 
 Every target build runs `Stark.ReleaseTools prepare-managed-licenses` immediately after
 the exact locked NuGet restore, whose repository-owned NuGet configuration
-requires package-signature validation. The helper verifies the exact archive
+requires package-signature validation against reviewed NuGet.org repository
+certificates and maps every permitted managed/runtime package family. Certificate
+rotation or a new runtime-pack family therefore requires a reviewed configuration
+and validator update. The helper verifies the exact archive
 hashes, requires the signature artifacts, and extracts only paths declared in `managed-license-evidence.json` into a
 target-owned staging directory. `package-release.ps1` requires that directory
 and places it at `licenses/managed/`; `Stark.ReleaseTools validate-stage` rejects a

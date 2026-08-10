@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using Stark.ReleaseTools;
 
 namespace compiler.IntegrationTests;
@@ -239,6 +240,32 @@ public sealed class ReleaseToolsTests
         Assert.DoesNotContain("python", scripts, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(repositoryRoot, "scripts"), "*.py", SearchOption.TopDirectoryOnly));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(repositoryRoot, "eng", "release"), "*.py", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void ReleaseNuGetConfigurationFailsClosedOnTrustAndMappingDrift()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        const string relativePath = "eng/release/NuGet.config";
+        ReleaseConfiguration.ValidateNuGetConfiguration(repositoryRoot, relativePath);
+        var original = XDocument.Load(Path.Combine(repositoryRoot, relativePath));
+        using var temporary = new TemporaryDirectory();
+
+        void RequireRejection(Action<XElement> mutate, string expectedMessage)
+        {
+            var changed = XDocument.Parse(original.ToString(SaveOptions.DisableFormatting));
+            mutate(changed.Root!);
+            const string fileName = "NuGet.config";
+            changed.Save(Path.Combine(temporary.Path, fileName));
+            var error = Assert.Throws<ReleaseToolException>(() => ReleaseConfiguration.ValidateNuGetConfiguration(temporary.Path, fileName));
+            Assert.Contains(expectedMessage, error.Message, StringComparison.Ordinal);
+        }
+
+        RequireRejection(root => root.Descendants("package")
+            .Single(package => package.Attribute("pattern")?.Value == "Microsoft.WindowsDesktop.App.Runtime.*")
+            .Remove(), "package-source mapping");
+        RequireRejection(root => root.Descendants("certificate").First()
+            .SetAttributeValue("fingerprint", new string('0', 64)), "trusted repository certificates");
     }
 
     [Fact]
