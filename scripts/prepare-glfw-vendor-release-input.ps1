@@ -419,6 +419,37 @@ function Assert-StaticArchive {
     }
 }
 
+function Assert-GlfwLinuxBuildHeaders {
+    param(
+        [Parameter(Mandatory = $true)][string] $ClangPath,
+        [Parameter(Mandatory = $true)][string[]] $CompileFlags,
+        [Parameter(Mandatory = $true)][string] $ObjectRoot
+    )
+
+    $requiredHeaders = @(
+        "X11/XKBlib.h",
+        "X11/Xatom.h",
+        "X11/Xcursor/Xcursor.h",
+        "X11/Xlib.h",
+        "X11/Xmd.h",
+        "X11/Xresource.h",
+        "X11/cursorfont.h",
+        "X11/extensions/XInput2.h",
+        "X11/extensions/Xinerama.h",
+        "X11/extensions/Xrandr.h",
+        "X11/extensions/shape.h",
+        "X11/keysym.h"
+    )
+    $probePath = Join-Path $ObjectRoot "glfw-x11-header-probe.c"
+    $probeSource = (($requiredHeaders | ForEach-Object { "#include <$_>" }) -join "`n") + "`n"
+    [System.IO.File]::WriteAllText($probePath, $probeSource, [System.Text.UTF8Encoding]::new($false))
+
+    & $ClangPath @CompileFlags -fsyntax-only $probePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "GLFW X11 source build requires target-compatible X11 development headers. On Debian or Ubuntu install the compile-time-only 'xorg-dev' package."
+    }
+}
+
 function Select-DarwinArm64ArchiveSlice {
     param(
         [Parameter(Mandatory = $true)][string] $UniversalArchive,
@@ -510,6 +541,9 @@ function Invoke-GlfwSourceBuild {
     }
 
     New-Item -ItemType Directory -Force -Path $ObjectRoot | Out-Null
+    if ($OperatingSystem -ceq "linux") {
+        Assert-GlfwLinuxBuildHeaders -ClangPath $ClangPath -CompileFlags $compileFlags -ObjectRoot $ObjectRoot
+    }
     $objectPaths = @()
     $sourceNames = @($commonSources + $platformSources)
     for ($index = 0; $index -lt $sourceNames.Count; $index++) {
