@@ -1299,16 +1299,16 @@ if ([int](Get-RequiredJsonPropertyValue -Object $managedLicenseManifest -Name "s
     throw "Managed license evidence identity does not match release target '$AssetSuffix' / '$RuntimeIdentifier'."
 }
 $managedLicensePackages = @(Get-ArrayValues -Value (Get-RequiredJsonPropertyValue -Object $managedLicenseManifest -Name "packages"))
-if ($managedLicensePackages.Count -ne 3) {
-    throw "Managed license evidence must inventory exactly the ANTLR, .NET runtime, and ASP.NET runtime packages."
+if ($managedLicensePackages.Count -ne 2) {
+    throw "Managed license evidence must inventory exactly the ANTLR and .NET runtime packages."
 }
 $managedLicenseFileCount = 0
 foreach ($managedLicensePackage in $managedLicensePackages) {
     $managedLicenseFileCount += @(Get-ArrayValues -Value (
         Get-RequiredJsonPropertyValue -Object $managedLicensePackage -Name "licenseFiles")).Count
 }
-if ($managedLicenseFileCount -ne 5) {
-    throw "Managed license evidence must inventory exactly five target license/notice files."
+if ($managedLicenseFileCount -ne 3) {
+    throw "Managed license evidence must inventory exactly three target license/notice files."
 }
 
 $commit = Get-CurrentCommit

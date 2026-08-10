@@ -307,13 +307,15 @@ missing. Volatile timestamps are deliberately absent from `release.json`.
 ## Managed Runtime License Evidence
 
 `eng/release/managed-license-evidence.json` is the technical redistribution
-inventory for Stage0's self-contained managed closure. It declares all twelve
-`Microsoft.NETCore.App.Runtime.<rid>` and
-`Microsoft.AspNetCore.App.Runtime.<rid>` 10.0.10 package archives across the six
+inventory for Stage0's self-contained managed closure. It declares the six
+`Microsoft.NETCore.App.Runtime.<rid>` 10.0.10 package archives across the six
 64-bit RIDs, their exact NuGet SHA-512 identities, and the byte count and
 SHA-256 of each `LICENSE` and `THIRD-PARTY-NOTICES` archive entry. The archive
 hashes must agree with `dependencies.json`; duplicate facts that drift fail
-configuration validation.
+configuration validation. The Stage0 project and every release restore disable
+the SDK's machine-local `library-packs` source and unrelated transitive framework
+downloads. ASP.NET and Windows Desktop runtime packs are not Stage0 dependencies
+and are therefore neither downloaded nor redistributed.
 
 `Antlr4.Runtime.Standard` 4.13.1 contains no license payload in its NuGet
 archive. Its evidence is therefore the repository-owned copy at
@@ -331,7 +333,7 @@ declared evidence entries, verifies their bytes, and emits the target-specific
 license expression. Release packaging does not recover
 licenses from the published `bin/` tree or from the network. Stage validation
 recomputes the declaration identity and every staged file hash, requires the
-exact three-package/five-file target closure, rejects extra files, and then the
+exact two-package/three-file target closure, rejects extra files, and then the
 ordinary exhaustive `release-files.sha256` inventory covers the result.
 
 This closes the machine-verifiable inventory and presence contract. It is not

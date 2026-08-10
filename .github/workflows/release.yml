@@ -52,12 +52,15 @@ concurrency:
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_MULTILEVEL_LOOKUP: "0"
   DOTNET_NOLOGO: "1"
 
 jobs:
   prepare:
     name: Validate release configuration
     runs-on: ubuntu-24.04
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
     outputs:
       matrix: ${{ steps.release_plan.outputs.matrix }}
       version: ${{ steps.release_plan.outputs.version }}
@@ -148,6 +151,8 @@ jobs:
     name: Qualify release source
     runs-on: ubuntu-24.04
     needs: prepare
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
     steps:
       - name: Checkout immutable release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -242,6 +247,7 @@ jobs:
     timeout-minutes: 360
     needs: [prepare, quality]
     env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
     strategy:
@@ -293,7 +299,9 @@ jobs:
             --use-lock-file `
             --locked-mode `
             --lock-file-path $nugetLockFile `
-            -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }}
+            -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }} `
+            -p:DisableImplicitLibraryPacksFolder=true `
+            -p:DisableTransitiveFrameworkReferenceDownloads=true
           if ($LASTEXITCODE -ne 0) {
             throw "Exact locked restore failed for ${{ matrix.rid }}."
           }
@@ -458,42 +466,40 @@ jobs:
       - name: Prepare pinned official Vendor release input
         shell: pwsh
         run: |
-          $arguments = @(
-            "-AssetSuffix", "${{ matrix.asset_suffix }}",
-            "-TargetTriple", "${{ matrix.target_triple }}",
-            "-OutputVendorRoot", "artifacts/vendor/${{ matrix.asset_suffix }}",
-            "-StdlibPackageDir", "artifacts/stdlib/${{ matrix.asset_suffix }}",
-            "-RaylibManifestPath", "${{ matrix.raylib_manifest }}",
-            "-ToolchainDir", "artifacts/toolchain/${{ matrix.asset_suffix }}",
-            "-CMakePath", "${{ steps.build_tools.outputs.cmake_path }}",
-            "-NinjaPath", "${{ steps.build_tools.outputs.ninja_path }}")
-          if (-not [bool]::Parse("${{ matrix.release_enabled }}")) { $arguments += "-AllowPlannedTarget" }
-          & ./scripts/prepare-vendor-release-input.ps1 @arguments
+          & ./scripts/prepare-vendor-release-input.ps1 `
+            -AssetSuffix "${{ matrix.asset_suffix }}" `
+            -TargetTriple "${{ matrix.target_triple }}" `
+            -OutputVendorRoot "artifacts/vendor/${{ matrix.asset_suffix }}" `
+            -StdlibPackageDir "artifacts/stdlib/${{ matrix.asset_suffix }}" `
+            -RaylibManifestPath "${{ matrix.raylib_manifest }}" `
+            -ToolchainDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
+            -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
+            -AllowPlannedTarget:(-not [bool]::Parse("${{ matrix.release_enabled }}"))
           if ($LASTEXITCODE -ne 0) { throw "Vendor preparation failed for ${{ matrix.target_id }}." }
 
       - name: Package release archive
         id: package
         shell: pwsh
         run: |
-          $arguments = @(
-            "-Version", $env:RELEASE_VERSION,
-            "-AssetSuffix", "${{ matrix.asset_suffix }}",
-            "-PublishDir", "artifacts/publish/${{ matrix.asset_suffix }}",
-            "-StdlibPackageDir", "artifacts/stdlib/${{ matrix.asset_suffix }}",
-            "-ManagedLicenseDir", "artifacts/managed-licenses/${{ matrix.asset_suffix }}",
-            "-VendorRoot", "artifacts/vendor/${{ matrix.asset_suffix }}",
-            "-ToolchainDir", "artifacts/toolchain/${{ matrix.asset_suffix }}",
-            "-ReleaseToolsPath", $env:RELEASE_TOOLS_DLL,
-            "-RuntimeIdentifier", "${{ matrix.rid }}",
-            "-TargetTriple", "${{ matrix.target_triple }}",
-            "-CommitSha", $env:RELEASE_COMMIT,
-            "-OutputDir", "artifacts/release",
-            "-ArchiveKind", "${{ matrix.archive_kind }}",
-            "-LlvmVersion", "${{ matrix.llvm_version }}",
-            "-BuildConfigurationSha256", "${{ needs.prepare.outputs.build_configuration_sha256 }}",
-            "-BuildPlanSha256", "${{ needs.prepare.outputs.build_plan_sha256 }}")
-          if (-not [bool]::Parse("${{ matrix.release_enabled }}")) { $arguments += "-AllowPlannedTarget" }
-          & ./scripts/package-release.ps1 @arguments
+          & ./scripts/package-release.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -AssetSuffix "${{ matrix.asset_suffix }}" `
+            -PublishDir "artifacts/publish/${{ matrix.asset_suffix }}" `
+            -StdlibPackageDir "artifacts/stdlib/${{ matrix.asset_suffix }}" `
+            -ManagedLicenseDir "artifacts/managed-licenses/${{ matrix.asset_suffix }}" `
+            -VendorRoot "artifacts/vendor/${{ matrix.asset_suffix }}" `
+            -ToolchainDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
+            -RuntimeIdentifier "${{ matrix.rid }}" `
+            -TargetTriple "${{ matrix.target_triple }}" `
+            -CommitSha $env:RELEASE_COMMIT `
+            -OutputDir "artifacts/release" `
+            -ArchiveKind "${{ matrix.archive_kind }}" `
+            -LlvmVersion "${{ matrix.llvm_version }}" `
+            -BuildConfigurationSha256 "${{ needs.prepare.outputs.build_configuration_sha256 }}" `
+            -BuildPlanSha256 "${{ needs.prepare.outputs.build_plan_sha256 }}" `
+            -AllowPlannedTarget:(-not [bool]::Parse("${{ matrix.release_enabled }}"))
           if ($LASTEXITCODE -ne 0) { throw "Release packaging failed for ${{ matrix.target_id }}." }
 
       - name: Validate staged SDK completeness
@@ -572,6 +578,7 @@ jobs:
           name: release-build-evidence-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/managed-restore-preflight-${{ matrix.asset_suffix }}.json
+            src/obj/project.assets.json
             artifacts/backend-qualification/${{ matrix.asset_suffix }}
             artifacts/toolchain/${{ matrix.asset_suffix }}/manifest.json
             artifacts/toolchain/${{ matrix.asset_suffix }}/provenance
@@ -602,6 +609,7 @@ jobs:
     permissions:
       contents: write
     env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:

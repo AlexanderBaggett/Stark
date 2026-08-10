@@ -21,6 +21,7 @@ concurrency:
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_MULTILEVEL_LOOKUP: "0"
   DOTNET_NOLOGO: "1"
   TARGET_ID: macos-x64
   TARGET_RID: osx-x64
@@ -31,6 +32,8 @@ jobs:
     name: Qualify pinned LLVM 22.1.8 macOS x64 build
     runs-on: macos-15-intel
     timeout-minutes: 360
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
 
     steps:
       - name: Checkout requested source
@@ -163,7 +166,9 @@ jobs:
             --use-lock-file `
             --locked-mode `
             --lock-file-path src/packages.osx-x64.lock.json `
-            -p:RuntimeFrameworkVersion=10.0.10
+            -p:RuntimeFrameworkVersion=10.0.10 `
+            -p:DisableImplicitLibraryPacksFolder=true `
+            -p:DisableTransitiveFrameworkReferenceDownloads=true
           if ($LASTEXITCODE -ne 0) { throw "Exact Stage0 restore failed." }
 
       - name: Publish native Stage0 and build optimized System

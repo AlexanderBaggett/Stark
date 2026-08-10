@@ -72,7 +72,7 @@ public sealed class ReleaseArchiveMetadataTests
             "selectionSha256 = Get-ObjectSha256 -Value $selections[0]",
             "license = [string](Get-RequiredJsonPropertyValue -Object $dependency -Name \"license\")",
             "managedLicenseInventory = [ordered]@{",
-            "Managed license evidence must inventory exactly five target license/notice files",
+            "Managed license evidence must inventory exactly three target license/notice files",
             "releaseContributionSha256 = Get-ObjectSha256 -Value $releaseContributions[0]",
             "selectedPackages = [object[]]$vendorPackageFacts",
             "contentIdentities = $ContentIdentities",

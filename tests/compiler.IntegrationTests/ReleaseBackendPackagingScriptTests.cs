@@ -433,6 +433,26 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
+    public void ReleaseWorkflowUsesHermeticRestoreAndNamedScriptArguments()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml"));
+        var qualification = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "qualify-private-backend.yml"));
+
+        foreach (var definition in new[] { workflow, qualification })
+        {
+            Assert.Contains("DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet", definition, StringComparison.Ordinal);
+            Assert.Contains("-p:DisableImplicitLibraryPacksFolder=true", definition, StringComparison.Ordinal);
+            Assert.Contains("-p:DisableTransitiveFrameworkReferenceDownloads=true", definition, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("src/obj/project.assets.json", workflow, StringComparison.Ordinal);
+        Assert.Contains("-AllowPlannedTarget:(-not [bool]::Parse(\"${{ matrix.release_enabled }}\"))", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("& ./scripts/prepare-vendor-release-input.ps1 @arguments", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("& ./scripts/package-release.ps1 @arguments", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReleaseWorkflowsPinNode24NativeActions()
     {
         var repositoryRoot = FindRepositoryRoot();

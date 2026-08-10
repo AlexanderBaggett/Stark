@@ -55,8 +55,6 @@ internal static class ReleaseConfiguration
     [
         "Antlr4.Runtime.Standard",
         "Microsoft.NETCore.App.Runtime.*",
-        "Microsoft.AspNetCore.App.Runtime.*",
-        "Microsoft.WindowsDesktop.App.Runtime.*",
         "Microsoft.NETCore.App.Host.*",
     ];
 
@@ -672,6 +670,8 @@ internal static class ReleaseConfiguration
         var properties = project.Elements("PropertyGroup").Elements().GroupBy(element => element.Name.LocalName).ToDictionary(group => group.Key, group => group.Select(element => element.Value.Trim()).ToArray(), StringComparer.Ordinal);
         Validation.Require(properties.TryGetValue("TargetFramework", out var framework) && framework.SequenceEqual(["net10.0"]), "Stage0 compiler must target exactly net10.0.");
         Validation.Require(properties.TryGetValue("RuntimeFrameworkVersion", out var runtime) && runtime.SequenceEqual(["10.0.10"]), "Stage0 compiler RuntimeFrameworkVersion must be exactly 10.0.10.");
+        Validation.Require(properties.TryGetValue("DisableImplicitLibraryPacksFolder", out var implicitPacks) && implicitPacks.SequenceEqual(["true"]), "Stage0 restore must disable the machine-local library-packs source.");
+        Validation.Require(properties.TryGetValue("DisableTransitiveFrameworkReferenceDownloads", out var transitivePacks) && transitivePacks.SequenceEqual(["true"]), "Stage0 restore must disable unrelated transitive framework-pack downloads.");
         var packages = project.Descendants("PackageReference").ToArray();
         Validation.Require(packages.Length == 1 && packages[0].Attribute("Include")?.Value == "Antlr4.Runtime.Standard" && packages[0].Attribute("Version")?.Value == "[4.13.1]", "Stage0 compiler managed package closure is not exact.");
     }

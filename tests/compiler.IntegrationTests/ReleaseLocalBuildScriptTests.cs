@@ -165,7 +165,10 @@ public sealed class ReleaseLocalBuildScriptTests
             Assert.Contains("-CMakePath", acquireArguments);
             Assert.Contains("-NinjaPath", acquireArguments);
             var restoreCommand = Assert.Single(commands, static command => command.GetProperty("label").GetString() == "Restore exact managed dependency graph");
-            Assert.Contains("--locked-mode", restoreCommand.GetProperty("arguments").EnumerateArray().Select(static value => value.GetString()));
+            var restoreArguments = restoreCommand.GetProperty("arguments").EnumerateArray().Select(static value => value.GetString()).ToArray();
+            Assert.Contains("--locked-mode", restoreArguments);
+            Assert.Contains("-p:DisableImplicitLibraryPacksFolder=true", restoreArguments);
+            Assert.Contains("-p:DisableTransitiveFrameworkReferenceDownloads=true", restoreArguments);
             Assert.Contains(
                 restoreCommand.GetProperty("arguments").EnumerateArray().Select(static value => value.GetString()!.Replace('\\', '/')),
                 static value => value.EndsWith("/src/packages.osx-arm64.lock.json", StringComparison.Ordinal));
