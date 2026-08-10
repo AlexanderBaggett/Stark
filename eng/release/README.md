@@ -206,7 +206,10 @@ or a receipt-owned installation.
 Every target build runs `Stark.ReleaseTools prepare-managed-licenses` immediately after
 the exact locked NuGet restore, whose repository-owned NuGet configuration
 requires package-signature validation against reviewed NuGet.org repository
-certificates and maps every permitted managed/runtime package family. Certificate
+certificates and maps every permitted managed/runtime package family. Restore
+also disables the SDK's machine-local `library-packs` source and unrelated
+transitive framework-pack downloads, so the runner image cannot silently expand
+the compiler's dependency closure. Certificate
 rotation or a new runtime-pack family therefore requires a reviewed configuration
 and validator update. The helper verifies the exact archive
 hashes, requires the signature artifacts, and extracts only paths declared in `managed-license-evidence.json` into a

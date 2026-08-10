@@ -465,7 +465,9 @@ foreach ($entry in $matrixEntries) {
             "--configfile", (Join-Path $repositoryRoot ([string]$entry.nuget_config)),
             "--use-lock-file", "--locked-mode",
             "--lock-file-path", (Join-Path $repositoryRoot ([string]$entry.nuget_lock_file)),
-            "-p:RuntimeFrameworkVersion=$([string]$entry.dotnet_runtime_version)"
+            "-p:RuntimeFrameworkVersion=$([string]$entry.dotnet_runtime_version)",
+            "-p:DisableImplicitLibraryPacksFolder=true",
+            "-p:DisableTransitiveFrameworkReferenceDownloads=true"
         ) `
         -Environment $dotnetEnvironment
     $commands += New-ReleaseCommand `
