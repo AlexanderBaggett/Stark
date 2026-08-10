@@ -386,6 +386,8 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("sourceRemovedBeforeConsumerBuild = $true", script, StringComparison.Ordinal);
         Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @OpaqueTarget]", script, StringComparison.Ordinal);
         Assert.Contains("-ExpectedExitCode 73", script, StringComparison.Ordinal);
+        Assert.EndsWith("exit 0\n", script.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.Contains("if (-not $?) { throw \"Assembly bridge archive/ThinLTO qualification failed", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("OperatingSystem.IsWindows", script, StringComparison.Ordinal);
 
         var archiveSmoke = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1"));
