@@ -3,6 +3,10 @@ module Book.OwnershipMoves
 struct Box
 {
     i32[min max] Value;
+
+    drop
+    {
+    }
 }
 
 fn void Consume(Box value)
