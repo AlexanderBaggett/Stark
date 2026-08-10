@@ -7,6 +7,11 @@
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);CS3021</NoWarn>
     <RuntimeFrameworkVersion>10.0.10</RuntimeFrameworkVersion>
+    <!-- Keep restore limited to the compiler's declared framework. The SDK's
+         machine-local library-packs source and unrelated transitive framework
+         packs must not influence release dependency resolution. -->
+    <DisableImplicitLibraryPacksFolder>true</DisableImplicitLibraryPacksFolder>
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
     <AntlrGrammar>$(MSBuildProjectDirectory)/../Stark.g4</AntlrGrammar>
     <!-- Dependency-module compiles run in parallel; workstation GC throttles the
          allocation-heavy concurrent pipelines to roughly two effective cores. -->

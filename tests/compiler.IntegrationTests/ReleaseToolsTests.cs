@@ -262,7 +262,7 @@ public sealed class ReleaseToolsTests
         }
 
         RequireRejection(root => root.Descendants("package")
-            .Single(package => package.Attribute("pattern")?.Value == "Microsoft.WindowsDesktop.App.Runtime.*")
+            .Single(package => package.Attribute("pattern")?.Value == "Microsoft.NETCore.App.Runtime.*")
             .Remove(), "package-source mapping");
         RequireRejection(root => root.Descendants("certificate").First()
             .SetAttributeValue("fingerprint", new string('0', 64)), "trusted repository certificates");

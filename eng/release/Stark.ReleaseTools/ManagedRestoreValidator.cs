@@ -52,8 +52,7 @@ internal static class ManagedRestoreValidator
             antlr.RequiredString("version", "ANTLR dependency"),
             antlr.RequiredString("lockContentHash", "ANTLR dependency"),
             antlr.RequiredString("signedPackageSha512", "ANTLR dependency"),
-            dotnetSelection.RequiredString("runtimePackContentHash", "dotnet selection"),
-            dotnetSelection.RequiredString("aspNetCoreRuntimePackContentHash", "dotnet selection"));
+            dotnetSelection.RequiredString("runtimePackContentHash", "dotnet selection"));
         report["targetId"] = targetId;
         if (restoreOnly)
         {
@@ -70,7 +69,7 @@ internal static class ManagedRestoreValidator
         return report;
     }
 
-    private static JsonObject ValidateAssets(JsonObject assets, string rid, string root, string nugetConfig, string lockFile, string sdkVersion, string runtimeVersion, string antlrVersion, string antlrContentHash, string antlrArchiveHash, string runtimeHash, string aspnetHash)
+    private static JsonObject ValidateAssets(JsonObject assets, string rid, string root, string nugetConfig, string lockFile, string sdkVersion, string runtimeVersion, string antlrVersion, string antlrContentHash, string antlrArchiveHash, string runtimeHash)
     {
         Validation.Require(sdkVersion == "10.0.302" && runtimeVersion == "10.0.10", "Release SDK/runtime versions are not the reviewed .NET 10 versions.");
         Validation.Require(assets.RequiredInt("version", "project.assets.json") == 4, "project.assets.json schema version must be 4.");
@@ -87,7 +86,9 @@ internal static class ManagedRestoreValidator
         var configs = Validation.Strings(restore["configFilePaths"], "restore configFilePaths");
         Validation.Require(configs.Length == 1, "Restore must use exactly one NuGet configuration.");
         RequireCanonical(configs[0], nugetConfig, "restore NuGet configuration");
-        Validation.Require(restore.RequiredObject("sources", "restore").Count == 1 && restore.RequiredObject("sources", "restore").ContainsKey("https://api.nuget.org/v3/index.json"), "Restore used an ambient or unreviewed NuGet source.");
+        var sources = restore.RequiredObject("sources", "restore");
+        var observedSources = string.Join(", ", sources.Select(source => source.Key).Order(StringComparer.Ordinal));
+        Validation.Require(sources.Count == 1 && sources.ContainsKey("https://api.nuget.org/v3/index.json"), $"Restore used an ambient or unreviewed NuGet source. Observed sources: {observedSources}");
         Validation.Require(Validation.Strings(restore["originalTargetFrameworks"], "restore target frameworks").SequenceEqual(["net10.0"]), "Restore target framework is not exactly net10.0.");
         var lockProperties = restore.RequiredObject("restoreLockProperties", "restore");
         Validation.Require(lockProperties.RequiredString("restorePackagesWithLockFile", "restore lock") == "true", "Restore did not enable its lock file.");
@@ -96,7 +97,8 @@ internal static class ManagedRestoreValidator
         var requestedAntlr = framework.RequiredObject("dependencies", "project framework").RequiredObject("Antlr4.Runtime.Standard", "project framework dependencies");
         Validation.Require(requestedAntlr.RequiredString("target", "ANTLR request") == "Package" && requestedAntlr.RequiredString("version", "ANTLR request") == $"[{antlrVersion}, {antlrVersion}]", "Restore project does not request the exact ANTLR package range.");
         var downloads = framework.RequiredArray("downloadDependencies", "project framework").OfType<JsonObject>().ToDictionary(item => item.RequiredString("name", "download dependency"), item => item.RequiredString("version", "download dependency"), StringComparer.Ordinal);
-        Validation.Require(downloads.Count == 2 && downloads[$"Microsoft.AspNetCore.App.Runtime.{rid}"] == $"[{runtimeVersion}, {runtimeVersion}]" && downloads[$"Microsoft.NETCore.App.Runtime.{rid}"] == $"[{runtimeVersion}, {runtimeVersion}]", "Self-contained runtime-pack graph is not the exact reviewed pair.");
+        var observedDownloads = string.Join(", ", downloads.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => $"{item.Key} {item.Value}"));
+        Validation.Require(downloads.Count == 1 && downloads.GetValueOrDefault($"Microsoft.NETCore.App.Runtime.{rid}") == $"[{runtimeVersion}, {runtimeVersion}]", $"Self-contained runtime-pack graph is not the exact reviewed compiler runtime. Observed downloads: {observedDownloads}");
         var runtimes = project.RequiredObject("runtimes", "project.assets.json project");
         Validation.Require(runtimes.Count == 1 && runtimes.ContainsKey(rid), "Restore runtime graph is not the selected RID.");
         var packagesPath = restore.RequiredString("packagesPath", "restore");
@@ -105,7 +107,6 @@ internal static class ManagedRestoreValidator
         {
             PackageCacheEntry(packagesPath, "Antlr4.Runtime.Standard", antlrVersion, antlrArchiveHash),
             PackageCacheEntry(packagesPath, $"Microsoft.NETCore.App.Runtime.{rid}", runtimeVersion, runtimeHash),
-            PackageCacheEntry(packagesPath, $"Microsoft.AspNetCore.App.Runtime.{rid}", runtimeVersion, aspnetHash),
         };
         return new JsonObject
         {

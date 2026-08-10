@@ -161,7 +161,7 @@ internal static class ManagedLicenseEvidence
         Validation.Require(declaration.RequiredString("path", "managed-license declaration") == "eng/release/managed-license-evidence.json" && declaration["bytes"]!.GetValue<long>() == declarationInfo.Length && declaration.RequiredString("sha256", "managed-license declaration") == JsonIO.Sha256File(declarationPath), "Staged managed-license declaration identity differs.");
 
         var actualPackages = inventory.RequiredArray("packages", "managed-license inventory").OfType<JsonObject>().ToArray();
-        Validation.Require(actualPackages.Length == 3, "Staged managed-license inventory must contain exactly three packages.");
+        Validation.Require(actualPackages.Length == 2, "Staged managed-license inventory must contain exactly two packages.");
         var byId = actualPackages.ToDictionary(package => package.RequiredString("packageId", "managed package"), StringComparer.Ordinal);
         Validation.Require(byId.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(packages.Select(package => package.PackageId)), "Staged managed-license package set is not exact.");
         var expectedFiles = new HashSet<string>(StringComparer.Ordinal);
@@ -204,7 +204,7 @@ internal static class ManagedLicenseEvidence
         var dotnet = dependencies["dotnet-stage0-runtime"];
         var antlr = dependencies["antlr4-runtime-standard"];
         var families = declaration.RequiredArray("packageFamilies", "managed-license-evidence.json").OfType<JsonObject>().ToArray();
-        Validation.Require(families.Length == 3, "Managed-license manifest must declare ANTLR and both .NET runtime package families.");
+        Validation.Require(families.Length == 2, "Managed-license manifest must declare the ANTLR and .NET runtime package families.");
         var familyKeys = new HashSet<string>(StringComparer.Ordinal);
         var outputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var family in families)
@@ -214,7 +214,7 @@ internal static class ManagedLicenseEvidence
             var expectedVersion = dependencyId == "antlr4-runtime-standard" ? antlr.RequiredString("version", dependencyId) : dotnet.RequiredString("runtimeVersion", dependencyId);
             Validation.Require(family.RequiredString("version", "managed-license family") == expectedVersion, $"Managed-license family {dependencyId} version differs.");
             var key = family["packageId"]?.GetValue<string>() ?? family.RequiredString("packageIdTemplate", "managed-license family");
-            Validation.Require(new[] { "Antlr4.Runtime.Standard", "Microsoft.NETCore.App.Runtime.{rid}", "Microsoft.AspNetCore.App.Runtime.{rid}" }.Contains(key) && familyKeys.Add(key), $"Managed-license family identity is invalid or duplicate: {key}");
+            Validation.Require(new[] { "Antlr4.Runtime.Standard", "Microsoft.NETCore.App.Runtime.{rid}" }.Contains(key) && familyKeys.Add(key), $"Managed-license family identity is invalid or duplicate: {key}");
             if (key == "Antlr4.Runtime.Standard")
             {
                 Validation.Require(family.RequiredString("targets", key) == "all" && family.RequiredString("packageArchiveSha512", key) == antlr.RequiredString("signedPackageSha512", dependencyId), "ANTLR license package identity differs from dependencies.json.");
@@ -232,12 +232,11 @@ internal static class ManagedLicenseEvidence
             var selections = family.RequiredArray("selections", key).OfType<JsonObject>().ToArray();
             Validation.Require(selections.Length == 6 && selections.Select(selection => selection.RequiredString("target", key)).ToHashSet(StringComparer.Ordinal).SetEquals(targets.Keys), $"{key} target selections are incomplete.");
             var dotnetSelections = dotnet.RequiredArray("selections", "dotnet-stage0-runtime").OfType<JsonObject>().ToDictionary(selection => selection.RequiredString("target", "dotnet selection"), StringComparer.Ordinal);
-            var hashName = key.StartsWith("Microsoft.NETCore", StringComparison.Ordinal) ? "runtimePackContentHash" : "aspNetCoreRuntimePackContentHash";
             foreach (var selection in selections)
             {
                 var targetId = selection.RequiredString("target", key);
                 var rid = targets[targetId].RequiredString("runtimeIdentifier", targetId);
-                Validation.Require(selection.RequiredString("runtimeIdentifier", key) == rid && selection.RequiredString("packageArchiveSha512", key) == dotnetSelections[targetId].RequiredString(hashName, $"dotnet/{targetId}"), $"{key}/{targetId} package identity differs.");
+                Validation.Require(selection.RequiredString("runtimeIdentifier", key) == rid && selection.RequiredString("packageArchiveSha512", key) == dotnetSelections[targetId].RequiredString("runtimePackContentHash", $"dotnet/{targetId}"), $"{key}/{targetId} package identity differs.");
                 var files = selection.RequiredArray("files", $"{key}/{targetId}").OfType<JsonObject>().ToArray();
                 Validation.Require(files.Length == 2, $"{key}/{targetId} must declare a license and notice.");
                 foreach (var evidence in files)
@@ -250,7 +249,7 @@ internal static class ManagedLicenseEvidence
             }
         }
 
-        Validation.Require(familyKeys.SetEquals(["Antlr4.Runtime.Standard", "Microsoft.NETCore.App.Runtime.{rid}", "Microsoft.AspNetCore.App.Runtime.{rid}"]), "Managed-license family set is not exact.");
+        Validation.Require(familyKeys.SetEquals(["Antlr4.Runtime.Standard", "Microsoft.NETCore.App.Runtime.{rid}"]), "Managed-license family set is not exact.");
         return new Declaration(declaration, targets, dependencies);
     }
 
