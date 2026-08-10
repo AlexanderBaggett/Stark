@@ -180,6 +180,14 @@ always an archive defect.
 Ordinary builds should prefer bundled binary package images and native artifacts.
 Source fallback is for diagnostics, rebuilds, and development, not the hot path.
 
+Producing the official Linux `Vendor.GLFW` package is a release-build operation,
+not an end-user source fallback. The release runner installs Ubuntu's `xorg-dev`
+package, verifies every X11 header included by the pinned GLFW source, and records
+the exact installed package versions in the build evidence. Those headers are
+compile-time-only inputs: they are not copied into the Stark SDK and do not add
+an X11 development-package requirement for applications using the bundled GLFW
+archive. GLFW's X11 backend dynamically loads its X11 runtime libraries.
+
 ## Deterministic Container Contract
 
 `Stark.ReleaseTools create-archive` is the only supported release-container

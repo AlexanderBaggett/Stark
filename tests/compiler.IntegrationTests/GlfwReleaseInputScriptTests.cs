@@ -104,6 +104,34 @@ public sealed class GlfwReleaseInputScriptTests
     }
 
     [Fact]
+    public void LinuxReleaseBuildInstallsVerifiesAndRecordsTheDeclaredX11HeaderPrerequisite()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml"));
+        var script = ReadScript();
+
+        Assert.Contains("name: Install GLFW X11 source-build prerequisites", workflow, StringComparison.Ordinal);
+        Assert.Contains("if: ${{ matrix.operating_system == 'linux' }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("sudo apt-get install --no-install-recommends --yes xorg-dev", workflow, StringComparison.Ordinal);
+        Assert.Contains("artifacts/vendor-build-prerequisites/${{ matrix.asset_suffix }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("glfw-x11-packages.txt", workflow, StringComparison.Ordinal);
+
+        Assert.Contains("function Assert-GlfwLinuxBuildHeaders", script, StringComparison.Ordinal);
+        Assert.Contains("-fsyntax-only", script, StringComparison.Ordinal);
+        Assert.Contains("target-compatible X11 development headers", script, StringComparison.Ordinal);
+        foreach (var header in new[]
+        {
+            "X11/XKBlib.h", "X11/Xatom.h", "X11/Xcursor/Xcursor.h", "X11/Xlib.h",
+            "X11/Xmd.h", "X11/Xresource.h", "X11/cursorfont.h", "X11/extensions/XInput2.h",
+            "X11/extensions/Xinerama.h", "X11/extensions/Xrandr.h", "X11/extensions/shape.h", "X11/keysym.h",
+        })
+        {
+            Assert.Contains(header, workflow, StringComparison.Ordinal);
+            Assert.Contains(header, script, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void LinuxX64AndWindowsX64SourceBuildContractsMatchThePinnedUpstreamSourceSets()
     {
         var script = ReadScript();
