@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace compiler.IntegrationTests;
 
@@ -444,8 +445,14 @@ public sealed class ReleaseBackendPackagingScriptTests
             Assert.Contains("DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet", definition, StringComparison.Ordinal);
             Assert.Contains("-p:DisableImplicitLibraryPacksFolder=true", definition, StringComparison.Ordinal);
             Assert.Contains("-p:DisableTransitiveFrameworkReferenceDownloads=true", definition, StringComparison.Ordinal);
+            Assert.DoesNotMatch("(?m)^    env:\\r?\\n      DOTNET_INSTALL_DIR:", definition);
+            Assert.Equal(
+                Regex.Matches(definition, "(?m)^        uses: actions/setup-dotnet@").Count,
+                Regex.Matches(definition, "(?m)^      - name: .+\\r?\\n        env:\\r?\\n          DOTNET_INSTALL_DIR: \\$\\{\\{ runner\\.temp \\}\\}/stark-dotnet\\r?\\n        uses: actions/setup-dotnet@").Count);
         }
 
+        Assert.StartsWith("name: Release", workflow, StringComparison.Ordinal);
+        Assert.StartsWith("name: Qualify compiler-private backend", qualification, StringComparison.Ordinal);
         Assert.Contains("src/obj/project.assets.json", workflow, StringComparison.Ordinal);
         Assert.Contains("-AllowPlannedTarget:(-not [bool]::Parse(\"${{ matrix.release_enabled }}\"))", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("& ./scripts/prepare-vendor-release-input.ps1 @arguments", workflow, StringComparison.Ordinal);
