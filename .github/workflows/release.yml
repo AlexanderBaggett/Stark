@@ -453,7 +453,7 @@ jobs:
             -TargetTriple "${{ matrix.target_triple }}" `
             -ToolchainDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
             -OutputDir $evidenceRoot
-          if ($LASTEXITCODE -ne 0) { throw "Assembly bridge archive/ThinLTO qualification failed for ${{ matrix.target_id }}." }
+          if (-not $?) { throw "Assembly bridge archive/ThinLTO qualification failed for ${{ matrix.target_id }}." }
 
       - name: Prepare pinned official Vendor release input
         shell: pwsh
