@@ -2578,6 +2578,12 @@ internal sealed class LlvmIrEmitter
 
         _emissionContext.RegisterOpaqueAsmSymbolUses(abiFunction.Name, asmFunction.Symbols);
 
+        if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+            && _emissionContext.TargetSupportsComdat)
+        {
+            builder.AppendLine($"${EscapeIdentifier(abiFunction.SymbolName)} = comdat any");
+        }
+
         var functionBuilder = new StringBuilder();
         var bridgeEffects = function.Visibility == StarkVisibility.Export
             ? effects
@@ -2595,7 +2601,8 @@ internal sealed class LlvmIrEmitter
             parameterEffects,
             specializationLinkage,
             forceDsoLocal: function.Visibility != StarkVisibility.Export,
-            forceHiddenVisibility: function.Visibility != StarkVisibility.Export) + asmPlan.MemoryAttributeSuffix);
+            forceHiddenVisibility: function.Visibility != StarkVisibility.Export,
+            explicitMemoryAttribute: asmPlan.MemoryAttribute));
         functionBuilder.AppendLine("{");
         EmitAsmFunctionBody(functionBuilder, function, abiFunction, asmFunction, asmPlan);
         functionBuilder.AppendLine("}");
@@ -2702,7 +2709,8 @@ internal sealed class LlvmIrEmitter
         MonomorphizationLinkageKind? specializationLinkage = null,
         SsaIntegerRangeFact? returnRange = null,
         bool forceDsoLocal = false,
-        bool forceHiddenVisibility = false)
+        bool forceHiddenVisibility = false,
+        string? explicitMemoryAttribute = null)
     {
         var signature = _functionSignatureBuilder.BuildDefinitionSignature(
             internalize,
@@ -2714,7 +2722,8 @@ internal sealed class LlvmIrEmitter
             specializationLinkage,
             returnRange,
             forceDsoLocal,
-            forceHiddenVisibility);
+            forceHiddenVisibility,
+            explicitMemoryAttribute);
 
         return availableExternally
             ? PrefixAvailableExternally(signature)

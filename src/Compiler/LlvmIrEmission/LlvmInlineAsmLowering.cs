@@ -4,7 +4,12 @@ internal sealed record LlvmInlineAsmPlan(
     string EscapedTemplate,
     string EscapedConstraints,
     IReadOnlyList<int> InputParameterIndices,
-    string MemoryAttributeSuffix);
+    string? MemoryAttribute)
+{
+    public string MemoryAttributeSuffix => MemoryAttribute is null
+        ? string.Empty
+        : $" {MemoryAttribute}";
+}
 
 internal static class LlvmInlineAsmLowering
 {
@@ -89,7 +94,7 @@ internal static class LlvmInlineAsmLowering
             EscapeString(asmFunction.TemplateText),
             EscapeString(string.Join(",", constraintFragments)),
             inputParameterIndices,
-            BuildMemoryAttributeSuffix(asmFunction.MemoryEffects));
+            BuildMemoryAttribute(asmFunction.MemoryEffects));
         failureReason = string.Empty;
         return true;
     }
@@ -149,11 +154,11 @@ internal static class LlvmInlineAsmLowering
         return clobbers;
     }
 
-    private static string BuildMemoryAttributeSuffix(AsmMemoryEffectModel? memoryEffects)
+    private static string? BuildMemoryAttribute(AsmMemoryEffectModel? memoryEffects)
     {
         if (memoryEffects is null)
         {
-            return string.Empty;
+            return null;
         }
 
         var reads = memoryEffects.Operands.Any(static operand =>
@@ -169,7 +174,7 @@ internal static class LlvmInlineAsmLowering
         };
 
         return access == "none"
-            ? " memory(none)"
-            : $" memory(argmem: {access})";
+            ? "memory(none)"
+            : $"memory(argmem: {access})";
     }
 }

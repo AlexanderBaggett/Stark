@@ -174,7 +174,8 @@ public sealed partial class LlvmIrEmissionTests
 
                         public unsafe ffi asm(x86_64) fn i64[min max] Identity(i64[min max] value)
                             in("rax") value,
-                            out("rax") return
+                            out("rax") return,
+                            memory(none)
                         {
                             ""
                         }
@@ -189,7 +190,11 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("; materialized imported asm bridge: Alpha.Identity", llvm);
-        Assert.Contains("define linkonce_odr dso_local hidden fastcc i64 @Alpha_Identity(i64 %arg_value)", llvm);
+        Assert.Contains("$Alpha_Identity = comdat any", llvm);
+        var identityHeader = ExtractDefinitionHeader(llvm, "Alpha_Identity");
+        Assert.Contains("define linkonce_odr dso_local hidden fastcc i64 @Alpha_Identity(i64 %arg_value)", identityHeader);
+        Assert.Contains("memory(none) comdat", identityHeader);
+        Assert.DoesNotContain("comdat memory(none)", identityHeader);
         Assert.DoesNotContain("declare i64 @Alpha_Identity", llvm);
     }
 
