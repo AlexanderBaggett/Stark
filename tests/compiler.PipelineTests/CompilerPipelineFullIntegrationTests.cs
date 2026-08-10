@@ -2427,9 +2427,11 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
-            Assert.Contains("declare i64 @Syscall0(i64)", llvmModule.Text);
-            Assert.Contains("call i64 @Syscall0(i64 range(i64 39, 40) 39)", llvmModule.Text);
-            Assert.DoesNotContain("asm sideeffect", llvmModule.Text);
+            Assert.Contains(
+                "call i64 asm sideeffect \"syscall\", \"={rax},0,~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 39) nounwind",
+                llvmModule.Text);
+            Assert.DoesNotContain("declare i64 @Syscall0", llvmModule.Text);
+            Assert.DoesNotContain("call i64 @Syscall0", llvmModule.Text);
             Assert.DoesNotContain("; imported asm definition: Syscall.Syscall0", llvmModule.Text);
         }
         finally

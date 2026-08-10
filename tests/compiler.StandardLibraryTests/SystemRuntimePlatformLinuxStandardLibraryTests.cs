@@ -52,7 +52,9 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @ProcessId(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxExitGroupSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxGetPidSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall1Integer(", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 231);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 39);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@exit(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@getpid(", llvm, StringComparison.Ordinal);
     }
@@ -84,8 +86,10 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
         Assert.Contains("@LinuxEpollWaitSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxEpollReadableEvent", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxEpollWritableEvent", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall1Integer(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall4HandlePointersInteger(", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 291);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 233);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 232);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
 
         var waitForEventsBody = ExtractDefinedFunctionText(
             llvm,
@@ -209,7 +213,8 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
         Assert.Contains("@LinuxFutexSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxFutexWaitPrivateOperation", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxFutexWakePrivateOperation", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall4HandlePointersInteger(", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 202);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@futex(", llvm, StringComparison.Ordinal);
     }
 

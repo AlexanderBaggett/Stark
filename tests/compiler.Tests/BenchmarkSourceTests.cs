@@ -146,7 +146,9 @@ public sealed class BenchmarkSourceTests
             loopback,
             "define internal dso_local fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowi8_minmax____(",
             "Expected TcpClient slice write inline clone to be emitted.");
-        Assert.Contains("@LinuxSyscall3HandleBuffer(", loopbackSliceWriteClone, StringComparison.Ordinal);
+        AssertDirectLinuxX64Syscall(loopbackSliceWriteClone, 1);
+        Assert.DoesNotContain("call i64 @LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
+        Assert.DoesNotContain("call i64 @System_Runtime_Platform_Linux_LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_Linux_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
 
@@ -181,13 +183,15 @@ public sealed class BenchmarkSourceTests
         // type-checked in the consuming build (cross-module monomorphization fix), the
         // consts fold to their literal syscall numbers (readv = 19, writev = 20) here
         // instead of an external global load. Preserve both the folded values and their
-        // exact one-value range facts on the imported inline-clone calls.
-        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 19, 20) 19,", scatterReadVectorClone, StringComparison.Ordinal);
+        // direct inline-assembly call sites, including the ABI clobber set.
+        AssertDirectLinuxX64Syscall(scatterReadVectorClone, 19);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
-        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 20, 21) 20,", scatterWriteVectorClone, StringComparison.Ordinal);
+        AssertDirectLinuxX64Syscall(scatterWriteVectorClone, 20);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterWriteVectorClone, StringComparison.Ordinal);
+        Assert.DoesNotContain("call i64 @LinuxSyscall", scatterGather, StringComparison.Ordinal);
+        Assert.DoesNotContain("call i64 @System_Runtime_Platform_Linux_LinuxSyscall", scatterGather, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -495,6 +499,37 @@ public sealed class BenchmarkSourceTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for benchmark source tests.");
+    }
+
+    private static void AssertDirectLinuxX64Syscall(string text, long syscallNumber)
+    {
+        var firstArgument = $"(i64 {syscallNumber}";
+        var callLine = text
+            .Split('\n')
+            .FirstOrDefault(line =>
+            {
+                if (!line.Contains("call i64 asm sideeffect \"syscall\"", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                var argumentIndex = line.IndexOf(firstArgument, StringComparison.Ordinal);
+                if (argumentIndex < 0)
+                {
+                    return false;
+                }
+
+                var delimiterIndex = argumentIndex + firstArgument.Length;
+                return delimiterIndex < line.Length
+                    && line[delimiterIndex] is ',' or ')';
+            });
+
+        Assert.NotNull(callLine);
+        Assert.Contains(
+            "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}",
+            callLine,
+            StringComparison.Ordinal);
+        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
     }
 
     private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)

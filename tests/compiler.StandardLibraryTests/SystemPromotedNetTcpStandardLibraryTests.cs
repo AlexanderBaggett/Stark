@@ -179,6 +179,7 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
                 EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -191,7 +192,8 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
         Assert.Contains("ptr noundef nonnull noalias captures(none) dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
-        Assert.Contains("LinuxSyscall3HandleBuffer", fixedReads, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(fixedReads, 0);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(fixedReads);
         Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("FixedByteBuffer512_WriteSlice__mutborrowFixedByteBuffer512_", fixed512Read, StringComparison.Ordinal);
@@ -207,7 +209,8 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         Assert.DoesNotContain("alloca [4096 x i8]", fixed4096Read, StringComparison.Ordinal);
         Assert.DoesNotContain("alloca [8192 x i8]", fixed8192Read, StringComparison.Ordinal);
 
-        Assert.Contains("LinuxSyscall3HandleBuffer", dynamicRead, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(dynamicRead, 0);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(dynamicRead);
         Assert.Contains("DynamicByteBuffer_WriteSlice", dynamicRead, StringComparison.Ordinal);
         Assert.DoesNotContain("DynamicByteBuffer_WriteByte", dynamicRead, StringComparison.Ordinal);
 
