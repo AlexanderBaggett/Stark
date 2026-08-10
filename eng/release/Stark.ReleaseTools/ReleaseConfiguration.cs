@@ -51,6 +51,21 @@ internal static class ReleaseConfiguration
         "Vendor.Cgltf", "Vendor.GLFW", "Vendor.SDL3", "Vendor.SQLite",
     ];
 
+    private static readonly string[] ExpectedNuGetPackagePatterns =
+    [
+        "Antlr4.Runtime.Standard",
+        "Microsoft.NETCore.App.Runtime.*",
+        "Microsoft.AspNetCore.App.Runtime.*",
+        "Microsoft.WindowsDesktop.App.Runtime.*",
+        "Microsoft.NETCore.App.Host.*",
+    ];
+
+    private static readonly string[] ExpectedNuGetRepositoryCertificates =
+    [
+        "5A2901D6ADA3D18260B9C6DFE2133C95D74B9EEF6AE0E5DC334C8454D1477DF4",
+        "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D",
+    ];
+
     private static readonly string[] ExpectedMacOsX64LlvmCMakeOptions =
     [
         "-DBUILD_SHARED_LIBS=OFF",
@@ -661,15 +676,26 @@ internal static class ReleaseConfiguration
         Validation.Require(packages.Length == 1 && packages[0].Attribute("Include")?.Value == "Antlr4.Runtime.Standard" && packages[0].Attribute("Version")?.Value == "[4.13.1]", "Stage0 compiler managed package closure is not exact.");
     }
 
-    private static void ValidateNuGetConfiguration(string root, string relative)
+    internal static void ValidateNuGetConfiguration(string root, string relative)
     {
         Validation.SafeRelativePath(relative, "ANTLR nugetConfig");
         var document = XDocument.Load(Path.Combine(root, relative)).Root ?? throw new ReleaseToolException("Release NuGet configuration is empty.");
         Validation.Require(document.Name.LocalName == "configuration", "Release NuGet configuration root must be <configuration>.");
         var sources = document.Element("packageSources")?.Elements().ToArray() ?? [];
-        Validation.Require(sources.Length == 2 && sources[0].Name.LocalName == "clear" && sources[1].Name.LocalName == "add" && sources[1].Attribute("key")?.Value == "nuget.org" && sources[1].Attribute("value")?.Value == "https://api.nuget.org/v3/index.json", "Release NuGet source must be the exact nuget.org v3 endpoint.");
+        Validation.Require(sources.Length == 2 && sources[0].Name.LocalName == "clear" && sources[1].Name.LocalName == "add" && sources[1].Attribute("key")?.Value == "nuget.org" && sources[1].Attribute("value")?.Value == "https://api.nuget.org/v3/index.json" && sources[1].Attribute("protocolVersion")?.Value == "3", "Release NuGet source must be the exact nuget.org v3 endpoint.");
         var signature = document.Element("config")?.Elements("add").SingleOrDefault();
         Validation.Require(signature?.Attribute("key")?.Value == "signatureValidationMode" && signature.Attribute("value")?.Value == "require", "Release NuGet restore must require signed packages.");
+
+        var mapping = document.Element("packageSourceMapping")?.Elements().ToArray() ?? [];
+        Validation.Require(mapping.Length == 2 && mapping[0].Name.LocalName == "clear" && mapping[1].Name.LocalName == "packageSource" && mapping[1].Attribute("key")?.Value == "nuget.org", "Release NuGet package-source mapping must contain only nuget.org.");
+        var packageMappings = mapping[1].Elements().ToArray();
+        var packagePatterns = packageMappings.Select(package => package.Attribute("pattern")?.Value).ToArray();
+        Validation.Require(packageMappings.All(package => package.Name.LocalName == "package") && packagePatterns.SequenceEqual(ExpectedNuGetPackagePatterns), "Release NuGet package-source mapping must cover the exact managed and runtime package closure.");
+
+        var trustedSigners = document.Element("trustedSigners")?.Elements().ToArray() ?? [];
+        Validation.Require(trustedSigners.Length == 1 && trustedSigners[0].Name.LocalName == "repository" && trustedSigners[0].Attribute("name")?.Value == "nuget.org" && trustedSigners[0].Attribute("serviceIndex")?.Value == "https://api.nuget.org/v3/index.json", "Release NuGet trusted signer must be the exact nuget.org repository.");
+        var certificates = trustedSigners[0].Elements().ToArray();
+        Validation.Require(certificates.All(certificate => certificate.Name.LocalName == "certificate") && certificates.Select(certificate => certificate.Attribute("fingerprint")?.Value).SequenceEqual(ExpectedNuGetRepositoryCertificates) && certificates.All(certificate => certificate.Attribute("hashAlgorithm")?.Value == "SHA256" && certificate.Attribute("allowUntrustedRoot")?.Value == "false"), "Release NuGet trusted repository certificates must match the reviewed nuget.org signing identities.");
     }
 
     private static void ValidateVendor(JsonObject document, IReadOnlyList<ReleaseTarget> targets, string root)
