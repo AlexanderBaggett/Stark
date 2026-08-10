@@ -260,6 +260,46 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit_sha }}
           fetch-depth: 1
 
+      - name: Install GLFW X11 source-build prerequisites
+        if: ${{ matrix.operating_system == 'linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes xorg-dev
+
+          required_headers=(
+            X11/XKBlib.h
+            X11/Xatom.h
+            X11/Xcursor/Xcursor.h
+            X11/Xlib.h
+            X11/Xmd.h
+            X11/Xresource.h
+            X11/cursorfont.h
+            X11/extensions/XInput2.h
+            X11/extensions/Xinerama.h
+            X11/extensions/Xrandr.h
+            X11/extensions/shape.h
+            X11/keysym.h
+          )
+          for header in "${required_headers[@]}"; do
+            if [[ ! -f "/usr/include/$header" ]]; then
+              echo "::error::Pinned GLFW source requires missing X11 header '$header'."
+              exit 1
+            fi
+          done
+
+          evidence_dir="artifacts/vendor-build-prerequisites/${{ matrix.asset_suffix }}"
+          mkdir -p "$evidence_dir"
+          dpkg-query -W -f='${binary:Package}=${Version}\n' \
+            xorg-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            | LC_ALL=C sort > "$evidence_dir/glfw-x11-packages.txt"
+
       - name: Setup .NET
         env:
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
@@ -585,6 +625,7 @@ jobs:
             artifacts/toolchain/${{ matrix.asset_suffix }}/provenance
             artifacts/toolchain/${{ matrix.asset_suffix }}/licenses
             artifacts/release-build-tools/${{ matrix.asset_suffix }}/manifest.json
+            artifacts/vendor-build-prerequisites/${{ matrix.asset_suffix }}
           if-no-files-found: warn
 
       - name: Upload release candidate and diagnostics
