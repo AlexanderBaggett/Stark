@@ -37,6 +37,7 @@
         "destination": "docs/Internals",
         "includeExtensions": [],
         "includeFiles": [
+          "ASMFunctionApproach.md",
           "DynamicMemoryAllocation.md",
           "LanguageInternals.md",
           "PackageImage.md",

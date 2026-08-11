@@ -110,11 +110,13 @@ public sealed class GlfwReleaseInputScriptTests
         var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml"));
         var script = ReadScript();
 
-        Assert.Contains("name: Install GLFW X11 source-build prerequisites", workflow, StringComparison.Ordinal);
+        Assert.Contains("name: Install Linux Vendor source-build prerequisites", workflow, StringComparison.Ordinal);
         Assert.Contains("if: ${{ matrix.operating_system == 'linux' }}", workflow, StringComparison.Ordinal);
-        Assert.Contains("sudo apt-get install --no-install-recommends --yes xorg-dev", workflow, StringComparison.Ordinal);
+        Assert.Contains("sudo apt-get install --no-install-recommends --yes libasound2-dev libudev-dev xorg-dev", workflow, StringComparison.Ordinal);
+        Assert.Contains("alsa/asoundlib.h", workflow, StringComparison.Ordinal);
+        Assert.Contains("libudev.h", workflow, StringComparison.Ordinal);
         Assert.Contains("artifacts/vendor-build-prerequisites/${{ matrix.asset_suffix }}", workflow, StringComparison.Ordinal);
-        Assert.Contains("glfw-x11-packages.txt", workflow, StringComparison.Ordinal);
+        Assert.Contains("linux-vendor-packages.txt", workflow, StringComparison.Ordinal);
 
         Assert.Contains("function Assert-GlfwLinuxBuildHeaders", script, StringComparison.Ordinal);
         Assert.Contains("-fsyntax-only", script, StringComparison.Ordinal);

@@ -222,7 +222,9 @@ The checked-in ANTLR license evidence is necessary because the 4.13.1 NuGet
 package has no license file. Its declaration pins the official tag, source
 commit, immutable URL, byte count, and hash. These checks establish technical
 provenance and payload presence only; they do not replace release-owner legal
-review.
+review. Repository text is checked out with LF line endings on every host through
+the root `.gitattributes` contract; this prevents Windows checkout conversion
+from changing the declared license bytes before validation.
 
 ## Published asset contract
 
