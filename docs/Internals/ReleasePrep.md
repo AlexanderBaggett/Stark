@@ -757,6 +757,21 @@ qualification also remains required.
   It resolves one immutable commit, rejects expected-SHA mismatches, requires an
   explicit immutable commit for manual publication, rejects partial publication,
   and uploads `release-plan.json` as reviewable workflow evidence.
+- [x] Gate expensive qualification behind a fast native six-runner release
+  contract. `.github/workflows/release-contract.yml` also runs independently
+  for relevant pull requests and manual diagnostics. It checks that each
+  configured runner has the promised OS/architecture, parses the critical
+  PowerShell recipes, verifies complete Vendor target support, enforces the
+  reviewed macOS GLFW binary-slice policy, rejects LLVM development-library
+  runtime patterns, and checks the assembly-package, SQLite object-header, and
+  SDK native-metadata producer/consumer contracts without rebuilding LLVM.
+- [ ] Rerun the complete six-target nonpublishing diagnostic after the contract
+  repair merges. The 2026-08-11 run exposed and the repair covers: explicit
+  Windows assembly package-image naming, all six SQLite object headers, empty
+  `pkgConfigPackages` serialization, removal of LLVM development archives from
+  runtime patterns, and x64/arm64 selection from the pinned official GLFW 3.4
+  macOS universal archive. These remain unqualified until the native workflow
+  is green.
 - [ ] Build compiler, standard library, Vendor packages, native dependencies,
   compiler-private backend, docs, installers, and archive independently for
   every matrix row.

@@ -89,6 +89,8 @@ public sealed class ReleaseSdkManifestAssemblyScriptTests
         Assert.Contains("$libraryDirectories = [System.Collections.Generic.List[string]]::new()", script, StringComparison.Ordinal);
         Assert.Contains("libraries = [object[]]$libraries", script, StringComparison.Ordinal);
         Assert.Contains("linkArguments = [object[]]$linkArguments", script, StringComparison.Ordinal);
+        Assert.Contains("pkgConfigPackages = [object[]]$pkgConfigPackages", script, StringComparison.Ordinal);
+        Assert.Contains("$pkgConfigPackages.Count -ne 0", script, StringComparison.Ordinal);
         Assert.Contains("baselineFeatures = [object[]]@(Get-ValidatedTargetFeatures", script, StringComparison.Ordinal);
         Assert.Contains("relocationModel = $targetRelocationModel", script, StringComparison.Ordinal);
         Assert.Contains("codeModel = if", script, StringComparison.Ordinal);
