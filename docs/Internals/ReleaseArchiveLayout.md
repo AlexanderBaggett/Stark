@@ -241,6 +241,29 @@ release review.
 
 ## Compiler-Private Backend Metadata
 
+The release build does not treat GitHub Actions cache or a prior workflow
+artifact as durable LLVM storage. A separate manual `Prepare qualified LLVM
+toolchains` workflow materializes the compiler-private closure on each of the
+six native runners, verifies it, writes a deterministic target-specific archive,
+extracts that archive through the hardened release extractor, and verifies the
+embedded closure a second time. When publication is explicitly enabled from an
+exact `main` commit, the complete six-target set is uploaded to the immutable
+`llvm-22.1.8-stark.1` GitHub prerelease. Each archive is also covered by GitHub
+build-provenance attestation. The workflow refuses to replace existing assets;
+a changed byte requires a new Stark bundle revision.
+
+`eng/release/llvm-toolchain-bundles.json` is the repository promotion lock. A
+`build-required` target continues to use the signed/attested upstream input or
+the pinned source-build recipe. A `published` target instead names exactly one
+release asset, its byte length and SHA-256, the SHA-256 of its embedded private-
+backend manifest, the source commit, and the qualification workflow. Once a
+target is published, release acquisition has no recipe fallback: any missing
+asset, size/hash mismatch, unsafe archive entry, embedded-manifest mismatch, or
+runtime-closure mismatch fails the release. This keeps expensive native LLVM
+compilation reusable without weakening supply-chain or backend-optimization
+facts. Actions cache may retain downloaded bytes for speed, but eviction cannot
+change correctness because the immutable release asset remains authoritative.
+
 `toolchain/llvm-22.1.8/manifest.json` records:
 
 - LLVM version and asset runtime identifier.

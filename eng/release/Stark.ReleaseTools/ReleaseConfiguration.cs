@@ -29,7 +29,9 @@ internal sealed record ReleaseConfigurationResult(
     IReadOnlyDictionary<string, string> NuGetLockFiles,
     string LlvmVersion,
     string LlvmManifest,
+    string LlvmBundleManifest,
     IReadOnlyDictionary<string, string> PrivateBackendAcquisitions,
+    IReadOnlyDictionary<string, string> PrivateBackendBundleStatuses,
     string RaylibManifest);
 
 internal static class ReleaseConfiguration
@@ -182,6 +184,13 @@ internal static class ReleaseConfiguration
                 item => item.RequiredString("target", "LLVM dependency selection"),
                 item => item.RequiredString("acquisition", "LLVM dependency selection"),
                 StringComparer.Ordinal);
+        var llvmBundleManifest = llvm.RequiredString("qualifiedBundleManifest", "LLVM dependency");
+        Validation.SafeRelativePath(llvmBundleManifest, "LLVM dependency qualifiedBundleManifest");
+        var privateBackendBundleStatuses = ValidatePrivateBackendBundleManifest(
+            root,
+            llvm,
+            targets,
+            llvmBundleManifest);
         var raylib = documents["vendor"].RequiredArray("packages", "vendor-packages.json").OfType<JsonObject>().Single(item => item.RequiredString("id", "Vendor package") == "Vendor.Raylib");
         return new ReleaseConfigurationResult(
             targets,
@@ -192,7 +201,9 @@ internal static class ReleaseConfiguration
             managed.LockFiles,
             llvm.RequiredString("version", "LLVM dependency"),
             llvm.RequiredString("acquisitionManifest", "LLVM dependency"),
+            llvmBundleManifest,
             privateBackendAcquisitions,
+            privateBackendBundleStatuses,
             raylib.RequiredString("acquisitionManifest", "Vendor.Raylib"));
     }
 
@@ -220,13 +231,94 @@ internal static class ReleaseConfiguration
                 ["nuget_lock_file"] = result.NuGetLockFiles[target.RuntimeIdentifier],
                 ["llvm_version"] = result.LlvmVersion,
                 ["llvm_manifest"] = result.LlvmManifest,
+                ["llvm_bundle_manifest"] = result.LlvmBundleManifest,
                 ["private_backend_selection"] = target.PrivateBackendSelection,
                 ["private_backend_acquisition"] = result.PrivateBackendAcquisitions[target.Id],
+                ["private_backend_bundle_status"] = result.PrivateBackendBundleStatuses[target.Id],
                 ["raylib_manifest"] = result.RaylibManifest,
             });
         }
 
         return new JsonObject { ["include"] = include };
+    }
+
+    private static IReadOnlyDictionary<string, string> ValidatePrivateBackendBundleManifest(
+        string root,
+        JsonObject backend,
+        IReadOnlyList<ReleaseTarget> targets,
+        string relativePath)
+    {
+        var path = Path.Combine(root, relativePath);
+        Validation.Require(File.Exists(path), $"LLVM qualified bundle manifest does not exist: {relativePath}");
+        var document = JsonIO.LoadObject(path, "LLVM qualified bundle manifest");
+        return ValidatePrivateBackendBundleDocument(document, backend, targets);
+    }
+
+    internal static IReadOnlyDictionary<string, string> ValidatePrivateBackendBundleDocument(
+        JsonObject document,
+        JsonObject backend,
+        IReadOnlyList<ReleaseTarget> targets)
+    {
+        Validation.NoPlaceholders("LLVM qualified bundle manifest", document);
+        Validation.Require(document.RequiredInt("schemaVersion", "LLVM qualified bundle manifest") == 1, "LLVM qualified bundle manifest schemaVersion must be 1.");
+
+        var version = backend.RequiredString("version", "private backend");
+        var bundleSetId = $"llvm-{version}-stark.1";
+        Validation.Require(document.RequiredString("bundleSetId", "LLVM qualified bundle manifest") == bundleSetId, "LLVM qualified bundle set ID is inconsistent.");
+        Validation.Require(document.RequiredString("llvmVersion", "LLVM qualified bundle manifest") == version, "LLVM qualified bundle version differs from dependencies.json.");
+        Validation.Require(document.RequiredString("releaseTag", "LLVM qualified bundle manifest") == bundleSetId, "LLVM qualified bundle release tag is inconsistent.");
+        var releaseUrl = $"https://github.com/AlexanderBaggett/Stark/releases/tag/{bundleSetId}";
+        Validation.Require(document.RequiredString("releaseUrl", "LLVM qualified bundle manifest") == releaseUrl, "LLVM qualified bundle release URL is inconsistent.");
+
+        var entries = document.RequiredArray("targets", "LLVM qualified bundle manifest").OfType<JsonObject>().ToArray();
+        Validation.Require(entries.Length == document.RequiredArray("targets", "LLVM qualified bundle manifest").Count, "LLVM qualified bundle targets must contain only objects.");
+        var targetIds = entries.Select(entry => entry.RequiredString("target", "LLVM qualified bundle target")).ToArray();
+        Validation.Unique(targetIds, "LLVM qualified bundle target IDs");
+        Validation.Require(targetIds.SequenceEqual(targets.Select(target => target.Id), StringComparer.Ordinal), "LLVM qualified bundle targets must appear once in canonical release-target order.");
+
+        var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var targetId = entry.RequiredString("target", "LLVM qualified bundle target");
+            var target = targets.Single(target => target.Id == targetId);
+            var status = entry.RequiredString("status", $"LLVM qualified bundle/{targetId}");
+            Validation.Require(status is "build-required" or "published", $"LLVM qualified bundle/{targetId} status must be build-required or published.");
+            Validation.Require(entry.RequiredString("archiveKind", $"LLVM qualified bundle/{targetId}") == target.ArchiveKind, $"LLVM qualified bundle/{targetId} archive kind differs from the target contract.");
+            var extension = target.ArchiveKind == "zip" ? ".zip" : ".tar.gz";
+            var assetName = $"stark-{bundleSetId}-{targetId}{extension}";
+            Validation.Require(entry.RequiredString("assetName", $"LLVM qualified bundle/{targetId}") == assetName, $"LLVM qualified bundle/{targetId} asset name is inconsistent.");
+
+            var baseProperties = new HashSet<string>(["target", "status", "archiveKind", "assetName"], StringComparer.Ordinal);
+            if (status == "build-required")
+            {
+                Validation.Require(entry.Select(item => item.Key).ToHashSet(StringComparer.Ordinal).SetEquals(baseProperties), $"LLVM qualified bundle/{targetId} build-required entry contains publication fields.");
+            }
+            else
+            {
+                var expectedProperties = new HashSet<string>(baseProperties, StringComparer.Ordinal)
+                {
+                    "archive", "manifestSha256", "qualificationCommit", "qualificationWorkflow",
+                };
+                Validation.Require(entry.Select(item => item.Key).ToHashSet(StringComparer.Ordinal).SetEquals(expectedProperties), $"LLVM qualified bundle/{targetId} published entry has unexpected or missing fields.");
+                var archive = entry.RequiredObject("archive", $"LLVM qualified bundle/{targetId}");
+                Validation.Require(archive.Select(item => item.Key).ToHashSet(StringComparer.Ordinal).SetEquals(["name", "url", "sha256", "size"]), $"LLVM qualified bundle/{targetId} archive descriptor has unexpected or missing fields.");
+                Validation.Require(archive.RequiredString("name", $"LLVM qualified bundle/{targetId} archive") == assetName, $"LLVM qualified bundle/{targetId} archive name differs from assetName.");
+                Validation.Require(archive.RequiredString("url", $"LLVM qualified bundle/{targetId} archive") == $"https://github.com/AlexanderBaggett/Stark/releases/download/{bundleSetId}/{assetName}", $"LLVM qualified bundle/{targetId} archive URL is inconsistent.");
+                var sha256 = archive.RequiredString("sha256", $"LLVM qualified bundle/{targetId} archive");
+                Validation.Require(sha256 == sha256.ToLowerInvariant() && Validation.IsSha256(sha256), $"LLVM qualified bundle/{targetId} archive SHA-256 is invalid.");
+                Validation.Require(archive["size"] is JsonValue size && size.TryGetValue<long>(out var bytes) && bytes > 0 && bytes < 2L * 1024 * 1024 * 1024, $"LLVM qualified bundle/{targetId} archive size is invalid or exceeds GitHub's per-asset limit.");
+                var manifestSha256 = entry.RequiredString("manifestSha256", $"LLVM qualified bundle/{targetId}");
+                Validation.Require(manifestSha256 == manifestSha256.ToLowerInvariant() && Validation.IsSha256(manifestSha256), $"LLVM qualified bundle/{targetId} embedded manifest SHA-256 is invalid.");
+                var commit = entry.RequiredString("qualificationCommit", $"LLVM qualified bundle/{targetId}");
+                Validation.Require(commit.Length == 40 && commit.All(char.IsAsciiHexDigit) && commit == commit.ToLowerInvariant(), $"LLVM qualified bundle/{targetId} qualification commit is invalid.");
+                var workflow = entry.RequiredString("qualificationWorkflow", $"LLVM qualified bundle/{targetId}");
+                Validation.Require(Uri.TryCreate(workflow, UriKind.Absolute, out var workflowUri) && workflowUri.Scheme == Uri.UriSchemeHttps && workflowUri.Host == "github.com", $"LLVM qualified bundle/{targetId} qualification workflow URL is invalid.");
+            }
+
+            statuses.Add(targetId, status);
+        }
+
+        return statuses;
     }
 
     private static List<ReleaseTarget> ValidateTargets(JsonObject document)

@@ -100,12 +100,14 @@ function Add-ConfigurationPath {
 foreach ($relativePath in @(
     ".gitattributes",
     ".github/workflows/qualify-private-backend.yml",
+    ".github/workflows/prepare-llvm-toolchains.yml",
     ".github/workflows/release-contract.yml",
     ".github/workflows/release.yml",
     "eng/release/archive-content.json",
     "eng/release/archive-content.schema.json",
     "eng/release/build-tools.json",
     "eng/release/dependencies.json",
+    "eng/release/llvm-toolchain-bundles.json",
     "eng/release/managed-license-evidence.json",
     "eng/release/NuGet.config",
     "eng/release/release-metadata.template.json",
@@ -156,6 +158,10 @@ foreach ($dependency in (Get-ArrayValues -Value (
     $acquisitionManifest = Get-OptionalPropertyValue -Object $dependency -Name "acquisitionManifest"
     if (-not [string]::IsNullOrWhiteSpace([string]$acquisitionManifest)) {
         Add-ConfigurationPath -Path ([string]$acquisitionManifest)
+    }
+    $qualifiedBundleManifest = Get-OptionalPropertyValue -Object $dependency -Name "qualifiedBundleManifest"
+    if (-not [string]::IsNullOrWhiteSpace([string]$qualifiedBundleManifest)) {
+        Add-ConfigurationPath -Path ([string]$qualifiedBundleManifest)
     }
     $globalJson = Get-OptionalPropertyValue -Object $dependency -Name "globalJson"
     if (-not [string]::IsNullOrWhiteSpace([string]$globalJson)) {
