@@ -22,6 +22,7 @@ internal static class Program
                 "validate-managed-restore" => ManagedRestoreValidator.Run(command),
                 "validate-stage" => ReleaseStageValidator.Run(command),
                 "qualify-private-backend" => PrivateBackendQualifier.Run(command),
+                "verify-private-backend-bundle" => PrivateBackendBundleVerifier.Run(command),
                 "compare-candidates" => CandidateComparer.Run(command),
                 "reconcile-github-release" => await GitHubReleaseReconciler.RunAsync(command),
                 _ => throw new ReleaseToolException($"Unknown release-tool command '{command.Command}'."),

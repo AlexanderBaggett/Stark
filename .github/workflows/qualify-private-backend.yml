@@ -139,6 +139,7 @@ jobs:
           & ./scripts/acquire-llvm-toolchain.ps1 `
             -AssetSuffix $env:TARGET_ID `
             -ManifestPath scripts/llvm-22.1.8-assets.json `
+            -IgnoreQualifiedBundle `
             -OutputDir artifacts/toolchain/macos-x64 `
             -CacheDir artifacts/llvm-cache `
             -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
