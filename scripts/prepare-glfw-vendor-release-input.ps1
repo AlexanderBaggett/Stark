@@ -450,10 +450,11 @@ function Assert-GlfwLinuxBuildHeaders {
     }
 }
 
-function Select-DarwinArm64ArchiveSlice {
+function Select-DarwinArchiveSlice {
     param(
         [Parameter(Mandatory = $true)][string] $UniversalArchive,
-        [Parameter(Mandatory = $true)][string] $OutputArchive
+        [Parameter(Mandatory = $true)][string] $OutputArchive,
+        [Parameter(Mandatory = $true)][ValidateSet("x64", "arm64")][string] $Architecture
     )
 
     $bytes = [System.IO.File]::ReadAllBytes($UniversalArchive)
@@ -461,7 +462,7 @@ function Select-DarwinArm64ArchiveSlice {
         throw "Pinned GLFW macOS archive '$UniversalArchive' is not the expected big-endian Darwin universal archive."
     }
     $architectureCount = [int](Read-BigEndianUInt32 -Bytes $bytes -Offset 4)
-    $arm64CpuType = [uint32]0x0100000C
+    $expectedCpuType = if ($Architecture -ceq "x64") { [uint32]0x01000007 } else { [uint32]0x0100000C }
     $matches = @()
     for ($index = 0; $index -lt $architectureCount; $index++) {
         $entryOffset = 8 + ($index * 20)
@@ -471,19 +472,19 @@ function Select-DarwinArm64ArchiveSlice {
         if ($sliceOffset + $sliceSize -gt [uint64]$bytes.Length -or $sliceSize -lt 8) {
             throw "Pinned GLFW macOS archive contains a truncated universal slice."
         }
-        if ($cpuType -eq $arm64CpuType) {
+        if ($cpuType -eq $expectedCpuType) {
             $matches += [pscustomobject]@{ Offset = $sliceOffset; Size = $sliceSize }
         }
     }
     if ($matches.Count -ne 1) {
-        throw "Pinned GLFW macOS archive must contain exactly one arm64 slice; found $($matches.Count)."
+        throw "Pinned GLFW macOS archive must contain exactly one $Architecture slice; found $($matches.Count)."
     }
 
     $slice = [byte[]]::new([int]$matches[0].Size)
     [System.Array]::Copy($bytes, [int64]$matches[0].Offset, $slice, 0, $slice.Length)
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputArchive) | Out-Null
     [System.IO.File]::WriteAllBytes($OutputArchive, $slice)
-    Assert-StaticArchive -Path $OutputArchive -Label "GLFW arm64 native library"
+    Assert-StaticArchive -Path $OutputArchive -Label "GLFW $Architecture native library"
 }
 
 function Invoke-GlfwSourceBuild {
@@ -809,7 +810,7 @@ if (($catalogModules -join "`n") -cne "Vendor.GLFW") {
     throw "Official Vendor catalog GLFW module ownership must contain only Vendor.GLFW."
 }
 $support = [string](Get-RequiredProperty -Object (Get-RequiredProperty -Object $catalogPackage -Name "targetSupport") -Name $AssetSuffix)
-$expectedSupport = if ($AssetSuffix -ceq "macos-arm64") { "required-binary" } else { "required-source-build" }
+$expectedSupport = if ($hostFacts.OperatingSystem -ceq "macos") { "required-binary" } else { "required-source-build" }
 if ($support -cne $expectedSupport) {
     throw "Official Vendor catalog GLFW support '$support' does not match required '$expectedSupport' for '$AssetSuffix'."
 }
@@ -842,12 +843,12 @@ if ([string](Get-RequiredProperty -Object $sourceBuildOptions -Name "configurati
 }
 
 $assetDescriptor = $sourceInput
-if ($AssetSuffix -ceq "macos-arm64") {
+if ($hostFacts.OperatingSystem -ceq "macos") {
     $binaryMatches = @((Get-ArrayValues -Value (Get-RequiredProperty -Object $catalogPackage -Name "binaryInputs")) | Where-Object {
         [string](Get-RequiredProperty -Object $_ -Name "target") -ceq $AssetSuffix
     })
     if ($binaryMatches.Count -ne 1) {
-        throw "Official Vendor catalog must define exactly one macOS arm64 GLFW binary input."
+        throw "Official Vendor catalog must define exactly one $AssetSuffix GLFW binary input."
     }
     $assetDescriptor = $binaryMatches[0]
 }
@@ -923,16 +924,17 @@ try {
 
     $nativeBuild = $null
     $extractedLicense = ""
-    if ($AssetSuffix -ceq "macos-arm64") {
+    if ($hostFacts.OperatingSystem -ceq "macos") {
         $archiveRoot = [string](Get-RequiredProperty -Object $assetDescriptor -Name "archiveRoot")
         $binaryRoot = Join-Path $extractRoot $archiveRoot
         Copy-RequiredFile -Source (Join-Path $binaryRoot "include/GLFW/glfw3.h") -Destination (Join-Path $nativeRoot "GLFW/glfw3.h")
         Copy-RequiredFile -Source (Join-Path $binaryRoot "include/GLFW/glfw3native.h") -Destination (Join-Path $nativeRoot "GLFW/glfw3native.h")
         $extractedLicense = Join-Path $binaryRoot "LICENSE.md"
         Copy-RequiredFile -Source $extractedLicense -Destination (Join-Path $nativeRoot "LICENSE.md")
-        Select-DarwinArm64ArchiveSlice `
+        Select-DarwinArchiveSlice `
             -UniversalArchive (Join-Path $binaryRoot "lib-universal/libglfw3.a") `
-            -OutputArchive $nativeLibraryPath
+            -OutputArchive $nativeLibraryPath `
+            -Architecture $hostFacts.Architecture
         $bridgeBuild = Add-GlfwBridgeToNativeArchive `
             -BridgeSource $stagedBridge `
             -BridgeObject $bridgeObjectPath `
@@ -943,7 +945,7 @@ try {
             -RanlibPath $ranlibPath
         $nativeBuild = [ordered]@{
             mode = "reviewed-pinned-binary"
-            selectedArchitecture = "arm64"
+            selectedArchitecture = $hostFacts.Architecture
             sourceArchive = [ordered]@{
                 name = [string](Get-RequiredProperty -Object $assetDescriptor -Name "name")
                 url = [string](Get-RequiredProperty -Object $assetDescriptor -Name "url")
@@ -951,7 +953,7 @@ try {
                 sha256 = [string](Get-RequiredProperty -Object $assetDescriptor -Name "sha256")
             }
             eventBridge = $bridgeBuild
-            optimizationRationale = "The reviewed upstream GLFW 3.4 macOS release archive is already optimized native code. The contributor selects only its arm64 archive slice, avoiding an unrelated x86_64 payload while preserving upstream code generation, then compiles the Stark event bridge once at -O3 and appends it deterministically. Applications never rebuild native bridge source."
+            optimizationRationale = "The reviewed upstream GLFW 3.4 macOS release archive is already optimized native code. The contributor selects only its $($hostFacts.Architecture) archive slice, avoiding the unrelated architecture payload while preserving upstream code generation, then compiles the Stark event bridge once at -O3 and appends it deterministically. Applications never rebuild native bridge source."
         }
     } else {
         $stripPrefix = [string](Get-RequiredProperty -Object $sourceInput -Name "stripPrefix")

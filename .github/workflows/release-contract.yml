@@ -1,0 +1,51 @@
+name: Release contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/release-contract.yml"
+      - ".github/workflows/release.yml"
+      - "eng/release/**"
+      - "scripts/**release*.ps1"
+      - "scripts/acquire-llvm-toolchain.ps1"
+      - "scripts/assemble-sdk-manifest.ps1"
+      - "scripts/llvm-22.1.8-assets.json"
+      - "scripts/qualify-assembly-bridge.ps1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Contract ${{ matrix.target_id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_id: linux-x64
+            os: ubuntu-24.04
+          - target_id: linux-arm64
+            os: ubuntu-24.04-arm
+          - target_id: windows-x64
+            os: windows-2025
+          - target_id: windows-arm64
+            os: windows-11-arm
+          - target_id: macos-x64
+            os: macos-15-intel
+          - target_id: macos-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Validate target release contract
+        shell: pwsh
+        run: ./scripts/test-release-target-contract.ps1 -TargetId "${{ matrix.target_id }}"

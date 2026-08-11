@@ -60,9 +60,7 @@
         "bin/llvm-ar",
         "bin/llvm-ranlib"
       ],
-      "requiredPatterns": [
-        "lib/libLLVM*"
-      ]
+      "requiredPatterns": []
     },
     "linux-arm64": {
       "runtimeIdentifier": "linux-arm64",
@@ -92,9 +90,7 @@
         "bin/llvm-ar",
         "bin/llvm-ranlib"
       ],
-      "requiredPatterns": [
-        "lib/libLLVM*"
-      ]
+      "requiredPatterns": []
     },
     "windows-x64": {
       "runtimeIdentifier": "win-x64",
@@ -126,8 +122,7 @@
         "bin/llvm-ranlib.exe"
       ],
       "requiredPatterns": [
-        "bin/LLVM*.dll",
-        "lib/LLVM*.lib"
+        "bin/LLVM*.dll"
       ]
     },
     "windows-arm64": {
@@ -160,8 +155,7 @@
         "bin/llvm-ranlib.exe"
       ],
       "requiredPatterns": [
-        "bin/LLVM*.dll",
-        "lib/LLVM*.lib"
+        "bin/LLVM*.dll"
       ]
     },
     "macos-x64": {

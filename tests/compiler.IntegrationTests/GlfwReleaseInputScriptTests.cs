@@ -31,12 +31,15 @@ public sealed class GlfwReleaseInputScriptTests
         Assert.Equal(1_653_725, source.GetProperty("size").GetInt64());
         Assert.Equal("glfw-3.4", source.GetProperty("stripPrefix").GetString());
 
-        var binary = Assert.Single(package.GetProperty("binaryInputs").EnumerateArray());
-        Assert.Equal("macos-arm64", binary.GetProperty("target").GetString());
-        Assert.Equal("glfw-3.4.bin.MACOS.zip", binary.GetProperty("name").GetString());
-        Assert.Equal(MacBinarySha256, binary.GetProperty("sha256").GetString());
-        Assert.Equal(1_351_252, binary.GetProperty("size").GetInt64());
-        Assert.Equal("glfw-3.4.bin.MACOS", binary.GetProperty("archiveRoot").GetString());
+        var binaries = package.GetProperty("binaryInputs").EnumerateArray().ToArray();
+        Assert.Equal(["macos-x64", "macos-arm64"], binaries.Select(static binary => binary.GetProperty("target").GetString()));
+        foreach (var binary in binaries)
+        {
+            Assert.Equal("glfw-3.4.bin.MACOS.zip", binary.GetProperty("name").GetString());
+            Assert.Equal(MacBinarySha256, binary.GetProperty("sha256").GetString());
+            Assert.Equal(1_351_252, binary.GetProperty("size").GetInt64());
+            Assert.Equal("glfw-3.4.bin.MACOS", binary.GetProperty("archiveRoot").GetString());
+        }
 
         var options = package.GetProperty("sourceBuildOptions");
         Assert.Equal("static", options.GetProperty("libraryType").GetString());
@@ -55,9 +58,14 @@ public sealed class GlfwReleaseInputScriptTests
             StringComparison.Ordinal);
 
         var support = package.GetProperty("targetSupport");
-        Assert.Equal("required-source-build", support.GetProperty("linux-x64").GetString());
-        Assert.Equal("required-source-build", support.GetProperty("windows-x64").GetString());
-        Assert.Equal("required-binary", support.GetProperty("macos-arm64").GetString());
+        foreach (var target in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64" })
+        {
+            Assert.Equal("required-source-build", support.GetProperty(target).GetString());
+        }
+        foreach (var target in new[] { "macos-x64", "macos-arm64" })
+        {
+            Assert.Equal("required-binary", support.GetProperty(target).GetString());
+        }
 
         var links = package.GetProperty("systemLinkFacts");
         Assert.Equal(["pthread", "dl", "rt", "m"], Strings(links.GetProperty("linux")));
@@ -93,6 +101,11 @@ public sealed class GlfwReleaseInputScriptTests
         Assert.Contains("_GLFW_X11", script, StringComparison.Ordinal);
         Assert.Contains("_GLFW_WIN32", script, StringComparison.Ordinal);
         Assert.DoesNotContain("_GLFW_WAYLAND", script, StringComparison.Ordinal);
+        Assert.Contains("function Select-DarwinArchiveSlice", script, StringComparison.Ordinal);
+        Assert.Contains("[ValidateSet(\"x64\", \"arm64\")]", script, StringComparison.Ordinal);
+        Assert.Contains("[uint32]0x01000007", script, StringComparison.Ordinal);
+        Assert.Contains("[uint32]0x0100000C", script, StringComparison.Ordinal);
+        Assert.Contains("selectedArchitecture = $hostFacts.Architecture", script, StringComparison.Ordinal);
 
         Assert.DoesNotContain("Get-Command clang", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("pkg-config", script, StringComparison.OrdinalIgnoreCase);
@@ -134,7 +147,7 @@ public sealed class GlfwReleaseInputScriptTests
     }
 
     [Fact]
-    public void LinuxX64AndWindowsX64SourceBuildContractsMatchThePinnedUpstreamSourceSets()
+    public void LinuxAndWindowsSourceBuildContractsMatchThePinnedUpstreamSourceSets()
     {
         var script = ReadScript();
 
@@ -241,8 +254,8 @@ public sealed class GlfwReleaseInputScriptTests
         Assert.Contains("duplicate or case-colliding entry", script, StringComparison.Ordinal);
         Assert.Contains("contains traversal entry", script, StringComparison.Ordinal);
         Assert.Contains("contains symbolic link", script, StringComparison.Ordinal);
-        Assert.Contains("Select-DarwinArm64ArchiveSlice", script, StringComparison.Ordinal);
-        Assert.Contains("must contain exactly one arm64 slice", script, StringComparison.Ordinal);
+        Assert.Contains("Select-DarwinArchiveSlice", script, StringComparison.Ordinal);
+        Assert.Contains("must contain exactly one $Architecture slice", script, StringComparison.Ordinal);
         Assert.Contains("is a thin archive", script, StringComparison.Ordinal);
         Assert.Contains("Remove-OwnedPath -Root $outputRoot", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Remove-Item -LiteralPath $outputRoot", script, StringComparison.Ordinal);

@@ -425,8 +425,19 @@ function Assert-NativeObjectTarget {
             $bytes[0] -eq 0x7f -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0x4c -and $bytes[3] -eq 0x46 `
                 -and $bytes[4] -eq 2 -and $bytes[5] -eq 1 -and $bytes[18] -eq 0x3e -and $bytes[19] -eq 0
         }
+        "linux-arm64" {
+            $bytes[0] -eq 0x7f -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0x4c -and $bytes[3] -eq 0x46 `
+                -and $bytes[4] -eq 2 -and $bytes[5] -eq 1 -and $bytes[18] -eq 0xb7 -and $bytes[19] -eq 0
+        }
         "windows-x64" {
             $bytes[0] -eq 0x64 -and $bytes[1] -eq 0x86
+        }
+        "windows-arm64" {
+            $bytes[0] -eq 0x64 -and $bytes[1] -eq 0xaa
+        }
+        "macos-x64" {
+            $bytes[0] -eq 0xcf -and $bytes[1] -eq 0xfa -and $bytes[2] -eq 0xed -and $bytes[3] -eq 0xfe `
+                -and $bytes[4] -eq 0x07 -and $bytes[5] -eq 0 -and $bytes[6] -eq 0 -and $bytes[7] -eq 1
         }
         "macos-arm64" {
             $bytes[0] -eq 0xcf -and $bytes[1] -eq 0xfa -and $bytes[2] -eq 0xed -and $bytes[3] -eq 0xfe `
