@@ -437,6 +437,8 @@ foreach ($entry in $matrixEntries) {
         "-NoProfile", "-NonInteractive", "-File", (Join-Path $repositoryRoot "scripts/acquire-llvm-toolchain.ps1"),
         "-AssetSuffix", [string]$entry.asset_suffix,
         "-ManifestPath", (Join-Path $repositoryRoot ([string]$entry.llvm_manifest)),
+        "-QualifiedBundleManifestPath", (Join-Path $repositoryRoot ([string]$entry.llvm_bundle_manifest)),
+        "-ReleaseToolsPath", $releaseToolsAssembly,
         "-OutputDir", $toolchainRoot,
         "-CacheDir", (Join-Path $cacheRoot ("llvm/" + $targetId))
     )

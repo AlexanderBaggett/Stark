@@ -1,0 +1,377 @@
+name: Prepare qualified LLVM toolchains
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git branch, tag, or full commit SHA to resolve once and build immutably.
+        required: true
+        default: main
+      commit:
+        description: Optional expected full commit SHA; required when publishing durable assets.
+        required: false
+        default: ""
+      publish:
+        description: Publish all six verified bundles to the immutable LLVM toolchain prerelease.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-qualified-llvm-22.1.8-stark.1
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_MULTILEVEL_LOOKUP: "0"
+  DOTNET_NOLOGO: "1"
+  LLVM_BUNDLE_TAG: llvm-22.1.8-stark.1
+
+jobs:
+  prepare:
+    name: Validate immutable bundle plan
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      commit_sha: ${{ steps.source.outputs.commit_sha }}
+    steps:
+      - name: Checkout requested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Resolve and bind source commit
+        id: source
+        shell: pwsh
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          $resolved = [string](& git rev-parse HEAD)
+          if ($LASTEXITCODE -ne 0 -or $resolved -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve the checked-out source commit."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_COMMIT) -and $env:INPUT_COMMIT -cne $resolved) {
+            throw "Requested commit '$env:INPUT_COMMIT' does not match resolved commit '$resolved'."
+          }
+          if ($env:INPUT_PUBLISH -ceq "true") {
+            if ($env:INPUT_REF -cne "main" -or $env:INPUT_COMMIT -notmatch '^[0-9a-f]{40}$') {
+              throw "Publishing durable LLVM bundles requires ref=main and an explicit full commit SHA."
+            }
+            $remoteMain = ((& git ls-remote origin refs/heads/main) -split "`t")[0]
+            if ($LASTEXITCODE -ne 0 -or $remoteMain -cne $resolved) {
+              throw "Publishing requires the exact current GitHub main commit; main is '$remoteMain', checkout is '$resolved'."
+            }
+          }
+          "commit_sha=$resolved" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build and validate repository-owned release tools
+        id: plan
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          $releaseTools = [System.IO.Path]::GetFullPath("eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll")
+          & dotnet $releaseTools validate-config --root . --include-planned --emit-matrix --github-output $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { throw "LLVM bundle plan validation failed." }
+
+  build:
+    name: Build and verify ${{ matrix.target_id }} LLVM bundle
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    needs: prepare
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cache checksum-verified LLVM recipe inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/llvm-cache
+          key: qualified-llvm-input-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+
+      - name: Cache pinned source-build tools
+        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/release-build-tool-cache
+          key: qualified-llvm-build-tools-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
+
+      - name: Acquire pinned source-build tools
+        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+        id: build_tools
+        shell: pwsh
+        run: |
+          $toolRoot = [System.IO.Path]::GetFullPath("artifacts/release-build-tools/${{ matrix.target_id }}")
+          & ./scripts/acquire-release-build-tools.ps1 `
+            -TargetId "${{ matrix.target_id }}" `
+            -OutputDir $toolRoot `
+            -CacheDir "artifacts/release-build-tool-cache/${{ matrix.target_id }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL
+          if ($LASTEXITCODE -ne 0) { throw "Pinned source-build tool acquisition failed." }
+          $manifest = Get-Content -LiteralPath (Join-Path $toolRoot "manifest.json") -Raw | ConvertFrom-Json
+          foreach ($toolName in @("cmake", "ninja")) {
+            $toolPath = [System.IO.Path]::GetFullPath((Join-Path $toolRoot ([string]$manifest.tools.$toolName.path)))
+            if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) { throw "Pinned $toolName is missing." }
+            "$($toolName)_path=$toolPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Build compiler-private LLVM closure from the pinned recipe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/qualification/${{ matrix.target_id }}" | Out-Null
+          & ./scripts/acquire-llvm-toolchain.ps1 `
+            -AssetSuffix "${{ matrix.target_id }}" `
+            -ManifestPath "${{ matrix.llvm_manifest }}" `
+            -QualifiedBundleManifestPath "${{ matrix.llvm_bundle_manifest }}" `
+            -IgnoreQualifiedBundle `
+            -OutputDir "artifacts/toolchain/${{ matrix.target_id }}" `
+            -CacheDir "artifacts/llvm-cache/${{ matrix.target_id }}" `
+            -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
+            -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
+            2>&1 | Tee-Object -FilePath "artifacts/qualification/${{ matrix.target_id }}/acquisition.log"
+          if ($LASTEXITCODE -ne 0) { throw "LLVM recipe acquisition failed for ${{ matrix.target_id }}." }
+
+      - name: Qualify native source build
+        if: ${{ matrix.private_backend_acquisition == 'pinned-source-build' }}
+        shell: pwsh
+        run: |
+          & dotnet $env:RELEASE_TOOLS_DLL qualify-private-backend `
+            --root . `
+            --target-id "${{ matrix.target_id }}" `
+            --toolchain-root "artifacts/toolchain/${{ matrix.target_id }}" `
+            --output "artifacts/qualification/${{ matrix.target_id }}/native-qualification.json" `
+            2>&1 | Tee-Object -FilePath "artifacts/qualification/${{ matrix.target_id }}/native-qualification.log"
+          if ($LASTEXITCODE -ne 0) { throw "Native source-build qualification failed for ${{ matrix.target_id }}." }
+
+      - name: Verify and create deterministic bundle
+        shell: pwsh
+        env:
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          $target = "${{ matrix.target_id }}"
+          $kind = "${{ matrix.archive_kind }}"
+          $extension = if ($kind -ceq "zip") { ".zip" } else { ".tar.gz" }
+          $assetName = "stark-$env:LLVM_BUNDLE_TAG-$target$extension"
+          $bundleRoot = [System.IO.Path]::GetFullPath("artifacts/bundle/$target")
+          New-Item -ItemType Directory -Force -Path $bundleRoot | Out-Null
+          $toolchainRoot = [System.IO.Path]::GetFullPath("artifacts/toolchain/$target")
+          & dotnet $env:RELEASE_TOOLS_DLL verify-private-backend-bundle --root . --target-id $target --toolchain-root $toolchainRoot
+          if ($LASTEXITCODE -ne 0) { throw "Pre-archive closure verification failed for $target." }
+          $archivePath = Join-Path $bundleRoot $assetName
+          $archiveResult = @(& dotnet $env:RELEASE_TOOLS_DLL create-archive --source-root $toolchainRoot --output $archivePath --kind $kind) | Select-Object -Last 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Deterministic archive creation failed for $target." }
+          $manifestSha = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $toolchainRoot "manifest.json")).Hash.ToLowerInvariant()
+          $record = [ordered]@{
+            schemaVersion = 1
+            target = $target
+            archiveKind = $kind
+            assetName = $assetName
+            archive = [ordered]@{
+              name = $assetName
+              url = "https://github.com/${{ github.repository }}/releases/download/$env:LLVM_BUNDLE_TAG/$assetName"
+              sha256 = [string]$archiveResult.sha256
+              size = [int64]$archiveResult.bytes
+            }
+            manifestSha256 = $manifestSha
+            qualificationCommit = $env:SOURCE_COMMIT
+            qualificationWorkflow = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $bundleRoot "$target.bundle.json") -Encoding utf8
+
+          $extractRoot = [System.IO.Path]::GetFullPath("artifacts/bundle-smoke/$target")
+          & dotnet $env:RELEASE_TOOLS_DLL extract-archive --archive $archivePath --kind $kind --destination $extractRoot --required-root $target --label "qualified LLVM bundle"
+          if ($LASTEXITCODE -ne 0) { throw "Post-archive safe extraction failed for $target." }
+          & dotnet $env:RELEASE_TOOLS_DLL verify-private-backend-bundle `
+            --root . `
+            --target-id $target `
+            --toolchain-root (Join-Path $extractRoot $target) `
+            --expected-manifest-sha256 $manifestSha
+          if ($LASTEXITCODE -ne 0) { throw "Post-archive closure verification failed for $target." }
+
+      - name: Attest immutable bundle provenance
+        if: ${{ inputs.publish }}
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: artifacts/bundle/${{ matrix.target_id }}/stark-${{ env.LLVM_BUNDLE_TAG }}-${{ matrix.target_id }}.*
+
+      - name: Upload bundle for publication aggregation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llvm-bundle-${{ matrix.target_id }}
+          path: |
+            artifacts/bundle/${{ matrix.target_id }}
+            artifacts/qualification/${{ matrix.target_id }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish immutable six-target LLVM bundle set
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-24.04
+    needs: [prepare, build]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Download all verified bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: llvm-bundle-*
+          path: artifacts/publish-input
+          merge-multiple: true
+
+      - name: Assemble and validate the checksum lock
+        shell: pwsh
+        env:
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          $template = Get-Content -LiteralPath eng/release/llvm-toolchain-bundles.json -Raw | ConvertFrom-Json
+          $records = @{}
+          foreach ($recordFile in @(Get-ChildItem -LiteralPath artifacts/publish-input -Filter "*.bundle.json" -File -Recurse)) {
+            $record = Get-Content -LiteralPath $recordFile.FullName -Raw | ConvertFrom-Json
+            $target = [string]$record.target
+            if ($records.ContainsKey($target)) { throw "Duplicate bundle record for '$target'." }
+            $records[$target] = $record
+          }
+          if ($records.Count -ne 6) { throw "Publication requires exactly six unique LLVM bundle records; found $($records.Count)." }
+
+          $publishedTargets = @()
+          foreach ($expected in @($template.targets)) {
+            $target = [string]$expected.target
+            if (-not $records.ContainsKey($target)) { throw "Missing bundle record for '$target'." }
+            $record = $records[$target]
+            if ([int]$record.schemaVersion -ne 1 -or
+                [string]$record.target -cne $target -or
+                [string]$record.archiveKind -cne [string]$expected.archiveKind -or
+                [string]$record.assetName -cne [string]$expected.assetName -or
+                [string]$record.archive.name -cne [string]$expected.assetName -or
+                [string]$record.qualificationCommit -cne $env:SOURCE_COMMIT) {
+              throw "Bundle record for '$target' differs from the immutable publication plan."
+            }
+            $archive = @(Get-ChildItem -LiteralPath artifacts/publish-input -Filter ([string]$record.assetName) -File -Recurse)
+            if ($archive.Count -ne 1) { throw "Expected exactly one archive '$($record.assetName)'; found $($archive.Count)." }
+            $actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive[0].FullName).Hash.ToLowerInvariant()
+            $actualSize = [int64]$archive[0].Length
+            if ($actualSha -cne [string]$record.archive.sha256 -or $actualSize -ne [int64]$record.archive.size) {
+              throw "Downloaded workflow artifact '$($record.assetName)' differs from its verified record."
+            }
+            $publishedTargets += [ordered]@{
+              target = $target
+              status = "published"
+              archiveKind = [string]$record.archiveKind
+              assetName = [string]$record.assetName
+              archive = $record.archive
+              manifestSha256 = [string]$record.manifestSha256
+              qualificationCommit = [string]$record.qualificationCommit
+              qualificationWorkflow = [string]$record.qualificationWorkflow
+            }
+          }
+          $catalog = [ordered]@{
+            schemaVersion = 1
+            bundleSetId = [string]$template.bundleSetId
+            llvmVersion = [string]$template.llvmVersion
+            releaseTag = [string]$template.releaseTag
+            releaseUrl = [string]$template.releaseUrl
+            targets = $publishedTargets
+          }
+          $catalogPath = [System.IO.Path]::GetFullPath("artifacts/publish-input/llvm-toolchain-bundles.json")
+          $catalog | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+          Copy-Item -LiteralPath $catalogPath -Destination eng/release/llvm-toolchain-bundles.json -Force
+          & dotnet $env:RELEASE_TOOLS_DLL validate-config --root .
+          if ($LASTEXITCODE -ne 0) { throw "Generated published-bundle lock failed the repository release contract." }
+
+      - name: Publish immutable release assets without replacement
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          $existingRelease = $null
+          $existingJson = @(& gh release view $env:LLVM_BUNDLE_TAG --repo "${{ github.repository }}" --json tagName,assets 2>$null) -join [Environment]::NewLine
+          if ($LASTEXITCODE -eq 0) {
+            $existingRelease = $existingJson | ConvertFrom-Json
+            if (@($existingRelease.assets).Count -ne 0) {
+              throw "Immutable toolchain release '$env:LLVM_BUNDLE_TAG' already contains assets; refusing to replace them. Increment the Stark bundle revision instead."
+            }
+          } else {
+            & gh release create $env:LLVM_BUNDLE_TAG `
+              --repo "${{ github.repository }}" `
+              --target $env:SOURCE_COMMIT `
+              --title "Qualified LLVM 22.1.8 toolchains (Stark bundle 1)" `
+              --notes "Compiler-private, checksum-locked LLVM 22.1.8 closures for Stark's six 64-bit release targets. These are build inputs, not a Stark SDK release." `
+              --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "Could not create the LLVM toolchain release." }
+          }
+
+          $assets = @(Get-ChildItem -LiteralPath artifacts/publish-input -File -Recurse |
+            Where-Object { $_.Name -like "stark-$env:LLVM_BUNDLE_TAG-*" } |
+            Sort-Object Name)
+          if ($assets.Count -ne 6) { throw "Expected six LLVM archives for publication; found $($assets.Count)." }
+          $assetPaths = @($assets | ForEach-Object { $_.FullName })
+          $assetPaths += [System.IO.Path]::GetFullPath("artifacts/publish-input/llvm-toolchain-bundles.json")
+          & gh release upload $env:LLVM_BUNDLE_TAG @assetPaths --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { throw "LLVM toolchain asset publication failed." }
+
+      - name: Upload generated repository lock
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llvm-toolchain-published-lock
+          path: artifacts/publish-input/llvm-toolchain-bundles.json
+          if-no-files-found: error
+          retention-days: 30

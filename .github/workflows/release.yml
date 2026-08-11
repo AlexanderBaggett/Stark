@@ -188,7 +188,14 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: artifacts/llvm-cache
-          key: llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+          key: llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'eng/release/llvm-toolchain-bundles.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+
+      - name: Build repository-owned release tools for backend verification
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Acquire and verify pinned LLVM for repository quality
         id: quality_llvm
@@ -201,6 +208,8 @@ jobs:
 
           & ./scripts/acquire-llvm-toolchain.ps1 `
             -AssetSuffix "linux-x64" `
+            -QualifiedBundleManifestPath "eng/release/llvm-toolchain-bundles.json" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
             -OutputDir $toolchainRoot `
             -CacheDir $cacheRoot `
             2>&1 | Tee-Object -FilePath (Join-Path $diagnosticsRoot "llvm-acquisition.log")
@@ -234,7 +243,7 @@ jobs:
           $versionLines | Set-Content -LiteralPath (Join-Path $diagnosticsRoot "clang-version.log") -Encoding utf8
           Copy-Item -LiteralPath $backendManifestPath -Destination (Join-Path $diagnosticsRoot "private-backend-manifest.json") -Force
           (Join-Path $toolchainRoot "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "cache_key=llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "cache_key=llvm-input-linux-x64-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'eng/release/llvm-toolchain-bundles.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Save checksum-verified Linux x64 LLVM inputs
         if: ${{ steps.quality_llvm_cache.outputs.cache-hit != 'true' }}
@@ -397,11 +406,11 @@ jobs:
           key: release-build-tools-${{ runner.os }}-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'scripts/resolve-release-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
 
       - name: Cache checksum-verified LLVM inputs
-        if: ${{ matrix.target_id == 'linux-x64' || matrix.private_backend_acquisition == 'pinned-source-build' }}
+        if: ${{ matrix.target_id == 'linux-x64' || matrix.private_backend_acquisition == 'pinned-source-build' || matrix.private_backend_bundle_status == 'published' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: artifacts/llvm-cache
-          key: llvm-input-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
+          key: llvm-input-${{ matrix.target_id }}-${{ hashFiles('scripts/llvm-22.1.8-assets.json', 'eng/release/llvm-toolchain-bundles.json', 'scripts/acquire-llvm-toolchain.ps1', 'scripts/llvm-source-build.ps1') }}
 
       - name: Acquire pinned release build tools
         id: build_tools
@@ -478,6 +487,8 @@ jobs:
           & ./scripts/acquire-llvm-toolchain.ps1 `
             -AssetSuffix "${{ matrix.asset_suffix }}" `
             -ManifestPath "${{ matrix.llvm_manifest }}" `
+            -QualifiedBundleManifestPath "${{ matrix.llvm_bundle_manifest }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
             -OutputDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
             -CacheDir "artifacts/llvm-cache/${{ matrix.asset_suffix }}" `
             -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `

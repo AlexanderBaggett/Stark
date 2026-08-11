@@ -4,6 +4,12 @@ param(
 
     [string] $ManifestPath = "scripts/llvm-22.1.8-assets.json",
 
+    [string] $QualifiedBundleManifestPath = "eng/release/llvm-toolchain-bundles.json",
+
+    [string] $ReleaseToolsPath = "",
+
+    [switch] $IgnoreQualifiedBundle,
+
     [string] $OutputDir = "artifacts/toolchain",
 
     [string] $CacheDir = "artifacts/llvm-cache",
@@ -441,6 +447,11 @@ function Save-Asset {
 
     Assert-NoReparsePointPath -Path $destination -Label "LLVM cached asset"
     Assert-Sha256 -Path $destination -ExpectedSha256 $sha256
+    $expectedSize = [int64](Get-JsonProperty -Object $Asset -Name "size")
+    $actualSize = [int64](Get-Item -LiteralPath $destination -Force).Length
+    if ($expectedSize -le 0 -or $actualSize -ne $expectedSize) {
+        throw "Size mismatch for '$destination'. Expected $expectedSize bytes, got $actualSize bytes."
+    }
     return $destination
 }
 
@@ -861,12 +872,53 @@ $archive = if ($null -eq $archiveProperty) { $null } else { $archiveProperty.Val
 $sourceBuild = if ($null -eq $sourceBuildProperty) { $null } else { $sourceBuildProperty.Value }
 $acquisitionKind = if ($null -eq $sourceBuild) { "upstream-archive" } else { "pinned-source-build" }
 $llvmVersion = [string] (Get-JsonProperty -Object $manifest -Name "llvmVersion")
+$qualifiedBundle = $null
+$releaseToolsFullPath = ""
+if (-not $IgnoreQualifiedBundle) {
+    $qualifiedBundleManifestFullPath = Resolve-RepositoryPath -Path $QualifiedBundleManifestPath
+    if (-not (Test-Path -LiteralPath $qualifiedBundleManifestFullPath -PathType Leaf)) {
+        throw "LLVM qualified bundle manifest '$qualifiedBundleManifestFullPath' does not exist."
+    }
 
-$assetDescriptors = @(
-    $manifest.sourceArchive,
-    $manifest.sourceArchive.signature,
-    $manifest.sourceArchive.attestation)
-if ($null -ne $archive) {
+    $bundleManifest = Get-Content -LiteralPath $qualifiedBundleManifestFullPath -Raw | ConvertFrom-Json
+    if ([int](Get-JsonProperty -Object $bundleManifest -Name "schemaVersion") -ne 1 -or
+        -not [string]::Equals([string](Get-JsonProperty -Object $bundleManifest -Name "llvmVersion"), $llvmVersion, [StringComparison]::Ordinal)) {
+        throw "LLVM qualified bundle manifest identity is inconsistent with '$ManifestPath'."
+    }
+    $bundleEntries = @((Get-ArrayValues -Value (Get-JsonProperty -Object $bundleManifest -Name "targets")) |
+        Where-Object { [string]::Equals([string]$_.target, $AssetSuffix, [StringComparison]::Ordinal) })
+    if ($bundleEntries.Count -ne 1) {
+        throw "LLVM qualified bundle manifest must contain exactly one '$AssetSuffix' entry."
+    }
+    $bundleEntry = $bundleEntries[0]
+    $bundleStatus = [string](Get-JsonProperty -Object $bundleEntry -Name "status")
+    if ($bundleStatus -eq "published") {
+        $qualifiedBundle = $bundleEntry
+        if ([string]::IsNullOrWhiteSpace($ReleaseToolsPath)) {
+            throw "Published LLVM bundle '$AssetSuffix' requires -ReleaseToolsPath for safe extraction and closure verification."
+        }
+        $releaseToolsFullPath = Resolve-RepositoryPath -Path $ReleaseToolsPath
+        if (-not (Test-Path -LiteralPath $releaseToolsFullPath -PathType Leaf)) {
+            throw "Release tools assembly '$releaseToolsFullPath' does not exist."
+        }
+        $embeddedManifestSha256 = [string](Get-JsonProperty -Object $qualifiedBundle -Name "manifestSha256")
+        if ($embeddedManifestSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "Published LLVM bundle '$AssetSuffix' has an invalid embedded manifest SHA-256."
+        }
+    } elseif ($bundleStatus -ne "build-required") {
+        throw "LLVM qualified bundle '$AssetSuffix' has unsupported status '$bundleStatus'."
+    }
+}
+
+$assetDescriptors = if ($null -ne $qualifiedBundle) {
+    @($qualifiedBundle.archive)
+} else {
+    @(
+        $manifest.sourceArchive,
+        $manifest.sourceArchive.signature,
+        $manifest.sourceArchive.attestation)
+}
+if ($null -eq $qualifiedBundle -and $null -ne $archive) {
     $assetDescriptors += @($archive, $archive.signature, $archive.attestation)
 }
 foreach ($asset in $assetDescriptors) {
@@ -882,15 +934,19 @@ New-Item -ItemType Directory -Force -Path $assetCacheRoot | Out-Null
 Assert-NoReparsePointPath -Path $assetCacheRoot -Label "LLVM platform cache directory"
 $archivePath = $null
 $sourceArchivePath = $null
-if ($null -ne $archive) {
+if ($null -ne $qualifiedBundle) {
+    $archivePath = Save-Asset -Asset $qualifiedBundle.archive -DestinationDirectory $assetCacheRoot
+} elseif ($null -ne $archive) {
     $archivePath = Save-Asset -Asset $archive -DestinationDirectory $assetCacheRoot
     Save-Asset -Asset $archive.signature -DestinationDirectory $assetCacheRoot | Out-Null
     Save-Asset -Asset $archive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
 } else {
     $sourceArchivePath = Save-Asset -Asset $manifest.sourceArchive -DestinationDirectory $assetCacheRoot
 }
-Save-Asset -Asset $manifest.sourceArchive.signature -DestinationDirectory $assetCacheRoot | Out-Null
-Save-Asset -Asset $manifest.sourceArchive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
+if ($null -eq $qualifiedBundle) {
+    Save-Asset -Asset $manifest.sourceArchive.signature -DestinationDirectory $assetCacheRoot | Out-Null
+    Save-Asset -Asset $manifest.sourceArchive.attestation -DestinationDirectory $assetCacheRoot | Out-Null
+}
 
 $operationToken = [Guid]::NewGuid().ToString("N")
 $workRoot = Get-ContainedChildPath -Root $assetCacheRoot -Child ("work-" + $operationToken) -Name "LLVM work directory"
@@ -919,6 +975,53 @@ New-Item -ItemType Directory -Path $stageRoot | Out-Null
 Write-OwnerMarker -Directory $stageRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot -Token $operationToken
 
 try {
+    if ($null -ne $qualifiedBundle) {
+        $bundleExtractRoot = Join-Path $workRoot "qualified-bundle"
+        $archiveKind = [string](Get-JsonProperty -Object $qualifiedBundle -Name "archiveKind")
+        & dotnet $releaseToolsFullPath extract-archive `
+            --archive $archivePath `
+            --kind $archiveKind `
+            --destination $bundleExtractRoot `
+            --required-root $AssetSuffix `
+            --label "qualified LLVM bundle $AssetSuffix"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Safe extraction failed for qualified LLVM bundle '$AssetSuffix'."
+        }
+
+        $bundlePayloadRoot = Join-Path $bundleExtractRoot $AssetSuffix
+        Copy-DirectoryContents -Source $bundlePayloadRoot -Destination $stageRoot
+        $bundleManifestPath = Join-Path $stageRoot "manifest.json"
+        Assert-Sha256 -Path $bundleManifestPath -ExpectedSha256 $embeddedManifestSha256
+
+        $hardlinkProperty = $platform.PSObject.Properties["hardlinkAliases"]
+        [void]@(
+            Convert-ToVerifiedHardLinkAliases `
+                -DestinationRoot $stageRoot `
+                -Aliases (Get-ArrayValues -Value $(if ($null -eq $hardlinkProperty) { $null } else { $hardlinkProperty.Value }))
+        )
+
+        & dotnet $releaseToolsFullPath verify-private-backend-bundle `
+            --root $repositoryRoot `
+            --target-id $AssetSuffix `
+            --toolchain-root $stageRoot `
+            --expected-manifest-sha256 $embeddedManifestSha256
+        if ($LASTEXITCODE -ne 0) {
+            throw "Closure verification failed for qualified LLVM bundle '$AssetSuffix'."
+        }
+
+        Assert-OwnedDirectory -Directory $stageRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot
+        Assert-NoReparsePointPath -Path $outputRoot -Label "LLVM output directory"
+        if (Test-PathEntryExists -Path $outputRoot) {
+            Remove-OwnedDirectory -Directory $outputRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot
+        }
+
+        Assert-NoReparsePointPath -Path $outputRoot -Label "LLVM output directory"
+        Move-Item -LiteralPath $stageRoot -Destination $outputRoot
+        Assert-OwnedDirectory -Directory $outputRoot -Kind "stark-llvm-output" -IntendedOutputRoot $outputRoot
+        Write-Host "Prepared LLVM $llvmVersion toolchain for $AssetSuffix from the checksum-pinned qualified bundle at $outputRoot"
+        return
+    }
+
     $extractionInput = if ($null -eq $sourceArchivePath) { $archivePath } else { $sourceArchivePath }
     tar -xf $extractionInput -C $extractRoot
     if ($LASTEXITCODE -ne 0) {

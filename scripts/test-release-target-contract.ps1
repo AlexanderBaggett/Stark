@@ -13,6 +13,7 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Pat
 $targetManifestPath = Join-Path $repositoryRoot "eng/release/targets.json"
 $vendorCatalogPath = Join-Path $repositoryRoot "eng/release/vendor-packages.json"
 $llvmManifestPath = Join-Path $repositoryRoot "scripts/llvm-22.1.8-assets.json"
+$llvmBundleManifestPath = Join-Path $repositoryRoot "eng/release/llvm-toolchain-bundles.json"
 
 function Get-RequiredProperty {
     param(
@@ -98,6 +99,38 @@ foreach ($pattern in @(Get-RequiredProperty -Object $llvmPlatform -Name "require
         -or $normalizedPattern.EndsWith(".lib", [StringComparison]::Ordinal) `
         -or $normalizedPattern -ceq "lib/libllvm*") {
         throw "LLVM target '$TargetId' declares development-only runtime pattern '$pattern'."
+    }
+}
+
+$llvmBundleManifest = Get-Content -LiteralPath $llvmBundleManifestPath -Raw | ConvertFrom-Json
+if ([int](Get-RequiredProperty -Object $llvmBundleManifest -Name "schemaVersion") -ne 1 -or
+    [string](Get-RequiredProperty -Object $llvmBundleManifest -Name "llvmVersion") -cne "22.1.8") {
+    throw "Qualified LLVM bundle manifest has an unexpected identity."
+}
+$bundleEntries = @((Get-RequiredProperty -Object $llvmBundleManifest -Name "targets"))
+$bundleTargetIds = @($bundleEntries | ForEach-Object { [string](Get-RequiredProperty -Object $_ -Name "target") })
+if (($bundleTargetIds -join "`n") -cne ($expectedTargetIds -join "`n")) {
+    throw "Qualified LLVM bundle manifest does not contain the exact reviewed six-target order."
+}
+$bundleEntry = @($bundleEntries | Where-Object { [string]$_.target -ceq $TargetId })[0]
+$bundleStatus = [string](Get-RequiredProperty -Object $bundleEntry -Name "status")
+if ($bundleStatus -notin @("build-required", "published")) {
+    throw "Qualified LLVM bundle '$TargetId' has unsupported state '$bundleStatus'."
+}
+$expectedArchiveKind = [string](Get-RequiredProperty -Object $target -Name "archiveKind")
+$expectedArchiveExtension = [string](Get-RequiredProperty -Object $target -Name "archiveExtension")
+$expectedBundleName = "stark-llvm-22.1.8-stark.1-$TargetId$expectedArchiveExtension"
+if ([string](Get-RequiredProperty -Object $bundleEntry -Name "archiveKind") -cne $expectedArchiveKind -or
+    [string](Get-RequiredProperty -Object $bundleEntry -Name "assetName") -cne $expectedBundleName) {
+    throw "Qualified LLVM bundle '$TargetId' differs from the target archive contract."
+}
+if ($bundleStatus -ceq "published") {
+    $bundleArchive = Get-RequiredProperty -Object $bundleEntry -Name "archive"
+    if ([string](Get-RequiredProperty -Object $bundleArchive -Name "name") -cne $expectedBundleName -or
+        [string](Get-RequiredProperty -Object $bundleArchive -Name "sha256") -notmatch '^[0-9a-f]{64}$' -or
+        [int64](Get-RequiredProperty -Object $bundleArchive -Name "size") -le 0 -or
+        [string](Get-RequiredProperty -Object $bundleEntry -Name "manifestSha256") -notmatch '^[0-9a-f]{64}$') {
+        throw "Published LLVM bundle '$TargetId' is not fully size/hash pinned."
     }
 }
 

@@ -116,6 +116,7 @@
       "licenseUrl": "https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/LICENSE.TXT",
       "provenanceUrl": "https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8",
       "acquisitionManifest": "scripts/llvm-22.1.8-assets.json",
+      "qualifiedBundleManifest": "eng/release/llvm-toolchain-bundles.json",
       "archiveLayout": "toolchain/llvm-22.1.8",
       "allowlistPolicy": "compiler-private-runtime-only",
       "selections": [
