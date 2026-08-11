@@ -3,14 +3,6 @@ name: Prepare qualified LLVM toolchains
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Git branch, tag, or full commit SHA to resolve once and build immutably.
-        required: true
-        default: main
-      commit:
-        description: Optional expected full commit SHA; required when publishing durable assets.
-        required: false
-        default: ""
       publish:
         description: Publish all six verified bundles to the immutable LLVM toolchain prerelease.
         type: boolean
@@ -38,30 +30,26 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       commit_sha: ${{ steps.source.outputs.commit_sha }}
     steps:
-      - name: Checkout requested source
+      - name: Checkout selected workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Resolve and bind source commit
         id: source
         shell: pwsh
         env:
-          INPUT_REF: ${{ inputs.ref }}
-          INPUT_COMMIT: ${{ inputs.commit }}
+          DISPATCH_REF: ${{ github.ref }}
           INPUT_PUBLISH: ${{ inputs.publish }}
         run: |
           $resolved = [string](& git rev-parse HEAD)
           if ($LASTEXITCODE -ne 0 -or $resolved -notmatch '^[0-9a-f]{40}$') {
             throw "Could not resolve the checked-out source commit."
           }
-          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_COMMIT) -and $env:INPUT_COMMIT -cne $resolved) {
-            throw "Requested commit '$env:INPUT_COMMIT' does not match resolved commit '$resolved'."
-          }
           if ($env:INPUT_PUBLISH -ceq "true") {
-            if ($env:INPUT_REF -cne "main" -or $env:INPUT_COMMIT -notmatch '^[0-9a-f]{40}$') {
-              throw "Publishing durable LLVM bundles requires ref=main and an explicit full commit SHA."
+            if ($env:DISPATCH_REF -cne "refs/heads/main") {
+              throw "Publishing durable LLVM bundles requires selecting main in GitHub's 'Use workflow from' control."
             }
             $remoteMain = ((& git ls-remote origin refs/heads/main) -split "`t")[0]
             if ($LASTEXITCODE -ne 0 -or $remoteMain -cne $resolved) {
