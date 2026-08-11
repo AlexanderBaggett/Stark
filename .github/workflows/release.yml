@@ -260,14 +260,16 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit_sha }}
           fetch-depth: 1
 
-      - name: Install GLFW X11 source-build prerequisites
+      - name: Install Linux Vendor source-build prerequisites
         if: ${{ matrix.operating_system == 'linux' }}
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes xorg-dev
+          sudo apt-get install --no-install-recommends --yes libasound2-dev libudev-dev xorg-dev
 
           required_headers=(
+            alsa/asoundlib.h
+            libudev.h
             X11/XKBlib.h
             X11/Xatom.h
             X11/Xcursor/Xcursor.h
@@ -291,6 +293,8 @@ jobs:
           evidence_dir="artifacts/vendor-build-prerequisites/${{ matrix.asset_suffix }}"
           mkdir -p "$evidence_dir"
           dpkg-query -W -f='${binary:Package}=${Version}\n' \
+            libasound2-dev \
+            libudev-dev \
             xorg-dev \
             libx11-dev \
             libxcursor-dev \
@@ -298,7 +302,7 @@ jobs:
             libxi-dev \
             libxinerama-dev \
             libxrandr-dev \
-            | LC_ALL=C sort > "$evidence_dir/glfw-x11-packages.txt"
+            | LC_ALL=C sort > "$evidence_dir/linux-vendor-packages.txt"
 
       - name: Setup .NET
         env:

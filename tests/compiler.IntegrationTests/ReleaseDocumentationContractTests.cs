@@ -1,7 +1,28 @@
 namespace compiler.IntegrationTests;
 
+using System.Text.Json;
+
 public sealed class ReleaseDocumentationContractTests
 {
+    [Fact]
+    public void ShippedLanguageInternalsIncludesItsAssemblyContractTarget()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        using var content = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(repositoryRoot, "eng", "release", "archive-content.json")));
+        var internals = content.RootElement.GetProperty("repositoryContent").GetProperty("trees")
+            .EnumerateArray()
+            .Single(static tree => tree.GetProperty("id").GetString() == "documentation-linked-internals");
+        var files = internals.GetProperty("includeFiles").EnumerateArray()
+            .Select(static file => file.GetString()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("LanguageInternals.md", files);
+        Assert.Contains("ASMFunctionApproach.md", files);
+        Assert.Contains("(ASMFunctionApproach.md)", File.ReadAllText(
+            Path.Combine(repositoryRoot, "docs", "Internals", "LanguageInternals.md")), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BookStructureGateSupportsTheSystemBashShippedByMacOS()
     {

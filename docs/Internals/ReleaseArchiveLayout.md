@@ -180,13 +180,15 @@ always an archive defect.
 Ordinary builds should prefer bundled binary package images and native artifacts.
 Source fallback is for diagnostics, rebuilds, and development, not the hot path.
 
-Producing the official Linux `Vendor.GLFW` package is a release-build operation,
-not an end-user source fallback. The release runner installs Ubuntu's `xorg-dev`
-package, verifies every X11 header included by the pinned GLFW source, and records
-the exact installed package versions in the build evidence. Those headers are
-compile-time-only inputs: they are not copied into the Stark SDK and do not add
-an X11 development-package requirement for applications using the bundled GLFW
-archive. GLFW's X11 backend dynamically loads its X11 runtime libraries.
+Producing the official Linux Vendor packages is a release-build operation, not
+an end-user source fallback. The release runner installs Ubuntu's `xorg-dev` for
+GLFW's X11 backend and `libasound2-dev` plus `libudev-dev` for SDL3's ALSA and
+Linux device-discovery backends, verifies the headers before the expensive
+native builds, and records the exact installed package versions in the build
+evidence. Those headers are compile-time-only inputs: they are not copied into
+the Stark SDK and do not add development-package requirements for applications
+using the bundled archives. The resulting GLFW and SDL3 backends dynamically
+load their corresponding runtime libraries.
 
 ## Deterministic Container Contract
 

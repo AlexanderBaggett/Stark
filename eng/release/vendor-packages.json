@@ -28,15 +28,18 @@
       "acquisitionManifest": "scripts/raylib-6.0-assets.json",
       "binaryInputs": [
         { "target": "linux-x64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz", "sha256": "b64ba618a19e7da9e9c0e09bb398ecfd477a77d2d7231901bafc8739d27c08d2" },
+        { "target": "linux-arm64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_arm64.tar.gz", "sha256": "d39ca0b36fe865b41b058a5646576e6b98b4875352502b41ed303f2c38a39ec9" },
         { "target": "windows-x64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_msvc16.zip", "sha256": "c93c7dc74576e00e3ee57fa2bd5fd109fbfc5aca87e12046dd7ec2c2268b3f78" },
+        { "target": "windows-arm64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_winarm64_msvc16.zip", "sha256": "ecd21693c5fd760ce1efc52745882e98fa61e0d3ecac36ec2271c60e245849b1" },
+        { "target": "macos-x64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_macos.tar.gz", "sha256": "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70" },
         { "target": "macos-arm64", "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_macos.tar.gz", "sha256": "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70" }
       ],
       "targetSupport": {
         "linux-x64": "required-binary",
-        "linux-arm64": "required-source-build",
+        "linux-arm64": "required-binary",
         "windows-x64": "required-binary",
-        "windows-arm64": "required-source-build",
-        "macos-x64": "required-source-build",
+        "windows-arm64": "required-binary",
+        "macos-x64": "required-binary",
         "macos-arm64": "required-binary"
       },
       "systemLinkFacts": {
@@ -293,6 +296,22 @@
             "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF", "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF",
             "SDL_LIBUDEV=ON"
           ],
+          "linux-arm64": [
+            "SDL_DEPS_SHARED=ON", "SDL_SYSTEM_ICONV=ON", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=OFF", "SDL_AVX2=OFF", "SDL_AVX512F=OFF", "SDL_SSE=OFF", "SDL_SSE2=OFF",
+            "SDL_SSE3=OFF", "SDL_SSE4_1=OFF", "SDL_SSE4_2=OFF", "SDL_MMX=OFF", "SDL_ARMNEON=ON",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=ON",
+            "SDL_PTHREADS_SEM=ON", "SDL_OSS=OFF", "SDL_ALSA=ON", "SDL_ALSA_SHARED=ON",
+            "SDL_JACK=OFF", "SDL_PIPEWIRE=OFF", "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF",
+            "SDL_CLOCK_GETTIME=ON", "SDL_X11=ON", "SDL_X11_SHARED=ON", "SDL_X11_XCURSOR=ON",
+            "SDL_X11_XDBE=ON", "SDL_X11_XINPUT=ON", "SDL_X11_XFIXES=ON", "SDL_X11_XRANDR=ON",
+            "SDL_X11_XSCRNSAVER=ON", "SDL_X11_XSHAPE=ON", "SDL_X11_XSYNC=ON", "SDL_X11_XTEST=ON",
+            "SDL_FRIBIDI=OFF", "SDL_LIBTHAI=OFF", "SDL_WAYLAND=OFF", "SDL_WAYLAND_LIBDECOR=OFF",
+            "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=OFF", "SDL_DIRECTX=OFF", "SDL_XINPUT=OFF",
+            "SDL_WASAPI=OFF", "SDL_RENDER_D3D=OFF", "SDL_RENDER_D3D11=OFF", "SDL_RENDER_D3D12=OFF",
+            "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF", "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF",
+            "SDL_LIBUDEV=ON"
+          ],
           "windows-x64": [
             "SDL_DEPS_SHARED=OFF", "SDL_SYSTEM_ICONV=OFF", "SDL_GCC_ATOMICS=ON",
             "SDL_AVX=ON", "SDL_AVX2=ON", "SDL_AVX512F=ON", "SDL_SSE=ON", "SDL_SSE2=ON",
@@ -303,6 +322,30 @@
             "SDL_WAYLAND=OFF", "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=OFF",
             "SDL_DIRECTX=ON", "SDL_XINPUT=ON", "SDL_WASAPI=ON", "SDL_RENDER_D3D=ON",
             "SDL_RENDER_D3D11=ON", "SDL_RENDER_D3D12=ON", "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF",
+            "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF", "SDL_LIBUDEV=OFF"
+          ],
+          "windows-arm64": [
+            "SDL_DEPS_SHARED=OFF", "SDL_SYSTEM_ICONV=OFF", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=OFF", "SDL_AVX2=OFF", "SDL_AVX512F=OFF", "SDL_SSE=OFF", "SDL_SSE2=OFF",
+            "SDL_SSE3=OFF", "SDL_SSE4_1=OFF", "SDL_SSE4_2=OFF", "SDL_MMX=OFF", "SDL_ARMNEON=ON",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=OFF",
+            "SDL_OSS=OFF", "SDL_ALSA=OFF", "SDL_JACK=OFF", "SDL_PIPEWIRE=OFF",
+            "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF", "SDL_CLOCK_GETTIME=OFF", "SDL_X11=OFF",
+            "SDL_WAYLAND=OFF", "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=OFF",
+            "SDL_DIRECTX=ON", "SDL_XINPUT=ON", "SDL_WASAPI=ON", "SDL_RENDER_D3D=ON",
+            "SDL_RENDER_D3D11=ON", "SDL_RENDER_D3D12=ON", "SDL_RENDER_METAL=OFF", "SDL_METAL=OFF",
+            "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF", "SDL_LIBUDEV=OFF"
+          ],
+          "macos-x64": [
+            "SDL_DEPS_SHARED=OFF", "SDL_SYSTEM_ICONV=OFF", "SDL_GCC_ATOMICS=ON",
+            "SDL_AVX=ON", "SDL_AVX2=ON", "SDL_AVX512F=ON", "SDL_SSE=ON", "SDL_SSE2=ON",
+            "SDL_SSE3=ON", "SDL_SSE4_1=ON", "SDL_SSE4_2=ON", "SDL_MMX=ON", "SDL_ARMNEON=OFF",
+            "SDL_DBUS=OFF", "SDL_LIBURING=OFF", "SDL_IBUS=OFF", "SDL_PTHREADS=ON",
+            "SDL_PTHREADS_SEM=ON", "SDL_OSS=OFF", "SDL_ALSA=OFF", "SDL_JACK=OFF",
+            "SDL_PIPEWIRE=OFF", "SDL_PULSEAUDIO=OFF", "SDL_SNDIO=OFF", "SDL_CLOCK_GETTIME=OFF",
+            "SDL_X11=OFF", "SDL_WAYLAND=OFF", "SDL_RPI=OFF", "SDL_ROCKCHIP=OFF", "SDL_COCOA=ON",
+            "SDL_DIRECTX=OFF", "SDL_XINPUT=OFF", "SDL_WASAPI=OFF", "SDL_RENDER_D3D=OFF",
+            "SDL_RENDER_D3D11=OFF", "SDL_RENDER_D3D12=OFF", "SDL_RENDER_METAL=ON", "SDL_METAL=ON",
             "SDL_VIVANTE=OFF", "SDL_KMSDRM=OFF", "SDL_LIBUDEV=OFF"
           ],
           "macos-arm64": [
@@ -320,13 +363,22 @@
         }
       },
       "requiredBuildDefines": {
-        "linux-x64": ["SDL_AUDIO_DRIVER_ALSA", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_LINUX", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_X11", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_VULKAN"],
+        "linux-x64": ["HAVE_LIBUDEV_H", "SDL_AUDIO_DRIVER_ALSA", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_LINUX", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_X11", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_VULKAN"],
+        "linux-arm64": ["HAVE_LIBUDEV_H", "SDL_AUDIO_DRIVER_ALSA", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_LINUX", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_X11", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_VULKAN"],
         "windows-x64": ["SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DSOUND", "SDL_AUDIO_DRIVER_DUMMY", "SDL_AUDIO_DRIVER_WASAPI", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_RAWINPUT", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_WINDOWS", "SDL_VIDEO_RENDER_D3D", "SDL_VIDEO_RENDER_D3D11", "SDL_VIDEO_RENDER_D3D12", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_D3D12", "SDL_GPU_VULKAN"],
+        "windows-arm64": ["SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DSOUND", "SDL_AUDIO_DRIVER_DUMMY", "SDL_AUDIO_DRIVER_WASAPI", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_RAWINPUT", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_DRIVER_WINDOWS", "SDL_VIDEO_RENDER_D3D", "SDL_VIDEO_RENDER_D3D11", "SDL_VIDEO_RENDER_D3D12", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_D3D12", "SDL_GPU_VULKAN"],
+        "macos-x64": ["SDL_AUDIO_DRIVER_COREAUDIO", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_CAMERA_DRIVER_COREMEDIA", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_IOKIT", "SDL_VIDEO_DRIVER_COCOA", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_METAL", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_METAL", "SDL_GPU_VULKAN"],
         "macos-arm64": ["SDL_AUDIO_DRIVER_COREAUDIO", "SDL_AUDIO_DRIVER_DISK", "SDL_AUDIO_DRIVER_DUMMY", "SDL_CAMERA_DRIVER_COREMEDIA", "SDL_JOYSTICK_HIDAPI", "SDL_JOYSTICK_IOKIT", "SDL_VIDEO_DRIVER_COCOA", "SDL_VIDEO_DRIVER_DUMMY", "SDL_VIDEO_DRIVER_OFFSCREEN", "SDL_VIDEO_RENDER_GPU", "SDL_VIDEO_RENDER_METAL", "SDL_VIDEO_RENDER_OGL", "SDL_VIDEO_RENDER_OGL_ES2", "SDL_VIDEO_RENDER_VULKAN", "SDL_GPU_METAL", "SDL_GPU_VULKAN"]
       },
       "nativeLinkFacts": {
         "linux-x64": { "libraries": ["SDL3", "m"], "linkArguments": ["-pthread"] },
+        "linux-arm64": { "libraries": ["SDL3", "m"], "linkArguments": ["-pthread"] },
         "windows-x64": { "libraries": ["SDL3", "kernel32", "user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32", "version", "uuid", "advapi32", "setupapi", "shell32", "dinput8"], "linkArguments": [] },
+        "windows-arm64": { "libraries": ["SDL3", "kernel32", "user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32", "version", "uuid", "advapi32", "setupapi", "shell32", "dinput8"], "linkArguments": [] },
+        "macos-x64": {
+          "libraries": ["SDL3", "m"],
+          "linkArguments": ["-lpthread", "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "Cocoa", "-weak_framework", "UniformTypeIdentifiers", "-framework", "IOKit", "-framework", "ForceFeedback", "-framework", "Carbon", "-framework", "CoreAudio", "-framework", "AudioToolbox", "-framework", "AVFoundation", "-framework", "Foundation", "-framework", "GameController", "-framework", "Metal", "-framework", "QuartzCore", "-weak_framework", "CoreHaptics"]
+        },
         "macos-arm64": {
           "libraries": ["SDL3", "m"],
           "linkArguments": ["-lpthread", "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "Cocoa", "-weak_framework", "UniformTypeIdentifiers", "-framework", "IOKit", "-framework", "ForceFeedback", "-framework", "Carbon", "-framework", "CoreAudio", "-framework", "AudioToolbox", "-framework", "AVFoundation", "-framework", "Foundation", "-framework", "GameController", "-framework", "Metal", "-framework", "QuartzCore", "-weak_framework", "CoreHaptics"]
@@ -337,9 +389,21 @@
           "libraries": ["library:m", "target:SDL3::Headers"],
           "linkOptions": ["-pthread"]
         },
+        "linux-arm64": {
+          "libraries": ["library:m", "target:SDL3::Headers"],
+          "linkOptions": ["-pthread"]
+        },
         "windows-x64": {
           "libraries": ["library:kernel32", "library:user32", "library:gdi32", "library:winmm", "library:imm32", "library:ole32", "library:oleaut32", "library:version", "library:uuid", "library:advapi32", "library:setupapi", "library:shell32", "library:dinput8", "target:SDL3::Headers"],
           "linkOptions": []
+        },
+        "windows-arm64": {
+          "libraries": ["library:kernel32", "library:user32", "library:gdi32", "library:winmm", "library:imm32", "library:ole32", "library:oleaut32", "library:version", "library:uuid", "library:advapi32", "library:setupapi", "library:shell32", "library:dinput8", "target:SDL3::Headers"],
+          "linkOptions": []
+        },
+        "macos-x64": {
+          "libraries": ["library:m", "framework:CoreMedia", "framework:CoreVideo", "framework:Cocoa", "weak-framework:UniformTypeIdentifiers", "framework:IOKit", "framework:ForceFeedback", "framework:Carbon", "framework:CoreAudio", "framework:AudioToolbox", "framework:AVFoundation", "framework:Foundation", "framework:GameController", "framework:Metal", "framework:QuartzCore", "weak-framework:CoreHaptics", "target:SDL3::Headers"],
+          "linkOptions": ["-lpthread"]
         },
         "macos-arm64": {
           "libraries": ["library:m", "framework:CoreMedia", "framework:CoreVideo", "framework:Cocoa", "weak-framework:UniformTypeIdentifiers", "framework:IOKit", "framework:ForceFeedback", "framework:Carbon", "framework:CoreAudio", "framework:AudioToolbox", "framework:AVFoundation", "framework:Foundation", "framework:GameController", "framework:Metal", "framework:QuartzCore", "weak-framework:CoreHaptics", "target:SDL3::Headers"],

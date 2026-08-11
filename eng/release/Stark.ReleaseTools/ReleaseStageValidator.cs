@@ -299,7 +299,7 @@ internal static partial class ReleaseStageValidator
             {
                 var expected = Convert.ToInt32(entry.RequiredString("mode", "archive entry"), 8);
                 var actual = kind == "file" ? (int)File.GetUnixFileMode(path) & 0x1ff : (int)File.GetUnixFileMode(path) & 0x1ff;
-                Validation.Require(actual == expected, $"{relative} mode is {actual:o}, expected {expected:o}.");
+                Validation.Require(actual == expected, $"{relative} mode is {FormatUnixMode(actual)}, expected {FormatUnixMode(expected)}.");
             }
 
             checkedCount++;
@@ -307,6 +307,9 @@ internal static partial class ReleaseStageValidator
 
         return checkedCount;
     }
+
+    internal static string FormatUnixMode(int mode)
+        => "0" + Convert.ToString(mode & 0x1ff, 8).PadLeft(3, '0');
 
     private static int ValidateChecksumManifest(string root)
     {
