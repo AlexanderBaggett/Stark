@@ -41,7 +41,11 @@ public sealed class ReleaseQualifiedLlvmBundleTests
         Assert.Contains("extract-archive", workflow, StringComparison.Ordinal);
         Assert.Contains("actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a", workflow, StringComparison.Ordinal);
         Assert.Contains("Publication requires exactly six unique LLVM bundle records", workflow, StringComparison.Ordinal);
-        Assert.Contains("ref=main and an explicit full commit SHA", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("inputs.ref", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("inputs.commit", workflow, StringComparison.Ordinal);
+        Assert.Contains("ref: ${{ github.sha }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("selecting main in GitHub's 'Use workflow from' control", workflow, StringComparison.Ordinal);
+        Assert.Contains("git ls-remote origin refs/heads/main", workflow, StringComparison.Ordinal);
         Assert.Contains("refusing to replace them", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("--clobber", workflow, StringComparison.Ordinal);
     }
