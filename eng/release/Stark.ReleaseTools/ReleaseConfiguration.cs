@@ -781,6 +781,11 @@ internal static class ReleaseConfiguration
             }
         }
 
+        ValidateRaylibAcquisitionManifest(
+            packages.Single(package => package.RequiredString("id", "Vendor package") == "Vendor.Raylib"),
+            targets,
+            root);
+
         Validation.Unique(allModules, "Vendor module ownership");
         Validation.Require(dependencies["Vendor.Raymath"].SequenceEqual(["Vendor.Raylib"]) && dependencies["Vendor.Rlgl"].SequenceEqual(["Vendor.Raylib"]), "Raymath and Rlgl must depend exactly on Vendor.Raylib.");
         foreach (var owner in owners)
@@ -804,6 +809,60 @@ internal static class ReleaseConfiguration
             foreach (var dependency in dependencies[id]) Visit(dependency);
             visiting.Remove(id);
             visited.Add(id);
+        }
+    }
+
+    private static void ValidateRaylibAcquisitionManifest(JsonObject package, IReadOnlyList<ReleaseTarget> targets, string root)
+    {
+        var relative = package.RequiredString("acquisitionManifest", "Vendor.Raylib");
+        var manifest = JsonIO.LoadObject(Path.Combine(root, relative), "Raylib acquisition manifest");
+        Validation.NoPlaceholders("Raylib acquisition manifest", manifest);
+        Validation.Require(
+            manifest.RequiredInt("schemaVersion", "Raylib acquisition manifest") == 1 &&
+            manifest.RequiredString("raylibVersion", "Raylib acquisition manifest") == package.RequiredString("version", "Vendor.Raylib") &&
+            manifest.RequiredString("releaseTag", "Raylib acquisition manifest") == "6.0" &&
+            manifest.RequiredString("releaseUrl", "Raylib acquisition manifest") == "https://github.com/raysan5/raylib/releases/tag/6.0",
+            "Raylib acquisition manifest release identity is invalid.");
+
+        var targetById = targets.ToDictionary(target => target.Id, StringComparer.Ordinal);
+        var binaryByTarget = package.RequiredArray("binaryInputs", "Vendor.Raylib")
+            .OfType<JsonObject>()
+            .ToDictionary(input => input.RequiredString("target", "Vendor.Raylib binary input"), StringComparer.Ordinal);
+        var platforms = manifest.RequiredObject("platforms", "Raylib acquisition manifest");
+        Validation.Require(platforms.Select(item => item.Key).ToHashSet(StringComparer.Ordinal).SetEquals(targetById.Keys), "Raylib acquisition manifest must cover all six targets.");
+        Validation.Require(binaryByTarget.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(targetById.Keys), "Raylib binary inputs must cover all six targets.");
+
+        foreach (var item in platforms)
+        {
+            var id = item.Key;
+            Validation.Require(item.Value is JsonObject, $"Raylib acquisition platform '{id}' must be an object.");
+            var platform = (JsonObject)item.Value!;
+            var target = targetById[id];
+            Validation.Require(
+                platform.RequiredString("runtimeIdentifier", $"Raylib/{id}") == target.RuntimeIdentifier &&
+                platform.RequiredString("hostOperatingSystem", $"Raylib/{id}") == target.OperatingSystem &&
+                platform.RequiredString("hostArchitecture", $"Raylib/{id}") == target.Architecture &&
+                platform.RequiredString("targetTriple", $"Raylib/{id}") == target.TargetTriple,
+                $"Raylib/{id} target identity differs from targets.json.");
+
+            var input = binaryByTarget[id];
+            var archive = platform.RequiredObject("archive", $"Raylib/{id}");
+            var url = archive.RequiredString("url", $"Raylib/{id} archive");
+            Validation.Require(
+                url == input.RequiredString("url", $"Vendor.Raylib/{id}") &&
+                archive.RequiredString("sha256", $"Raylib/{id} archive") == input.RequiredString("sha256", $"Vendor.Raylib/{id}") &&
+                archive.RequiredString("name", $"Raylib/{id} archive") == Path.GetFileName(new Uri(url).AbsolutePath) &&
+                archive["size"] is JsonValue size && size.TryGetValue<long>(out var bytes) && bytes > 0,
+                $"Raylib/{id} archive identity differs from the Vendor catalog.");
+            Validation.SafeRelativePath(archive.RequiredString("payloadRoot", $"Raylib/{id} archive"), $"Raylib/{id} payload root");
+            Validation.SafeRelativePath(platform.RequiredString("staticLibrary", $"Raylib/{id}"), $"Raylib/{id} static library");
+            Validation.Require(platform.RequiredString("nativeLibraryFile", $"Raylib/{id}") == (target.OperatingSystem == "windows" ? "raylib.lib" : "libraylib.a"), $"Raylib/{id} native library filename is invalid.");
+            Validation.Require(platform.RequiredString("starkLibraryFile", $"Raylib/{id}") == (target.OperatingSystem == "windows" ? "VendorRaylib.lib" : "libVendorRaylib.a"), $"Raylib/{id} Stark library filename is invalid.");
+            Validation.Require(Validation.Strings(platform["libraries"], $"Raylib/{id} libraries", nonEmpty: true)[0] == "raylib", $"Raylib/{id} native libraries must begin with raylib.");
+            foreach (var argument in platform.RequiredArray("linkArguments", $"Raylib/{id}"))
+            {
+                _ = Validation.String(argument, $"Raylib/{id} link argument");
+            }
         }
     }
 

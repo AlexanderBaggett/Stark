@@ -751,7 +751,7 @@ $requiredBuildDefinesObject = Get-RequiredProperty -Object $package -Name "requi
 $requiredBuildDefines = @(Get-ArrayValues -Value (Get-RequiredProperty -Object $requiredBuildDefinesObject -Name $AssetSuffix) |
     ForEach-Object { [string]$_ })
 foreach ($define in $requiredBuildDefines) {
-    if ($define -cnotmatch '^SDL_[A-Z0-9_]+$') {
+    if ($define -cnotmatch '^(?:SDL|HAVE)_[A-Z0-9_]+$') {
         throw "Unsafe SDL3 required build define '$define'."
     }
 }
@@ -943,7 +943,7 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
         $macSdkVersion = ([string]$macSdkVersion).Trim()
         $cmakeArguments += @(
             "-DCMAKE_OSX_SYSROOT=$macSdkPath",
-            "-DCMAKE_OSX_ARCHITECTURES=arm64",
+            "-DCMAKE_OSX_ARCHITECTURES=$targetArchitecture",
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
         )
     }
@@ -960,6 +960,18 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
         if ($LASTEXITCODE -ne 0) {
             throw "Pinned CMake failed to configure SDL3 for '$TargetTriple'."
         }
+
+        $configuredBuildHeaders = @(Get-ChildItem -LiteralPath $buildRoot -File -Recurse -Filter "SDL_build_config.h")
+        if ($configuredBuildHeaders.Count -ne 1) {
+            throw "SDL3 configure must emit exactly one SDL_build_config.h; found $($configuredBuildHeaders.Count)."
+        }
+        $configuredBuildText = Get-Content -LiteralPath $configuredBuildHeaders[0].FullName -Raw
+        foreach ($define in $requiredBuildDefines) {
+            if ($configuredBuildText -cnotmatch "(?m)^#define $([Regex]::Escape($define)) 1$") {
+                throw "SDL3 configure for '$AssetSuffix' lost required backend define '$define'. Install the target's declared native development prerequisites before building."
+            }
+        }
+
         & $cmakeExecutable --build $buildRoot --target SDL3-static --config Release --parallel
         if ($LASTEXITCODE -ne 0) {
             throw "Pinned CMake/Ninja failed to build SDL3 for '$TargetTriple'."
@@ -995,7 +1007,7 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
             throw "SDL3 build for '$AssetSuffix' silently lost required backend define '$define'."
         }
     }
-    $actualBuildDefines = @([Regex]::Matches($buildConfigText, '(?m)^#define (SDL_[A-Z0-9_]+) 1$') |
+    $actualBuildDefines = @([Regex]::Matches($buildConfigText, '(?m)^#define ((?:SDL|HAVE)_[A-Z0-9_]+) 1$') |
         ForEach-Object { $_.Groups[1].Value })
     $actualBuildDefines = @(Sort-StringsOrdinal -Values $actualBuildDefines)
 

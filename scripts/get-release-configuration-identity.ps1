@@ -98,6 +98,7 @@ function Add-ConfigurationPath {
 }
 
 foreach ($relativePath in @(
+    ".gitattributes",
     ".github/workflows/qualify-private-backend.yml",
     ".github/workflows/release.yml",
     "eng/release/archive-content.json",

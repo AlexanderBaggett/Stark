@@ -144,6 +144,7 @@ public sealed class ReleaseArchiveMetadataTests
         }
 
         Assert.True(captured > 0, "Expected at least one dot-sourced release helper contract.");
+        Assert.Contains("\".gitattributes\"", identityScript, StringComparison.Ordinal);
         Assert.Contains("scripts/release-repository-audit-allowlist.json", identityScript, StringComparison.Ordinal);
         Assert.Contains("sha256-ordinal-path-size-content-v1", identityScript, StringComparison.Ordinal);
     }
