@@ -284,9 +284,11 @@ improving those rough edges.
 - [ ] Run `Prepare qualified LLVM toolchains` with `publish=false` from the
   intended release commit, review all six post-archive verification results,
   compressed sizes, native evidence, and the macOS x64 source-build duration.
-- [ ] Re-run that workflow with `ref=main`, the exact current 40-character main
-  commit, and `publish=true`. Confirm all six archives, the generated complete
-  lock, and their GitHub provenance attestations exist on the immutable
+- [ ] Re-run that workflow by selecting `main` in GitHub's built-in **Use
+  workflow from** control and setting `publish=true`. The workflow resolves,
+  records, and verifies the selected immutable `main` commit automatically.
+  Confirm all six archives, the generated complete lock, and their GitHub
+  provenance attestations exist on the immutable
   `llvm-22.1.8-stark.1` prerelease before changing repository promotion state.
 - [ ] Apply the workflow-generated `llvm-toolchain-bundles.json` in a small
   data-only PR, review every recorded digest/size/workflow identity, and run the
