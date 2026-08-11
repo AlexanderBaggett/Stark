@@ -147,10 +147,28 @@ jobs:
             artifacts/release-prepare.log
           if-no-files-found: warn
 
+  contract:
+    name: Contract ${{ matrix.asset_suffix }}
+    runs-on: ${{ matrix.os }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Validate target release contract
+        shell: pwsh
+        run: ./scripts/test-release-target-contract.ps1 -TargetId "${{ matrix.target_id }}"
+
   quality:
     name: Qualify release source
     runs-on: ubuntu-24.04
-    needs: prepare
+    needs: [prepare, contract]
     steps:
       - name: Checkout immutable release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

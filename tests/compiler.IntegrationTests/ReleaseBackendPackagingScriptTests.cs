@@ -317,6 +317,7 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.DoesNotContain("package-release.ps1", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("reconcile-github-release", workflow, StringComparison.Ordinal);
         Assert.Contains(".github/workflows/qualify-private-backend.yml", identityScript, StringComparison.Ordinal);
+        Assert.Contains(".github/workflows/release-contract.yml", identityScript, StringComparison.Ordinal);
 
         Assert.Contains("GenerateMatrix(result, command.HasFlag(\"--include-planned\"))", File.ReadAllText(
             Path.Combine(repositoryRoot, "eng", "release", "Stark.ReleaseTools", "ReleaseConfiguration.cs")), StringComparison.Ordinal);
@@ -384,6 +385,9 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains("-TargetTriple \"${{ matrix.target_triple }}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("artifacts/backend-qualification/${{ matrix.asset_suffix }}/assembly-bridge", workflow, StringComparison.Ordinal);
         Assert.Contains("producerObjectIsLlvmBitcode = $true", script, StringComparison.Ordinal);
+        Assert.Contains("$manifestPath = Join-Path $packageDirectory \"libBridge.starkpkg\"", script, StringComparison.Ordinal);
+        Assert.Contains("\"--package-image-output\", $manifestPath", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("ChangeExtension($libraryPath", script, StringComparison.Ordinal);
         Assert.Contains("sourceRemovedBeforeConsumerBuild = $true", script, StringComparison.Ordinal);
         Assert.Contains("@llvm.used = appending global [1 x ptr] [ptr @OpaqueTarget]", script, StringComparison.Ordinal);
         Assert.Contains("-ExpectedExitCode 73", script, StringComparison.Ordinal);
@@ -466,6 +470,7 @@ public sealed class ReleaseBackendPackagingScriptTests
         var workflows = string.Join(
             Environment.NewLine,
             File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "qualify-private-backend.yml")),
+            File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release-contract.yml")),
             File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "release.yml")));
 
         foreach (var retiredReference in new[]

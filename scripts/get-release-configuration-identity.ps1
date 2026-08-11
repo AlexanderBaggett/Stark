@@ -100,6 +100,7 @@ function Add-ConfigurationPath {
 foreach ($relativePath in @(
     ".gitattributes",
     ".github/workflows/qualify-private-backend.yml",
+    ".github/workflows/release-contract.yml",
     ".github/workflows/release.yml",
     "eng/release/archive-content.json",
     "eng/release/archive-content.schema.json",
@@ -134,6 +135,7 @@ foreach ($relativePath in @(
     "scripts/release-repository-audit-allowlist.json",
     "scripts/sdl3-work-root-lock.ps1",
     "scripts/smoke-release-archive.ps1",
+    "scripts/test-release-target-contract.ps1",
     "scripts/smoke-release-install.ps1",
     "scripts/stage-release-installers.ps1",
     "scripts/stage-release-repository-content.ps1",

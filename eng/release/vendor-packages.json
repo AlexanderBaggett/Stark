@@ -209,6 +209,14 @@
       },
       "binaryInputs": [
         {
+          "target": "macos-x64",
+          "name": "glfw-3.4.bin.MACOS.zip",
+          "url": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.MACOS.zip",
+          "sha256": "6775085bdae60312a3002bff2e39779a83bc72a7e1c810bd806fddb00cb35fd0",
+          "size": 1351252,
+          "archiveRoot": "glfw-3.4.bin.MACOS"
+        },
+        {
           "target": "macos-arm64",
           "name": "glfw-3.4.bin.MACOS.zip",
           "url": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.MACOS.zip",
@@ -222,7 +230,7 @@
         "linux-arm64": "required-source-build",
         "windows-x64": "required-source-build",
         "windows-arm64": "required-source-build",
-        "macos-x64": "required-source-build",
+        "macos-x64": "required-binary",
         "macos-arm64": "required-binary"
       },
       "systemLinkFacts": {

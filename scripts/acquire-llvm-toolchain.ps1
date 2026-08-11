@@ -738,8 +738,16 @@ function Assert-CompilerPrivateBackendClosure {
     )
 
     $exactRuntimePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($path in @($RequiredTools) + @($RequiredPatternMatches)) {
+    foreach ($path in @($RequiredTools)) {
         [void] $exactRuntimePaths.Add(([string] $path).Replace('\', '/'))
+    }
+    foreach ($path in @($RequiredPatternMatches)) {
+        $normalizedPath = ([string] $path).Replace('\', '/')
+        if ($normalizedPath.EndsWith(".a", [StringComparison]::OrdinalIgnoreCase) `
+            -or $normalizedPath.EndsWith(".lib", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Compiler-private backend runtime pattern selected development library '$normalizedPath'. Static/import libraries must not enter a Stark release."
+        }
+        [void] $exactRuntimePaths.Add($normalizedPath)
     }
 
     $normalizedResourceRoots = @(Get-SortedUniqueStrings -Values $CompilerResourceRoots)
