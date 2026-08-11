@@ -140,7 +140,7 @@ $bridgePath = Join-Path $packageDirectory "Bridge.stark"
 $disabledBridgePath = Join-Path $packageDirectory "Bridge.source-disabled"
 $applicationPath = Join-Path $applicationDirectory "App.stark"
 $libraryPath = Join-Path $packageDirectory $libraryFileName
-$manifestPath = [System.IO.Path]::ChangeExtension($libraryPath, ".starkpkg")
+$manifestPath = Join-Path $packageDirectory "libBridge.starkpkg"
 $executablePath = Join-Path $applicationDirectory $executableFileName
 
 $bridgeSource = @'
@@ -169,6 +169,7 @@ $producer = Invoke-QualificationProcess `
         "--emit-lib",
         "--target", $TargetTriple,
         "--package-profile", "release",
+        "--package-image-output", $manifestPath,
         "--toolchain-dir", $toolchain,
         "--save-temps", $producerTemps,
         "-o", $libraryPath) `

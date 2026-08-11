@@ -62,7 +62,7 @@ public sealed class ReleaseSqliteVendorPreparationScriptTests
             ["STARK_SQLITE_BUNDLED_FEATURES=1"],
             Strings(package.GetProperty("adapterCompileDefinitions")));
 
-        foreach (var targetId in new[] { "linux-x64", "windows-x64", "macos-arm64" })
+        foreach (var targetId in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64" })
         {
             Assert.Equal("required-source-build", package.GetProperty("targetSupport").GetProperty(targetId).GetString());
         }
@@ -128,6 +128,13 @@ public sealed class ReleaseSqliteVendorPreparationScriptTests
         Assert.Contains("Assert-NativeObjectTarget", script, StringComparison.Ordinal);
         Assert.Contains("Assert-StaticLibraryArchive", script, StringComparison.Ordinal);
         Assert.Contains("The SQLite amalgamation is already one translation unit", script, StringComparison.Ordinal);
+        foreach (var targetId in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64" })
+        {
+            Assert.Contains($"\"{targetId}\" {{", script, StringComparison.Ordinal);
+        }
+        Assert.Contains("$bytes[18] -eq 0xb7", script, StringComparison.Ordinal);
+        Assert.Contains("$bytes[1] -eq 0xaa", script, StringComparison.Ordinal);
+        Assert.Contains("$bytes[4] -eq 0x07", script, StringComparison.Ordinal);
 
         Assert.DoesNotContain("Get-Command clang", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("--native-pkg-config", script, StringComparison.Ordinal);
