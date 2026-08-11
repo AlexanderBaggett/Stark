@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release-contract.yml"
+      - ".github/workflows/prepare-llvm-toolchains.yml"
       - ".github/workflows/release.yml"
       - "eng/release/**"
       - "scripts/**release*.ps1"

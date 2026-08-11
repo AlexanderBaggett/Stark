@@ -23,7 +23,7 @@ internal static class PrivateBackendQualifier
         "llvm-lib.exe", "llvm-ranlib.exe",
     ], StringComparer.Ordinal);
 
-    private static readonly string[] ManifestProperties =
+    internal static readonly string[] ManifestProperties =
     [
         "schemaVersion", "payloadKind", "llvmVersion", "releaseTag", "releaseUrl",
         "assetSuffix", "runtimeIdentifier", "acquisitionKind", "binaryArchive",
@@ -210,7 +210,7 @@ internal static class PrivateBackendQualifier
         Validation.Require(apple.RequiredString("clangxxSha256", "source-build Apple toolchain") == qualifiedApple.RequiredString("clangxxSha256", "qualified Apple toolchain"), "Source-build Apple Clang++ hash differs from the qualified recipe.");
     }
 
-    private static void ValidateRuntimeClosure(
+    internal static void ValidateRuntimeClosure(
         string toolchainRoot,
         JsonObject closure,
         IReadOnlyCollection<string> requiredTools,
@@ -468,7 +468,7 @@ internal static class PrivateBackendQualifier
         return result;
     }
 
-    private static void ValidateHardlinkDeclaration(JsonArray actual, JsonArray? expected)
+    internal static void ValidateHardlinkDeclaration(JsonArray actual, JsonArray? expected)
     {
         expected ??= [];
         Validation.Require(actual.Count == actual.OfType<JsonObject>().Count(), "Private backend hardlinkAliases must contain only objects.");
@@ -502,7 +502,7 @@ internal static class PrivateBackendQualifier
         Validation.Require(allowed, $"Private backend runtime closure contains undeclared development file '{path}'.");
     }
 
-    private static string[] ValidateStringArray(JsonObject owner, string name, bool nonEmpty = false)
+    internal static string[] ValidateStringArray(JsonObject owner, string name, bool nonEmpty = false)
     {
         var values = Validation.Strings(owner[name], $"private backend manifest.{name}", nonEmpty);
         foreach (var value in values)
@@ -512,24 +512,24 @@ internal static class PrivateBackendQualifier
         return values;
     }
 
-    private static void RequireEqualStringSet(IEnumerable<string> actual, IEnumerable<string> expected, string label)
+    internal static void RequireEqualStringSet(IEnumerable<string> actual, IEnumerable<string> expected, string label)
     {
         Validation.Require(actual.ToHashSet(StringComparer.Ordinal).SetEquals(expected), $"Private backend {label} differ from the pinned platform recipe.");
     }
 
-    private static void RequireEqual(JsonNode? actual, JsonNode? expected, string label)
+    internal static void RequireEqual(JsonNode? actual, JsonNode? expected, string label)
     {
         Validation.Require(JsonNode.DeepEquals(actual, expected), $"Private backend {label} differs from the pinned acquisition recipe.");
     }
 
-    private static void RequireExactProperties(JsonObject value, IEnumerable<string> expected, string label)
+    internal static void RequireExactProperties(JsonObject value, IEnumerable<string> expected, string label)
     {
         var expectedSet = expected.ToHashSet(StringComparer.Ordinal);
         var actualSet = value.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
         Validation.Require(actualSet.SetEquals(expectedSet), $"{label} has unexpected or missing properties: {DescribeSetDifference(expectedSet, actualSet)}.");
     }
 
-    private static void RequireLowerSha256(string value, string label)
+    internal static void RequireLowerSha256(string value, string label)
     {
         Validation.Require(Validation.IsSha256(value) && value == value.ToLowerInvariant(), $"{label} SHA-256 must be 64 lowercase hexadecimal characters.");
     }

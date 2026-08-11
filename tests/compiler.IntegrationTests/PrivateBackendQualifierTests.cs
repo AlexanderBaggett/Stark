@@ -22,6 +22,36 @@ public sealed class PrivateBackendQualifierTests
     }
 
     [Fact]
+    public void GenericBundleVerificationAcceptsTheSameExactRuntimeClosure()
+    {
+        using var fixture = PrivateBackendFixture.Create();
+        var expectedManifestSha256 = JsonIO.Sha256File(Path.Combine(fixture.ToolchainRoot, "manifest.json"));
+
+        var result = PrivateBackendBundleVerifier.Verify(
+            fixture.RepositoryRoot,
+            "macos-x64",
+            fixture.ToolchainRoot,
+            expectedManifestSha256);
+
+        Assert.Equal("verified", result.RequiredString("status", "result"));
+        Assert.Equal(expectedManifestSha256, result.RequiredString("manifestSha256", "result"));
+    }
+
+    [Fact]
+    public void GenericBundleVerificationRejectsAnUnexpectedEmbeddedManifestHash()
+    {
+        using var fixture = PrivateBackendFixture.Create();
+
+        var error = Assert.Throws<ReleaseToolException>(() => PrivateBackendBundleVerifier.Verify(
+            fixture.RepositoryRoot,
+            "macos-x64",
+            fixture.ToolchainRoot,
+            new string('0', 64)));
+
+        Assert.Contains("manifest SHA-256", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StaticQualificationRejectsTrackedByteDrift()
     {
         using var fixture = PrivateBackendFixture.Create();

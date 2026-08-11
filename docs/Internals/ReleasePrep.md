@@ -266,6 +266,33 @@ improving those rough edges.
 
 ### Required feasibility spikes
 
+- [x] Add a durable, per-target compiler-private LLVM bundle pipeline so a
+  successful native build is not repeated by every Stark release. The manual
+  `Prepare qualified LLVM toolchains` workflow builds all six native closures
+  from the pinned recipes, runs generic closure verification before and after
+  deterministic archive creation, retains native macOS x64 qualification,
+  produces GitHub build-provenance attestations, and can publish one immutable
+  prerelease asset per target. Actions cache remains a disposable download
+  accelerator; it is not the source of truth.
+- [x] Add `eng/release/llvm-toolchain-bundles.json` as the reviewed promotion
+  lock. Every target is explicitly `build-required` or `published`. A published
+  entry carries the immutable release URL, archive byte length/SHA-256,
+  embedded backend-manifest SHA-256, source commit, and qualification workflow.
+  Release and local build paths consume a published bundle exclusively and
+  fail on download, extraction, identity, or closure drift; they never silently
+  fall back to a long source build or a different upstream archive.
+- [ ] Run `Prepare qualified LLVM toolchains` with `publish=false` from the
+  intended release commit, review all six post-archive verification results,
+  compressed sizes, native evidence, and the macOS x64 source-build duration.
+- [ ] Re-run that workflow with `ref=main`, the exact current 40-character main
+  commit, and `publish=true`. Confirm all six archives, the generated complete
+  lock, and their GitHub provenance attestations exist on the immutable
+  `llvm-22.1.8-stark.1` prerelease before changing repository promotion state.
+- [ ] Apply the workflow-generated `llvm-toolchain-bundles.json` in a small
+  data-only PR, review every recorded digest/size/workflow identity, and run the
+  Release workflow. The run must download and verify all promoted bundles and
+  must not execute the macOS x64 LLVM source build.
+
 - [ ] Produce an extraction-only Stage0 proof for each existing target with .NET
   and ambient LLVM removed from `PATH`; record compiler-side dependencies
   separately from the approved host development layer used during final link.
