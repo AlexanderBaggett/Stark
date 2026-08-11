@@ -62,7 +62,7 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
         Assert.Contains("SDL_RENDER_GPU=ON", commonOptions);
         Assert.Contains("SDL_VULKAN=ON", commonOptions);
 
-        foreach (var target in new[] { "linux-x64", "windows-x64", "macos-arm64" })
+        foreach (var target in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64" })
         {
             Assert.Equal("required-source-build", package.GetProperty("targetSupport").GetProperty(target).GetString());
             Assert.NotEmpty(build.GetProperty("targetCmakeOptions").GetProperty(target).EnumerateArray());
@@ -126,7 +126,14 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
         Assert.Contains("adapterCompiledIntoNativeArchive = $true", script, StringComparison.Ordinal);
         Assert.Contains("perApplicationNativeSourceCompilation = $false", script, StringComparison.Ordinal);
         Assert.Contains("requiredBuildDefines", script, StringComparison.Ordinal);
+        Assert.Contains("(?:SDL|HAVE)_[A-Z0-9_]+", script, StringComparison.Ordinal);
         Assert.Contains("silently lost required backend define", script, StringComparison.Ordinal);
+        Assert.Contains("Install the target's declared native development prerequisites", script, StringComparison.Ordinal);
+        Assert.True(
+            script.IndexOf("$configuredBuildHeaders", StringComparison.Ordinal) <
+            script.IndexOf("& $cmakeExecutable --build", StringComparison.Ordinal),
+            "Required SDL3 backends must be checked after configure and before the expensive native build.");
+        Assert.Contains("-DCMAKE_OSX_ARCHITECTURES=$targetArchitecture", script, StringComparison.Ordinal);
         Assert.Contains("cmakeStaticInterfaceLibraries", script, StringComparison.Ordinal);
         Assert.Contains("SDL3 CMake static interface libraries", script, StringComparison.Ordinal);
         Assert.Contains("SDL3 CMake static interface options", script, StringComparison.Ordinal);

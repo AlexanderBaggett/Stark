@@ -133,6 +133,42 @@ public sealed class ReleaseVendorPreparationScriptTests
     }
 
     [Fact]
+    public void RaylibOfficialBinaryManifestCoversEveryReleaseTarget()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        using var catalog = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(repositoryRoot, "eng", "release", "vendor-packages.json")));
+        using var manifest = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(repositoryRoot, "scripts", "raylib-6.0-assets.json")));
+        var raylib = catalog.RootElement.GetProperty("packages").EnumerateArray()
+            .Single(static package => package.GetProperty("id").GetString() == "Vendor.Raylib");
+        var expected = new Dictionary<string, (long Size, string Sha256)>(StringComparer.Ordinal)
+        {
+            ["linux-x64"] = (1_793_706, "b64ba618a19e7da9e9c0e09bb398ecfd477a77d2d7231901bafc8739d27c08d2"),
+            ["linux-arm64"] = (1_799_293, "d39ca0b36fe865b41b058a5646576e6b98b4875352502b41ed303f2c38a39ec9"),
+            ["windows-x64"] = (2_597_715, "c93c7dc74576e00e3ee57fa2bd5fd109fbfc5aca87e12046dd7ec2c2268b3f78"),
+            ["windows-arm64"] = (2_350_106, "ecd21693c5fd760ce1efc52745882e98fa61e0d3ecac36ec2271c60e245849b1"),
+            ["macos-x64"] = (3_432_078, "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70"),
+            ["macos-arm64"] = (3_432_078, "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70"),
+        };
+
+        var inputs = raylib.GetProperty("binaryInputs").EnumerateArray()
+            .ToDictionary(static input => input.GetProperty("target").GetString()!, StringComparer.Ordinal);
+        var platforms = manifest.RootElement.GetProperty("platforms");
+        Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), inputs.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), platforms.EnumerateObject().Select(static property => property.Name).Order(StringComparer.Ordinal));
+        foreach (var (target, identity) in expected)
+        {
+            Assert.Equal("required-binary", raylib.GetProperty("targetSupport").GetProperty(target).GetString());
+            var archive = platforms.GetProperty(target).GetProperty("archive");
+            Assert.Equal(identity.Size, archive.GetProperty("size").GetInt64());
+            Assert.Equal(identity.Sha256, archive.GetProperty("sha256").GetString());
+            Assert.Equal(identity.Sha256, inputs[target].GetProperty("sha256").GetString());
+            Assert.Equal(archive.GetProperty("url").GetString(), inputs[target].GetProperty("url").GetString());
+        }
+    }
+
+    [Fact]
     public async Task VendorPreparationScriptsParseWhenPowerShellIsAvailable()
     {
         var repositoryRoot = FindRepositoryRoot();

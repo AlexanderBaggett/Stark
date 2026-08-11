@@ -11,6 +11,28 @@ namespace compiler.IntegrationTests;
 public sealed class ReleaseToolsTests
 {
     [Theory]
+    [InlineData(493, "0755")]
+    [InlineData(420, "0644")]
+    [InlineData(0, "0000")]
+    public void UnixModesUseExplicitOctalFormatting(int mode, string expected)
+    {
+        Assert.Equal(expected, ReleaseStageValidator.FormatUnixMode(mode));
+    }
+
+    [Fact]
+    public void RepositoryCheckoutPreservesReleaseCriticalLfBytes()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var attributes = File.ReadAllText(Path.Combine(repositoryRoot, ".gitattributes")).Replace("\r\n", "\n", StringComparison.Ordinal);
+        Assert.StartsWith("* text=auto eol=lf\n", attributes, StringComparison.Ordinal);
+
+        var license = File.ReadAllBytes(Path.Combine(repositoryRoot, "eng", "release", "licenses", "Antlr4.Runtime.Standard-4.13.1-LICENSE.txt"));
+        Assert.Equal(1_480, license.Length);
+        Assert.DoesNotContain((byte)'\r', license);
+        Assert.Equal("3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c", JsonIO.Sha256(license));
+    }
+
+    [Theory]
     [InlineData("zip")]
     [InlineData("targz")]
     public void ArchiveCreationIsDeterministicAndRoundTrips(string kind)
