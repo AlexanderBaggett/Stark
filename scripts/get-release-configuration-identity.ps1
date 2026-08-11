@@ -210,7 +210,7 @@ foreach ($relativePath in $paths) {
     if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
         throw "Release configuration input '$relativePath' does not exist."
     }
-    $file = Get-Item -LiteralPath $absolutePath
+    $file = Get-Item -LiteralPath $absolutePath -Force
     $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash.ToLowerInvariant()
     $files += [ordered]@{
         path = $relativePath
