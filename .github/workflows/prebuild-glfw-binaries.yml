@@ -1,0 +1,24 @@
+name: Pre-build GLFW binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the six verified GLFW native bundles to an immutable GitHub prerelease.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prebuild:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/prebuild-vendor-binaries.yml
+    with:
+      dependency: glfw
+      publish: ${{ inputs.publish }}

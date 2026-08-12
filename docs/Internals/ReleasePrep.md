@@ -295,6 +295,26 @@ improving those rough edges.
   Release workflow. The run must download and verify all promoted bundles and
   must not execute the macOS x64 LLVM source build.
 
+- [x] Add clearly named manual workflows for pre-building the SDL3, GLFW, and
+  SQLite native payloads on all six 64-bit targets. `Pre-build SDL3 binaries`,
+  `Pre-build GLFW binaries`, and `Pre-build SQLite binaries` share one reusable
+  implementation, consume the qualified LLVM bundles, run the existing native
+  build plus package/runtime qualification, create deterministic native-only
+  archives, smoke-extract them, and optionally publish a complete immutable
+  six-target prerelease. The archives deliberately exclude the generated Stark
+  package image and Stark wrapper library because those artifacts carry the
+  exact `System` package API/content identity from the qualification run.
+- [ ] Run each Vendor binary pre-build first with `publish=false`, review all six
+  target results and bundle inventories, and then rerun it with `publish=true`.
+  Retain the generated `*-native-bundles.json` catalog from each successful
+  publication.
+- [ ] Promote the three generated native-bundle catalogs in a small follow-up
+  PR. Teach the SDL3, GLFW, and SQLite contributor recipes to acquire and verify
+  the catalog-pinned native payload for their target, then generate fresh Stark
+  package images and wrapper libraries against the release's current `System`.
+  The ordinary Release workflow must fail on a missing or mismatched promoted
+  bundle and must not silently fall back to rebuilding that native dependency.
+
 - [ ] Produce an extraction-only Stage0 proof for each existing target with .NET
   and ambient LLVM removed from `PATH`; record compiler-side dependencies
   separately from the approved host development layer used during final link.

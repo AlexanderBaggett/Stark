@@ -1,0 +1,24 @@
+name: Pre-build SDL3 binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the six verified SDL3 native bundles to an immutable GitHub prerelease.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prebuild:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/prebuild-vendor-binaries.yml
+    with:
+      dependency: sdl3
+      publish: ${{ inputs.publish }}
