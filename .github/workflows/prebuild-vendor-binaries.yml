@@ -1,0 +1,416 @@
+name: Reusable Vendor binary pre-build
+
+on:
+  workflow_call:
+    inputs:
+      dependency:
+        description: Lowercase native dependency key.
+        type: string
+        required: true
+      publish:
+        description: Publish the complete verified six-target bundle set.
+        type: boolean
+        required: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_MULTILEVEL_LOOKUP: "0"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  prepare:
+    name: Plan ${{ inputs.dependency }} native bundles
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      commit_sha: ${{ steps.source.outputs.commit_sha }}
+      package_id: ${{ steps.dependency.outputs.package_id }}
+      version: ${{ steps.dependency.outputs.version }}
+      source_identity: ${{ steps.dependency.outputs.source_identity }}
+      bundle_tag: ${{ steps.dependency.outputs.bundle_tag }}
+    steps:
+      - name: Checkout selected workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Record source commit
+        id: source
+        shell: pwsh
+        run: |
+          $resolved = [string](& git rev-parse HEAD)
+          if ($LASTEXITCODE -ne 0 -or $resolved -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve the checked-out source commit."
+          }
+          "commit_sha=$resolved" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Resolve dependency identity from the Vendor catalog
+        id: dependency
+        shell: pwsh
+        env:
+          DEPENDENCY: ${{ inputs.dependency }}
+        run: |
+          $specifications = @{
+            sdl3 = @{ packageId = "Vendor.SDL3"; recipe = "scripts/prepare-sdl3-vendor-release-input.ps1" }
+            glfw = @{ packageId = "Vendor.GLFW"; recipe = "scripts/prepare-glfw-vendor-release-input.ps1" }
+            sqlite = @{ packageId = "Vendor.SQLite"; recipe = "scripts/prepare-sqlite-vendor-release-input.ps1" }
+          }
+          if (-not $specifications.ContainsKey($env:DEPENDENCY)) {
+            throw "Unsupported pre-built Vendor dependency '$env:DEPENDENCY'."
+          }
+          $specification = $specifications[$env:DEPENDENCY]
+          $catalog = Get-Content -LiteralPath eng/release/vendor-packages.json -Raw | ConvertFrom-Json
+          $packages = @($catalog.packages | Where-Object { [string]$_.id -ceq [string]$specification.packageId })
+          if ($packages.Count -ne 1) {
+            throw "Vendor catalog must contain exactly one '$($specification.packageId)' package."
+          }
+          $package = $packages[0]
+          if ([string]$package.buildRecipe -cne [string]$specification.recipe) {
+            throw "Vendor catalog recipe for '$($specification.packageId)' is not '$($specification.recipe)'."
+          }
+          $version = [string]$package.version
+          if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+            throw "Vendor version '$version' is not safe for a release tag."
+          }
+          $bundleTag = "vendor-$env:DEPENDENCY-$version-stark.1"
+          "package_id=$($specification.packageId)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_identity=$([string]$package.sourceIdentity)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "bundle_tag=$bundleTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Setup exact .NET SDK from global.json
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build and validate the six-target plan
+        id: plan
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          $releaseTools = [System.IO.Path]::GetFullPath("eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll")
+          & dotnet $releaseTools validate-config --root . --include-planned --emit-matrix --github-output $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { throw "Vendor native bundle plan validation failed." }
+
+  build:
+    name: Build and verify ${{ inputs.dependency }} for ${{ matrix.target_id }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    needs: prepare
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout recorded source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Install Linux native build prerequisites
+        if: ${{ runner.os == 'Linux' && inputs.dependency != 'sqlite' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libasound2-dev libudev-dev xorg-dev
+
+      - name: Setup exact .NET SDK
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/stark-dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ matrix.dotnet_version }}
+
+      - name: Build repository-owned release tools
+        shell: pwsh
+        run: |
+          & dotnet build eng/release/Stark.ReleaseTools/Stark.ReleaseTools.csproj -c Release --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "Stark.ReleaseTools build failed." }
+          "RELEASE_TOOLS_DLL=$([System.IO.Path]::GetFullPath('eng/release/Stark.ReleaseTools/bin/Release/net10.0/Stark.ReleaseTools.dll'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: vendor-prebuild-${{ runner.os }}-${{ matrix.rid }}-nuget-${{ hashFiles('global.json', 'src/compiler.csproj', 'src/packages.*.lock.json', 'eng/release/NuGet.config') }}
+          restore-keys: |
+            vendor-prebuild-${{ runner.os }}-${{ matrix.rid }}-nuget-
+
+      - name: Restore exact Stage0 dependency graph
+        shell: pwsh
+        run: |
+          & dotnet restore src/compiler.csproj `
+            -r "${{ matrix.rid }}" `
+            --configfile "${{ matrix.nuget_config }}" `
+            --use-lock-file `
+            --locked-mode `
+            --lock-file-path "${{ matrix.nuget_lock_file }}" `
+            -p:RuntimeFrameworkVersion=${{ matrix.dotnet_runtime_version }} `
+            -p:DisableImplicitLibraryPacksFolder=true `
+            -p:DisableTransitiveFrameworkReferenceDownloads=true
+          if ($LASTEXITCODE -ne 0) { throw "Exact locked restore failed for ${{ matrix.rid }}." }
+
+      - name: Cache checksum-verified LLVM bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/llvm-cache
+          key: vendor-prebuild-llvm-${{ matrix.target_id }}-${{ hashFiles('eng/release/llvm-toolchain-bundles.json', 'scripts/acquire-llvm-toolchain.ps1') }}
+
+      - name: Cache checksum-verified dependency source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/vendor-cache/${{ inputs.dependency }}
+          key: vendor-prebuild-source-${{ inputs.dependency }}-${{ hashFiles('eng/release/vendor-packages.json', 'scripts/prepare-sdl3-vendor-release-input.ps1', 'scripts/prepare-glfw-vendor-release-input.ps1', 'scripts/prepare-sqlite-vendor-release-input.ps1', 'scripts/invoke-release-download.ps1') }}
+
+      - name: Acquire qualified LLVM bundle
+        shell: pwsh
+        run: |
+          & ./scripts/acquire-llvm-toolchain.ps1 `
+            -AssetSuffix "${{ matrix.asset_suffix }}" `
+            -ManifestPath "${{ matrix.llvm_manifest }}" `
+            -QualifiedBundleManifestPath "${{ matrix.llvm_bundle_manifest }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
+            -OutputDir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -CacheDir "artifacts/llvm-cache/${{ matrix.asset_suffix }}"
+          if ($LASTEXITCODE -ne 0) { throw "Qualified LLVM acquisition failed for ${{ matrix.target_id }}." }
+
+      - name: Cache pinned CMake and Ninja downloads
+        if: ${{ inputs.dependency == 'sdl3' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/release-build-tool-cache
+          key: vendor-prebuild-tools-${{ matrix.target_id }}-${{ hashFiles('eng/release/build-tools.json', 'scripts/acquire-release-build-tools.ps1', 'eng/release/Stark.ReleaseTools/**') }}
+
+      - name: Acquire pinned CMake and Ninja
+        if: ${{ inputs.dependency == 'sdl3' }}
+        id: build_tools
+        shell: pwsh
+        run: |
+          $toolRoot = [System.IO.Path]::GetFullPath("artifacts/release-build-tools/${{ matrix.target_id }}")
+          & ./scripts/acquire-release-build-tools.ps1 `
+            -TargetId "${{ matrix.target_id }}" `
+            -OutputDir $toolRoot `
+            -CacheDir "artifacts/release-build-tool-cache/${{ matrix.target_id }}" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL
+          if ($LASTEXITCODE -ne 0) { throw "Pinned CMake/Ninja acquisition failed." }
+          $manifest = Get-Content -LiteralPath (Join-Path $toolRoot "manifest.json") -Raw | ConvertFrom-Json
+          foreach ($toolName in @("cmake", "ninja")) {
+            $toolPath = [System.IO.Path]::GetFullPath((Join-Path $toolRoot ([string]$manifest.tools.$toolName.path)))
+            if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) { throw "Pinned $toolName is missing." }
+            "$($toolName)_path=$toolPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Build the target System package used for qualification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/stdlib/${{ matrix.asset_suffix }}" | Out-Null
+          & dotnet run --project src/compiler.csproj --no-restore -- `
+            stdlib/src/System.stark `
+            --emit-lib `
+            --target "${{ matrix.target_triple }}" `
+            --package-profile release `
+            --toolchain-dir "artifacts/toolchain/${{ matrix.asset_suffix }}" `
+            -o "artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}"
+          if ($LASTEXITCODE -ne 0) { throw "Stage0 could not build System for ${{ matrix.target_id }}." }
+
+      - name: Build and qualify pinned native dependency
+        shell: pwsh
+        env:
+          DEPENDENCY: ${{ inputs.dependency }}
+        run: |
+          $common = @{
+            AssetSuffix = "${{ matrix.asset_suffix }}"
+            TargetTriple = "${{ matrix.target_triple }}"
+            OutputVendorRoot = "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}"
+            StdlibPackageDir = "artifacts/stdlib/${{ matrix.asset_suffix }}"
+            ToolchainDir = "artifacts/toolchain/${{ matrix.asset_suffix }}"
+            ContributionManifestPath = "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json"
+            CacheDir = "artifacts/vendor-cache/$env:DEPENDENCY"
+          }
+          switch ($env:DEPENDENCY) {
+            "sdl3" {
+              & ./scripts/prepare-sdl3-vendor-release-input.ps1 @common `
+                -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
+                -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
+                -AllowPlannedTarget
+            }
+            "glfw" {
+              & ./scripts/prepare-glfw-vendor-release-input.ps1 @common -AllowPlannedTarget
+            }
+            "sqlite" {
+              & ./scripts/prepare-sqlite-vendor-release-input.ps1 @common
+            }
+            default { throw "Unsupported dependency '$env:DEPENDENCY'." }
+          }
+          if ($LASTEXITCODE -ne 0) { throw "$env:DEPENDENCY qualification failed for ${{ matrix.target_id }}." }
+
+      - name: Create and smoke-test deterministic native bundle
+        shell: pwsh
+        env:
+          DEPENDENCY: ${{ inputs.dependency }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          & ./scripts/package-vendor-native-bundle.ps1 `
+            -Dependency $env:DEPENDENCY `
+            -PackageId "${{ needs.prepare.outputs.package_id }}" `
+            -Version "${{ needs.prepare.outputs.version }}" `
+            -SourceIdentity "${{ needs.prepare.outputs.source_identity }}" `
+            -TargetId "${{ matrix.target_id }}" `
+            -TargetTriple "${{ matrix.target_triple }}" `
+            -ArchiveKind "${{ matrix.archive_kind }}" `
+            -BundleTag "${{ needs.prepare.outputs.bundle_tag }}" `
+            -VendorRoot "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}" `
+            -ContributionManifestPath "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json" `
+            -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
+            -QualificationCommit $env:SOURCE_COMMIT `
+            -QualificationWorkflow "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" `
+            -ReleaseRepository "${{ github.repository }}" `
+            -OutputDir "artifacts/vendor-bundle/$env:DEPENDENCY/${{ matrix.target_id }}" `
+            -StagingDir "artifacts/vendor-bundle-stage/$env:DEPENDENCY/${{ matrix.target_id }}"
+          if ($LASTEXITCODE -ne 0) { throw "Native bundle packaging failed for ${{ matrix.target_id }}." }
+
+      - name: Attest native bundle provenance
+        if: ${{ inputs.publish }}
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: artifacts/vendor-bundle/${{ inputs.dependency }}/${{ matrix.target_id }}/stark-${{ needs.prepare.outputs.bundle_tag }}-${{ matrix.target_id }}.*
+
+      - name: Upload verified native bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.dependency }}-native-bundle-${{ matrix.target_id }}
+          path: artifacts/vendor-bundle/${{ inputs.dependency }}/${{ matrix.target_id }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish six ${{ inputs.dependency }} native bundles
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-24.04
+    needs: [prepare, build]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout recorded source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Download all verified native bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ inputs.dependency }}-native-bundle-*
+          path: artifacts/publish-input
+          merge-multiple: true
+
+      - name: Assemble and verify published bundle catalog
+        shell: pwsh
+        env:
+          BUNDLE_TAG: ${{ needs.prepare.outputs.bundle_tag }}
+          DEPENDENCY: ${{ inputs.dependency }}
+          PACKAGE_ID: ${{ needs.prepare.outputs.package_id }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_IDENTITY: ${{ needs.prepare.outputs.source_identity }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          $records = @{}
+          foreach ($recordFile in @(Get-ChildItem -LiteralPath artifacts/publish-input -Filter "*.bundle.json" -File -Recurse)) {
+            $record = Get-Content -LiteralPath $recordFile.FullName -Raw | ConvertFrom-Json
+            $target = [string]$record.target.id
+            if ($records.ContainsKey($target)) { throw "Duplicate native bundle record for '$target'." }
+            $records[$target] = $record
+          }
+          $targetConfiguration = Get-Content -LiteralPath eng/release/targets.json -Raw | ConvertFrom-Json
+          $expectedTargets = @($targetConfiguration.targets)
+          if ($records.Count -ne $expectedTargets.Count) {
+            throw "Publication requires exactly $($expectedTargets.Count) unique native bundle records; found $($records.Count)."
+          }
+          $publishedTargets = @()
+          foreach ($expected in $expectedTargets) {
+            $target = [string]$expected.id
+            if (-not $records.ContainsKey($target)) { throw "Missing native bundle record for '$target'." }
+            $record = $records[$target]
+            if ([int]$record.schemaVersion -ne 1 -or
+                [string]$record.bundleKind -cne "stark-vendor-native-bundle" -or
+                [string]$record.dependency -cne $env:DEPENDENCY -or
+                [string]$record.packageId -cne $env:PACKAGE_ID -or
+                [string]$record.version -cne $env:VERSION -or
+                [string]$record.sourceIdentity -cne $env:SOURCE_IDENTITY -or
+                [string]$record.bundleTag -cne $env:BUNDLE_TAG -or
+                [string]$record.target.targetTriple -cne [string]$expected.targetTriple -or
+                [string]$record.archiveKind -cne [string]$expected.archiveKind -or
+                [string]$record.qualification.commit -cne $env:SOURCE_COMMIT) {
+              throw "Native bundle record for '$target' differs from the publication plan."
+            }
+            $archive = @(Get-ChildItem -LiteralPath artifacts/publish-input -Filter ([string]$record.archive.name) -File -Recurse)
+            if ($archive.Count -ne 1) { throw "Expected exactly one archive '$($record.archive.name)'; found $($archive.Count)." }
+            $actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive[0].FullName).Hash.ToLowerInvariant()
+            if ($actualSha -cne [string]$record.archive.sha256 -or [int64]$archive[0].Length -ne [int64]$record.archive.size) {
+              throw "Downloaded workflow artifact '$($record.archive.name)' differs from its verified record."
+            }
+            $publishedTargets += $record
+          }
+          $catalog = [ordered]@{
+            schemaVersion = 1
+            bundleKind = "stark-vendor-native-bundle-set"
+            dependency = $env:DEPENDENCY
+            packageId = $env:PACKAGE_ID
+            version = $env:VERSION
+            sourceIdentity = $env:SOURCE_IDENTITY
+            releaseTag = $env:BUNDLE_TAG
+            releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:BUNDLE_TAG"
+            targets = [object[]]$publishedTargets
+          }
+          $catalog | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath "artifacts/publish-input/$env:DEPENDENCY-native-bundles.json" -Encoding utf8
+
+      - name: Publish immutable native bundle assets without replacement
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_TAG: ${{ needs.prepare.outputs.bundle_tag }}
+          DEPENDENCY: ${{ inputs.dependency }}
+          PACKAGE_ID: ${{ needs.prepare.outputs.package_id }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit_sha }}
+        run: |
+          $existingJson = @(& gh release view $env:BUNDLE_TAG --repo "${{ github.repository }}" --json assets 2>$null) -join [Environment]::NewLine
+          if ($LASTEXITCODE -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            if (@($existing.assets).Count -ne 0) {
+              throw "Immutable native bundle release '$env:BUNDLE_TAG' already contains assets. Increment the Stark bundle revision instead of replacing them."
+            }
+          } else {
+            & gh release create $env:BUNDLE_TAG `
+              --repo "${{ github.repository }}" `
+              --target $env:SOURCE_COMMIT `
+              --title "Pre-built $env:PACKAGE_ID $env:VERSION native binaries" `
+              --notes "Verified native binaries for Stark's six 64-bit targets. These are release-build inputs, not a Stark SDK release." `
+              --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "Could not create the native bundle release." }
+          }
+          $archives = @(Get-ChildItem -LiteralPath artifacts/publish-input -File -Recurse |
+            Where-Object { $_.Name -like "stark-$env:BUNDLE_TAG-*" -and $_.Name -notlike "*.bundle.json" } |
+            Sort-Object Name)
+          if ($archives.Count -ne 6) { throw "Expected six native archives for publication; found $($archives.Count)." }
+          $assetPaths = @($archives | ForEach-Object { $_.FullName })
+          $assetPaths += [System.IO.Path]::GetFullPath("artifacts/publish-input/$env:DEPENDENCY-native-bundles.json")
+          & gh release upload $env:BUNDLE_TAG @assetPaths --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { throw "Native bundle publication failed." }
+
+      - name: Upload generated native bundle catalog
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.dependency }}-published-native-bundle-catalog
+          path: artifacts/publish-input/${{ inputs.dependency }}-native-bundles.json
+          if-no-files-found: error
+          retention-days: 30

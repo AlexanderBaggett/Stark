@@ -191,6 +191,25 @@ always an archive defect.
 Ordinary builds should prefer bundled binary package images and native artifacts.
 Source fallback is for diagnostics, rebuilds, and development, not the hot path.
 
+SDL3, GLFW, and SQLite also have durable native pre-build workflows. Their
+published build-input archives contain only the target-specific `native/<name>`
+tree, its build provenance, and a bundle manifest. They do not contain a
+`Vendor.*.starkpkg` or Stark wrapper archive. Those two files encode the exact
+API/content identity of the `System` package used while generating them and
+therefore cannot safely cross compiler/standard-library releases. A release
+that consumes a promoted native bundle must verify its catalog checksum,
+target triple, upstream source identity, build-recipe identity, embedded
+manifest, and complete native-tree inventory before generating a fresh Vendor
+package image and wrapper archive against that release's staged `System`.
+
+The GitHub Actions list exposes the producer entry points as `Pre-build SDL3
+binaries`, `Pre-build GLFW binaries`, and `Pre-build SQLite binaries`. A
+non-publishing run retains candidate archives as short-lived workflow artifacts.
+A publishing run succeeds only with the complete six-target set and uploads the
+archives plus their generated `*-native-bundles.json` catalog to an immutable
+dependency prerelease. Actions caches accelerate verified downloads but are not
+the durable source of release inputs.
+
 Producing the official Linux Vendor packages is a release-build operation, not
 an end-user source fallback. The release runner installs Ubuntu's `xorg-dev` for
 GLFW's X11 backend and `libasound2-dev` plus `libudev-dev` for SDL3's ALSA and
