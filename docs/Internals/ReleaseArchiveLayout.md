@@ -122,8 +122,9 @@ These files are required for ordinary use from a clean machine:
   artifact, such as `libSystem.a` or `System.lib`.
 - The allowlisted `toolchain/llvm-22.1.8/` compiler-private backend payload.
   For Stage0 this is the compatible backend executable(s), builtin resources,
-  transitive runtime libraries, licenses, and diagnostic/provenance metadata it
-  actually needs to turn textual LLVM into target output. For Stage1 it is the
+  transitive runtime libraries outside the documented host ABI baseline,
+  licenses, and diagnostic/provenance metadata it actually needs to turn
+  textual LLVM into target output. For Stage1 it is the
   qualified libLLVM runtime and its runtime closure. Release assembly must copy
   from an explicit manifest and reject unlisted upstream development files.
 - The complete target-advertised official Vendor collection: bindings and
@@ -137,6 +138,16 @@ These files are required for ordinary use from a clean machine:
   development libraries on Linux. The optional installer may invoke the official
   platform mechanism for these prerequisites; `stark doctor` must diagnose them
   separately from a missing or corrupt private backend.
+
+On macOS, final links may also consume the Darwin compiler runtime archive from
+that selected Xcode/Command Line Tools installation when the compiler-private
+Clang bundle provides its driver and headers but not `libclang_rt.osx.a`.
+
+The upstream Linux LLVM tools used by the current private backend also consume
+the `libz.so.1` and `libxml2.so.2` ABI libraries supplied by the declared Ubuntu
+24.04-compatible host baseline. They are host platform libraries, not Vendor
+payloads. Optional .NET diagnostic providers that would add unrelated tracing
+dependencies are omitted from the SDK.
 
 Because each archive is target-specific, its `sdk.json` advertises exactly one
 target and the named `<sdk-target>` directories contain only that target's

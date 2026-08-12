@@ -61,6 +61,7 @@ internal sealed record NativeToolchainResolution(
     NativeResolvedTool Xcrun,
     NativeResolvedFile LlvmLibrary,
     string? MacOSSdkRoot,
+    string? MacOSCompilerRuntimeLibrary,
     IReadOnlyList<string> SearchRoots);
 
 internal sealed record NativeToolchainSearchRoot(
@@ -129,6 +130,7 @@ internal static class NativeToolchain
         }
         var llvmLibrary = ResolveLlvmLibrary(options, searchRoots);
         var sdkRoot = ResolveMacOSSdkRoot(xcrun.Path);
+        var macOSCompilerRuntimeLibrary = ResolveMacOSCompilerRuntimeLibrary(linker.Path);
 
         return new NativeToolchainResolution(
             clang,
@@ -139,6 +141,7 @@ internal static class NativeToolchain
             xcrun,
             llvmLibrary,
             sdkRoot,
+            macOSCompilerRuntimeLibrary,
             searchRoots.Select(static root => root.Path).Distinct(StringComparer.Ordinal).ToArray());
     }
 
@@ -386,7 +389,8 @@ internal static class NativeToolchain
                 enableLto,
                 IsClangDriver(resolvedLinkerTool),
                 resolvedToolchain.Lld.IsAvailable,
-                resolvedToolchain.MacOSSdkRoot),
+                resolvedToolchain.MacOSSdkRoot,
+                resolvedToolchain.MacOSCompilerRuntimeLibrary),
             outputPath);
     }
 
@@ -947,7 +951,8 @@ internal static class NativeToolchain
         bool enableLto,
         bool linkerIsClangDriver,
         bool lldAvailable,
-        string? macOSSdkRoot)
+        string? macOSSdkRoot,
+        string? macOSCompilerRuntimeLibrary)
     {
         if (targetInfo is not null && !string.IsNullOrWhiteSpace(targetInfo.Triple))
         {
@@ -991,6 +996,16 @@ internal static class NativeToolchain
             {
                 yield return argument;
             }
+        }
+
+        if (ShouldUseMacOSPlatformSdk(targetInfo)
+            && macOSCompilerRuntimeLibrary is not null)
+        {
+            // Source-built private Clang distributions may contain the driver
+            // and resource headers without Darwin compiler-rt. The selected
+            // Xcode/Command Line Tools installation supplies that final host
+            // link component, just as it supplies the macOS SDK and libSystem.
+            yield return macOSCompilerRuntimeLibrary;
         }
 
         foreach (var argument in GetRelocationLinkArguments(targetInfo))
@@ -1282,6 +1297,62 @@ internal static class NativeToolchain
         }
 
         return QueryXcrunMacOSSdkRoot(xcrunPath);
+    }
+
+    private static string? ResolveMacOSCompilerRuntimeLibrary(string? linkerPath)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return null;
+        }
+
+        // A complete selected Clang toolchain adds its compiler runtime on its
+        // own. Only provide the platform toolchain's archive when the selected
+        // linker driver reports no usable runtime library.
+        if (IsClangDriver(linkerPath ?? string.Empty)
+            && QueryCompilerRuntimeLibrary(linkerPath!) is not null)
+        {
+            return null;
+        }
+
+        return File.Exists("/usr/bin/clang")
+            ? QueryCompilerRuntimeLibrary("/usr/bin/clang")
+            : null;
+    }
+
+    private static string? QueryCompilerRuntimeLibrary(string clangPath)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = clangPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-print-libgcc-file-name");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return null;
+            }
+
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            var candidate = standardOutput.Trim();
+            return process.ExitCode == 0 && Path.IsPathRooted(candidate) && File.Exists(candidate)
+                ? Path.GetFullPath(candidate)
+                : null;
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
+        {
+            return null;
+        }
     }
 
     private static string? QueryXcrunMacOSSdkRoot(string? xcrunPath)

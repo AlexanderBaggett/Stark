@@ -1213,9 +1213,10 @@ open; PowerShell parsing alone is not target qualification.
     native exit code.
   - Review each target's `archive-smoke-<target>.json` evidence. Its
     `packagedSystemAssembly` fields must prove a System-using program compiled
-    with the extracted SDK's `stdlib/src` unavailable, lowered a direct
-    standard-library assembly call with precise `memory(argmem: readwrite)`,
-    and ran successfully.
+    with the extracted SDK's `stdlib/src` unavailable, linked the packaged
+    optimized System archive, and ran successfully. Precise assembly lowering
+    is covered once by the dedicated assembly-bridge qualification above rather
+    than inferred from one optimized program's incidental textual LLVM shape.
 - [ ] Download the exact draft-release assets and independently verify filenames,
   contents, checksums, signatures/attestations where used, and clean-machine
   behavior.

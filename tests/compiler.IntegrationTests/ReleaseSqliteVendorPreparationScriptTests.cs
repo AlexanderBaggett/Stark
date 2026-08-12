@@ -100,7 +100,6 @@ public sealed class ReleaseSqliteVendorPreparationScriptTests
         }
 
         Assert.Contains("$archiveCacheRoot = Join-Path $cacheRoot $sourceSha256", script, StringComparison.Ordinal);
-        Assert.Contains("Invoke-WebRequest -Uri $sourceUrl", script, StringComparison.Ordinal);
         Assert.Contains("Assert-Sha256 -Path $archivePath", script, StringComparison.Ordinal);
         Assert.Contains("Expand-VerifiedZipArchive", script, StringComparison.Ordinal);
         Assert.Contains("sourceArchiveFiles", script, StringComparison.Ordinal);

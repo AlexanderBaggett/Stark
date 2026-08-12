@@ -27,6 +27,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $artifactsRoot = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot "artifacts"))
 $ownerMarkerName = ".stark-llvm-toolchain-owner.json"
+. (Join-Path $PSScriptRoot "invoke-release-download.ps1")
 
 function Assert-PortablePathSegment {
     param(
@@ -438,16 +439,27 @@ function Save-Asset {
 
     $url = [string] $Asset.url
     $sha256 = [string] $Asset.sha256
+    $expectedSize = [int64](Get-JsonProperty -Object $Asset -Name "size")
     $destination = Get-ContainedChildPath -Root $DestinationDirectory -Child $name -Name "LLVM cached asset"
 
     if ($Force -or -not (Test-Path -LiteralPath $destination -PathType Leaf)) {
         Assert-NoReparsePointPath -Path $destination -Label "LLVM cached asset"
-        Invoke-WebRequest -Uri $url -OutFile $destination
+        $downloadPath = "$destination.download-$([Guid]::NewGuid().ToString('N'))"
+        try {
+            Invoke-ReleaseDownload -Uri $url -OutFile $downloadPath
+            Assert-Sha256 -Path $downloadPath -ExpectedSha256 $sha256
+            $downloadedSize = [int64](Get-Item -LiteralPath $downloadPath -Force).Length
+            if ($expectedSize -le 0 -or $downloadedSize -ne $expectedSize) {
+                throw "Size mismatch for '$destination'. Expected $expectedSize bytes, got $downloadedSize bytes."
+            }
+            Move-Item -LiteralPath $downloadPath -Destination $destination -Force
+        } finally {
+            Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+        }
     }
 
     Assert-NoReparsePointPath -Path $destination -Label "LLVM cached asset"
     Assert-Sha256 -Path $destination -ExpectedSha256 $sha256
-    $expectedSize = [int64](Get-JsonProperty -Object $Asset -Name "size")
     $actualSize = [int64](Get-Item -LiteralPath $destination -Force).Length
     if ($expectedSize -le 0 -or $actualSize -ne $expectedSize) {
         throw "Size mismatch for '$destination'. Expected $expectedSize bytes, got $actualSize bytes."

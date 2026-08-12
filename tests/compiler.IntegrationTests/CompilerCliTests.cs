@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Stark.Compiler;
 
@@ -2694,6 +2695,8 @@ public sealed class CompilerCliTests
             var clangLog = await File.ReadAllTextAsync(clangLogPath);
             Assert.Contains("-isysroot", clangLog, StringComparison.Ordinal);
             Assert.Contains(sdkRoot, clangLog, StringComparison.Ordinal);
+            var platformCompilerRuntime = RunToolAndReadSingleLine("/usr/bin/clang", "-print-libgcc-file-name");
+            Assert.Contains(platformCompilerRuntime, clangLog, StringComparison.Ordinal);
         }
         finally
         {
@@ -4313,6 +4316,23 @@ public sealed class CompilerCliTests
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
         return path;
+    }
+
+    private static string RunToolAndReadSingleLine(string toolPath, string argument)
+    {
+        var startInfo = new ProcessStartInfo(toolPath, argument)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        using var process = Process.Start(startInfo)!;
+        var output = process.StandardOutput.ReadToEnd().Trim();
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+        Assert.True(Path.IsPathRooted(output));
+        Assert.True(File.Exists(output));
+        return output;
     }
 
     private static async Task<string> CreateUnixAppendCaptureClangAsync(string directory, string logPath)
