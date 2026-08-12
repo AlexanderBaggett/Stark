@@ -251,7 +251,8 @@ function Test-IsWindowsSystemLibrary {
 function Test-IsLinuxSystemLibrary {
     param([string] $Name)
 
-    return $Name -match '^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|gcc_s|stdc\+\+|atomic|unwind)\.so(\..*)?)$'
+    return $Name -match '^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|gcc_s|stdc\+\+|atomic|unwind)\.so(\..*)?)$' `
+        -or $Name -in @("libz.so.1", "libxml2.so.2")
 }
 
 function Assert-SafePolicyRelativePath {

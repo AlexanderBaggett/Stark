@@ -123,6 +123,7 @@ foreach ($relativePath in @(
     "scripts/build-release.ps1",
     "scripts/generate-release-docs.ps1",
     "scripts/get-release-configuration-identity.ps1",
+    "scripts/invoke-release-download.ps1",
     "scripts/package-release.ps1",
     "scripts/prepare-release-public-assets.ps1",
     "scripts/prepare-vendor-release-input.ps1",

@@ -33,6 +33,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "invoke-release-download.ps1")
 
 function Resolve-RepositoryPath {
     param(
@@ -506,9 +507,18 @@ New-Item -ItemType Directory -Force -Path $assetCacheRoot | Out-Null
 $archiveName = [string] (Get-RequiredProperty -Object $archive -Name "name")
 $archivePath = Join-Path $assetCacheRoot $archiveName
 if ($Force -or -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
-    Invoke-WebRequest `
-        -Uri ([string] (Get-RequiredProperty -Object $archive -Name "url")) `
-        -OutFile $archivePath
+    $downloadPath = "$archivePath.download-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        Invoke-ReleaseDownload `
+            -Uri ([string] (Get-RequiredProperty -Object $archive -Name "url")) `
+            -OutFile $downloadPath
+        Assert-Sha256 `
+            -Path $downloadPath `
+            -ExpectedSha256 ([string] (Get-RequiredProperty -Object $archive -Name "sha256"))
+        Move-Item -LiteralPath $downloadPath -Destination $archivePath -Force
+    } finally {
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Assert-Sha256 `
@@ -754,6 +764,7 @@ if (@(Get-ArrayValues -Value $pkgConfigPackages).Count -ne 0) {
 # Raylib upstream release. Build the siblings against the just-staged Raylib
 # package so their dependency identity and native link closure flow transitively
 # without duplicating Raylib's native payload.
+$isWindowsTarget = $AssetSuffix.StartsWith("windows-", [StringComparison]::Ordinal)
 $siblingDefinitions = @(
     [pscustomobject]@{
         Id = "Vendor.Raymath"
@@ -761,7 +772,7 @@ $siblingDefinitions = @(
         LibraryStem = "VendorRaymath"
         LicenseName = "Raymath"
         ExpectedDependencies = @("System", "Vendor.Raylib")
-        ExpectedNativeLibraries = @("m")
+        ExpectedNativeLibraries = if ($isWindowsTarget) { @() } else { @("m") }
     },
     [pscustomobject]@{
         Id = "Vendor.Rlgl"
@@ -774,7 +785,7 @@ $siblingDefinitions = @(
 )
 $siblingPackageBuilds = @()
 foreach ($definition in $siblingDefinitions) {
-    $siblingLibraryFile = if ($AssetSuffix -eq "windows-x64") {
+    $siblingLibraryFile = if ($isWindowsTarget) {
         "$($definition.LibraryStem).lib"
     } else {
         "lib$($definition.LibraryStem).a"

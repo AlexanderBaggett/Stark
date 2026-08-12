@@ -37,6 +37,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $recipePath = "scripts/prepare-glfw-vendor-release-input.ps1"
 $packageId = "Vendor.GLFW"
+. (Join-Path $PSScriptRoot "invoke-release-download.ps1")
 
 function Resolve-RepositoryPath {
     param([Parameter(Mandatory = $true)][string] $Path)
@@ -308,7 +309,7 @@ function Get-OrDownloadPinnedArchive {
     if ($Force -or -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
         $downloadPath = "$archivePath.download-$([Guid]::NewGuid().ToString('N'))"
         try {
-            Invoke-WebRequest -Uri $url -OutFile $downloadPath
+            Invoke-ReleaseDownload -Uri $url -OutFile $downloadPath
             Assert-Sha256 -Path $downloadPath -ExpectedSha256 $sha256 -ExpectedBytes $bytes
             Move-Item -LiteralPath $downloadPath -Destination $archivePath -Force
         } finally {
