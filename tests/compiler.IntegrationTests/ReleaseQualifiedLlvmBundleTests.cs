@@ -12,7 +12,7 @@ public sealed class ReleaseQualifiedLlvmBundleTests
     ];
 
     [Fact]
-    public void BundleLockTracksEveryTargetAndStartsWithoutUnpinnedPublicationFields()
+    public void BundleLockTracksEveryPublishedTargetWithPinnedPublicationFields()
     {
         var root = FindRepositoryRoot();
         using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "eng", "release", "llvm-toolchain-bundles.json")));
@@ -21,9 +21,17 @@ public sealed class ReleaseQualifiedLlvmBundleTests
         Assert.Equal(TargetIds, entries.Select(entry => entry.GetProperty("target").GetString()));
         Assert.All(entries, entry =>
         {
-            Assert.Equal("build-required", entry.GetProperty("status").GetString());
-            Assert.False(entry.TryGetProperty("archive", out _));
-            Assert.False(entry.TryGetProperty("manifestSha256", out _));
+            Assert.Equal("published", entry.GetProperty("status").GetString());
+            var archive = entry.GetProperty("archive");
+            Assert.Equal(entry.GetProperty("assetName").GetString(), archive.GetProperty("name").GetString());
+            Assert.Matches("^[0-9a-f]{64}$", archive.GetProperty("sha256").GetString()!);
+            Assert.True(archive.GetProperty("size").GetInt64() > 0);
+            Assert.Matches("^[0-9a-f]{64}$", entry.GetProperty("manifestSha256").GetString()!);
+            Assert.Matches("^[0-9a-f]{40}$", entry.GetProperty("qualificationCommit").GetString()!);
+            Assert.StartsWith(
+                "https://github.com/AlexanderBaggett/Stark/actions/runs/",
+                entry.GetProperty("qualificationWorkflow").GetString()!,
+                StringComparison.Ordinal);
         });
     }
 
