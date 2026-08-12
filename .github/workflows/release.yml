@@ -11,10 +11,6 @@ on:
         description: Git branch, tag, or full commit SHA to resolve once and build immutably.
         required: true
         default: main
-      commit:
-        description: Optional expected full commit SHA; required to publish unless ref is already a full SHA.
-        required: false
-        default: ""
       targets:
         description: "all, or a comma-separated subset of targets permitted by include_planned."
         required: true
@@ -103,7 +99,6 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_REF: ${{ inputs.ref }}
-          INPUT_COMMIT: ${{ inputs.commit }}
           INPUT_TARGETS: ${{ inputs.targets }}
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_DRAFT: ${{ inputs.draft }}
@@ -119,7 +114,6 @@ jobs:
             --github-sha $env:GITHUB_SHA `
             --input-version $env:INPUT_VERSION `
             --input-ref $env:INPUT_REF `
-            --input-commit $env:INPUT_COMMIT `
             --input-targets $env:INPUT_TARGETS `
             --input-publish $env:INPUT_PUBLISH `
             --input-draft $env:INPUT_DRAFT `

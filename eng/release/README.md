@@ -38,8 +38,9 @@ and selected matrix. A manual run defaults to `publish=false`, `draft=true`,
 `prerelease=true`, and all release-enabled targets. Target subsets are allowed
 for nonpublishing diagnostics only. Setting `include_planned=true` permits the
 three release-disabled rows in that diagnostic matrix; the request is rejected
-if `publish=true`. Publishing requires either an expected full commit SHA or a
-full SHA as the requested ref, and always requires the complete enabled matrix.
+if `publish=true`. Publishing always requires the complete enabled matrix. The
+selected `ref` is resolved once, and every downstream job uses that immutable
+commit SHA.
 
 ## Run a release candidate from GitHub
 
@@ -49,9 +50,8 @@ full SHA as the requested ref, and always requires the complete enabled matrix.
 3. Select the branch containing the workflow definition. Enter a portable
    `version`, such as `v0.1.0-rc.1`.
 4. Set `ref` to the branch, tag, or full 40-character commit to build. For a
-   review-only candidate, leave `commit` empty, keep `targets=all`, and retain
-   the safe defaults: `publish=false`, `include_planned=false`, `draft=true`,
-   `prerelease=true`.
+   review-only candidate, keep `targets=all` and retain the safe defaults:
+   `publish=false`, `include_planned=false`, `draft=true`, `prerelease=true`.
 5. Choose **Run workflow**. Review the `release-plan` artifact first, especially
    its resolved commit, target IDs, warnings, and configuration identity. Then
    review every `release-candidate-<target>-attempt-<N>` artifact and independent
@@ -325,13 +325,12 @@ Reports cover the no-existing-release case, source binding, upload decision,
 the exact upload subset, remote byte identities, planned deletions, every
 completed deletion, and the verified metadata/visibility transition.
 
-To create a draft prerelease after review, rerun with the exact same version and
-source identity, set `ref` to the full commit SHA (or provide that SHA in
-`commit`), keep `targets=all`, and set `publish=true`, `draft=true`, and
-`prerelease=true`. Publication runs only after prepare, every selected native
-build, archive validation, and every independent installer smoke succeed. A
-partial target set, moving ref without an expected commit, or failed target
-cannot publish.
+To create a draft prerelease after review, rerun with the intended version and
+`ref`, keep `targets=all`, and set `publish=true`, `draft=true`, and
+`prerelease=true`. The workflow resolves the ref once and builds that immutable
+commit. Publication runs only after prepare, every selected native build,
+archive validation, and every independent installer smoke succeed. A partial
+target set or failed target cannot publish.
 
 Only the release coordinator should request cleared `draft` or `prerelease`
 state, and only after the repository's release sign-off. Pushing a `v*.*.*` tag

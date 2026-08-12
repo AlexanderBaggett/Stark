@@ -771,7 +771,7 @@ qualification also remains required.
 ### One-click workflow behavior
 
 - [x] Keep a GitHub Actions **Run workflow** button with explicit inputs for
-  version, commit/ref, draft, prerelease, publish/no-publish, and optional target
+  version, ref, draft, prerelease, publish/no-publish, and optional target
   subset for diagnostics.
 - [x] Default manual runs to non-publishing draft prerelease candidates and all
   currently enabled supported targets; require
@@ -782,10 +782,9 @@ qualification also remains required.
   packaging. The planner rejects planned targets without opt-in and rejects the
   opt-in before writing a plan whenever publication is requested.
 - [x] Add a prepare job that validates the version/ref/manifests, emits the
-  dynamic matrix, and refuses a dirty, moving, or mismatched release identity.
-  It resolves one immutable commit, rejects expected-SHA mismatches, requires an
-  explicit immutable commit for manual publication, rejects partial publication,
-  and uploads `release-plan.json` as reviewable workflow evidence.
+  dynamic matrix, resolves the selected ref once to an immutable commit used by
+  every downstream job, rejects partial publication, and uploads
+  `release-plan.json` as reviewable workflow evidence.
 - [x] Gate expensive qualification behind a fast native six-runner release
   contract. `.github/workflows/release-contract.yml` also runs independently
   for relevant pull requests and manual diagnostics. It checks that each

@@ -10,7 +10,7 @@ internal static partial class ReleasePlanPreparer
     {
         command.RejectUnknown(
             "--root", "--event-name", "--resolved-commit", "--github-ref", "--github-ref-name", "--github-sha",
-            "--input-version", "--input-ref", "--input-commit", "--input-targets", "--input-publish",
+            "--input-version", "--input-ref", "--input-targets", "--input-publish",
             "--input-draft", "--input-prerelease", "--input-include-planned", "--require-release-tool", "--plan-output", "--github-output");
         var root = Path.GetFullPath(command.Optional("--root", Directory.GetCurrentDirectory()));
         var configuration = ReleaseConfiguration.Validate(root);
@@ -41,12 +41,7 @@ internal static partial class ReleasePlanPreparer
             includePlanned = ParseBool(command.Optional("--input-include-planned", "false"), "include_planned input");
             Validation.Require(!includePlanned || !publish, "Planned targets are diagnostic-only and cannot be included in a publication run.");
             targetIds = SelectTargets(command.Optional("--input-targets"), configuration.Targets, includePlanned);
-            var requestedCommit = command.Optional("--input-commit").Trim();
-            expected = requestedCommit.Length != 0 ? ValidateCommit(requestedCommit, "expected commit") : FullCommit().IsMatch(requestedRef) ? requestedRef.ToLowerInvariant() : null;
-            if (publish)
-            {
-                Validation.Require(expected is not null, "Publishing a manually dispatched release requires an expected commit or a full commit SHA as the requested ref.");
-            }
+            expected = FullCommit().IsMatch(requestedRef) ? requestedRef.ToLowerInvariant() : null;
         }
         else
         {
