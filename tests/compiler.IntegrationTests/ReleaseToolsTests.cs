@@ -355,9 +355,27 @@ public sealed class ReleaseToolsTests
         Assert.Throws<ReleaseToolException>(() => ReleasePlanPreparer.Run(CommandLine.Parse([
             "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
             "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
-            "--input-commit", new string('1', 40), "--input-targets", "macos-arm64", "--input-publish", "true",
+            "--input-targets", "macos-arm64", "--input-publish", "true",
             "--input-draft", "true", "--input-prerelease", "false", "--plan-output", plan])));
         Assert.False(File.Exists(plan));
+    }
+
+    [Fact]
+    public void ReleasePlanningAllowsManualPublicationFromABranchRef()
+    {
+        using var temporary = new TemporaryDirectory();
+        var planPath = Path.Combine(temporary.Path, "plan.json");
+        var commit = new string('1', 40);
+        ReleasePlanPreparer.Run(CommandLine.Parse([
+            "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
+            "--resolved-commit", commit, "--input-version", "v0.1.0", "--input-ref", "main",
+            "--input-targets", "all", "--input-publish", "true",
+            "--input-draft", "true", "--input-prerelease", "true", "--input-include-planned", "false",
+            "--plan-output", planPath]));
+
+        var plan = JsonIO.LoadObject(planPath, "test release plan");
+        Assert.Equal(commit, plan.RequiredString("resolvedCommit", "test release plan"));
+        Assert.True(plan.RequiredBool("publish", "test release plan"));
     }
 
     [Fact]
@@ -368,7 +386,7 @@ public sealed class ReleaseToolsTests
         ReleasePlanPreparer.Run(CommandLine.Parse([
             "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
             "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
-            "--input-commit", new string('1', 40), "--input-targets", "all", "--input-publish", "false",
+            "--input-targets", "all", "--input-publish", "false",
             "--input-draft", "true", "--input-prerelease", "true", "--input-include-planned", "true",
             "--plan-output", planPath]));
 
@@ -387,7 +405,7 @@ public sealed class ReleaseToolsTests
         Assert.Throws<ReleaseToolException>(() => ReleasePlanPreparer.Run(CommandLine.Parse([
             "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
             "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
-            "--input-commit", new string('1', 40), "--input-targets", "macos-x64", "--input-publish", "false",
+            "--input-targets", "macos-x64", "--input-publish", "false",
             "--input-draft", "true", "--input-prerelease", "true", "--input-include-planned", "false",
             "--plan-output", planPath])));
         Assert.False(File.Exists(planPath));
@@ -401,7 +419,7 @@ public sealed class ReleaseToolsTests
         var error = Assert.Throws<ReleaseToolException>(() => ReleasePlanPreparer.Run(CommandLine.Parse([
             "prepare-release", "--root", FindRepositoryRoot(), "--event-name", "workflow_dispatch",
             "--resolved-commit", new string('1', 40), "--input-version", "v0.1.0", "--input-ref", new string('1', 40),
-            "--input-commit", new string('1', 40), "--input-targets", "all", "--input-publish", "true",
+            "--input-targets", "all", "--input-publish", "true",
             "--input-draft", "true", "--input-prerelease", "false", "--input-include-planned", "true",
             "--plan-output", planPath])));
         Assert.Contains("diagnostic-only", error.Message, StringComparison.Ordinal);
