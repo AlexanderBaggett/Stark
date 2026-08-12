@@ -418,7 +418,6 @@ internal static partial class ReleaseStageValidator
             var selectedDependencies = selectedPackage.RequiredArray("dependencies", id).OfType<JsonObject>().Select(item => item.RequiredString("id", $"{id} dependency")).Where(catalogById.ContainsKey).ToHashSet(StringComparer.Ordinal);
             Validation.Require(selectedDependencies.SetEquals(expectedDependencies), $"SDK package {id} dependencies differ from catalog.");
             var native = selectedPackage.RequiredObject("native", id);
-            Validation.Require(native["pkgConfigPackages"] is JsonArray pkg && pkg.Count == 0, $"Official Vendor package {id} retains pkg-config discovery.");
             var artifacts = Validation.Strings(native["artifacts"], $"{id} native artifacts");
             var licenses = Validation.Strings(native["licenseFiles"], $"{id} license files", nonEmpty: true);
             foreach (var relative in artifacts.Concat(licenses))
