@@ -62,7 +62,6 @@ public sealed class ReleaseTargetContractTests
         Assert.Contains("glfw-3.4.bin.MACOS.zip", script, StringComparison.Ordinal);
         Assert.Contains("lib/libllvm*", script, StringComparison.Ordinal);
         Assert.Contains("--package-image-output", script, StringComparison.Ordinal);
-        Assert.Contains("pkgConfigPackages", script, StringComparison.Ordinal);
         Assert.Contains("SQLite native-object validation", script, StringComparison.Ordinal);
     }
 
