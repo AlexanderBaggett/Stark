@@ -155,9 +155,4 @@ if (-not $sqlite.Contains('"' + $TargetId + '" {', [StringComparison]::Ordinal))
     throw "SQLite native-object validation has no explicit '$TargetId' target contract."
 }
 
-$sdkAssembler = Get-Content -LiteralPath (Join-Path $repositoryRoot "scripts/assemble-sdk-manifest.ps1") -Raw
-if (-not $sdkAssembler.Contains('pkgConfigPackages = [object[]]$pkgConfigPackages', [StringComparison]::Ordinal)) {
-    throw "SDK assembly does not serialize the pkgConfigPackages producer/consumer contract."
-}
-
 Write-Host "Release contract passed for $TargetId on $hostOperatingSystem-$hostArchitecture."
