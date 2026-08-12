@@ -47,6 +47,7 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Pat
 $recipePath = "scripts/prepare-sdl3-vendor-release-input.ps1"
 $packageId = "Vendor.SDL3"
 . (Join-Path $PSScriptRoot "sdl3-work-root-lock.ps1")
+. (Join-Path $PSScriptRoot "invoke-release-download.ps1")
 
 function Resolve-RepositoryPath {
     param([Parameter(Mandatory = $true)][string] $Path)
@@ -781,7 +782,7 @@ $archivePath = Join-Path $archiveCacheRoot $archiveName
 if ($Force -or -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
     $downloadPath = "$archivePath.download-$([Guid]::NewGuid().ToString('N'))"
     try {
-        Invoke-WebRequest -Uri $sourceUrl -OutFile $downloadPath
+        Invoke-ReleaseDownload -Uri $sourceUrl -OutFile $downloadPath
         Assert-Sha256 -Path $downloadPath -ExpectedSha256 $sourceSha256 -ExpectedBytes $sourceSize
         Move-Item -LiteralPath $downloadPath -Destination $archivePath -Force
     } finally {

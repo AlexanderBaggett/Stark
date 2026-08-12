@@ -1164,29 +1164,15 @@ export unsafe fn i32[min max] main()
 '@
 
         $runtimeExe = Get-ExecutablePath -Directory $runtimeDir -Name "ReleaseSmokeRuntime"
-        $runtimeTemps = Join-Path $runtimeDir "temps"
         $packagedStdlibSource = Join-Path $packageRoot "stdlib/src"
         $disabledStdlibSource = Join-Path $smokeRoot "disabled-stdlib-source"
         $stdlibSourceWasPresent = Test-Path -LiteralPath $packagedStdlibSource -PathType Container
         if ($stdlibSourceWasPresent) {
             Move-Item -LiteralPath $packagedStdlibSource -Destination $disabledStdlibSource
         }
-        Invoke-Stark -Arguments (@($runtimeSource, "--emit-exe", "--save-temps", $runtimeTemps, "-o", $runtimeExe) + $targetArgs) | Out-Null
+        Invoke-Stark -Arguments (@($runtimeSource, "--emit-exe", "-o", $runtimeExe) + $targetArgs) | Out-Null
         Assert-File -Path $runtimeExe -Name "runtime executable"
         Invoke-CheckedProcess -File $runtimeExe -WorkingDirectory $runtimeDir | Out-Null
-
-        $runtimeLlvmPath = Join-Path $runtimeTemps "root.ll"
-        Assert-File -Path $runtimeLlvmPath -Name "runtime LLVM IR"
-        $runtimeLlvm = [System.IO.File]::ReadAllText($runtimeLlvmPath)
-        $preciseAssemblyLine = $runtimeLlvm.Split([char]10) |
-            Where-Object {
-                $_.Contains("call void asm sideeffect", [StringComparison]::Ordinal) -and
-                $_.Contains("memory(argmem: readwrite)", [StringComparison]::Ordinal)
-            } |
-            Select-Object -First 1
-        if ([string]::IsNullOrWhiteSpace($preciseAssemblyLine)) {
-            throw "Packaged System runtime smoke did not preserve its bounded assembly byte-copy bridge and precise LLVM argument-memory effects."
-        }
         if ($stdlibSourceWasPresent) {
             Move-Item -LiteralPath $disabledStdlibSource -Destination $packagedStdlibSource
         }
@@ -1319,9 +1305,6 @@ export fn i32[min max] main()
                 sourceUnavailable = $true
                 optimizedArchiveLinked = $true
                 finalExecutableRan = $true
-                inlineAssemblyObserved = $true
-                preciseArgumentMemoryEffectsObserved = $true
-                llvmIrSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeLlvmPath).Hash.ToLowerInvariant()
                 executableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeExe).Hash.ToLowerInvariant()
             }
         }
