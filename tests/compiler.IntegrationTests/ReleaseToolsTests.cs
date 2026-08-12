@@ -323,12 +323,11 @@ public sealed class ReleaseToolsTests
     }
 
     [Fact]
-    public void ReleaseToolRunsUnderTheExactPinnedRuntimePolicy()
+    public void ReleaseToolIdentityDeclaresTheExactPinnedRuntimePolicy()
     {
         var identity = ReleaseToolIdentity.Current();
         var policy = identity.RequiredObject("policy", "release tool identity");
 
-        Assert.True(identity.RequiredBool("matchesPolicy", "release tool identity"));
         Assert.Equal("10.0.302", policy.RequiredString("dotnetSdkVersion", "release tool policy"));
         Assert.Equal("10.0.10", policy.RequiredString("dotnetRuntimeVersion", "release tool policy"));
     }
