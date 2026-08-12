@@ -5098,6 +5098,7 @@ internal static class CompilerCli
                 var manifestValue = Path.IsPathRooted(relativePath)
                     ? fullPath
                     : relativePath;
+                manifestValue = manifestValue.Replace(Path.DirectorySeparatorChar, '/');
                 if (seen.Add(manifestValue))
                 {
                     normalized.Add(manifestValue);
@@ -5128,6 +5129,7 @@ internal static class CompilerCli
                         : Path.IsPathRooted(trimmed)
                             ? fullPath
                             : relativePath;
+                manifestValue = manifestValue.Replace(Path.DirectorySeparatorChar, '/');
                 if (seen.Add(manifestValue))
                 {
                     normalized.Add(manifestValue);

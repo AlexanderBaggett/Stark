@@ -816,7 +816,6 @@ function Get-PackageNativeDescriptor {
         runtimeFiles = [object[]]@($runtimeFiles)
         licenseFiles = [object[]]@($licenseFiles)
         fileChecksums = [object[]]$fileChecksums
-        pkgConfigPackages = [object[]]$pkgConfigPackages
         libraries = [object[]]$libraries
         linkArguments = [object[]]$linkArguments
     }

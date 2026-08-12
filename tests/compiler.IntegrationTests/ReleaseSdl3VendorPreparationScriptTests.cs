@@ -133,7 +133,8 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
             script.IndexOf("$configuredBuildHeaders", StringComparison.Ordinal) <
             script.IndexOf("& $cmakeExecutable --build", StringComparison.Ordinal),
             "Required SDL3 backends must be checked after configure and before the expensive native build.");
-        Assert.Contains("-DCMAKE_OSX_ARCHITECTURES=$targetArchitecture", script, StringComparison.Ordinal);
+        Assert.Contains("$targetArchitecture -ceq \"x64\"", script, StringComparison.Ordinal);
+        Assert.Contains("-DCMAKE_OSX_ARCHITECTURES=$cmakeOsxArchitecture", script, StringComparison.Ordinal);
         Assert.Contains("cmakeStaticInterfaceLibraries", script, StringComparison.Ordinal);
         Assert.Contains("SDL3 CMake static interface libraries", script, StringComparison.Ordinal);
         Assert.Contains("SDL3 CMake static interface options", script, StringComparison.Ordinal);
