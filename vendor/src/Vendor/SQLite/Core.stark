@@ -5302,7 +5302,7 @@ public fn SQLiteStatusResult StringBuilderAppendRepeatedAsciiByte(
     unsafe
     {
         stack System.C.c_int nativeCount = (i32[min max])count;
-        stack System.C.c_char nativeValue = (i8[min max])value;
+        stack System.C.c_char nativeValue = value;
         sqlite3_str_appendchar(builder.Handle, nativeCount, nativeValue);
     }
 

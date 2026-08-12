@@ -941,9 +941,10 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
             throw "xcrun could not resolve the required macOS SDK version."
         }
         $macSdkVersion = ([string]$macSdkVersion).Trim()
+        $cmakeOsxArchitecture = if ($targetArchitecture -ceq "x64") { "x86_64" } else { $targetArchitecture }
         $cmakeArguments += @(
             "-DCMAKE_OSX_SYSROOT=$macSdkPath",
-            "-DCMAKE_OSX_ARCHITECTURES=$targetArchitecture",
+            "-DCMAKE_OSX_ARCHITECTURES=$cmakeOsxArchitecture",
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
         )
     }
