@@ -24,6 +24,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $artifactsRoot = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot "artifacts"))
 $ownerMarkerName = ".stark-release-build-tools-owner.json"
+. (Join-Path $PSScriptRoot "invoke-release-download.ps1")
 
 function Get-RequiredProperty {
     param(
@@ -270,7 +271,7 @@ function Get-PinnedArchive {
 
     $downloadPath = Join-Path $digestCacheRoot ("$name.download-$([Guid]::NewGuid().ToString('N'))")
     try {
-        Invoke-WebRequest -Uri $url -OutFile $downloadPath -MaximumRedirection 10
+        Invoke-ReleaseDownload -Uri $url -OutFile $downloadPath
         Assert-Sha256 -Path $downloadPath -ExpectedSha256 $sha256 -ExpectedBytes $bytes -Label "$Label downloaded archive"
         Move-Item -LiteralPath $downloadPath -Destination $archivePath
     } finally {
