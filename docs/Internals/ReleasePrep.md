@@ -795,11 +795,11 @@ qualification also remains required.
   SDK native-metadata producer/consumer contracts without rebuilding LLVM.
 - [ ] Rerun the complete six-target nonpublishing diagnostic after the contract
   repair merges. The 2026-08-11 run exposed and the repair covers: explicit
-  Windows assembly package-image naming, all six SQLite object headers, empty
-  `pkgConfigPackages` serialization, removal of LLVM development archives from
-  runtime patterns, and x64/arm64 selection from the pinned official GLFW 3.4
-  macOS universal archive. These remain unqualified until the native workflow
-  is green.
+  Windows assembly package-image naming, all six SQLite object headers,
+  elimination of `pkgConfigPackages` before SDK serialization, removal of LLVM
+  development archives from runtime patterns, and x64/arm64 selection from the
+  pinned official GLFW 3.4 macOS universal archive. These remain unqualified
+  until the native workflow is green.
 - [ ] Build compiler, standard library, Vendor packages, native dependencies,
   compiler-private backend, docs, installers, and archive independently for
   every matrix row.
