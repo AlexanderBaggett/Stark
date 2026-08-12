@@ -2,6 +2,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Stark.ReleaseTools;
@@ -330,6 +331,21 @@ public sealed class ReleaseToolsTests
         Assert.True(identity.RequiredBool("matchesPolicy", "release tool identity"));
         Assert.Equal("10.0.302", policy.RequiredString("dotnetSdkVersion", "release tool policy"));
         Assert.Equal("10.0.10", policy.RequiredString("dotnetRuntimeVersion", "release tool policy"));
+    }
+
+    [Fact]
+    public void StandaloneReleaseToolDisablesRuntimePatchRollForward()
+    {
+        var assemblyPath = typeof(ReleaseToolIdentity).Assembly.Location;
+        var runtimeConfigPath = Path.ChangeExtension(assemblyPath, ".runtimeconfig.json");
+        Assert.True(File.Exists(runtimeConfigPath), $"Release-tool runtime config is missing: {runtimeConfigPath}");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(runtimeConfigPath));
+        var runtimeOptions = document.RootElement.GetProperty("runtimeOptions");
+        var framework = runtimeOptions.GetProperty("framework");
+        Assert.Equal("Disable", runtimeOptions.GetProperty("rollForward").GetString());
+        Assert.Equal("Microsoft.NETCore.App", framework.GetProperty("name").GetString());
+        Assert.Equal("10.0.10", framework.GetProperty("version").GetString());
     }
 
     [Fact]
