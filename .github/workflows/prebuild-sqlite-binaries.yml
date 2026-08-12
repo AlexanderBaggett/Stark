@@ -1,0 +1,24 @@
+name: Pre-build SQLite binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the six verified SQLite native bundles to an immutable GitHub prerelease.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prebuild:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/prebuild-vendor-binaries.yml
+    with:
+      dependency: sqlite
+      publish: ${{ inputs.publish }}
