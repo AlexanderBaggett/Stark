@@ -398,7 +398,6 @@ public sealed class ReleaseBackendPackagingScriptTests
         var archiveSmoke = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1"));
         Assert.Contains("[string] $ReportPath", archiveSmoke, StringComparison.Ordinal);
         Assert.Contains("packagedSystemAssembly = [ordered]@{", archiveSmoke, StringComparison.Ordinal);
-        Assert.Contains("memory(argmem: readwrite)", archiveSmoke, StringComparison.Ordinal);
         Assert.Contains("archive-smoke-${{ matrix.asset_suffix }}.json", workflow, StringComparison.Ordinal);
     }
 

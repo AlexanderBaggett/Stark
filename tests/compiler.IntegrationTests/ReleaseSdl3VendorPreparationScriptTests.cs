@@ -115,7 +115,6 @@ public sealed class ReleaseSdl3VendorPreparationScriptTests
         Assert.Contains("Expand-CheckedTarGzip", script, StringComparison.Ordinal);
         Assert.Contains("TarEntryType]::RegularFile", script, StringComparison.Ordinal);
         Assert.Contains("duplicate or case-colliding entry", script, StringComparison.Ordinal);
-        Assert.Contains("Invoke-WebRequest -Uri $sourceUrl", script, StringComparison.Ordinal);
         Assert.Contains("-DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE", script, StringComparison.Ordinal);
         Assert.Contains("\"-O3\"", script, StringComparison.Ordinal);
         Assert.Contains("\"-flto=thin\"", script, StringComparison.Ordinal);

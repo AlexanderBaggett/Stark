@@ -1238,6 +1238,15 @@ Assert-NoReparsePointPath -Path $stageMarkerPath
 
 $compilerBinRoot = Join-Path $stageRoot "bin"
 Copy-TreeFiltered -Source $publishPath -Destination $compilerBinRoot -ExcludedDirectoryNames @()
+if ($AssetSuffix.StartsWith("linux-", [StringComparison]::Ordinal)) {
+    # This optional EventPipe provider is not used by the compiler, but carries
+    # an otherwise unnecessary liblttng runtime dependency in self-contained
+    # .NET publishes.
+    Remove-Item `
+        -LiteralPath (Join-Path $compilerBinRoot "libcoreclrtraceptprovider.so") `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
 $commandName = Normalize-CompilerCommand -Root $compilerBinRoot
 $compilerRelativePath = "bin/$commandName"
 
