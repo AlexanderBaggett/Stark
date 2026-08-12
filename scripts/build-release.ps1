@@ -274,7 +274,6 @@ try {
         "--resolved-commit", $Commit,
         "--input-version", $Version,
         "--input-ref", $Ref,
-        "--input-commit", $Commit,
         "--input-targets", $Targets,
         "--input-publish", $(if ($PublishingCandidate) { "true" } else { "false" }),
         "--input-draft", "true",
