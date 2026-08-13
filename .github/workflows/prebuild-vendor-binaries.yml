@@ -233,7 +233,7 @@ jobs:
             OutputVendorRoot = "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}"
             StdlibPackageDir = "artifacts/stdlib/${{ matrix.asset_suffix }}"
             ToolchainDir = "artifacts/toolchain/${{ matrix.asset_suffix }}"
-            ContributionManifestPath = "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json"
+            ContributionManifestPath = "artifacts/vendor-native-work/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json"
             CacheDir = "artifacts/vendor-cache/$env:DEPENDENCY"
           }
           switch ($env:DEPENDENCY) {
@@ -241,10 +241,11 @@ jobs:
               & ./scripts/prepare-sdl3-vendor-release-input.ps1 @common `
                 -CMakePath "${{ steps.build_tools.outputs.cmake_path }}" `
                 -NinjaPath "${{ steps.build_tools.outputs.ninja_path }}" `
-                -AllowPlannedTarget
+                -AllowPlannedTarget:(-not [bool]::Parse("${{ matrix.release_enabled }}"))
             }
             "glfw" {
-              & ./scripts/prepare-glfw-vendor-release-input.ps1 @common -AllowPlannedTarget
+              & ./scripts/prepare-glfw-vendor-release-input.ps1 @common `
+                -AllowPlannedTarget:(-not [bool]::Parse("${{ matrix.release_enabled }}"))
             }
             "sqlite" {
               & ./scripts/prepare-sqlite-vendor-release-input.ps1 @common
@@ -269,7 +270,7 @@ jobs:
             -ArchiveKind "${{ matrix.archive_kind }}" `
             -BundleTag "${{ needs.prepare.outputs.bundle_tag }}" `
             -VendorRoot "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}" `
-            -ContributionManifestPath "artifacts/vendor-native-source/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json" `
+            -ContributionManifestPath "artifacts/vendor-native-work/$env:DEPENDENCY/${{ matrix.target_id }}/contribution.json" `
             -ReleaseToolsPath $env:RELEASE_TOOLS_DLL `
             -QualificationCommit $env:SOURCE_COMMIT `
             -QualificationWorkflow "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" `
