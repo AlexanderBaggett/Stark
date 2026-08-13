@@ -100,8 +100,9 @@ internal fn bool StdLibSourceLinuxFileOperationsUseSyscallBackedPathImpl()
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
     // @OpenFileRead/@CloseFile/@ReadFile/@WriteFile, routes through the openat/read/
-    // write/rename syscall shims (@LinuxSyscall4OpenAt, @LinuxSyscall1Handle,
-    // @LinuxSyscall3HandleBuffer, @LinuxSyscall3AtPath, @LinuxSyscall4RenameAt), and
+    // write/rename syscall operations (@LinuxOpenAt, @LinuxCloseHandle,
+    // @LinuxReadHandleBuffer, @LinuxWriteHandleBuffer, @LinuxSyscall3AtPath,
+    // @LinuxSyscall4RenameAt), and
     // never calls libc stdio (@fopen/@fclose/@fread/@fwrite/@remove/@rename). The
     // host bridge cannot read the on-disk module directly, so this cross-targets a
     // Linux facade probe and asserts it succeeds.
