@@ -3889,6 +3889,68 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task NativeToolRunnerDrainsHighVolumeStandardErrorWithoutDeadlocking()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-native-tool-output-");
+        var objectPath = Path.Combine(tempDirectory.FullName, "input.o");
+        var outputPath = Path.Combine(tempDirectory.FullName, "output");
+        var linkerPath = Path.Combine(tempDirectory.FullName, "high-volume-linker.sh");
+
+        try
+        {
+            await File.WriteAllTextAsync(objectPath, "object fixture");
+            await File.WriteAllTextAsync(
+                linkerPath,
+                """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                out=""
+                previous=""
+                for argument in "$@"; do
+                  if [ "$previous" = "-o" ]; then
+                    out="$argument"
+                  fi
+                  previous="$argument"
+                done
+                chunk='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+                for ((index = 0; index < 16384; index++)); do
+                  printf '%s\n' "$chunk" >&2
+                done
+                printf '%s\n' 'native-tool-output-complete' >&2
+                : > "$out"
+                """);
+            System.Diagnostics.Process.Start("chmod", $"+x {linkerPath}")!.WaitForExit();
+
+            var result = await Task.Run(() => NativeToolchain.LinkExecutable(
+                    [objectPath],
+                    outputPath,
+                    linkerTool: linkerPath))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.True(result.Succeeded, result.StandardError);
+            Assert.True(File.Exists(outputPath));
+            Assert.True(result.StandardError.Length > 1_000_000);
+            Assert.Contains("native-tool-output-complete", result.StandardError, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeForwardsRelocationModelToLinker()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())

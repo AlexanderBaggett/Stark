@@ -226,9 +226,7 @@ internal static class NativeToolchain
                     return false;
                 }
 
-                var standardOutput = process.StandardOutput.ReadToEnd();
-                _ = process.StandardError.ReadToEnd();
-                process.WaitForExit();
+                var (standardOutput, _) = ReadRedirectedOutputAndWaitForExit(process);
 
                 if (process.ExitCode != 0)
                 {
@@ -340,9 +338,7 @@ internal static class NativeToolchain
         var stopwatch = Stopwatch.StartNew();
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start clang.");
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var (standardOutput, standardError) = ReadRedirectedOutputAndWaitForExit(process);
         stopwatch.Stop();
 
         return new NativeToolchainResult(
@@ -917,9 +913,7 @@ internal static class NativeToolchain
             var stopwatch = Stopwatch.StartNew();
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start clang.");
-            var standardOutput = process.StandardOutput.ReadToEnd();
-            var standardError = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            var (standardOutput, standardError) = ReadRedirectedOutputAndWaitForExit(process);
             stopwatch.Stop();
 
             return new NativeToolchainResult(
@@ -1084,9 +1078,7 @@ internal static class NativeToolchain
         var stopwatch = Stopwatch.StartNew();
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Failed to start {toolName}.");
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var (standardOutput, standardError) = ReadRedirectedOutputAndWaitForExit(process);
         stopwatch.Stop();
 
         return new NativeToolchainResult(
@@ -1095,6 +1087,19 @@ internal static class NativeToolchain
             standardOutput,
             standardError)
         { Duration = stopwatch.Elapsed };
+    }
+
+    private static (string StandardOutput, string StandardError) ReadRedirectedOutputAndWaitForExit(Process process)
+    {
+        // Drain both pipes concurrently. Reading either redirected stream to
+        // completion first can deadlock when a native tool fills the other
+        // pipe before it exits.
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync();
+        var standardErrorTask = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        return (
+            standardOutputTask.GetAwaiter().GetResult(),
+            standardErrorTask.GetAwaiter().GetResult());
     }
 
     private static string? ExtractQuotedValue(string line)
@@ -1340,9 +1345,7 @@ internal static class NativeToolchain
                 return null;
             }
 
-            var standardOutput = process.StandardOutput.ReadToEnd();
-            _ = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            var (standardOutput, _) = ReadRedirectedOutputAndWaitForExit(process);
 
             var candidate = standardOutput.Trim();
             return process.ExitCode == 0 && Path.IsPathRooted(candidate) && File.Exists(candidate)
@@ -1378,9 +1381,7 @@ internal static class NativeToolchain
                 return null;
             }
 
-            var standardOutput = process.StandardOutput.ReadToEnd();
-            _ = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            var (standardOutput, _) = ReadRedirectedOutputAndWaitForExit(process);
 
             var sdkRoot = standardOutput.Trim();
             return process.ExitCode == 0 && IsUsableMacOSSdkRoot(sdkRoot)
