@@ -329,9 +329,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("@System_Runtime_Platform_Linux_LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 1);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 48);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 3);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
@@ -461,10 +460,9 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocketVector2\(", llvm);
         Assert.Contains("%LinuxIovec = type { ptr, i64 }", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 1);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.Contains("@LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxReadvSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxWritevSyscallNumber", llvm, StringComparison.Ordinal);
 
