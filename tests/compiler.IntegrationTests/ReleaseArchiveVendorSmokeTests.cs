@@ -1,4 +1,6 @@
 using Stark.Compiler;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -129,6 +131,96 @@ public sealed partial class ReleaseArchiveVendorSmokeTests
         }
     }
 
+    [Fact]
+    public async Task ArchiveSmokeTerminatesAndIdentifiesAStalledChildCommand()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var powershell = await FindPowerShellAsync(repositoryRoot);
+        if (powershell is null)
+        {
+            return;
+        }
+
+        var smokeScript = Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1");
+        var temporaryRoot = Path.Combine(
+            Path.GetTempPath(),
+            "stark-release-smoke-timeout-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporaryRoot);
+        var probeScript = Path.Combine(temporaryRoot, "probe-timeout.ps1");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                probeScript,
+                """
+                param(
+                    [Parameter(Mandatory = $true)][string] $SmokeScript,
+                    [Parameter(Mandatory = $true)][string] $ChildPowerShell,
+                    [Parameter(Mandatory = $true)][string] $WorkingDirectory
+                )
+                $ErrorActionPreference = 'Stop'
+                $tokens = $null
+                $parseErrors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+                    $SmokeScript,
+                    [ref] $tokens,
+                    [ref] $parseErrors)
+                if ($parseErrors.Count -ne 0) {
+                    throw "smoke-release-archive.ps1 did not parse: $($parseErrors[0].Message)"
+                }
+                $function = $ast.Find({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
+                        -and $node.Name -eq 'Invoke-CheckedProcess'
+                }, $true)
+                if ($null -eq $function) {
+                    throw 'Invoke-CheckedProcess was not found.'
+                }
+                Invoke-Expression $function.Extent.Text
+
+                try {
+                    Invoke-CheckedProcess `
+                        -File $ChildPowerShell `
+                        -Arguments @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
+                        -WorkingDirectory $WorkingDirectory `
+                        -TimeoutSeconds 1 | Out-Null
+                    throw 'The stalled command unexpectedly completed.'
+                } catch {
+                    if (-not $_.Exception.Message.Contains('timed out after 1s', [StringComparison]::Ordinal)) {
+                        throw
+                    }
+                    Write-Output 'stalled-command-timeout-observed'
+                }
+                """);
+
+            var result = await RunProcessAsync(
+                    powershell,
+                    [
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-File",
+                        probeScript,
+                        smokeScript,
+                        powershell,
+                        temporaryRoot,
+                    ],
+                    repositoryRoot)
+                .WaitAsync(TimeSpan.FromSeconds(15));
+
+            Assert.True(
+                result.ExitCode == 0,
+                $"Stalled-command diagnostic probe failed.{Environment.NewLine}{result.Stdout}{Environment.NewLine}{result.Stderr}");
+            Assert.Contains($"cwd={temporaryRoot}", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("timeout=1s", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("command timed out: pid=", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("stalled-command-timeout-observed", result.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
     private static Dictionary<string, string> ExtractAdditionalProbeSources(string script)
     {
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -158,6 +250,62 @@ public sealed partial class ReleaseArchiveVendorSmokeTests
             }
         }
         throw new DirectoryNotFoundException("Could not find the Stark repository root.");
+    }
+
+    private static async Task<string?> FindPowerShellAsync(string workingDirectory)
+    {
+        var explicitPowerShell = Environment.GetEnvironmentVariable("POWERSHELL_EXE");
+        var candidates = OperatingSystem.IsWindows()
+            ? new[] { explicitPowerShell, "pwsh.exe", "powershell.exe" }
+            : new[] { explicitPowerShell, "pwsh" };
+        foreach (var candidateValue in candidates.Where(static value => !string.IsNullOrWhiteSpace(value)))
+        {
+            var candidate = candidateValue!;
+            try
+            {
+                var result = await RunProcessAsync(
+                    candidate,
+                    ["-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+                    workingDirectory);
+                if (result.ExitCode == 0)
+                {
+                    return candidate;
+                }
+            }
+            catch (Win32Exception)
+            {
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            }
+        };
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await stdout, await stderr);
     }
 
     private static string NormalizeLineEndings(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);

@@ -10,7 +10,10 @@ param(
 
     [switch] $KeepWorkDir,
 
-    [switch] $IsolatePath
+    [switch] $IsolatePath,
+
+    [ValidateRange(1, 86400)]
+    [int] $CommandTimeoutSeconds = 600
 )
 
 Set-StrictMode -Version Latest
@@ -65,11 +68,19 @@ function Invoke-CheckedProcess {
 
         [string] $WorkingDirectory = "",
 
-        [int[]] $AllowedExitCodes = @(0)
+        [int[]] $AllowedExitCodes = @(0),
+
+        [int] $TimeoutSeconds = $CommandTimeoutSeconds
     )
 
     $display = "$File $($Arguments -join ' ')".Trim()
+    $displayWorkingDirectory = if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        (Get-Location).Path
+    } else {
+        [System.IO.Path]::GetFullPath($WorkingDirectory)
+    }
     Write-Host ">> $display"
+    Write-Host "   cwd=$displayWorkingDirectory timeout=${TimeoutSeconds}s"
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $File
@@ -90,11 +101,41 @@ function Invoke-CheckedProcess {
         throw "Failed to start '$File'."
     }
 
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
+    $nextHeartbeatSeconds = 30
+    $timedOut = $false
+    while (-not $process.WaitForExit(1000)) {
+        if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $timedOut = $true
+            Write-Host "!! command timed out: pid=$($process.Id) elapsed=$([Math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s"
+            try {
+                $process.Kill($true)
+            } catch {
+                Write-Warning "Failed to terminate timed-out process tree for pid $($process.Id): $($_.Exception.Message)"
+            }
+            $process.WaitForExit()
+            break
+        }
+
+        if ($stopwatch.Elapsed.TotalSeconds -ge $nextHeartbeatSeconds) {
+            $cpuText = "unavailable"
+            $workingSetText = "unavailable"
+            try {
+                $process.Refresh()
+                $cpuText = "$([Math]::Round($process.TotalProcessorTime.TotalSeconds, 1))s"
+                $workingSetText = "$([Math]::Round($process.WorkingSet64 / 1MB, 1))MiB"
+            } catch {
+                # The process may exit between WaitForExit and Refresh.
+            }
+            Write-Host ".. still running: pid=$($process.Id) elapsed=$([Math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s cpu=$cpuText working-set=$workingSetText"
+            $nextHeartbeatSeconds += 30
+        }
+    }
     $stdout = $stdoutTask.GetAwaiter().GetResult()
     $stderr = $stderrTask.GetAwaiter().GetResult()
+    $stopwatch.Stop()
 
     if (-not [string]::IsNullOrWhiteSpace($stdout)) {
         Write-Host $stdout.TrimEnd()
@@ -104,9 +145,15 @@ function Invoke-CheckedProcess {
         Write-Host $stderr.TrimEnd()
     }
 
+    if ($timedOut) {
+        throw "Command '$display' timed out after ${TimeoutSeconds}s in '$displayWorkingDirectory'."
+    }
+
     if ($AllowedExitCodes -notcontains $process.ExitCode) {
         throw "Command '$display' exited with code $($process.ExitCode)."
     }
+
+    Write-Host "<< completed: exit=$($process.ExitCode) elapsed=$([Math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s"
 
     return [pscustomobject]@{
         ExitCode = $process.ExitCode
@@ -617,6 +664,7 @@ export fn i32[min max] main()
         if ($SdkPackageIds -cnotcontains [string]$specification.PackageId) {
             continue
         }
+        Write-Host "Starting $($specification.PackageId) SDK-only build and headless runtime smoke."
         $projectDirectory = Join-Path $SourceRoot ("vendor-" + ([string]$specification.PackageId).Replace('.', '-').ToLowerInvariant())
         Write-SmokeExecutableProject `
             -Directory $projectDirectory `
@@ -630,6 +678,7 @@ export fn i32[min max] main()
             -OutputName ([string]$specification.ProjectName) `
             -Name "$($specification.PackageId) project executable"
         if ([bool]$specification.RunHeadless) {
+            Write-Host "$($specification.PackageId) build passed; starting headless runtime smoke."
             Invoke-StarkFromPath `
                 -Arguments (@("run") + $TargetArguments) `
                 -WorkingDirectory $projectDirectory | Out-Null
