@@ -328,7 +328,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("@TcpListener_Accept(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 48);
@@ -337,7 +336,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("GetMutableByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
@@ -406,7 +404,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ConnectTcpIPv4(",
             "Expected Linux ConnectTcpIPv4 definition.");
-        // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+        // The architecture-selected close operation lowers directly into the call site.
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(connectBody, 3);
         Assert.DoesNotContain("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
     }
@@ -462,7 +460,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
-        Assert.Contains("@LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxReadvSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxWritevSyscallNumber", llvm, StringComparison.Ordinal);
 
@@ -517,7 +514,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ListenTcpIPv4(",
             "Expected Linux ListenTcpIPv4 definition.");
-        // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+        // The architecture-selected close operation lowers directly into the call site.
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(listenBody, 3);
         Assert.DoesNotContain("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
@@ -551,7 +548,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @AcceptSocket(",
             "Expected Linux AcceptSocket definition.");
-        Assert.DoesNotContain("@LinuxCloseSyscallNumber", acceptBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("movq $$3, %rax\\0Asyscall", acceptBody, StringComparison.Ordinal);
         Assert.DoesNotContain("call i64 @LinuxSyscall1Handle(", acceptBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept4(", llvm, StringComparison.Ordinal);

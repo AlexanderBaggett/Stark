@@ -85,7 +85,9 @@
         "raylib",
         "opengl32",
         "gdi32",
-        "winmm"
+        "winmm",
+        "user32",
+        "shell32"
       ],
       "linkArguments": []
     },
@@ -108,7 +110,9 @@
         "raylib",
         "opengl32",
         "gdi32",
-        "winmm"
+        "winmm",
+        "user32",
+        "shell32"
       ],
       "linkArguments": []
     },

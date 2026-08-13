@@ -283,7 +283,7 @@ fn i32[min max] Run()
 // stdlib/src/System/Net/Tcp.stark, compiles it directly with EmitLlvmIr pinned to
 // the x86_64-unknown-linux-gnu target, then scans the module IR and the per-body
 // LLVM of TcpClient.Close / TcpListener.Close to confirm both route an open handle
-// through the Linux close syscall (LinuxCloseSyscallNumber + LinuxSyscall1Handle)
+// through the architecture-selected LinuxCloseHandle operation
 // and convert the platform result via StatusFromPlatformResult /
 // NetworkErrorFromPlatformResult. The host bridge cannot read the repository
 // source tree directly, so this port cross-targets a driver that imports
@@ -408,12 +408,11 @@ fn i32[min max] Run()
         || !Contains(llvm, "@System_Runtime_Platform_Linux_ConnectTcpIPv4(")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_ListenTcpIPv4(")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_AcceptSocket(")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxReadSyscallNumber")
-        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
         || !Contains(llvm, "GetMutableByteSliceParts")
         || !Contains(llvm, "GetByteSliceParts")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\"")
         || !Contains(llvm, "@System_Net_Tcp_StatusFromPlatformResult(")
         || !Contains(llvm, "@System_Net_Tcp_ByteCountFromPlatformResult(")
         || !Contains(llvm, "call fastcc %System_Net_NetworkError @__stark_inline_clone_System_Net_Tcp_NetworkErrorFromPlatformResult("))
@@ -433,13 +432,13 @@ fn i32[min max] Run()
 }
 
 // Mirror of the C# AssertCloseBodyRoutesOpenHandleThroughPlatformClose helper:
-// the close body must reference the Linux close syscall number and call
-// LinuxSyscall1Handle, and it must convert the platform result either directly
+// the close body must call the architecture-selected LinuxCloseHandle operation,
+// and it must convert the platform result either directly
 // through StatusFromPlatformResult or via the inlined NetworkErrorFromPlatformResult
 // branch (icmp slt i32 + insertvalue %System_Net_NetStatus).
 internal fn bool CloseBodyRoutesOpenHandleThroughPlatformClose(ascii body)
 {
-    if (!Contains(body, "call i64 @LinuxSyscall1Handle(i64 range(i64 3, 4) 3, "))
+    if (!Contains(body, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -460,7 +459,7 @@ internal fn bool CloseBodyRoutesOpenHandleThroughPlatformClose(ascii body)
 // stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR for the
 // close-syscall lowering of CloseSocket (which routes through CloseFile and
-// LinuxSyscall1Handle and never emits the Winsock closesocket import). The
+// LinuxCloseHandle and never emits the Winsock closesocket import). The
 // host bridge cannot read the repository source tree directly, so this port
 // cross-targets a driver that exercises the public TCP close path, then
 // keeps the original IR substring assertions verbatim. The Linux-specific symbol
@@ -515,7 +514,7 @@ export unsafe fn i32[min max] main()
         return false;
     }
 
-    if (!Contains(llvm, "call i64 @LinuxSyscall1Handle(i64 range(i64 3, 4) 3, "))
+    if (!Contains(llvm, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -535,7 +534,7 @@ export unsafe fn i32[min max] main()
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
 // ConnectTcpIPv4 body for the socket+connect syscall path (LinuxSyscall3Integers
 // to create the socket, WriteTcpIPv4Sockaddr + LinuxSyscall3HandleBuffer to
-// connect, and the folded LinuxCloseSyscallNumber 3 cleanup that does not fall
+// connect, and the architecture-selected LinuxCloseHandle cleanup that does not fall
 // back to CloseFile). The host bridge cannot read the repository source tree
 // directly, so this port cross-targets a driver that exercises the public TCP
 // connect path, then keeps the original IR substring assertions and applies the
@@ -590,8 +589,8 @@ fn i32[min max] Run()
     }
 
     stack ascii connectBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4");
-    // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
-    if (!Contains(connectBody, "call i64 @LinuxSyscall1Handle(i64 range(i64 3, 4) 3, "))
+    // LinuxCloseHandle selects and lowers the architecture-specific close operation.
+    if (!Contains(connectBody, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -754,7 +753,7 @@ fn i32[min max] Run()
 
     if (!Contains(llvm, "%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }")
         || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxReadSyscallNumber")
+        || !Contains(llvm, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxReadvSyscallNumber")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxWritevSyscallNumber"))
     {
@@ -797,7 +796,7 @@ fn i32[min max] Run()
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
 // ListenTcpIPv4 body for the socket+bind+listen syscall path (LinuxSyscall3Integers
 // for the socket, LinuxSyscall3HandleBuffer for bind, LinuxSyscall2HandleInteger
-// for listen, with the folded LinuxCloseSyscallNumber 3 cleanup that does not fall
+// for listen, with the architecture-selected LinuxCloseHandle cleanup that does not fall
 // back to CloseFile, and never the Winsock bind/listen imports). The host bridge
 // cannot read the repository source tree directly, so this port cross-targets a
 // driver that exercises the public TCP listen path and keeps the original IR
@@ -854,8 +853,8 @@ fn i32[min max] Run()
     }
 
     stack ascii listenBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4");
-    // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
-    if (!Contains(listenBody, "call i64 @LinuxSyscall1Handle(i64 range(i64 3, 4) 3, "))
+    // LinuxCloseHandle selects and lowers the architecture-specific close operation.
+    if (!Contains(listenBody, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\""))
     {
         return false;
     }
