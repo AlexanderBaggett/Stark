@@ -838,11 +838,31 @@ public class StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define fastcc noundef i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 1);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.Contains("call fastcc i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 1 to ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 2 to ptr", llvm, StringComparison.Ordinal);
+    }
+    public void StdLibSourceConsoleAsciiWritesUseArm64LinuxWriteSyscall()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("aarch64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("define fastcc noundef i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxArm64WriteSyscall(llvm);
+        AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
     }
     public void StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath()
     {
@@ -861,7 +881,7 @@ public class StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define fastcc noundef i32 @WriteUnicodeToHandle(", llvm, StringComparison.Ordinal);
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 1);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@fputws(", llvm, StringComparison.Ordinal);
     }
@@ -888,7 +908,7 @@ public class StandardLibraryTestSuite
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 257);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 3);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 1);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 263);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 264);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
@@ -1116,7 +1136,7 @@ public class StandardLibraryTestSuite
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@CreateFileW(", llvm, StringComparison.Ordinal);

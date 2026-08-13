@@ -1900,6 +1900,29 @@ public sealed class SdkManifestAndResolverTests
     }
 
     [Theory]
+    [InlineData("x86_64")]
+    [InlineData("aarch64")]
+    public void TargetCompatibilityAcceptsVersionedMsvcEnvironmentAsTheMsvcAbiFamily(string architecture)
+    {
+        var sdkTarget = CreateSdkTarget(
+            llvmTriple: $"{architecture}-pc-windows-msvc",
+            architecture: architecture,
+            operatingSystem: "windows",
+            abi: "msvc",
+            cDataModel: "llp64");
+        var activeTarget = new LlvmTargetInfo(
+            $"{architecture}-pc-windows-msvc1.2.3",
+            "e-p:64:64",
+            Cpu: "generic",
+            RelocationModel: LlvmRelocationModel.Pic,
+            CodeModel: LlvmCodeModel.Small);
+
+        var result = SdkTargetCompatibility.ValidateActiveTarget(sdkTarget, activeTarget);
+
+        Assert.True(result.IsCompatible, FormatDiagnostics(result.Diagnostics));
+    }
+
+    [Theory]
     [InlineData("x86_64-pc-windows-msvc", "STK7483")]
     [InlineData("x86_64-unknown-linux-musl", "STK7484")]
     [InlineData("x86_64-unknown-linux", "STK7484")]

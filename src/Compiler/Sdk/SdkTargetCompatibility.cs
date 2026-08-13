@@ -729,12 +729,21 @@ internal static class SdkTargetCompatibility
 
     private static string? NormalizeAbi(string? value)
     {
-        return value?.Trim().ToLowerInvariant() switch
+        var normalized = value?.Trim().ToLowerInvariant();
+        if (normalized?.StartsWith("msvc", StringComparison.Ordinal) == true)
+        {
+            // LLVM appends the detected Visual C++ environment version to
+            // Windows host triples. It remains the same MSVC ABI family as
+            // the version-neutral SDK target descriptor.
+            return "msvc";
+        }
+
+        return normalized switch
         {
             null => null,
             "darwin" or "macos" or "macosx" => "darwin",
             "" => null,
-            { } normalized => normalized
+            _ => normalized
         };
     }
 
