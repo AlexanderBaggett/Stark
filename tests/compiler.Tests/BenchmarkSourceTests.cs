@@ -146,7 +146,7 @@ public sealed class BenchmarkSourceTests
             loopback,
             "define internal dso_local fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowi8_minmax____(",
             "Expected TcpClient slice write inline clone to be emitted.");
-        AssertDirectLinuxX64Syscall(loopbackSliceWriteClone, 1);
+        AssertDirectLinuxX64WriteSyscall(loopbackSliceWriteClone);
         Assert.DoesNotContain("call i64 @LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("call i64 @System_Runtime_Platform_Linux_LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
@@ -523,6 +523,23 @@ public sealed class BenchmarkSourceTests
                 return delimiterIndex < line.Length
                     && line[delimiterIndex] is ',' or ')';
             });
+
+        Assert.NotNull(callLine);
+        Assert.Contains(
+            "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}",
+            callLine,
+            StringComparison.Ordinal);
+        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
+    }
+
+    private static void AssertDirectLinuxX64WriteSyscall(string text)
+    {
+        var callLine = text
+            .Split('\n')
+            .FirstOrDefault(line =>
+                line.Contains(
+                    "call i64 asm sideeffect \"movq $$1, %rax\\0Asyscall\"",
+                    StringComparison.Ordinal));
 
         Assert.NotNull(callLine);
         Assert.Contains(

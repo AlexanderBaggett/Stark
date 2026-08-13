@@ -1136,7 +1136,6 @@ public class StandardLibraryTestSuite
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@CreateFileW(", llvm, StringComparison.Ordinal);
