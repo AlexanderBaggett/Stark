@@ -137,6 +137,16 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[mi
     "syscall"
 }
 
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] length)
+    in("rdi") handle,
+    in("rsi") buffer,
+    in("rdx") length,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$1, %rax\nsyscall"
+}
+
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
     in("rax") number,
     in("rdi") arg1,
@@ -304,6 +314,16 @@ internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[m
     "svc #0"
 }
 
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] length)
+    in("x0") handle,
+    in("x1") buffer,
+    in("x2") length,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #64\nsvc #0"
+}
+
 internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
     in("x8") number,
     in("x0") arg1,
@@ -462,6 +482,16 @@ internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[m
     out("a0") return
 {
     "ecall"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] length)
+    in("a0") handle,
+    in("a1") buffer,
+    in("a2") length,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 64\necall"
 }
 
 internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
@@ -624,6 +654,15 @@ internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min m
     "int $$0x80"
 }
 
+internal unsafe ffi asm(x86) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] length)
+    in("ebx") handle,
+    in("ecx") buffer,
+    in("edx") length,
+    out("eax") return
+{
+    "movl $$4, %eax\nint $$0x80"
+}
+
 internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
     in("eax") number,
     in("ebx") arg1,
@@ -784,6 +823,16 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min m
     "svc #0"
 }
 
+internal unsafe ffi asm(arm) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] length)
+    in("r0") handle,
+    in("r1") buffer,
+    in("r2") length,
+    out("r0") return,
+    clobber("r7")
+{
+    "mov r7, #4\nsvc #0"
+}
+
 internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
     in("r7") number,
     in("r0") arg1,
@@ -861,7 +910,6 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall4HandlePointersInteger(
 const LinuxGetcwdSyscallNumber = 79;
 const LinuxIoctlSyscallNumber = 16;
 const LinuxReadSyscallNumber = 0;
-const LinuxWriteSyscallNumber = 1;
 const LinuxReadvSyscallNumber = 19;
 const LinuxWritevSyscallNumber = 20;
 const LinuxCloseSyscallNumber = 3;
@@ -1836,7 +1884,7 @@ internal unsafe fn i32[min max] FlushEncodedWriteBuffer(
 
         stack rawptr<i8[min max]> data = &buffer.Storage[readPosition];
         stack i64[min max] readable = (i64[min max])(writePosition - readPosition);
-        stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, readable);
+        stack i64[min max] syscallResult = LinuxWriteHandleBuffer(handle, data, readable);
         if (syscallResult < 0)
         {
             return (i32[min max])syscallResult;
@@ -1868,7 +1916,7 @@ internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, a
     {
         stack ascii chunk = text[written, remaining];
         stack rawptr<i8[min max]> data = AsciiData(chunk);
-        stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, remaining);
+        stack i64[min max] syscallResult = LinuxWriteHandleBuffer(handle, data, remaining);
         if (syscallResult < 0)
         {
             return (i32[min max])syscallResult;
@@ -1912,8 +1960,7 @@ internal unsafe fn i32[min max] WriteBufferToHandle(
     while willexit (remaining > 0)
     {
         stack rawptr<i8[min max]> data = &buffer[written];
-        stack i64[min max] syscallResult =
-            LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, remaining);
+        stack i64[min max] syscallResult = LinuxWriteHandleBuffer(handle, data, remaining);
         if (syscallResult < 0)
         {
             return (i32[min max])syscallResult;
@@ -2527,7 +2574,7 @@ internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min ma
     }
 
     stack i64[min max] bytesRequested = size * count;
-    stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, buffer, bytesRequested);
+    stack i64[min max] syscallResult = LinuxWriteHandleBuffer(handle, buffer, bytesRequested);
     if (syscallResult <= 0)
     {
         return 0;
@@ -2562,8 +2609,7 @@ internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length
         return 0;
     }
 
-    stack i64[min max] syscallResult =
-        LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, buffer, length);
+    stack i64[min max] syscallResult = LinuxWriteHandleBuffer(handle, buffer, length);
     if (syscallResult <= 0)
     {
         return 0;
@@ -3247,11 +3293,7 @@ internal unsafe inline fn i64[min max] WriteSocket(
         return -14;
     }
 
-    return LinuxSyscall3HandleBuffer(
-        LinuxWriteSyscallNumber,
-        handle,
-        buffer,
-        length);
+    return LinuxWriteHandleBuffer(handle, buffer, length);
 }
 
 internal unsafe inline fn i64[min max] ReadSocketVector2(

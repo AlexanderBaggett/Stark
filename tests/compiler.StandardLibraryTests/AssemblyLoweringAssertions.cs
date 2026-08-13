@@ -39,6 +39,35 @@ internal static class AssemblyLoweringAssertions
         Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
     }
 
+    public static void ContainsDirectLinuxArm64WriteSyscall(string text)
+    {
+        var callLine = text
+            .Split('\n')
+            .FirstOrDefault(line =>
+                line.Contains(
+                    "call i64 asm sideeffect \"mov x8, #64\\0Asvc #0\"",
+                    StringComparison.Ordinal));
+
+        Assert.NotNull(callLine);
+        Assert.Contains("~{x8}", callLine, StringComparison.Ordinal);
+        Assert.Contains("~{memory}", callLine, StringComparison.Ordinal);
+        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
+    }
+
+    public static void ContainsDirectLinuxX64WriteSyscall(string text)
+    {
+        var callLine = text
+            .Split('\n')
+            .FirstOrDefault(line =>
+                line.Contains(
+                    "call i64 asm sideeffect \"movq $$1, %rax\\0Asyscall\"",
+                    StringComparison.Ordinal));
+
+        Assert.NotNull(callLine);
+        Assert.Contains(RequiredLinuxX64SyscallClobbers, callLine, StringComparison.Ordinal);
+        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
+    }
+
     public static void DoesNotContainLinuxSyscallBridgeCalls(string text)
     {
         Assert.DoesNotContain("call i64 @LinuxSyscall", text, StringComparison.Ordinal);
