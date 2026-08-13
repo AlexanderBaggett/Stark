@@ -810,6 +810,13 @@ jobs:
           name: release-candidate-${{ matrix.asset_suffix }}-attempt-${{ github.run_attempt }}
           path: smoke
 
+      - name: Install documented Linux host-development prerequisite
+        if: ${{ matrix.operating_system == 'linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libasound2-dev libudev-dev xorg-dev
+
       - name: Re-run archive smoke on downloaded candidate
         shell: pwsh
         run: |
