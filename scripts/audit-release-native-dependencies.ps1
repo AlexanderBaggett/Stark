@@ -237,10 +237,10 @@ function Test-IsWindowsSystemLibrary {
         "advapi32.dll", "bcrypt.dll", "cfgmgr32.dll", "comctl32.dll",
         "comdlg32.dll", "crypt32.dll", "d3d11.dll", "dbghelp.dll",
         "dinput8.dll", "dwmapi.dll", "dxgi.dll", "gdi32.dll",
-        "imm32.dll", "kernel32.dll", "msvcp140.dll", "msvcrt.dll",
+        "imm32.dll", "iphlpapi.dll", "kernel32.dll", "msvcp140.dll", "msvcrt.dll",
         "ntdll.dll", "ole32.dll", "oleaut32.dll", "opengl32.dll",
         "powrprof.dll", "rpcrt4.dll", "secur32.dll", "setupapi.dll",
-        "shell32.dll", "shlwapi.dll", "ucrtbase.dll", "user32.dll",
+        "shell32.dll", "shlwapi.dll", "sspicli.dll", "ucrtbase.dll", "user32.dll",
         "userenv.dll", "version.dll", "vcruntime140.dll",
         "vcruntime140_1.dll", "winmm.dll", "ws2_32.dll"
     )
@@ -607,7 +607,15 @@ function Inspect-WindowsBinary {
     $arguments = if ($UsesDumpbin) { @("/DEPENDENTS", $File.FullName) } else { @("-p", $File.FullName) }
     $text = (Invoke-CapturedTool -FileName $Inspector -Arguments $arguments).Stdout
     $dependencies = @()
-    foreach ($match in [Regex]::Matches($text, '(?im)(?:DLL Name:\s*)?\b([A-Za-z0-9_.+\-]+\.dll)\b')) {
+    $dependencyPattern = if ($UsesDumpbin) {
+        '(?im)^\s+([A-Za-z0-9_.+\-]+\.dll)\s*$'
+    } else {
+        # llvm-objdump uses `DLL Name:` for imports and `DLL name:` for the
+        # image's exported module name. Keep this match case-sensitive so an
+        # export alias is not mistaken for a missing runtime dependency.
+        '(?m)^\s+DLL Name:\s*([A-Za-z0-9_.+\-]+\.[dD][lL][lL])\s*$'
+    }
+    foreach ($match in [Regex]::Matches($text, $dependencyPattern)) {
         $dependencies += $match.Groups[1].Value
     }
 

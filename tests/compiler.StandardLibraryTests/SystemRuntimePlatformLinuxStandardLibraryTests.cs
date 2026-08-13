@@ -13,6 +13,9 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
     public void StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPath() => _suite.StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPath();
 
     [Fact]
+    public void StdLibSourceConsoleAsciiWritesUseArm64LinuxWriteSyscall() => _suite.StdLibSourceConsoleAsciiWritesUseArm64LinuxWriteSyscall();
+
+    [Fact]
     public void StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath() => _suite.StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath();
 
     [Fact]

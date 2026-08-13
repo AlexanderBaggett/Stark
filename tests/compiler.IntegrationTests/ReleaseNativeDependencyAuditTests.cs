@@ -146,6 +146,74 @@ public sealed class ReleaseNativeDependencyAuditTests
         }
     }
 
+    [Fact]
+    public async Task WindowsObjdumpAuditReadsOnlyImportsAndAcceptsBaseSystemLibraries()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var powershell = await FindPowerShellAsync(repositoryRoot);
+        if (powershell is null)
+        {
+            return;
+        }
+
+        var testRoot = Directory.CreateTempSubdirectory("stark-native-audit-windows-");
+        try
+        {
+            var sdkRoot = Directory.CreateDirectory(Path.Combine(testRoot.FullName, "stark-v0.1.0-windows-x64"));
+            var binRoot = Directory.CreateDirectory(Path.Combine(sdkRoot.FullName, "bin"));
+            File.WriteAllBytes(Path.Combine(binRoot.FullName, "probe.dll"), [0x4d, 0x5a, 0, 0, 0, 0, 0, 0]);
+            WriteCandidateIdentity(
+                sdkRoot.FullName,
+                "windows-x64",
+                "win-x64",
+                "x86_64-pc-windows-msvc");
+
+            var toolRoot = Directory.CreateDirectory(Path.Combine(testRoot.FullName, "tools"));
+            var objdumpTool = Path.Combine(toolRoot.FullName, "llvm-objdump");
+            await File.WriteAllTextAsync(
+                objdumpTool,
+                "#!/bin/sh\nprintf '%s\\n' '    DLL Name: KERNEL32.dll' '    DLL Name: IPHLPAPI.DLL' '    DLL Name: SspiCli.dll' ' DLL name: not-an-import.dll'\n");
+            var executableMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+            File.SetUnixFileMode(objdumpTool, executableMode);
+
+            var reportPath = Path.Combine(testRoot.FullName, "report.json");
+            var result = await RunProcessAsync(
+                powershell,
+                [
+                    "-NoProfile", "-NonInteractive", "-File",
+                    Path.Combine(repositoryRoot, "scripts", "audit-release-native-dependencies.ps1"),
+                    "-SdkRoot", sdkRoot.FullName,
+                    "-OutputPath", reportPath,
+                ],
+                repositoryRoot,
+                new Dictionary<string, string>
+                {
+                    ["PATH"] = toolRoot.FullName + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
+                });
+
+            Assert.Equal(0, result.ExitCode);
+            using var report = JsonDocument.Parse(await File.ReadAllTextAsync(reportPath));
+            Assert.Equal("ok", report.RootElement.GetProperty("status").GetString());
+            var file = Assert.Single(report.RootElement.GetProperty("files").EnumerateArray());
+            var dependencies = file.GetProperty("Dependencies").EnumerateArray()
+                .Select(static dependency => dependency.GetString()!)
+                .ToArray();
+            Assert.Equal(["IPHLPAPI.DLL", "KERNEL32.dll", "SspiCli.dll"], dependencies);
+            Assert.DoesNotContain("not-an-import.dll", dependencies);
+        }
+        finally
+        {
+            testRoot.Delete(recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("examples/foreign-elf", "elf")]
     [InlineData("docs/native-payload.md", "mach-o")]
