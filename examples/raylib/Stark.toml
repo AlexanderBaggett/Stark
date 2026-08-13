@@ -18,4 +18,4 @@ libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", 
 [native.fallback.windows]
 include-dirs = ["${native.paths.raylib-include}"]
 library-dirs = ["${native.paths.raylib-lib}"]
-libraries = ["raylib", "opengl32", "gdi32", "winmm"]
+libraries = ["raylib", "opengl32", "gdi32", "winmm", "user32", "shell32"]

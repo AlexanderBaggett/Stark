@@ -44,7 +44,7 @@
       },
       "systemLinkFacts": {
         "linux": ["GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"],
-        "windows": ["opengl32", "gdi32", "winmm"],
+        "windows": ["opengl32", "gdi32", "winmm", "user32", "shell32"],
         "macos": ["CoreVideo", "IOKit", "Cocoa", "GLUT", "OpenGL"]
       }
     },
