@@ -2882,15 +2882,15 @@ internal static class CompilerCli
         string toolOutput,
         NativeLibraryLinkCandidate candidate)
     {
-        if (toolOutput.Contains(candidate.LinkArgument, StringComparison.OrdinalIgnoreCase)
-            || toolOutput.Contains(candidate.DisplayName, StringComparison.OrdinalIgnoreCase))
+        if (ContainsDelimitedNativeLibraryMention(toolOutput, candidate.LinkArgument)
+            || ContainsDelimitedNativeLibraryMention(toolOutput, candidate.DisplayName))
         {
             return true;
         }
 
         foreach (var alias in candidate.Aliases)
         {
-            if (toolOutput.Contains(alias, StringComparison.OrdinalIgnoreCase))
+            if (ContainsDelimitedNativeLibraryMention(toolOutput, alias))
             {
                 return true;
             }
@@ -2898,6 +2898,43 @@ internal static class CompilerCli
 
         return false;
     }
+
+    private static bool ContainsDelimitedNativeLibraryMention(string toolOutput, string mention)
+    {
+        if (string.IsNullOrEmpty(toolOutput) || string.IsNullOrEmpty(mention))
+        {
+            return false;
+        }
+
+        var searchStart = 0;
+        while (searchStart < toolOutput.Length)
+        {
+            var index = toolOutput.IndexOf(
+                mention,
+                searchStart,
+                StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var end = index + mention.Length;
+            var isDelimitedBefore = index == 0 || !IsNativeLibraryMentionCharacter(toolOutput[index - 1]);
+            var isDelimitedAfter = end == toolOutput.Length || !IsNativeLibraryMentionCharacter(toolOutput[end]);
+            if (isDelimitedBefore && isDelimitedAfter)
+            {
+                return true;
+            }
+
+            searchStart = index + 1;
+        }
+
+        return false;
+    }
+
+    private static bool IsNativeLibraryMentionCharacter(char value)
+        => char.IsLetterOrDigit(value)
+           || value is '_' or '.' or '+' or '-';
 
     private static IEnumerable<NativeLibraryLinkCandidate> EnumerateNativeLibraryLinkCandidates(
         IReadOnlyList<string> linkArguments)

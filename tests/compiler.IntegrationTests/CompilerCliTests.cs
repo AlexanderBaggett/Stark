@@ -3862,7 +3862,8 @@ public sealed class CompilerCliTests
                     "--emit-exe",
                     "-o", outputPath,
                     "--linker", linkerPath,
-                    "--native-library", "MissingNative"
+                    "--native-library", "MissingNative",
+                    "--native-library", "m"
                 ],
                 new StringReader(string.Empty),
                 stdout,
@@ -3872,6 +3873,7 @@ public sealed class CompilerCliTests
             Assert.Equal(1, exitCode);
             Assert.Contains("error STK7204 [native-link]", errorText, StringComparison.Ordinal);
             Assert.Contains("Native library 'MissingNative' could not be found while linking.", errorText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Native library 'm' could not be found while linking.", errorText, StringComparison.Ordinal);
             Assert.Contains("--native-library-dir", errorText, StringComparison.Ordinal);
             Assert.Contains("cannot find -lMissingNative", errorText, StringComparison.Ordinal);
         }
