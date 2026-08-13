@@ -969,7 +969,7 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
         }
         $configuredBuildText = Get-Content -LiteralPath $configuredBuildHeaders[0].FullName -Raw
         foreach ($define in $requiredBuildDefines) {
-            if ($configuredBuildText -cnotmatch "(?m)^#define $([Regex]::Escape($define)) 1$") {
+            if ($configuredBuildText -cnotmatch "(?m)^#define $([Regex]::Escape($define)) 1\r?$") {
                 throw "SDL3 configure for '$AssetSuffix' lost required backend define '$define'. Install the target's declared native development prerequisites before building."
             }
         }
@@ -1005,11 +1005,11 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/stark-sdl3-interface-options.txt" CONT
     $buildConfigPath = $buildConfigMatches[0].FullName
     $buildConfigText = Get-Content -LiteralPath $buildConfigPath -Raw
     foreach ($define in $requiredBuildDefines) {
-        if ($buildConfigText -cnotmatch "(?m)^#define $([Regex]::Escape($define)) 1$") {
+        if ($buildConfigText -cnotmatch "(?m)^#define $([Regex]::Escape($define)) 1\r?$") {
             throw "SDL3 build for '$AssetSuffix' silently lost required backend define '$define'."
         }
     }
-    $actualBuildDefines = @([Regex]::Matches($buildConfigText, '(?m)^#define ((?:SDL|HAVE)_[A-Z0-9_]+) 1$') |
+    $actualBuildDefines = @([Regex]::Matches($buildConfigText, '(?m)^#define ((?:SDL|HAVE)_[A-Z0-9_]+) 1\r?$') |
         ForEach-Object { $_.Groups[1].Value })
     $actualBuildDefines = @(Sort-StringsOrdinal -Values $actualBuildDefines)
 
