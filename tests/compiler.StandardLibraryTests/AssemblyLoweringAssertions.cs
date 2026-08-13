@@ -8,10 +8,19 @@ internal static class AssemblyLoweringAssertions
     public static void ContainsDirectLinuxX64Syscall(string text, long syscallNumber)
     {
         var firstArgument = $"(i64 {syscallNumber}";
+        var semanticTemplate = syscallNumber == 0
+            ? "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\""
+            : $"call i64 asm sideeffect \"movq $${syscallNumber}, %rax\\0Asyscall\"";
         var callLine = text
             .Split('\n')
             .FirstOrDefault(line =>
             {
+                if (line.Contains(semanticTemplate, StringComparison.Ordinal))
+                {
+                    return line.Contains(RequiredLinuxX64SyscallClobbers, StringComparison.Ordinal)
+                        && line.Contains(" nounwind", StringComparison.Ordinal);
+                }
+
                 if (!line.Contains("call i64 asm sideeffect \"syscall\"", StringComparison.Ordinal))
                 {
                     return false;
@@ -39,13 +48,13 @@ internal static class AssemblyLoweringAssertions
         Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
     }
 
-    public static void ContainsDirectLinuxArm64WriteSyscall(string text)
+    public static void ContainsDirectLinuxArm64Syscall(string text, long syscallNumber)
     {
         var callLine = text
             .Split('\n')
             .FirstOrDefault(line =>
                 line.Contains(
-                    "call i64 asm sideeffect \"mov x8, #64\\0Asvc #0\"",
+                    $"call i64 asm sideeffect \"mov x8, #{syscallNumber}\\0Asvc #0\"",
                     StringComparison.Ordinal));
 
         Assert.NotNull(callLine);
@@ -53,6 +62,9 @@ internal static class AssemblyLoweringAssertions
         Assert.Contains("~{memory}", callLine, StringComparison.Ordinal);
         Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
     }
+
+    public static void ContainsDirectLinuxArm64WriteSyscall(string text) =>
+        ContainsDirectLinuxArm64Syscall(text, 64);
 
     public static void ContainsDirectLinuxX64WriteSyscall(string text)
     {

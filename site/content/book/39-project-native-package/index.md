@@ -283,7 +283,7 @@ remember them:
 
 ```toml
 [native.fallback.windows]
-libraries = ["raylib", "winmm", "gdi32", "opengl32"]
+libraries = ["raylib", "opengl32", "gdi32", "winmm", "user32", "shell32"]
 
 [native.fallback.macos]
 libraries = ["raylib"]

@@ -844,7 +844,7 @@ public class StandardLibraryTestSuite
         Assert.Contains("inttoptr i8 1 to ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("inttoptr i8 2 to ptr", llvm, StringComparison.Ordinal);
     }
-    public void StdLibSourceConsoleAsciiWritesUseArm64LinuxWriteSyscall()
+    public void StdLibSourceArm64LinuxFileOperationsUseArchitectureSpecificSyscalls()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -861,6 +861,9 @@ public class StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define fastcc noundef i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
+        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 56);
+        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 57);
+        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 63);
         AssemblyLoweringAssertions.ContainsDirectLinuxArm64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
     }
