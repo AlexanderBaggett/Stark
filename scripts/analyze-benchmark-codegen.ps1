@@ -283,7 +283,7 @@ function Analyze-Stark {
     $disassemblyPath = Join-Path $OutputDir "$SafeName.disasm.txt"
     $notes = New-Object System.Collections.Generic.List[string]
 
-    $compilerArgs = @("run", "--project", (Join-Path $repoRoot "src\compiler.csproj"), "--", $SourcePath, "--emit-llvm", "-O3", "-I", $stdlibRoot, "-o", $irPath)
+    $compilerArgs = @("run", "--project", (Join-Path $repoRoot "src\compiler.csproj"), "--", $SourcePath, "--emit-llvm", "-I", $stdlibRoot, "-o", $irPath)
     if (![string]::IsNullOrWhiteSpace($Target)) {
         $compilerArgs += @("--target", $Target)
     }

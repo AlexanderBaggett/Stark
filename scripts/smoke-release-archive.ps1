@@ -421,6 +421,36 @@ function Assert-ProjectExecutable {
     Assert-File -Path $artifact.FullName -Name $Name
 }
 
+function Invoke-StarkPerformanceSmoke {
+    param(
+        [string] $SourceRoot,
+        [string] $OutputRoot,
+        [AllowEmptyCollection()][string[]] $TargetArguments
+    )
+
+    $repositoryRoot = Split-Path -Parent $PSScriptRoot
+    $benchmarkRelativePath = "benchmarks/collections/ListIteration.stark"
+    $benchmarkSource = Join-Path $repositoryRoot $benchmarkRelativePath
+    Assert-File -Path $benchmarkSource -Name "Stark performance smoke source"
+
+    $benchmarkDirectory = Join-Path $SourceRoot "performance"
+    New-Item -ItemType Directory -Force -Path $benchmarkDirectory | Out-Null
+    $externalSource = Join-Path $benchmarkDirectory "ListIteration.stark"
+    Copy-Item -LiteralPath $benchmarkSource -Destination $externalSource
+
+    $benchmarkExecutable = Get-ExecutablePath -Directory $OutputRoot -Name "ReleaseSmokeListIteration"
+    Write-Host "Starting Stark-only optimized performance smoke: $benchmarkRelativePath (one execution)."
+    Invoke-Stark `
+        -Arguments (@($externalSource, "--emit-exe", "-o", $benchmarkExecutable) + $TargetArguments) `
+        -WorkingDirectory $benchmarkDirectory | Out-Null
+    Assert-File -Path $benchmarkExecutable -Name "Stark performance smoke executable"
+
+    # A smoke run checks that optimized code compiles, links, and terminates
+    # successfully. It intentionally does not collect or gate timing data.
+    Invoke-CheckedProcess -File $benchmarkExecutable -WorkingDirectory $benchmarkDirectory | Out-Null
+    Write-Host "Stark-only optimized performance smoke passed after one execution; C and Rust counterparts were not built or run."
+}
+
 function Get-JsonPropertyValue {
     param(
         [object] $Value,
@@ -1012,6 +1042,12 @@ try {
                 Invoke-StarkFromPath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
             })
         Write-Host "Generated README.md and INSTALL.md quick-start commands passed against the shipped hello example."
+        Write-Host "Release smoke suite example passed: examples/hello.stark."
+
+        Invoke-StarkPerformanceSmoke `
+            -SourceRoot $sourceRoot `
+            -OutputRoot $outputRoot `
+            -TargetArguments $targetArgs
 
         $systemProjectName = "ReleaseSmokeSystemProject"
         $systemProjectDir = Join-Path $sourceRoot "system-project"

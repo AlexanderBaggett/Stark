@@ -199,7 +199,11 @@ machine-readable command text exactly, copies the shipped hello inputs to an
 isolated work root, and executes every documented operation with the extracted
 or installed compiler. The `run` step must print `Hello, World!`. This keeps
 first-use documentation executable without leaving build outputs inside the SDK
-or a receipt-owned installation.
+or a receipt-owned installation. The archive smoke then compiles the Stark
+`benchmarks/collections/ListIteration.stark` performance program through the
+compiler's fixed full-optimization pipeline and executes it once. That check is
+intentionally limited to the Stark source: it does not build or run the
+benchmark's C or Rust counterparts, and it does not enforce a timing threshold.
 
 ## Managed license evidence contract
 
