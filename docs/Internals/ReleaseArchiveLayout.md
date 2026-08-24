@@ -567,12 +567,19 @@ environment overrides, puts only the extracted SDK's `bin` directory on
 `--emit-lib`, and `--emit-exe`. It builds external projects that import System
 and `Vendor.Raylib` without `-I`, project dependencies, `STARK_PATH`, or
 `pkg-config`, performs real native links without opening a graphical window,
-moves the SDK, and repeats the builds. The suite covers every package advertised
-by the target's official Vendor catalog, not only Raylib. Use `-IsolatePath` to
-prove the archive does not depend on ambient Stark/.NET/LLVM installations while
-retaining only the approved host-development prerequisite. The test separately
-proves that the packaged compiler-private backend is present and that no
-unlisted LLVM installation is selected.
+moves the SDK, and repeats the builds. Its two representative application
+smokes are the shipped `examples/hello.stark` project and the Stark
+`benchmarks/collections/ListIteration.stark` performance program. Hello World
+is compiled and run through the documented project commands. The performance
+program is compiled through Stark's fixed full-optimization pipeline and
+executed once; this is a functional smoke, not a timing gate, and its C and Rust
+counterparts are neither built nor run.
+The suite also covers every package advertised by the target's official Vendor
+catalog, not only Raylib. Use `-IsolatePath` to prove the archive does not depend
+on ambient Stark/.NET/LLVM installations while retaining only the approved
+host-development prerequisite. The test separately proves that the packaged
+compiler-private backend is present and that no unlisted LLVM installation is
+selected.
 
 Each published target must also execute a native C interop fixture that passes
 and returns representative by-value aggregates. The macOS arm64 gate includes

@@ -34,7 +34,7 @@ The default publication profile is:
 
 | Language | Compiler | Flags |
 | --- | --- | --- |
-| Stark | repository compiler | `--emit-exe -O3` |
+| Stark | repository compiler | `--emit-exe` (fixed full-optimization pipeline) |
 | C | `clang` | `-O3 -DNDEBUG -std=c17` |
 | Rust | `rustc` | `-C opt-level=3 -C debug-assertions=no -C overflow-checks=no` |
 
