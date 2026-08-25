@@ -174,7 +174,7 @@ write_machine_metadata() {
     printf 'benchmark_max_stark_to_rust_ratio=%s\n' "${STARK_BENCH_MAX_STARK_TO_RUST_RATIO:-<disabled>}"
     printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
-    printf 'stark_flags=--emit-exe -O3\n'
+    printf 'stark_flags=--emit-exe (compiler fixed full-optimization pipeline)\n'
     printf 'stark_compiler_configuration=Release\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
     printf 'c_compiler=%s\n' "${c_compiler}"
@@ -489,7 +489,6 @@ compile_and_time_stark() {
     dotnet run -c Release --project "${repo_root}/src" -- \
     "${source_path}" \
     --emit-exe \
-    -O3 \
     -I "${stdlib_root}" \
     -o "${output_path}" \
     --toolchain-metrics "${metrics_path}"
