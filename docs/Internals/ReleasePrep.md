@@ -1125,6 +1125,9 @@ open; PowerShell parsing alone is not target qualification.
   - [ ] run `stark --help`
   - [ ] run `stark doctor --strict`
   - [ ] compile and run an external hello-world project
+  - [ ] compile one representative Stark performance benchmark through the
+    compiler's full optimization pipeline and execute it once, without building
+    or running its C/Rust counterparts
   - [ ] build an external System-using project
   - [ ] build and link external projects for every advertised `Vendor.*` package
   - [ ] run safe headless/runtime smokes for every Vendor package whose public

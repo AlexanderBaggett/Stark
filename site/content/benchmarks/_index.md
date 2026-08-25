@@ -161,7 +161,7 @@ Important controls:
 
 The locked default flags are:
 
-- Stark: `--emit-exe -O3`
+- Stark: `--emit-exe` (the compiler always uses its full optimization pipeline)
 - C: `clang -O3 -DNDEBUG -std=c17`
 - Rust: `rustc -C opt-level=3 -C debug-assertions=no -C overflow-checks=no`
 
