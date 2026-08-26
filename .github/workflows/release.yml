@@ -594,6 +594,7 @@ jobs:
           ./scripts/smoke-release-archive.ps1
           -ArchivePath "${{ steps.package.outputs.archive_path }}"
           -TargetTriple "${{ matrix.target_triple }}"
+          -FullSourceSuite
           -IsolatePath
 
       - name: Validate packaged managed dependency closure

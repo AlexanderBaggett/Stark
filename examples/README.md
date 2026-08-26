@@ -7,8 +7,9 @@ This directory contains small Stark programs that match the compiler and standar
 The examples directory includes `Stark.toml` project manifests and a root
 `Stark.solution.toml` for the current project driver.
 
-From this directory, the default solution build covers the examples that do not
-need a local native graphics library:
+From this directory, the default solution build covers every member. Official
+`Vendor.*` examples resolve their native payloads from the active SDK and do not
+need machine-local library installations:
 
 ```bash
 dotnet run --project ../src -- build
@@ -28,12 +29,11 @@ dotnet run --project ../src -- build http-get
 The `standard-library` manifest builds through the project driver and is the
 recommended quick check for examples that use `System.*` modules.
 
-`breakout` imports the official `Vendor.Raylib` package from the active SDK and
-needs no Raylib installation, `pkg-config`, dependency entry, or local native
-path. The separate `raylib` project is a binding-author/source-package example;
-building that project itself requires Raylib through `pkg-config` or a local
-native path configured in `Stark.user.toml` or
-`~/.config/stark/config.toml`.
+`breakout` and `raylib` import the official `Vendor.Raylib` package from the
+active SDK and need no Raylib installation, `pkg-config`, dependency entry, or
+local native path. Contributors can still rebuild the standalone binding source
+package with `raylib/build-package.sh`; that separate authoring workflow is not
+the ordinary examples solution build.
 
 ## `hello.stark`
 
@@ -142,12 +142,9 @@ dotnet run --project src -- examples/standard-library/StandardLibrary.stark --ch
 
 ## `http-get/HttpGet.stark`
 
-Minimal HTTPS GET client for `https://www.google.com/`. Stark builds and sends
-the HTTP request and streams the response, while `HttpsNative.c` supplies the TLS
-transport through OpenSSL because the standard library currently only ships TCP.
-
-This example requires OpenSSL development headers and libraries discoverable via
-`pkg-config openssl` or the platform fallback library names.
+Minimal HTTP GET client for `http://example.com/`. It builds the request, opens
+a TCP connection through `System.Net.Tcp`, and streams the response without a C
+shim, OpenSSL, `pkg-config`, or any other machine-local native dependency.
 
 Build and run it from the examples solution:
 

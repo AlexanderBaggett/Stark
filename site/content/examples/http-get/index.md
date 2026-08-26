@@ -1,11 +1,11 @@
 +++
-title = "HTTPS GET"
+title = "HTTP GET"
 weight = 120
 +++
 
-This example performs an HTTPS GET request to `https://www.google.com/`. Stark
-code builds the request, checks write/read status, and streams the response;
-`HttpsNative.c` supplies the TLS transport through OpenSSL.
+This example performs an HTTP GET request to `http://example.com/`. Stark code
+builds the request, connects through `System.Net.Tcp`, checks write/read status,
+and streams the response without a C shim or machine-local native library.
 
 ## Build And Run
 
@@ -15,25 +15,20 @@ dotnet run --project ../src -- build http-get
 ./build/dev/<target-triple>/stage0/bin/http-get/http-get
 ```
 
-Expected behavior: writes the HTTPS response to stdout when the network path
-and OpenSSL setup are available. This example requires outbound networking and
-is not part of the ordinary no-network integration run.
+Expected behavior: writes the HTTP response to stdout when outbound networking
+is available. Release qualification builds it on every target but does not make
+the build depend on external network availability.
 
 Status: manual/networked example.
 
 ## Source Files
 
 - [HttpGet.stark](samples/HttpGet.stark)
-- [HttpsNative.c](samples/HttpsNative.c)
 - [Stark.toml](samples/Stark.toml)
 
 ### HttpGet.stark
 
 {{< file-sample "samples/HttpGet.stark" "stark" >}}
-
-### HttpsNative.c
-
-{{< file-sample "samples/HttpsNative.c" "c" >}}
 
 ### Stark.toml
 
