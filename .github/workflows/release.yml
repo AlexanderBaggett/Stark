@@ -594,7 +594,15 @@ jobs:
           ./scripts/smoke-release-archive.ps1
           -ArchivePath "${{ steps.package.outputs.archive_path }}"
           -TargetTriple "${{ matrix.target_triple }}"
-          -FullSourceSuite
+          -IsolatePath
+
+      - name: Qualify all Stark examples and benchmarks
+        shell: pwsh
+        run: >
+          ./scripts/smoke-release-archive.ps1
+          -ArchivePath "${{ steps.package.outputs.archive_path }}"
+          -TargetTriple "${{ matrix.target_triple }}"
+          -SourceSuiteOnly
           -IsolatePath
 
       - name: Validate packaged managed dependency closure

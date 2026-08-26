@@ -12,7 +12,7 @@ param(
 
     [switch] $IsolatePath,
 
-    [switch] $FullSourceSuite,
+    [switch] $SourceSuiteOnly,
 
     [ValidateRange(1, 86400)]
     [int] $CommandTimeoutSeconds = 600
@@ -1145,6 +1145,16 @@ try {
 
     $environmentState = Set-IsolatedEnvironment -PackageRoot $packageRoot
     try {
+        if ($SourceSuiteOnly) {
+            Invoke-StarkExampleSuite `
+                -PackageRoot $packageRoot `
+                -SourceRoot $sourceRoot `
+                -TargetArguments $targetArgs
+            Invoke-StarkBenchmarkSuite `
+                -SourceRoot $sourceRoot `
+                -OutputRoot $outputRoot `
+                -TargetArguments $targetArgs
+        } else {
         # Run initial PATH discovery outside the checkout. ProcessStartInfo can
         # consult the current directory before PATH on some hosts; using the
         # external smoke source root prevents a repository launcher named
@@ -1180,17 +1190,6 @@ try {
             })
         Write-Host "Generated README.md and INSTALL.md quick-start commands passed against the shipped hello example."
         Write-Host "Release smoke suite example passed: examples/hello.stark."
-
-        if ($FullSourceSuite) {
-            Invoke-StarkExampleSuite `
-                -PackageRoot $packageRoot `
-                -SourceRoot $sourceRoot `
-                -TargetArguments $targetArgs
-            Invoke-StarkBenchmarkSuite `
-                -SourceRoot $sourceRoot `
-                -OutputRoot $outputRoot `
-                -TargetArguments $targetArgs
-        }
 
         $systemProjectName = "ReleaseSmokeSystemProject"
         $systemProjectDir = Join-Path $sourceRoot "system-project"
@@ -1512,6 +1511,7 @@ export fn i32[min max] main()
         } finally {
             Restore-IsolatedEnvironment -State $relocatedEnvironmentState
         }
+        }
     } finally {
         Restore-IsolatedEnvironment -State $environmentState
     }
@@ -1521,19 +1521,31 @@ export fn i32[min max] main()
         if (-not [string]::IsNullOrWhiteSpace($reportDirectory)) {
             New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
         }
-        $report = [ordered]@{
-            schemaVersion = 1
-            qualification = "stark-release-archive-smoke"
-            status = "passed"
-            releaseVersion = $releaseVersion
-            targetId = $artifactTargetId
-            targetTriple = $effectiveTargetTriple
-            archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
-            packagedSystemAssembly = [ordered]@{
-                sourceUnavailable = $true
-                optimizedArchiveLinked = $true
-                finalExecutableRan = $true
-                executableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeExe).Hash.ToLowerInvariant()
+        $report = if ($SourceSuiteOnly) {
+            [ordered]@{
+                schemaVersion = 1
+                qualification = "stark-release-source-suite"
+                status = "passed"
+                releaseVersion = $releaseVersion
+                targetId = $artifactTargetId
+                targetTriple = $effectiveTargetTriple
+                archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+            }
+        } else {
+            [ordered]@{
+                schemaVersion = 1
+                qualification = "stark-release-archive-smoke"
+                status = "passed"
+                releaseVersion = $releaseVersion
+                targetId = $artifactTargetId
+                targetTriple = $effectiveTargetTriple
+                archiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+                packagedSystemAssembly = [ordered]@{
+                    sourceUnavailable = $true
+                    optimizedArchiveLinked = $true
+                    finalExecutableRan = $true
+                    executableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeExe).Hash.ToLowerInvariant()
+                }
             }
         }
         [System.IO.File]::WriteAllText(
@@ -1542,7 +1554,11 @@ export fn i32[min max] main()
             [System.Text.UTF8Encoding]::new($false))
     }
 
-    Write-Host "Release archive smoke passed: $archive"
+    if ($SourceSuiteOnly) {
+        Write-Host "Release examples and Stark benchmark suite passed: $archive"
+    } else {
+        Write-Host "Release archive smoke passed: $archive"
+    }
 } finally {
     if ($KeepWorkDir) {
         Write-Host "Kept smoke work directory: $smokeRoot"

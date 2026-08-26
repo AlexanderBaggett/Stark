@@ -199,14 +199,15 @@ machine-readable command text exactly, copies the shipped hello inputs to an
 isolated work root, and executes every documented operation with the extracted
 or installed compiler. The `run` step must print `Hello, World!`. This keeps
 first-use documentation executable without leaving build outputs inside the SDK
-or a receipt-owned installation. The initial archive smoke additionally enables
-`-FullSourceSuite`: it builds every shipped example project, checks every shipped
-Stark example source, compiles every repository Stark benchmark, and executes
-each runnable benchmark exactly once. Explicit compile-only benchmarks emit an
+or a receipt-owned installation. A separate **Qualify all Stark examples and
+benchmarks** workflow step runs `smoke-release-archive.ps1 -SourceSuiteOnly`.
+That mode builds every shipped example project, checks every shipped Stark
+example source, compiles every repository Stark benchmark, and executes each
+runnable benchmark exactly once. Explicit compile-only benchmarks emit an
 object without being run. This functional suite has no benchmark warmup,
 repetition loop, or timing threshold and never builds or runs C/Rust
-counterparts. The downloaded candidate/install smoke omits the switch so the
-full source suite runs once per target rather than twice.
+counterparts. Keeping it in a separate step exposes its elapsed time and live
+progress while the downloaded candidate/install smoke continues to omit it.
 
 ## Managed license evidence contract
 
