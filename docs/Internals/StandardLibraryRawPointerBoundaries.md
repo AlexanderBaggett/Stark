@@ -25,8 +25,10 @@ legitimately needs raw pointers, add it here with a rationale and to the test's
 | `System/Runtime/Buffer.stark` | Fixed and dynamic byte buffers expose addressed regions for IO. |
 | `System/Runtime/ConsoleInput.stark` | Line input fills raw byte regions from platform reads. |
 | `System/Runtime/Platform.stark` | Cross-platform dispatch facade over the per-OS modules. |
-| `System/Runtime/Platform/Linux.stark` | Linux syscall shims: every syscall argument is a raw region or scalar. |
-| `System/Runtime/Platform/MacOS.stark` | macOS libSystem shims, same shape as the Linux boundary. |
+| `System/Runtime/Platform/Linux.stark` | Linux runtime operations pass paths, buffers, handles, and kernel structures through audited raw regions. |
+| `System/Runtime/Platform/LinuxSyscalls.stark` | Architecture-selected Linux syscall and kernel-layout bridges bind raw arguments directly to each 64-bit target ABI. |
+| `System/Runtime/Platform/MacOS.stark` | macOS libSystem operations exchange paths, buffers, handles, and native structures through audited raw regions. |
+| `System/Runtime/Platform/MacOSAbi.stark` | Architecture-selected accessors decode the native `stat` and `dirent` layouts returned by macOS libSystem. |
 | `System/Runtime/Platform/Windows.stark` | Win32 API shims, same shape as the Linux boundary. |
 | `System/Testing/HostCompiler.stark` | Host-test JSON protocol helpers bind parsed string fields as text views and keep that unsafe parsing boundary inside test infrastructure. |
 | `System/Text.stark` | Fixed-buffer concat/format helpers write through bounded raw regions. |

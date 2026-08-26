@@ -335,7 +335,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.Contains("GetMutableByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
@@ -430,7 +429,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define fastcc noundef i32 @ShutdownSocket(", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 48);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
-        Assert.Contains("@LinuxShutdownSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@shutdown(", llvm, StringComparison.Ordinal);
     }
 
@@ -460,8 +458,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 0);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(llvm);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
-        Assert.Contains("@LinuxReadvSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxWritevSyscallNumber", llvm, StringComparison.Ordinal);
 
         var readVectorBody = ExtractDefinedFunctionText(
             llvm,
@@ -472,8 +468,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             "define fastcc noundef i64 @WriteSocketVector2(",
             "Expected Linux WriteSocketVector2 definition.");
         Assert.Contains("[2 x %LinuxIovec]", readVectorBody, StringComparison.Ordinal);
-        // LinuxReadvSyscallNumber (19) / LinuxWritevSyscallNumber (20) are comptime
-        // constants that fold into the direct inline-assembly call sites.
+        // The architecture-selected operations lower directly into these call sites.
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(readVectorBody, 19);
         Assert.Contains("i64 2)", readVectorBody, StringComparison.Ordinal);
         Assert.Contains("[2 x %LinuxIovec]", writeVectorBody, StringComparison.Ordinal);
@@ -508,8 +503,6 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 49);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 50);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
-        Assert.Contains("@LinuxBindSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxListenSyscallNumber", llvm, StringComparison.Ordinal);
         var listenBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef ptr @ListenTcpIPv4(",
@@ -542,14 +535,12 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define fastcc noundef ptr @AcceptSocket(", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 288);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
-        Assert.Contains("@LinuxAccept4SyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxSocketCloseOnExecFlag", llvm, StringComparison.Ordinal);
         var acceptBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef ptr @AcceptSocket(",
             "Expected Linux AcceptSocket definition.");
         Assert.DoesNotContain("movq $$3, %rax\\0Asyscall", acceptBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("call i64 @LinuxSyscall1Handle(", acceptBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@accept4(", llvm, StringComparison.Ordinal);
     }

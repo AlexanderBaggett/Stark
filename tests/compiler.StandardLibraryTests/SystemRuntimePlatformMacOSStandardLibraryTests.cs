@@ -96,9 +96,7 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
             "Expected ReadPathMetadata definition in emitted LLVM.");
 
         Assert.Contains("call i32 @stat(", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("getelementptr i8, ptr", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("load i16", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @UnsignedShort(", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("ldrh w0, [x0, #4]", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
         Assert.Contains("and i32", isDirectoryBody, StringComparison.Ordinal);
         Assert.Contains("61440", isDirectoryBody, StringComparison.Ordinal);
@@ -109,10 +107,35 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.Contains("call i32 @stat(", metadataBody, StringComparison.Ordinal);
         Assert.Contains("61440", metadataBody, StringComparison.Ordinal);
         Assert.Contains("4095", metadataBody, StringComparison.Ordinal);
-        Assert.Contains("load i64", metadataBody, StringComparison.Ordinal);
         Assert.Contains("store i64", metadataBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@opendir(", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@access(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceMacOSNativeLayoutsFollowTargetArchitecture()
+    {
+        var arm64 = CompileMacOSPlatformSource();
+        Assert.True(arm64.Succeeded, string.Join(Environment.NewLine, arm64.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var arm64Llvm = arm64.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("ldrh w0, [x0, #4]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("ldr x0, [x0, #96]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("ldr x0, [x0, #48]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("ldr x0, [x0, #56]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("ldrh w0, [x0, #18]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("ldrb w0, [x0, #20]", arm64Llvm, StringComparison.Ordinal);
+        Assert.Contains("add x0, x0, #21", arm64Llvm, StringComparison.Ordinal);
+
+        var x64 = CompileMacOSPlatformSource("x86_64-apple-macosx11.0.0");
+        Assert.True(x64.Succeeded, string.Join(Environment.NewLine, x64.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var x64Llvm = x64.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("movzwl 8(%rdi), %eax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("movq 72(%rdi), %rax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("movq 40(%rdi), %rax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("movq 48(%rdi), %rax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("movzbl 7(%rdi), %eax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("movzbl 6(%rdi), %eax", x64Llvm, StringComparison.Ordinal);
+        Assert.Contains("leaq 8(%rdi), %rax", x64Llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -183,7 +206,9 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
         Assert.NotNull(moduleGraph);
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOSAbi"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.LinuxSyscalls"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
@@ -231,7 +256,9 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         // dispatch module, so a macOS-target process build must not pull the
         // Linux or Windows backends back into the module graph.
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOSAbi"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.LinuxSyscalls"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
@@ -282,7 +309,7 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.DoesNotContain("asm sideeffect \"syscall\"", llvm, StringComparison.Ordinal);
     }
 
-    private static CompilationResult CompileMacOSPlatformSource()
+    private static CompilationResult CompileMacOSPlatformSource(string targetTriple = MacOSTargetTriple)
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -293,7 +320,7 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
                 macOSPath),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                TargetInfo: new LlvmTargetInfo(MacOSTargetTriple, null),
+                TargetInfo: new LlvmTargetInfo(targetTriple, null),
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
     }
 
