@@ -568,16 +568,17 @@ environment overrides, puts only the extracted SDK's `bin` directory on
 and `Vendor.Raylib` without `-I`, project dependencies, `STARK_PATH`, or
 `pkg-config`, performs real native links without opening a graphical window,
 moves the SDK, and repeats the builds. Hello World is compiled and run through
-the documented project commands. With `-FullSourceSuite`, the script also builds
-every project in the shipped examples solution and checks every shipped `.stark`
-example source. It then discovers every Stark benchmark source in the repository,
-compiles each through Stark's fixed full-optimization pipeline, and executes each
-runnable benchmark exactly once. Sources marked `stark-bench: compile-only` emit
-an object but are not executed. This is functional qualification: it has no
-warmup, repetition loop, or timing threshold, and it never builds or runs C or
-Rust counterparts. The release workflow enables the full source suite only for
-the initial archive smoke, so its benchmarks are not repeated by the downloaded-
-artifact install smoke.
+the documented project commands. The script's `-SourceSuiteOnly` mode instead
+builds every project in the shipped examples solution and checks every shipped
+`.stark` example source. It then discovers every Stark benchmark source in the
+repository, compiles each through Stark's fixed full-optimization pipeline, and
+executes each runnable benchmark exactly once. Sources marked
+`stark-bench: compile-only` emit an object but are not executed. This is
+functional qualification: it has no warmup, repetition loop, or timing threshold,
+and it never builds or runs C or Rust counterparts. The release workflow invokes
+this mode in its own **Qualify all Stark examples and benchmarks** step, exposing
+its duration and progress separately from the ordinary archive smoke. The
+downloaded-artifact install smoke does not repeat it.
 The suite also covers every package advertised by the target's official Vendor
 catalog, not only Raylib. Use `-IsolatePath` to prove the archive does not depend
 on ambient Stark/.NET/LLVM installations while retaining only the approved
