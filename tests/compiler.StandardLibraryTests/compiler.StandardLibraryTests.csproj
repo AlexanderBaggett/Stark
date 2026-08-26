@@ -17,6 +17,11 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="compiler.TestInfrastructure" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../TestInfrastructure/AssemblyLoweringAssertions.cs" Link="AssemblyLoweringAssertions.cs" />
   </ItemGroup>
 
   <ItemGroup>
