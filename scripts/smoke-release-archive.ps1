@@ -12,6 +12,8 @@ param(
 
     [switch] $IsolatePath,
 
+    [switch] $FullSourceSuite,
+
     [ValidateRange(1, 86400)]
     [int] $CommandTimeoutSeconds = 600
 )
@@ -421,7 +423,94 @@ function Assert-ProjectExecutable {
     Assert-File -Path $artifact.FullName -Name $Name
 }
 
-function Invoke-StarkPerformanceSmoke {
+function Test-StarkBenchmarkCompileOnly {
+    param([string] $Path)
+
+    return [bool](Select-String `
+        -LiteralPath $Path `
+        -Pattern '^\s*//\s*stark-bench:\s*compile-only(?:\s|$)' `
+        -Quiet)
+}
+
+function Test-StarkBenchmarkUsesReservedSdkModule {
+    param([string] $Path)
+
+    return [bool](Select-String `
+        -LiteralPath $Path `
+        -Pattern '^\s*module\s+(?:System|Vendor)(?:\.|\s|$)' `
+        -Quiet)
+}
+
+function ConvertTo-SmokeFileStem {
+    param([string] $RelativePath)
+
+    return ($RelativePath -replace '[^A-Za-z0-9]+', '_').Trim('_')
+}
+
+function Get-ExampleProjectRoot {
+    param(
+        [string] $SourcePath,
+        [string] $ExamplesRoot
+    )
+
+    $examplesFullPath = [System.IO.Path]::GetFullPath($ExamplesRoot).TrimEnd('\', '/')
+    $current = Split-Path -Parent ([System.IO.Path]::GetFullPath($SourcePath))
+    while (-not [string]::IsNullOrWhiteSpace($current) -and
+        $current.StartsWith($examplesFullPath, [StringComparison]::Ordinal)) {
+        if (Test-Path -LiteralPath (Join-Path $current "Stark.toml") -PathType Leaf) {
+            return $current
+        }
+        if ([string]::Equals($current.TrimEnd('\', '/'), $examplesFullPath, [StringComparison]::Ordinal)) {
+            break
+        }
+        $current = Split-Path -Parent $current
+    }
+
+    return $examplesFullPath
+}
+
+function Invoke-StarkExampleSuite {
+    param(
+        [string] $PackageRoot,
+        [string] $SourceRoot,
+        [AllowEmptyCollection()][string[]] $TargetArguments
+    )
+
+    $packagedExamples = Join-Path $PackageRoot "examples"
+    Assert-Directory -Path $packagedExamples -Name "packaged examples"
+    $externalExamples = Join-Path $SourceRoot "examples-suite"
+    Copy-Item -LiteralPath $packagedExamples -Destination $externalExamples -Recurse
+
+    $projectManifests = @(Get-ChildItem -LiteralPath $externalExamples -Filter "Stark.toml" -File -Recurse)
+    if ($projectManifests.Count -eq 0) {
+        throw "The packaged examples tree contains no Stark.toml projects."
+    }
+
+    # Capture shipped source inputs before the solution build creates its
+    # external build tree. Generated build outputs are not release examples.
+    $sources = @(Get-ChildItem -LiteralPath $externalExamples -Filter "*.stark" -File -Recurse | Sort-Object FullName)
+    if ($sources.Count -eq 0) {
+        throw "The packaged examples tree contains no Stark sources."
+    }
+
+    Write-Host "Starting complete examples solution build ($($projectManifests.Count) projects)."
+    Invoke-StarkFromPath `
+        -Arguments (@("build") + $TargetArguments) `
+        -WorkingDirectory $externalExamples | Out-Null
+
+    foreach ($source in $sources) {
+        $relativePath = [System.IO.Path]::GetRelativePath($externalExamples, $source.FullName).Replace('\', '/')
+        $projectRoot = Get-ExampleProjectRoot -SourcePath $source.FullName -ExamplesRoot $externalExamples
+        Write-Host "Checking packaged example source: examples/$relativePath"
+        Invoke-StarkFromPath `
+            -Arguments (@($source.FullName, "--check", "-I", $projectRoot) + $TargetArguments) `
+            -WorkingDirectory $projectRoot | Out-Null
+    }
+
+    Write-Host "Complete examples suite passed: $($projectManifests.Count) projects built and $($sources.Count) Stark sources checked."
+}
+
+function Invoke-StarkBenchmarkSuite {
     param(
         [string] $SourceRoot,
         [string] $OutputRoot,
@@ -429,26 +518,74 @@ function Invoke-StarkPerformanceSmoke {
     )
 
     $repositoryRoot = Split-Path -Parent $PSScriptRoot
-    $benchmarkRelativePath = "benchmarks/collections/ListIteration.stark"
-    $benchmarkSource = Join-Path $repositoryRoot $benchmarkRelativePath
-    Assert-File -Path $benchmarkSource -Name "Stark performance smoke source"
+    $benchmarkRoot = Join-Path $repositoryRoot "benchmarks"
+    Assert-Directory -Path $benchmarkRoot -Name "Stark benchmark sources"
+    $benchmarks = @(Get-ChildItem -LiteralPath $benchmarkRoot -Filter "*.stark" -File -Recurse | Sort-Object FullName)
+    if ($benchmarks.Count -eq 0) {
+        throw "The repository benchmark tree contains no Stark benchmark sources."
+    }
 
-    $benchmarkDirectory = Join-Path $SourceRoot "performance"
-    New-Item -ItemType Directory -Force -Path $benchmarkDirectory | Out-Null
-    $externalSource = Join-Path $benchmarkDirectory "ListIteration.stark"
-    Copy-Item -LiteralPath $benchmarkSource -Destination $externalSource
+    $benchmarkSourceRoot = Join-Path $SourceRoot "benchmark-suite"
+    $benchmarkOutputRoot = Join-Path $OutputRoot "benchmark-suite"
+    $benchmarkDevelopmentSdkRoot = Join-Path $SourceRoot "benchmark-development-sdk"
+    $benchmarkDevelopmentSourceRoot = Join-Path $benchmarkDevelopmentSdkRoot "stdlib/src"
+    New-Item -ItemType Directory -Force -Path $benchmarkSourceRoot, $benchmarkOutputRoot | Out-Null
+    $runnableCount = 0
+    $compileOnlyCount = 0
 
-    $benchmarkExecutable = Get-ExecutablePath -Directory $OutputRoot -Name "ReleaseSmokeListIteration"
-    Write-Host "Starting Stark-only optimized performance smoke: $benchmarkRelativePath (one execution)."
-    Invoke-Stark `
-        -Arguments (@($externalSource, "--emit-exe", "-o", $benchmarkExecutable) + $TargetArguments) `
-        -WorkingDirectory $benchmarkDirectory | Out-Null
-    Assert-File -Path $benchmarkExecutable -Name "Stark performance smoke executable"
+    foreach ($benchmark in $benchmarks) {
+        $relativePath = [System.IO.Path]::GetRelativePath($repositoryRoot, $benchmark.FullName).Replace('\', '/')
+        $safeName = ConvertTo-SmokeFileStem -RelativePath $relativePath
+        $usesReservedSdkModule = Test-StarkBenchmarkUsesReservedSdkModule -Path $benchmark.FullName
+        if ($usesReservedSdkModule -and
+            -not (Test-Path -LiteralPath (Join-Path $benchmarkDevelopmentSdkRoot "sdk.json") -PathType Leaf)) {
+            New-Item -ItemType Directory -Force -Path $benchmarkDevelopmentSourceRoot | Out-Null
+            Invoke-Stark `
+                -Arguments @("--write-development-sdk-manifest", $benchmarkDevelopmentSdkRoot) `
+                -WorkingDirectory $benchmarkDevelopmentSdkRoot | Out-Null
+            Assert-File `
+                -Path (Join-Path $benchmarkDevelopmentSdkRoot "sdk.json") `
+                -Name "benchmark development SDK manifest"
+        }
 
-    # A smoke run checks that optimized code compiles, links, and terminates
-    # successfully. It intentionally does not collect or gate timing data.
-    Invoke-CheckedProcess -File $benchmarkExecutable -WorkingDirectory $benchmarkDirectory | Out-Null
-    Write-Host "Stark-only optimized performance smoke passed after one execution; C and Rust counterparts were not built or run."
+        $workingDirectory = if ($usesReservedSdkModule) {
+            Join-Path $benchmarkDevelopmentSourceRoot $safeName
+        } else {
+            Join-Path $benchmarkSourceRoot $safeName
+        }
+        New-Item -ItemType Directory -Force -Path $workingDirectory | Out-Null
+        $externalSource = Join-Path $workingDirectory $benchmark.Name
+        Copy-Item -LiteralPath $benchmark.FullName -Destination $externalSource
+        $sdkArguments = if ($usesReservedSdkModule) {
+            @("--sdk-root", $benchmarkDevelopmentSdkRoot)
+        } else {
+            @()
+        }
+
+        if (Test-StarkBenchmarkCompileOnly -Path $benchmark.FullName) {
+            $compileOnlyCount += 1
+            $objectPath = Get-ObjectPath -Directory $benchmarkOutputRoot -Name $safeName
+            Write-Host "Compiling compile-only Stark benchmark: $relativePath"
+            Invoke-Stark `
+                -Arguments (@($externalSource, "--emit-obj", "-o", $objectPath) + $sdkArguments + $TargetArguments) `
+                -WorkingDirectory $workingDirectory | Out-Null
+            Assert-File -Path $objectPath -Name "compile-only Stark benchmark object"
+            continue
+        }
+
+        $runnableCount += 1
+        $executablePath = Get-ExecutablePath -Directory $benchmarkOutputRoot -Name $safeName
+        Write-Host "Compiling runnable Stark benchmark: $relativePath"
+        Invoke-Stark `
+            -Arguments (@($externalSource, "--emit-exe", "-o", $executablePath) + $sdkArguments + $TargetArguments) `
+            -WorkingDirectory $workingDirectory | Out-Null
+        Assert-File -Path $executablePath -Name "runnable Stark benchmark executable"
+
+        Write-Host "Executing Stark benchmark exactly once: $relativePath"
+        Invoke-CheckedProcess -File $executablePath -WorkingDirectory $workingDirectory | Out-Null
+    }
+
+    Write-Host "Complete Stark benchmark suite passed: $runnableCount executed once, $compileOnlyCount compiled only, zero C/Rust counterparts built or run."
 }
 
 function Get-JsonPropertyValue {
@@ -1044,10 +1181,16 @@ try {
         Write-Host "Generated README.md and INSTALL.md quick-start commands passed against the shipped hello example."
         Write-Host "Release smoke suite example passed: examples/hello.stark."
 
-        Invoke-StarkPerformanceSmoke `
-            -SourceRoot $sourceRoot `
-            -OutputRoot $outputRoot `
-            -TargetArguments $targetArgs
+        if ($FullSourceSuite) {
+            Invoke-StarkExampleSuite `
+                -PackageRoot $packageRoot `
+                -SourceRoot $sourceRoot `
+                -TargetArguments $targetArgs
+            Invoke-StarkBenchmarkSuite `
+                -SourceRoot $sourceRoot `
+                -OutputRoot $outputRoot `
+                -TargetArguments $targetArgs
+        }
 
         $systemProjectName = "ReleaseSmokeSystemProject"
         $systemProjectDir = Join-Path $sourceRoot "system-project"

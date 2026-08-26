@@ -1,9 +1,10 @@
 # Raylib Bindings
 
-This directory contains standalone Stark bindings for Raylib 6.0, split by
-Raylib area for readability. New code can also use the bundled `Vendor.Raylib`
-package under `/vendor`; both bindings use Stark's direct C ABI aggregate
-carrier lowering for C-layout Raylib structs.
+This directory contains a normal SDK-consumer example plus standalone Stark
+bindings for Raylib 6.0, split by Raylib area for readability. `Stark.toml`
+builds `VendorRaylibSafeApis.stark` against the bundled `Vendor.Raylib`,
+`Vendor.Raymath`, and `Vendor.Rlgl` packages with no native setup. The local
+binding sources remain available for contributors using `build-package.sh`.
 
 - `Raylib/Types.stark`: structs, aliases, callback pointer aliases, enum constants, color helpers, and small constructors.
 - `Raylib/Core.stark`
@@ -21,8 +22,9 @@ On AArch64, `Color` is passed through an `i64` carrier and returned through
 `i32`; those directions intentionally use different ABI facts.
 
 An application using an installed SDK imports `Vendor.Raylib` and runs ordinary
-`stark build`/`stark run` commands. The local build steps below are specifically
-for binding authors rebuilding this standalone source package.
+`stark build`/`stark run` commands. From `examples`, `stark build raylib` builds
+the SDK-consumer project. The local build steps below are specifically for
+binding authors rebuilding this standalone source package.
 
 Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. Callback typedefs are exposed as raw callback pointers until Stark has a dedicated C-callable callback ABI. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
 

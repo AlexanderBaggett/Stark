@@ -3,14 +3,22 @@ title = "Raylib"
 weight = 180
 +++
 
-The Raylib example is a native-backed library package. It uses direct C ABI
-aggregate carriers for small by-value Raylib structs and is split into modules
-such as `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`, `Raylib.Text`,
-`Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`.
+The ordinary Raylib project consumes the bundled `Vendor.Raylib`,
+`Vendor.Raymath`, and `Vendor.Rlgl` SDK packages. This directory also retains
+the contributor-facing standalone bindings, which use direct C ABI aggregate
+carriers for small by-value Raylib structs.
 
 ## Build And Run
 
-Follow the local setup notes in the checked-in README:
+Build the SDK-consumer example without local native setup:
+
+```bash
+cd examples
+stark build raylib
+```
+
+Contributors rebuilding the standalone source package can follow the checked-in
+README and run:
 
 ```bash
 bash examples/raylib/build-package.sh
@@ -22,7 +30,9 @@ advertised `Vendor.Raylib` package and native payload; applications simply
 `import Vendor.Raylib` and do not configure `pkg-config` or native paths.
 Graphical execution is intentionally manual.
 
-Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNativeExecution` and package-linked by `ExamplesCompileRunTests.BreakoutRaylibBuildsThroughPackageOwnedNativeMetadataWithoutGraphicalExecution`.
+Status: the SDK-consumer project is built on every release target without
+graphical execution; contributor binding modules retain their focused compiler
+checks.
 
 ## Source Files
 

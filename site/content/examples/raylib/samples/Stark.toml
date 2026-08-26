@@ -1,16 +1,8 @@
 [project]
 name = "raylib"
 version = "0.1.0"
-kind = "library"
+kind = "executable"
 
-[library]
-root = "Raylib.stark"
-output = "RaylibStark"
-
-[native]
-pkg-config = ["raylib"]
-
-[native.fallback.linux]
-include-dirs = ["${native.paths.raylib-src}"]
-library-dirs = ["${native.paths.raylib-src}"]
-libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
+[executable]
+root = "VendorRaylibSafeApis.stark"
+output = "vendor-raylib-safe-apis"
