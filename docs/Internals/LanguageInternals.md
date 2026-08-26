@@ -344,7 +344,12 @@ details internal while Stark callers operate on safe handles and caller-owned
 buffers. `Vendor.GLFW` uses a package-owned callback bridge for window events,
 while `Vendor.Raylib`, `Vendor.Raymath`, and `Vendor.Rlgl` use direct
 `[LinkName]` declarations and C-layout aggregate carriers where the native ABI
-is already expressible.
+is already expressible. Raylib 6.0 moved `DrawModelPoints` and
+`DrawModelPointsEx` out of its exported C API and into an upstream example;
+Stark preserves those public conveniences as allocation-free wrappers over the
+official `rlgl` point-mode and culling exports plus `DrawModel`/`DrawModelEx`.
+They must not be declared as direct imports of the nonexistent Raylib 6.0
+symbols.
 
 Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
 modules keep the dynamic-storage contracts validated during the comparison
