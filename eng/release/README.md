@@ -10,8 +10,7 @@ Validate the configuration and print the currently enabled GitHub matrix:
 dotnet run --project eng/release/Stark.ReleaseTools -- validate-config --emit-matrix
 ```
 
-Validate all six intended 64-bit rows and include planned rows in the emitted
-matrix:
+Include any future release-disabled planned rows in a diagnostic matrix:
 
 ```sh
 dotnet run --project eng/release/Stark.ReleaseTools -- validate-config --emit-matrix --include-planned
@@ -19,9 +18,9 @@ dotnet run --project eng/release/Stark.ReleaseTools -- validate-config --emit-ma
 
 `releaseEnabled` is an execution gate, not an omission from the support plan.
 The validator always requires all six target identities and complete Vendor
-target declarations. A planned row becomes enabled only after its private
-backend, System package, entire Vendor catalog, installer, and native smoke are
-qualified.
+target declarations. All six current rows are tier-1 and release-enabled after
+passing their private backend, System package, entire Vendor catalog, installer,
+and native smoke qualification.
 
 The dependency file deliberately records incomplete qualification as explicit
 state rather than fake URLs or checksum placeholders. Validation rejects common
@@ -36,11 +35,11 @@ lock them.
 validated manifests into an immutable plan containing the exact source commit
 and selected matrix. A manual run defaults to `publish=false`, `draft=true`,
 `prerelease=true`, and all release-enabled targets. Target subsets are allowed
-for nonpublishing diagnostics only. Setting `include_planned=true` permits the
-three release-disabled rows in that diagnostic matrix; the request is rejected
-if `publish=true`. Publishing always requires the complete enabled matrix. The
-selected `ref` is resolved once, and every downstream job uses that immutable
-commit SHA.
+for nonpublishing diagnostics only. The retained `include_planned=true` switch
+would permit a future release-disabled planned row in a diagnostic matrix; it is
+rejected when `publish=true`. No current target is planned. Publishing always
+requires the complete six-target enabled matrix. The selected `ref` is resolved
+once, and every downstream job uses that immutable commit SHA.
 
 ## Run a release candidate from GitHub
 
@@ -58,13 +57,10 @@ commit SHA.
    `install-smoke-<target>-attempt-<N>` artifact from the same run attempt.
 
 A nonpublishing diagnostic run may select a comma-separated subset of enabled
-target IDs. To exercise planned targets, keep `publish=false`, set
-`include_planned=true`, and select `all` or a comma-separated subset that may
-include `linux-arm64`, `windows-arm64`, or `macos-x64`. Such a run follows the
-same archive and independent install-smoke pipeline and produces immutable
-candidate artifacts, but it cannot create or update a GitHub Release. Planned
-rows are not made publishable by a successful diagnostic run; their manifest
-status must be reviewed and promoted separately.
+target IDs. All six current targets are enabled, so ordinary diagnostics should
+leave `include_planned=false`. If a target is deliberately returned to planned
+status in the future, `include_planned=true` can exercise it through the same
+archive and independent install-smoke pipeline without making it publishable.
 
 Rows whose matrix declares `private_backend_acquisition=pinned-source-build`
 rebuild that backend from checksum-verified source inputs and immediately run

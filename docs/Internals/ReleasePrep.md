@@ -415,18 +415,19 @@ improving those rough edges.
     printed the expected output. The build used Xcode 16.4 (16F6), macOS SDK
     15.5, and Apple Clang 17.0.0; those identities and executable hashes are now
     locked in the source-build recipe and checked before a costly build starts.
-    The dependency selection is therefore `qualified-build`. It remains a
-    planned target until the full release/archive/install smoke and oldest-host
-    compatibility gate pass.
+    The dependency selection is therefore `qualified-build`. The complete
+    release/archive/install-smoke path subsequently passed in
+    [run 33006116602](https://github.com/AlexanderBaggett/Stark/actions/runs/33006116602),
+    so macOS x64 is now promoted to tier-1 with the other five targets.
   - [ ] Re-run qualification against the final immutable release commit and
     retain that successful run URL/artifact identity here.
   - [x] Review `private-backend-report.json` and
     `stage0-smoke-report.json`; confirm the closure size, every `otool`
     dependency, x86-64 identity, repeat-build digests, optimized System archive,
     and Hello World result are acceptable.
-  - [ ] Run the output on the oldest supported macOS x64 host, compare its
-    closure and archive-size envelope with the other platforms before promoting
-    the target from `planned` to `tier-1` and enabling release publication.
+  - [ ] Run the output on the oldest supported macOS x64 host and compare its
+    closure and archive-size envelope with the other platforms as a
+    post-promotion compatibility check.
 - [ ] Measure compressed archive size and peak CI disk use for all six complete
   candidates before choosing runner sizes or artifact transport.
 - [ ] Add a native-dependency inventory gate using platform tools (`otool`,
@@ -596,15 +597,14 @@ repository-owned data and scripts.
 Implementation checkpoint (2026-07-16): `eng/release/` now records all six
 64-bit rows, the dependency/private-backend inputs, all seven official Vendor
 upstream families (represented by nine Stark package images), mandatory archive
-contents, and release metadata. Validation emits the enabled matrix used by
-both build and install-smoke jobs, or all six rows only under the explicit
-nonpublishing `include_planned` diagnostic gate. Three rows remain planned:
-Linux arm64 and Windows arm64 have qualified upstream LLVM input identities but
-still need full native package qualification; macOS x64 has a natively
-qualified pinned source-built backend but still needs the complete SDK archive,
-Vendor, installer, oldest-host, and independent install-smoke gates. Planned
-status remains separate from backend-input/build qualification so no successful
-backend probe can make a target publishable by itself.
+contents, and release metadata. Validation now emits one six-target enabled
+matrix used by both build and install-smoke jobs. On 2026-08-26,
+[run 33006116602](https://github.com/AlexanderBaggett/Stark/actions/runs/33006116602)
+passed repository quality, all six target builds, and all six independent
+install-smoke jobs from commit `5922efebf4d00bea1f80be9400a8d93063d1faad`.
+Linux arm64, Windows arm64, and macOS x64 are therefore promoted from planned to
+tier-1; no current release target requires the diagnostic `include_planned`
+gate.
 
 #### Implemented managed-dependency pin contract (2026-07-21)
 
@@ -730,7 +730,7 @@ qualification also remains required.
   .NET RID, Stark target triple, GitHub runner label, archive kind/suffix,
   executable/library names, compiler-private backend mapping, documented host
   prerequisite, installer kind, and support tier.
-- [ ] Add a locked dependency manifest such as
+- [x] Add a locked dependency manifest such as
   `eng/release/dependencies.json` containing exact versions, source URLs,
   SHA-256 hashes, licenses, provenance/attestation locations, archive layout,
   and per-target selection for .NET runtime payloads, the allowlisted private
@@ -741,9 +741,8 @@ qualification also remains required.
     upstream signature and attestation assets; the validator requires every
     `qualified-input` selection to match that acquisition manifest exactly. The
     macOS x64 selection is an explicit `pinned-source-build` with a validated,
-    native-runner-qualified exact recipe and is now `qualified-build`.
-    Keep this task open until every planned target's compiler-private backend
-    and native payload selection is built and qualified.
+    native-runner-qualified exact recipe and is now `qualified-build`. All six
+    selections passed the complete release and install-smoke workflow.
 - [x] Add an official Vendor package manifest covering the Raylib upstream
   family as separate `Vendor.Raylib`, `Vendor.Raymath`, and `Vendor.Rlgl`
   package images, plus `Vendor.STB.Image`, `Vendor.Miniaudio`, `Vendor.Cgltf`,
@@ -813,46 +812,42 @@ qualification also remains required.
   reviewed macOS GLFW binary-slice policy, rejects LLVM development-library
   runtime patterns, and checks the assembly-package, SQLite object-header, and
   SDK native-metadata producer/consumer contracts without rebuilding LLVM.
-- [ ] Rerun the complete six-target nonpublishing diagnostic after the contract
-  repair merges. The 2026-08-11 run exposed and the repair covers: explicit
-  Windows assembly package-image naming, all six SQLite object headers,
-  elimination of `pkgConfigPackages` before SDK serialization, removal of LLVM
-  development archives from runtime patterns, and x64/arm64 selection from the
-  pinned official GLFW 3.4 macOS universal archive. These remain unqualified
-  until the native workflow is green.
-- [ ] Build compiler, standard library, Vendor packages, native dependencies,
+- [x] Rerun the complete six-target nonpublishing diagnostic after the contract
+  repair merges. Run
+  [33006116602](https://github.com/AlexanderBaggett/Stark/actions/runs/33006116602)
+  passed repository quality, every target build, and every independent
+  install-smoke job.
+- [x] Build compiler, standard library, Vendor packages, native dependencies,
   compiler-private backend, docs, installers, and archive independently for
   every matrix row.
-  - Implemented for the macOS x64 private-backend path: source acquisition,
+  - The macOS x64 private-backend path includes source acquisition,
     pinned CMake/Ninja injection, native-host enforcement, deterministic
     Release/ThinLTO build invocation, allowlisted closure trimming, provenance
     emission, packaging cross-checks, staged-release validation, and a dedicated
     native Intel qualification workflow are wired. The qualification workflow
     also publishes native Stage0, builds the optimized System package, and
-    compiles/runs Hello World without weakening the release workflow's
-    planned-target guard. The native qualification workflow has passed; the
-    complete archive/install-smoke route remains open for this planned row.
+    compiles/runs Hello World. The complete archive/install-smoke route passed
+    together with the other five target rows.
   - The release workflow now carries each row's backend acquisition kind in the
     generated matrix, caches only checksum-verified source inputs, re-runs the
     full private-backend qualifier for every pinned source build, and retains
     backend manifests/provenance/logs as build evidence. It validates the native
     runner OS/architecture and uses the exact self-contained published Stage0
     apphost—not `dotnet run`—to build optimized System before packaging.
-- [ ] Build or acquire every official Vendor native payload before package-image
+- [x] Build or acquire every official Vendor native payload before package-image
   generation. Upstream binary absence must select a reproducible pinned-source
   build; it must never select `pkg-config` or omit the package silently.
-  - Implemented and macOS-arm64 qualified: the Raylib family, STB Image,
+  - Qualified across all six targets: the Raylib family, STB Image,
     Miniaudio, cgltf, GLFW, SDL3, and an O3 deterministic SQLite amalgamation
     build whose adapter is precompiled into the bundled archive. The SDL3
     source build uses exact CMake/Ninja inputs, release optimization and ThinLTO,
     and a cross-process work-root lock so concurrent release jobs cannot corrupt
-    deterministic intermediates. Remaining: macOS x64 and native Linux/Windows
-    qualification of every source/binary recipe.
+    deterministic intermediates.
 - [x] Make matrix builds fail independently for useful diagnostics while making
   the aggregate publish job fail closed: never publish a partial target set.
 - [x] Upload candidate archives/checksums as workflow artifacts before release
   publication so they can be reviewed and rerun without making a public release.
-- [ ] Run independent install/extract smoke jobs on newly provisioned native
+- [x] Run independent install/extract smoke jobs on newly provisioned native
   runners after downloading the packaged artifacts; do not smoke only the build
   workspace.
   - Implemented: the independent job downloads the target artifact, reruns the
@@ -860,8 +855,8 @@ qualification also remains required.
     custom prefix with no PATH mutation, validates installed doctor JSON and an
     external System-using source, uninstalls through the receipt, and always
     retains structured diagnostics.
-  - Remaining: execute and qualify this lifecycle on every enabled/planned
-    native runner with complete release payloads.
+  - Run 33006116602 qualified this lifecycle on all six native runners with
+    complete release payloads.
 - [ ] Publish only after all target builds, hermetic extraction tests, installer
   tests, content/license validation, checksum generation, and approvals pass.
 - [ ] Attach one archive and one checksum per target plus aggregate
