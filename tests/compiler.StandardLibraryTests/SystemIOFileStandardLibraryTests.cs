@@ -89,13 +89,11 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("case System.Runtime.Platform.FileOpenResult.Err(var error):", source, StringComparison.Ordinal);
         Assert.Contains("return OpenHandleResult.Err(IOErrorFromPlatformResult(error));", source, StringComparison.Ordinal);
 
-        Assert.Contains("const LinuxFsyncSyscallNumber = 74;", linuxSource, StringComparison.Ordinal);
         Assert.Contains("const LinuxOpenExclusiveFlag = 128;", linuxSource, StringComparison.Ordinal);
         Assert.Contains("internal enum FileOpenResult", linuxSource, StringComparison.Ordinal);
         Assert.Contains("internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)", linuxSource, StringComparison.Ordinal);
         Assert.Contains("return FileOpenResult.Err((i32[min max])syscallResult);", linuxSource, StringComparison.Ordinal);
         Assert.Contains("LinuxOpenExclusiveFlag | LinuxOpenCloseOnExecFlag", linuxSource, StringComparison.Ordinal);
-        Assert.Contains("LinuxSyscall1Handle(LinuxFsyncSyscallNumber, handle)", linuxSource, StringComparison.Ordinal);
 
         Assert.Contains("const MacOSOpenExclusiveFlag = 2048;", macOSSource, StringComparison.Ordinal);
         Assert.Contains("internal unsafe ffi fn rawmutptr<i32[min max]> __error();", macOSSource, StringComparison.Ordinal);

@@ -23,7 +23,6 @@ public sealed class SystemIOFileRuntimeStandardLibraryTests : StandardLibraryTes
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
         Assert.Contains("define fastcc noundef i64 @SeekFile(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxLseekSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 8);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@lseek(", llvm, StringComparison.Ordinal);
@@ -48,7 +47,6 @@ public sealed class SystemIOFileRuntimeStandardLibraryTests : StandardLibraryTes
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
         Assert.Contains("define fastcc noundef i32 @FlushFile(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxFsyncSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 74);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
     }

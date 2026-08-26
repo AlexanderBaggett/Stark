@@ -26,12 +26,7 @@ internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
         return false;
     }
 
-    if (!System.Testing.Contains(llvm, "@LinuxLseekSyscallNumber"))
-    {
-        return false;
-    }
-
-    if (!System.Testing.Contains(llvm, "call i64 @LinuxSyscall3HandleIntegerInteger("))
+    if (!System.Testing.Contains(llvm, "call i64 asm sideeffect \"movq $$8, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -65,12 +60,7 @@ internal fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl()
         return false;
     }
 
-    if (!System.Testing.Contains(llvm, "@LinuxFsyncSyscallNumber"))
-    {
-        return false;
-    }
-
-    if (!System.Testing.Contains(llvm, "call i64 @LinuxSyscall1Handle("))
+    if (!System.Testing.Contains(llvm, "call i64 asm sideeffect \"movq $$74, %rax\\0Asyscall\""))
     {
         return false;
     }

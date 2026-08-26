@@ -1,6 +1,7 @@
 import System.C
 import System.Runtime.Buffer
 import System.Memory
+import System.Runtime.Platform.MacOSAbi
 module System.Runtime.Platform.MacOS
 
 internal unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
@@ -139,10 +140,6 @@ const MacOSOpenTruncateFlag = 1024;
 const MacOSOpenCloseOnExecFlag = 16777216;
 const MacOSDefaultCreateMode = 420;
 const MacOSDefaultDirectoryMode = 493;
-const MacOSStatModeOffset = 4;
-const MacOSStatModifiedSecondsOffset = 48;
-const MacOSStatModifiedNanosecondsOffset = 56;
-const MacOSStatSizeOffset = 96;
 const MacOSStatTypeMask = 61440;
 const MacOSStatRegularType = 32768;
 const MacOSStatDirectoryType = 16384;
@@ -164,9 +161,6 @@ const MacOSSocketReuseAddress = 4;
 const MacOSSocketNoSigPipe = 4130;
 const MacOSPollReadableEvent = 1;
 const MacOSPollWritableEvent = 4;
-const MacOSDirectoryEntryNameLengthOffset = 18;
-const MacOSDirectoryEntryTypeOffset = 20;
-const MacOSDirectoryEntryNameOffset = 21;
 const MacOSDirectoryEntryFileType = 8;
 const MacOSDirectoryEntryDirectoryType = 4;
 const MacOSDirectoryEntrySymlinkType = 10;
@@ -1321,8 +1315,7 @@ internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode
         return false;
     }
 
-    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
-    *mode = UnsignedShort(*modePointer);
+    *mode = MacOSAbiStatMode(statData);
     return true;
 }
 
@@ -1398,15 +1391,8 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
         return NegativeErrno();
     }
 
-    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
-    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[MacOSStatSizeOffset]);
-    stack rawptr<i64[min max]> modifiedSecondsPointer =
-        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedSecondsOffset]);
-    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
-        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedNanosecondsOffset]);
-
-    stack i32[min max] mode = UnsignedShort(*modePointer);
-    stack mut i64[min max] size = *sizePointer;
+    stack i32[min max] mode = MacOSAbiStatMode(statData);
+    stack mut i64[min max] size = MacOSAbiStatSize(statData);
     if (size < 0)
     {
         size = 0;
@@ -1426,8 +1412,8 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
     *kindPointer = DirectoryEntryKindFromMacOSMode(mode);
     *permissionsPointer = mode & 4095;
     *sizeDestination = size;
-    *modifiedSecondsDestination = *modifiedSecondsPointer;
-    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    *modifiedSecondsDestination = MacOSAbiStatModifiedSeconds(statData);
+    *modifiedNanosecondsDestination = MacOSAbiStatModifiedNanoseconds(statData);
     return 0;
 }
 
@@ -1461,15 +1447,8 @@ internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min ma
         return NegativeErrno();
     }
 
-    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
-    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[MacOSStatSizeOffset]);
-    stack rawptr<i64[min max]> modifiedSecondsPointer =
-        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedSecondsOffset]);
-    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
-        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedNanosecondsOffset]);
-
-    stack i32[min max] mode = UnsignedShort(*modePointer);
-    stack mut i64[min max] size = *sizePointer;
+    stack i32[min max] mode = MacOSAbiStatMode(statData);
+    stack mut i64[min max] size = MacOSAbiStatSize(statData);
     if (size < 0)
     {
         size = 0;
@@ -1489,8 +1468,8 @@ internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min ma
     *kindPointer = DirectoryEntryKindFromMacOSMode(mode);
     *permissionsPointer = mode & 4095;
     *sizeDestination = size;
-    *modifiedSecondsDestination = *modifiedSecondsPointer;
-    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    *modifiedSecondsDestination = MacOSAbiStatModifiedSeconds(statData);
+    *modifiedNanosecondsDestination = MacOSAbiStatModifiedNanoseconds(statData);
     return 0;
 }
 
@@ -1718,9 +1697,8 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
             return 0;
         }
 
-        stack rawptr<i16[min max]> nameLengthPointer = (rawptr<i16[min max]>)(&entry[MacOSDirectoryEntryNameLengthOffset]);
-        stack i64[min max] entryNameLength = (i64[min max])UnsignedShort(*nameLengthPointer);
-        stack rawptr<i8[min max]> entryNameData = (rawptr<i8[min max]>)(&entry[MacOSDirectoryEntryNameOffset]);
+        stack i64[min max] entryNameLength = MacOSAbiDirectoryEntryNameLength(entry);
+        stack rawptr<i8[min max]> entryNameData = MacOSAbiDirectoryEntryName(entry);
 
         if (IsDotDirectoryEntry(entryNameData, entryNameLength))
         {
@@ -1746,14 +1724,13 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
             copyIndex += 1;
         }
 
-        stack i8[min max] rawEntryType = *(&entry[MacOSDirectoryEntryTypeOffset]);
         *name = new Ascii()
         {
             Data = nameData,
             Length = entryNameLength,
             Capacity = nameCapacity
         };
-        *kind = DirectoryEntryKindFromMacOSType(UnsignedByte(rawEntryType));
+        *kind = DirectoryEntryKindFromMacOSType(MacOSAbiDirectoryEntryType(entry));
         return 1;
     }
 }
@@ -1787,18 +1764,16 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
             return 0;
         }
 
-        stack rawptr<i16[min max]> nameLengthPointer = (rawptr<i16[min max]>)(&entry[MacOSDirectoryEntryNameLengthOffset]);
-        stack i64[min max] entryNameLength = (i64[min max])UnsignedShort(*nameLengthPointer);
-        stack rawptr<i8[min max]> entryNameData = (rawptr<i8[min max]>)(&entry[MacOSDirectoryEntryNameOffset]);
+        stack i64[min max] entryNameLength = MacOSAbiDirectoryEntryNameLength(entry);
+        stack rawptr<i8[min max]> entryNameData = MacOSAbiDirectoryEntryName(entry);
 
         if (IsDotDirectoryEntry(entryNameData, entryNameLength))
         {
             continue;
         }
 
-        stack i8[min max] rawEntryType = *(&entry[MacOSDirectoryEntryTypeOffset]);
         *nameLength = entryNameLength;
-        *kind = DirectoryEntryKindFromMacOSType(UnsignedByte(rawEntryType));
+        *kind = DirectoryEntryKindFromMacOSType(MacOSAbiDirectoryEntryType(entry));
         return 1;
     }
 }
@@ -2583,8 +2558,7 @@ internal unsafe fn bool ProcessWorkingDirectoryExists(rawptr<System.C.c_char> pa
         return false;
     }
 
-    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
-    stack i32[min max] mode = UnsignedShort(*modePointer);
+    stack i32[min max] mode = MacOSAbiStatMode(statData);
     return (mode & MacOSStatTypeMask) == MacOSStatDirectoryType;
 }
 
