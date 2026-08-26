@@ -604,7 +604,14 @@ foreach ($entry in $matrixEntries) {
         "-ArchivePath", $archivePath,
         "-TargetTriple", [string]$entry.target_triple,
         "-WorkDir", (Join-Path $diagnosticsRoot ("archive-smoke-$targetId")),
-        "-FullSourceSuite",
+        "-IsolatePath"
+    )
+    $commands += New-ReleaseCommand -PhaseName "Smoke" -TargetId $targetId -Label "Qualify all Stark examples and benchmarks" -Executable $powerShellPath -Arguments @(
+        "-NoProfile", "-NonInteractive", "-File", (Join-Path $repositoryRoot "scripts/smoke-release-archive.ps1"),
+        "-ArchivePath", $archivePath,
+        "-TargetTriple", [string]$entry.target_triple,
+        "-WorkDir", (Join-Path $diagnosticsRoot ("source-suite-$targetId")),
+        "-SourceSuiteOnly",
         "-IsolatePath"
     )
     $commands += New-ReleaseCommand -PhaseName "Smoke" -TargetId $targetId -Label "Qualify archive-local installer lifecycle" -Executable $powerShellPath -Arguments @(

@@ -25,7 +25,7 @@ Both runners compile executable Stark, C, and Rust benchmarks and perform one
 warmup execution per binary.
 
 Release archive qualification is intentionally different from a performance
-measurement run. `scripts/smoke-release-archive.ps1 -FullSourceSuite` discovers
+measurement run. `scripts/smoke-release-archive.ps1 -SourceSuiteOnly` discovers
 every `.stark` benchmark, compiles it with the packaged compiler, and executes
 each runnable program exactly once. It performs no warmup or measured repetition,
 does not build C or Rust counterparts, and enforces no timing threshold. Sources
