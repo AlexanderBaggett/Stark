@@ -300,24 +300,6 @@ public fn void DrawModelWiresEx(Model model, Vector3 position, Vector3 rotationA
     return;
 }
 
-[LinkName("DrawModelPoints")]
-internal unsafe ffi fn void stark_raylib_DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint);
-public fn void DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint) {
-    unsafe {
-        stark_raylib_DrawModelPoints(model, position, scale, tint);
-    }
-    return;
-}
-
-[LinkName("DrawModelPointsEx")]
-internal unsafe ffi fn void stark_raylib_DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint);
-public fn void DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint) {
-    unsafe {
-        stark_raylib_DrawModelPointsEx(model, position, rotationAxis, rotationAngle, scale, tint);
-    }
-    return;
-}
-
 [LinkName("DrawBoundingBox")]
 internal unsafe ffi fn void stark_raylib_DrawBoundingBox(BoundingBox box, Color color);
 public fn void DrawBoundingBox(BoundingBox box, Color color) {

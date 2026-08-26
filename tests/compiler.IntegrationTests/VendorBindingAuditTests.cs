@@ -488,9 +488,9 @@ public sealed partial class VendorBindingAuditTests
         var linkNames = LinkNameRegex().Matches(bindingText).Select(static match => match.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
         var directFfiNames = DirectFfiNameRegex().Matches(bindingText).Select(static match => match.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
         var boundNativeNames = new HashSet<string>(linkNames, StringComparer.Ordinal);
-        boundNativeNames.UnionWith(directFfiNames);
+        boundNativeNames.UnionWith(directFfiNames.Where(static name => !name.StartsWith("stark_", StringComparison.Ordinal)));
 
-        Assert.Equal(599, coreFunctions.Count);
+        Assert.Equal(597, coreFunctions.Count);
         Assert.Equal(35, coreStructs.Count);
         Assert.Equal(303, enumValues.Count);
         Assert.Equal(6, callbacks.Count);
@@ -498,17 +498,17 @@ public sealed partial class VendorBindingAuditTests
         Assert.Equal(163, rlglFunctions.Count);
 
         Assert.Empty(coreFunctions.Except(boundNativeNames, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(boundNativeNames.Except(coreFunctions, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(coreStructs.Except(ExtractPublicStructNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(enumValues.Except(ExtractPublicConstNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(callbacks.Except(ExtractPublicAliasNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
     }
 
     [Fact]
-    public void RaylibSixAllocatingTextFunctionsUseOwnedWrappersAndStaleModelPointSymbolsAreGone()
+    public void RaylibSixAllocatingTextFunctionsUseOwnedWrappers()
     {
         var repositoryRoot = FindRepositoryRoot();
         var textBinding = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib", "Text.stark"));
-        var modelBinding = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib", "Models.stark"));
 
         foreach (var name in new[] { "TextReplace", "TextInsert", "TextReplaceBetween" })
         {
@@ -528,8 +528,6 @@ public sealed partial class VendorBindingAuditTests
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplace", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextInsert", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplaceBetween", textBinding, StringComparison.Ordinal);
-        Assert.Contains("public fn void DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint)", modelBinding, StringComparison.Ordinal);
-        Assert.Contains("public fn void DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint)", modelBinding, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1310,7 +1308,7 @@ public sealed partial class VendorBindingAuditTests
     [GeneratedRegex(@"\[LinkName\(""([^""]+)""\)\]", RegexOptions.CultureInvariant)]
     private static partial Regex LinkNameRegex();
 
-    [GeneratedRegex(@"^\s*(?:public|internal)\s+(?=[^;\r\n]*\bffi\b)(?=[^;\r\n]*\bfn\b)[^;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(?:public|internal)\s+(?=[^;\r\n]*\bffi\b)[^;\r\n]*?\bfn\b\s+[^;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex DirectFfiNameRegex();
 
     [GeneratedRegex(@"^\s*public\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]

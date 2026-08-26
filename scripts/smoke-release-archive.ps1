@@ -512,6 +512,7 @@ function Invoke-StarkExampleSuite {
 
 function Invoke-StarkBenchmarkSuite {
     param(
+        [string] $PackageRoot,
         [string] $SourceRoot,
         [string] $OutputRoot,
         [AllowEmptyCollection()][string[]] $TargetArguments
@@ -529,6 +530,7 @@ function Invoke-StarkBenchmarkSuite {
     $benchmarkOutputRoot = Join-Path $OutputRoot "benchmark-suite"
     $benchmarkDevelopmentSdkRoot = Join-Path $SourceRoot "benchmark-development-sdk"
     $benchmarkDevelopmentSourceRoot = Join-Path $benchmarkDevelopmentSdkRoot "stdlib/src"
+    $packagedToolchainRoot = Join-Path $PackageRoot "toolchain"
     New-Item -ItemType Directory -Force -Path $benchmarkSourceRoot, $benchmarkOutputRoot | Out-Null
     $runnableCount = 0
     $compileOnlyCount = 0
@@ -557,7 +559,14 @@ function Invoke-StarkBenchmarkSuite {
         $externalSource = Join-Path $workingDirectory $benchmark.Name
         Copy-Item -LiteralPath $benchmark.FullName -Destination $externalSource
         $sdkArguments = if ($usesReservedSdkModule) {
-            @("--sdk-root", $benchmarkDevelopmentSdkRoot)
+            # The source-only development SDK grants reserved System/Vendor
+            # module ownership, but it does not contain a compiler backend.
+            # Preserve the extracted release's bundled toolchain explicitly;
+            # isolated qualification must never fall back to an ambient clang.
+            @(
+                "--sdk-root", $benchmarkDevelopmentSdkRoot,
+                "--toolchain-dir", $packagedToolchainRoot
+            )
         } else {
             @()
         }
@@ -1151,6 +1160,7 @@ try {
                 -SourceRoot $sourceRoot `
                 -TargetArguments $targetArgs
             Invoke-StarkBenchmarkSuite `
+                -PackageRoot $packageRoot `
                 -SourceRoot $sourceRoot `
                 -OutputRoot $outputRoot `
                 -TargetArguments $targetArgs
