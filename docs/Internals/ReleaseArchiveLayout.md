@@ -579,6 +579,11 @@ and it never builds or runs C or Rust counterparts. The release workflow invokes
 this mode in its own **Qualify all Stark examples and benchmarks** step, exposing
 its duration and progress separately from the ordinary archive smoke. The
 downloaded-artifact install smoke does not repeat it.
+Benchmarks that declare reserved SDK modules are compiled through a temporary
+source-only development manifest while explicitly retaining the extracted
+release's bundled `toolchain` root. This keeps module-ownership qualification
+separate from backend selection and preserves PATH isolation without relying on
+an ambient Clang installation.
 The suite also covers every package advertised by the target's official Vendor
 catalog, not only Raylib. Use `-IsolatePath` to prove the archive does not depend
 on ambient Stark/.NET/LLVM installations while retaining only the approved
