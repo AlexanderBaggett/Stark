@@ -1252,6 +1252,18 @@ module ReleaseSmokeRaylibProject
 
 export fn i32[min max] main()
 {
+    stack Model model = DefaultModel();
+    if (GetScreenWidth() < 0)
+    {
+        DrawModelPoints(model, Vec3(0.0f, 0.0f, 0.0f), 1.0f, WHITE());
+        DrawModelPointsEx(
+            model,
+            Vec3(0.0f, 0.0f, 0.0f),
+            Vec3(0.0f, 1.0f, 0.0f),
+            0.0f,
+            Vec3(1.0f, 1.0f, 1.0f),
+            WHITE());
+    }
     return GetScreenWidth();
 }
 '@
