@@ -53,9 +53,8 @@ internal static class AssemblyLoweringAssertions
         var callLine = text
             .Split('\n')
             .FirstOrDefault(line =>
-                line.Contains(
-                    $"call i64 asm sideeffect \"mov x8, #{syscallNumber}\\0Asvc #0\"",
-                    StringComparison.Ordinal));
+                line.Contains("call i64 asm sideeffect", StringComparison.Ordinal)
+                && line.Contains($"mov x8, #{syscallNumber}\\0Asvc #0", StringComparison.Ordinal));
 
         Assert.NotNull(callLine);
         Assert.Contains("~{x8}", callLine, StringComparison.Ordinal);

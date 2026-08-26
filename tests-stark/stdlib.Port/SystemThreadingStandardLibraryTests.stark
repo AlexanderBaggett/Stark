@@ -1094,8 +1094,8 @@ fn i32[min max] Run()
 // x86_64-unknown-linux-gnu target with EmitLlvmIr, then scans the emitted LLVM for
 // the raw-clone thread lifecycle (LinuxMapThreadRegion, LinuxCloneThread,
 // LinuxReleaseThreadReference, StartThread/JoinThread/DetachThread,
-// LinuxThreadEntryThunk, FutexWait, the @LinuxMunmapSyscallNumber/@LinuxFutexSyscallNumber
-// globals, LinuxSyscall1Handle/LinuxSyscall2Pointers, YieldThread/SleepThreadMilliseconds)
+// LinuxThreadEntryThunk, FutexWait, the direct munmap/futex operations,
+// YieldThread/SleepThreadMilliseconds)
 // and the absence of pthread_*/ThreadEntryThunk/sched_yield/nanosleep. The host
 // bridge cannot read that repository source file directly, so this port
 // cross-targets a program that imports System.Threading and exercises the thread
@@ -1114,12 +1114,8 @@ internal fn bool StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBacked
     stack ascii linuxThreadEntryThunk = "define fastcc noundef i32 @LinuxThreadEntryThunk(";
     stack ascii futexWait = "define fastcc noundef i32 @FutexWait(";
     stack ascii releaseThreadReferenceFn = "define fastcc noundef i32 @ReleaseThreadReference(";
-    stack ascii syscall2Pointers = "define i64 @LinuxSyscall2Pointers(";
     stack ascii yieldThread = "define fastcc void @YieldThread(";
     stack ascii sleepThreadMilliseconds = "define fastcc void @SleepThreadMilliseconds(";
-    stack ascii munmapSyscallNumber = "@LinuxMunmapSyscallNumber";
-    stack ascii futexSyscallNumber = "@LinuxFutexSyscallNumber";
-    stack ascii callSyscall1Handle = "call i64 @LinuxSyscall1Handle(";
     stack ascii noPthreadCreate = "@pthread_create(";
     stack ascii noPthreadJoin = "@pthread_join(";
     stack ascii noPthreadDetach = "@pthread_detach(";

@@ -411,7 +411,6 @@ fn i32[min max] Run()
         || !Contains(llvm, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
         || !Contains(llvm, "GetMutableByteSliceParts")
         || !Contains(llvm, "GetByteSliceParts")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber")
         || !Contains(llvm, "call i64 asm sideeffect \"movq $$3, %rax\\0Asyscall\"")
         || !Contains(llvm, "@System_Net_Tcp_StatusFromPlatformResult(")
         || !Contains(llvm, "@System_Net_Tcp_ByteCountFromPlatformResult(")
@@ -532,9 +531,8 @@ export unsafe fn i32[min max] main()
 // PORT-NOTE: the C# test reads the on-disk stdlib source
 // stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
-// ConnectTcpIPv4 body for the socket+connect syscall path (LinuxSyscall3Integers
-// to create the socket, WriteTcpIPv4Sockaddr + LinuxSyscall3HandleBuffer to
-// connect, and the architecture-selected LinuxCloseHandle cleanup that does not fall
+// ConnectTcpIPv4 body for the direct socket+connect syscall path,
+// WriteTcpIPv4Sockaddr, and the architecture-selected LinuxCloseHandle cleanup that does not fall
 // back to CloseFile). The host bridge cannot read the repository source tree
 // directly, so this port cross-targets a driver that exercises the public TCP
 // connect path, then keeps the original IR substring assertions and applies the
@@ -581,8 +579,8 @@ fn i32[min max] Run()
 
     stack ascii llvm = Llvm(c);
     if (!Contains(llvm, "define internal dso_local fastcc noundef ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4(")
-        || !Contains(llvm, "call i64 @LinuxSyscall3Integers(")
-        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$41, %rax\\0Asyscall\"")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$42, %rax\\0Asyscall\"")
         || !Contains(llvm, "call fastcc void @System_Runtime_Platform_Linux_WriteTcpIPv4Sockaddr("))
     {
         return false;
@@ -608,8 +606,8 @@ fn i32[min max] Run()
 // PORT-NOTE: the C# test reads the on-disk stdlib source
 // stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR for the
-// shutdown-syscall lowering of ShutdownSocket (LinuxSyscall2HandleInteger +
-// LinuxShutdownSyscallNumber, never the Winsock shutdown import). The host bridge
+// direct shutdown-syscall lowering of ShutdownSocket, never the Winsock shutdown
+// import. The host bridge
 // cannot read the repository source tree directly, so this port cross-targets a
 // driver that exercises the public TCP shutdown path and keeps the original IR
 // substring assertions.
@@ -653,12 +651,7 @@ export unsafe fn i32[min max] main()
     }
 
     stack ascii shutdownBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Net_Tcp_TcpClient_Shutdown");
-    if (!Contains(shutdownBody, "call i64 @LinuxSyscall2HandleInteger(i64 range(i64 48, 49) 48, "))
-    {
-        return false;
-    }
-
-    if (!Contains(llvm, "@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber"))
+    if (!Contains(shutdownBody, "call i64 asm sideeffect \"movq $$48, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -752,27 +745,25 @@ fn i32[min max] Run()
     }
 
     if (!Contains(llvm, "%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }")
-        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
         || !Contains(llvm, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxReadvSyscallNumber")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxWritevSyscallNumber"))
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$19, %rax\\0Asyscall\"")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$20, %rax\\0Asyscall\""))
     {
         return false;
     }
 
     stack ascii readVectorBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Runtime_Platform_Linux_ReadSocketVector2");
     stack ascii writeVectorBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Runtime_Platform_Linux_WriteSocketVector2");
-    // LinuxReadvSyscallNumber (19) / LinuxWritevSyscallNumber (20) are comptime
-    // constants that fold into the syscall wrapper call sites.
+    // The architecture-selected operations lower directly into these call sites.
     if (!Contains(readVectorBody, "[2 x %System_Runtime_Platform_Linux_LinuxIovec]")
-        || !Contains(readVectorBody, "call i64 @LinuxSyscall3HandleBuffer(i64 range(i64 19, 20) 19, ")
+        || !Contains(readVectorBody, "call i64 asm sideeffect \"movq $$19, %rax\\0Asyscall\"")
         || !Contains(readVectorBody, "i64 range(i64 2, 3) 2"))
     {
         return false;
     }
 
     if (!Contains(writeVectorBody, "[2 x %System_Runtime_Platform_Linux_LinuxIovec]")
-        || !Contains(writeVectorBody, "call i64 @LinuxSyscall3HandleBuffer(i64 range(i64 20, 21) 20, ")
+        || !Contains(writeVectorBody, "call i64 asm sideeffect \"movq $$20, %rax\\0Asyscall\"")
         || !Contains(writeVectorBody, "i64 range(i64 2, 3) 2"))
     {
         return false;
@@ -794,9 +785,8 @@ fn i32[min max] Run()
 // PORT-NOTE: the C# test reads the on-disk stdlib source
 // stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
-// ListenTcpIPv4 body for the socket+bind+listen syscall path (LinuxSyscall3Integers
-// for the socket, LinuxSyscall3HandleBuffer for bind, LinuxSyscall2HandleInteger
-// for listen, with the architecture-selected LinuxCloseHandle cleanup that does not fall
+// ListenTcpIPv4 body for the direct socket+bind+listen syscall path, with the
+// architecture-selected LinuxCloseHandle cleanup that does not fall
 // back to CloseFile, and never the Winsock bind/listen imports). The host bridge
 // cannot read the repository source tree directly, so this port cross-targets a
 // driver that exercises the public TCP listen path and keeps the original IR
@@ -843,11 +833,9 @@ fn i32[min max] Run()
 
     stack ascii llvm = Llvm(c);
     if (!Contains(llvm, "define internal dso_local fastcc noundef ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4(")
-        || !Contains(llvm, "call i64 @LinuxSyscall3Integers(")
-        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
-        || !Contains(llvm, "call i64 @LinuxSyscall2HandleInteger(")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxBindSyscallNumber")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxListenSyscallNumber"))
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$41, %rax\\0Asyscall\"")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$49, %rax\\0Asyscall\"")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$50, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -878,8 +866,7 @@ fn i32[min max] Run()
 // PORT-NOTE: the C# test reads the on-disk stdlib source
 // stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
 // EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
-// AcceptSocket body for the accept4 syscall path (LinuxSyscall4HandlePointersInteger
-// + LinuxAccept4SyscallNumber + LinuxSocketCloseOnExecFlag, with no close-syscall
+// AcceptSocket body for the direct accept4 syscall path with SOCK_CLOEXEC and no close-syscall
 // cleanup in the body and never the libc accept/accept4 imports). The host bridge
 // cannot read the repository source tree directly, so this port cross-targets a
 // driver that exercises the public TCP accept path and keeps the original IR
@@ -911,15 +898,14 @@ fn i32[min max] Run()
 
     stack ascii llvm = Llvm(c);
     if (!Contains(llvm, "define internal dso_local fastcc void @__stark_inline_clone_System_Net_Tcp_TcpListener_Accept(")
-        || !Contains(llvm, "call i64 @LinuxSyscall4HandlePointersInteger(")
-        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxAccept4SyscallNumber")
+        || !Contains(llvm, "call i64 asm sideeffect \"movq $$288, %rax\\0Asyscall\"")
         || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxSocketCloseOnExecFlag"))
     {
         return false;
     }
 
     stack ascii acceptBody = LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Net_Tcp_TcpListener_Accept");
-    if (!Contains(acceptBody, "call i64 @LinuxSyscall4HandlePointersInteger(i64 range(i64 288, 289) 288, ")
+    if (!Contains(acceptBody, "call i64 asm sideeffect \"movq $$288, %rax\\0Asyscall\"")
         || !Contains(acceptBody, "i64 range(i64 524288, 524289) 524288"))
     {
         return false;

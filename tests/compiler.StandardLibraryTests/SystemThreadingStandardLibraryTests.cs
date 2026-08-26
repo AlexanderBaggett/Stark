@@ -1277,7 +1277,6 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.Contains("define fastcc noundef i32 @LinuxThreadEntryThunk(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @FutexWait(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReleaseThreadReference(", llvm, StringComparison.Ordinal);
-        Assert.Contains("; direct-only asm definition omitted: LinuxSyscall2Pointers", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc void @YieldThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc void @SleepThreadMilliseconds(", llvm, StringComparison.Ordinal);
         Assert.Contains("movq $$9, %rax", llvm, StringComparison.Ordinal);
@@ -1286,8 +1285,6 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.DoesNotContain("call i64 @LinuxMapThreadRegion(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("call i64 @LinuxCloneThread(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("call i32 @LinuxReleaseThreadReference(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxMunmapSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxFutexSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 11);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 24);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 35);

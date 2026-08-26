@@ -1,0 +1,104 @@
+module System.Runtime.Platform.MacOSAbi
+
+// Intel macOS keeps the unsuffixed 32-bit-inode compatibility entry points,
+// while Apple Silicon exposes only the modern 64-bit-inode layout. Stark calls
+// the unsuffixed symbols directly, so the matching target-specific layouts are
+// decoded here without a runtime architecture branch.
+
+internal unsafe ffi asm(x86_64) fn i32[min max] MacOSAbiStatMode(rawptr<i8[min max]> statData)
+    in("rdi") statData,
+    out("rax") return
+{
+    "movzwl 8(%rdi), %eax"
+}
+
+internal unsafe ffi asm(aarch64) fn i32[min max] MacOSAbiStatMode(rawptr<i8[min max]> statData)
+    in("x0") statData,
+    out("x0") return
+{
+    "ldrh w0, [x0, #4]"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] MacOSAbiStatSize(rawptr<i8[min max]> statData)
+    in("rdi") statData,
+    out("rax") return
+{
+    "movq 72(%rdi), %rax"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] MacOSAbiStatSize(rawptr<i8[min max]> statData)
+    in("x0") statData,
+    out("x0") return
+{
+    "ldr x0, [x0, #96]"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] MacOSAbiStatModifiedSeconds(rawptr<i8[min max]> statData)
+    in("rdi") statData,
+    out("rax") return
+{
+    "movq 40(%rdi), %rax"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] MacOSAbiStatModifiedSeconds(rawptr<i8[min max]> statData)
+    in("x0") statData,
+    out("x0") return
+{
+    "ldr x0, [x0, #48]"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] MacOSAbiStatModifiedNanoseconds(rawptr<i8[min max]> statData)
+    in("rdi") statData,
+    out("rax") return
+{
+    "movq 48(%rdi), %rax"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] MacOSAbiStatModifiedNanoseconds(rawptr<i8[min max]> statData)
+    in("x0") statData,
+    out("x0") return
+{
+    "ldr x0, [x0, #56]"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] MacOSAbiDirectoryEntryNameLength(rawptr<i8[min max]> entry)
+    in("rdi") entry,
+    out("rax") return
+{
+    "movzbl 7(%rdi), %eax"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] MacOSAbiDirectoryEntryNameLength(rawptr<i8[min max]> entry)
+    in("x0") entry,
+    out("x0") return
+{
+    "ldrh w0, [x0, #18]"
+}
+
+internal unsafe ffi asm(x86_64) fn i32[min max] MacOSAbiDirectoryEntryType(rawptr<i8[min max]> entry)
+    in("rdi") entry,
+    out("rax") return
+{
+    "movzbl 6(%rdi), %eax"
+}
+
+internal unsafe ffi asm(aarch64) fn i32[min max] MacOSAbiDirectoryEntryType(rawptr<i8[min max]> entry)
+    in("x0") entry,
+    out("x0") return
+{
+    "ldrb w0, [x0, #20]"
+}
+
+internal unsafe ffi asm(x86_64) fn rawptr<i8[min max]> MacOSAbiDirectoryEntryName(rawptr<i8[min max]> entry)
+    in("rdi") entry,
+    out("rax") return
+{
+    "leaq 8(%rdi), %rax"
+}
+
+internal unsafe ffi asm(aarch64) fn rawptr<i8[min max]> MacOSAbiDirectoryEntryName(rawptr<i8[min max]> entry)
+    in("x0") entry,
+    out("x0") return
+{
+    "add x0, x0, #21"
+}
