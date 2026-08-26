@@ -800,9 +800,7 @@ In `v1.x`, this selection is done through the package build and target-specific 
 
 ### Linux Implementation
 
-`System.Runtime.Platform.Linux` targets the Linux syscall ABI without depending on libc or glibc.
-
-In the current Milestone 7 slice, the actual syscall instruction is issued through tiny internal `ffi asm` shims inside the Linux platform module.
+`System.Runtime.Platform.Linux` targets the Linux syscall ABI without depending on libc or glibc. The target-varying syscall table and kernel-layout accessors live in the internal `System.Runtime.Platform.LinuxSyscalls` module; the small foundational open/read/write/close bridges and x86-64 thread bootstrap remain beside their runtime consumers. Every bridge is selected at compile time rather than sharing constants across incompatible targets.
 
 The syscall ABI on x86_64 Linux is:
 
@@ -811,27 +809,40 @@ The syscall ABI on x86_64 Linux is:
 - return value in `rax`
 - `rcx` and `r11` are clobbered by the kernel
 
-The required syscalls are:
+The release-target syscall table is:
 
-| Operation | Syscall | Number (x86_64) |
-|---|---|---|
-| write | `write` | 1 |
-| read | `read` | 0 |
-| open | `openat` | 257 |
-| close | `close` | 3 |
-| event wait | `epoll_wait` with `epoll_create1` and `epoll_ctl` | 232, 291, 233 |
-| seek | `lseek` | 8 |
-| flush | userspace buffer drain via `write` | 1 |
-| delete | `unlinkat` | 263 |
-| rename | `renameat` | 264 |
-| stat or exists | `newfstatat` | 262 |
-| getcwd | `getcwd` | 79 |
-| process id | `getpid` | 39 |
-| exit | `exit_group` | 231 |
-| ioctl | `ioctl` | 16 |
-| synchronization wait/wake | `futex` | 202 |
-| thread virtual memory | `mmap`, `munmap` | 9, 11 |
-| thread creation | `clone` | 56 |
+| Operation | Syscall | x86-64 | AArch64 |
+|---|---|---:|---:|
+| current directory | `getcwd` | 79 | 17 |
+| terminal control | `ioctl` | 16 | 29 |
+| scalar read/write | `read`, `write` | 0, 1 | 63, 64 |
+| vector read/write | `readv`, `writev` | 19, 20 | 65, 66 |
+| open/close | `openat`, `close` | 257, 3 | 56, 57 |
+| seek/sync | `lseek`, `fsync` | 8, 74 | 62, 82 |
+| process id/exit | `getpid`, `exit_group` | 39, 231 | 172, 94 |
+| socket/connect | `socket`, `connect` | 41, 42 | 198, 203 |
+| bind/listen | `bind`, `listen` | 49, 50 | 200, 201 |
+| accept/shutdown | `accept4`, `shutdown` | 288, 48 | 242, 210 |
+| stat | `newfstatat` | 262 | 79 |
+| link operations | `readlinkat`, `symlinkat` | 267, 266 | 78, 36 |
+| directory mutation | `mkdirat`, `unlinkat` | 258, 263 | 34, 35 |
+| permissions/rename | `fchmodat`, `renameat` | 268, 264 | 53, 38 |
+| directory enumeration | `getdents64` | 217 | 61 |
+| scheduling/sleep | `sched_yield`, `nanosleep` | 24, 35 | 124, 101 |
+| unmap/synchronization | `munmap`, `futex` | 11, 202 | 215, 98 |
+| event queue create/control | `epoll_create1`, `epoll_ctl` | 291, 233 | 20, 21 |
+| event wait | `epoll_wait` / `epoll_pwait` | 232 | 22 |
+
+Linux also has architecture-specific non-syscall ABI facts. `O_DIRECTORY` is
+`65536` on x86-64 and `16384` on AArch64. Kernel `stat.st_mode` is at byte 24
+on x86-64 and byte 16 on AArch64. `epoll_event` occupies 12 bytes on x86-64
+and 16 bytes on the generic 64-bit ABI, so the runtime reserves and clears the
+larger representation. Directory-entry offsets and the `stat` size/time fields
+used by Stark are common across these two 64-bit ABIs.
+
+The current raw `mmap`/`clone` thread lifecycle remains x86-64-specific. This is
+separate from the syscall table used by file, directory, socket, process, and
+event operations on both supported Linux architectures.
 
 `ioctl` is needed to detect whether a file descriptor is a terminal for buffering strategy selection.
 
@@ -881,7 +892,11 @@ The current macOS backend uses:
 
 Directory enumeration reads Darwin `dirent` entries directly from `readdir`,
 including the `d_type` byte when available. File existence and file/directory
-kind checks use Darwin `stat` mode bits. Thread joins preserve the `i32` returned
+kind checks use Darwin `stat` mode bits. Intel macOS's unsuffixed libSystem
+`stat`/`readdir` entry points expose the legacy x86-64 layouts, while Apple
+Silicon exposes the modern layouts. Internal compile-time-selected accessors in
+`System.Runtime.Platform.MacOSAbi` decodes each layout without a runtime branch.
+Thread joins preserve the `i32` returned
 by the Stark entry function through `pthread_join` without heap-allocating a
 return-code box.
 

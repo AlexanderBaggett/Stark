@@ -1,6 +1,7 @@
 import System.C
 import System.Memory
 import System.Runtime.Buffer
+import System.Runtime.Platform.LinuxSyscalls
 module System.Runtime.Platform.Linux
 
 internal unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
@@ -42,15 +43,6 @@ internal unsafe ffi(c) fn i32[min max] setenv(rawptr<System.C.c_char> name, rawp
 internal unsafe ffi(c) fn i32[min max] unsetenv(rawptr<System.C.c_char> name);
 internal unsafe ffi(c) fn i32[min max] waitpid(i32[min max] processId, rawmutptr<i32[min max]> status, i32[min max] options);
 
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
-    in("rax") number,
-    in("rdi") arg1,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxCloseHandle(rawptr<i8[min max]> handle)
     in("rdi") handle,
     out("rax") return,
@@ -84,67 +76,6 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxCloneThread(i64[min max] fl
     "movq $$56, %rax\nxorq %rdx, %rdx\nxorq %r10, %r10\nxorq %r8, %r8\nsyscall\ntestq %rax, %rax\njnz 2f\nmovq 40(%r12), %r13\nmovq 48(%r12), %rdi\ncallq *%r13\nmovl %eax, 24(%r12)\nmovl $$1, 28(%r12)\nmovq 8(%r12), %r14\nmovq 16(%r12), %r15\nmovl $$-1, %eax\nlock xaddl %eax, 32(%r12)\ncmpl $$1, %eax\njne 1f\nmovq $$11, %rax\nmovq %r14, %rdi\nmovq %r15, %rsi\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n1:\nmovq $$202, %rax\nleaq 28(%r12), %rdi\nmovq $$129, %rsi\nmovq $$1, %rdx\nxorq %r10, %r10\nsyscall\nmovq $$60, %rax\nxorq %rdi, %rdi\nsyscall\n2:"
 }
 
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
-    in("rax") number,
-    in("rdi") arg1,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall2Pointers(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall2PathBuffer(i64[min max] number, rawmutptr<i8[min max]> arg1, i64[min max] arg2)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall2HandleInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3Integers(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxReadHandleBuffer(rawptr<i8[min max]> handle, rawmutptr<i8[min max]> buffer, i64[min max] length)
     in("rdi") handle,
     in("rsi") buffer,
@@ -165,51 +96,6 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8
     "movq $$1, %rax\nsyscall"
 }
 
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3HandleRequestPointer(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, rawptr<i8[min max]> arg3)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall3AtPath(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall4OpenAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, i64[min max] arg4)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    in("r10") arg4,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxOpenAt(i64[min max] directoryHandle, rawptr<i8[min max]> path, i64[min max] flags, i64[min max] mode)
     in("rdi") directoryHandle,
     in("rsi") path,
@@ -219,50 +105,6 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxOpenAt(i64[min max] directo
     clobber("rcx", "r11")
 {
     "movq $$257, %rax\nsyscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall4RenameAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, rawptr<i8[min max]> arg4)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    in("r10") arg4,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall4StatAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, rawmutptr<i8[min max]> arg3, i64[min max] arg4)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    in("r10") arg4,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall4HandlePointersInteger(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, rawptr<i8[min max]> arg3, i64[min max] arg4)
-    in("rax") number,
-    in("rdi") arg1,
-    in("rsi") arg2,
-    in("rdx") arg3,
-    in("r10") arg4,
-    out("rax") return,
-    clobber("rcx", "r11")
-{
-    "syscall"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
-    in("x8") number,
-    in("x0") arg1,
-    out("x0") return
-{
-    "svc #0"
 }
 
 internal unsafe ffi asm(aarch64) fn i64[min max] LinuxCloseHandle(rawptr<i8[min max]> handle)
@@ -296,61 +138,6 @@ internal unsafe ffi asm(aarch64) fn i64[min max] LinuxCloneThread(i64[min max] f
     "mov x0, xzr\nsub x0, x0, #38"
 }
 
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
-    in("x8") number,
-    in("x0") arg1,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall2Pointers(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall2PathBuffer(i64[min max] number, rawmutptr<i8[min max]> arg1, i64[min max] arg2)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall2HandleInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3Integers(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    out("x0") return
-{
-    "svc #0"
-}
-
 internal unsafe ffi asm(aarch64) fn i64[min max] LinuxReadHandleBuffer(rawptr<i8[min max]> handle, rawmutptr<i8[min max]> buffer, i64[min max] length)
     in("x0") handle,
     in("x1") buffer,
@@ -371,47 +158,6 @@ internal unsafe ffi asm(aarch64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i
     "mov x8, #64\nsvc #0"
 }
 
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3HandleRequestPointer(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, rawptr<i8[min max]> arg3)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall3AtPath(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall4OpenAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, i64[min max] arg4)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    in("x3") arg4,
-    out("x0") return
-{
-    "svc #0"
-}
-
 internal unsafe ffi asm(aarch64) fn i64[min max] LinuxOpenAt(i64[min max] directoryHandle, rawptr<i8[min max]> path, i64[min max] flags, i64[min max] mode)
     in("x0") directoryHandle,
     in("x1") path,
@@ -421,47 +167,6 @@ internal unsafe ffi asm(aarch64) fn i64[min max] LinuxOpenAt(i64[min max] direct
     clobber("x8")
 {
     "mov x8, #56\nsvc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall4RenameAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, rawptr<i8[min max]> arg4)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    in("x3") arg4,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall4StatAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, rawmutptr<i8[min max]> arg3, i64[min max] arg4)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    in("x3") arg4,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxSyscall4HandlePointersInteger(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, rawptr<i8[min max]> arg3, i64[min max] arg4)
-    in("x8") number,
-    in("x0") arg1,
-    in("x1") arg2,
-    in("x2") arg3,
-    in("x3") arg4,
-    out("x0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
-    in("a7") number,
-    in("a0") arg1,
-    out("a0") return
-{
-    "ecall"
 }
 
 internal unsafe ffi asm(riscv64) fn i64[min max] LinuxCloseHandle(rawptr<i8[min max]> handle)
@@ -495,61 +200,6 @@ internal unsafe ffi asm(riscv64) fn i64[min max] LinuxCloneThread(i64[min max] f
     "li a0, -38"
 }
 
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
-    in("a7") number,
-    in("a0") arg1,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall2Pointers(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall2PathBuffer(i64[min max] number, rawmutptr<i8[min max]> arg1, i64[min max] arg2)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall2HandleInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3Integers(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    out("a0") return
-{
-    "ecall"
-}
-
 internal unsafe ffi asm(riscv64) fn i64[min max] LinuxReadHandleBuffer(rawptr<i8[min max]> handle, rawmutptr<i8[min max]> buffer, i64[min max] length)
     in("a0") handle,
     in("a1") buffer,
@@ -570,47 +220,6 @@ internal unsafe ffi asm(riscv64) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i
     "li a7, 64\necall"
 }
 
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3HandleRequestPointer(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, rawptr<i8[min max]> arg3)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall3AtPath(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall4OpenAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, i64[min max] arg4)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    in("a3") arg4,
-    out("a0") return
-{
-    "ecall"
-}
-
 internal unsafe ffi asm(riscv64) fn i64[min max] LinuxOpenAt(i64[min max] directoryHandle, rawptr<i8[min max]> path, i64[min max] flags, i64[min max] mode)
     in("a0") directoryHandle,
     in("a1") path,
@@ -620,47 +229,6 @@ internal unsafe ffi asm(riscv64) fn i64[min max] LinuxOpenAt(i64[min max] direct
     clobber("a7")
 {
     "li a7, 56\necall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall4RenameAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, rawptr<i8[min max]> arg4)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    in("a3") arg4,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall4StatAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, rawmutptr<i8[min max]> arg3, i64[min max] arg4)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    in("a3") arg4,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxSyscall4HandlePointersInteger(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, rawptr<i8[min max]> arg3, i64[min max] arg4)
-    in("a7") number,
-    in("a0") arg1,
-    in("a1") arg2,
-    in("a2") arg3,
-    in("a3") arg4,
-    out("a0") return
-{
-    "ecall"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
-    in("eax") number,
-    in("ebx") arg1,
-    out("eax") return
-{
-    "int $$0x80"
 }
 
 internal unsafe ffi asm(x86) fn i64[min max] LinuxCloseHandle(rawptr<i8[min max]> handle)
@@ -693,61 +261,6 @@ internal unsafe ffi asm(x86) fn i64[min max] LinuxCloneThread(i64[min max] flags
     "movl $$-38, %eax"
 }
 
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
-    in("eax") number,
-    in("ebx") arg1,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall2Pointers(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall2PathBuffer(i64[min max] number, rawmutptr<i8[min max]> arg1, i64[min max] arg2)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall2HandleInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3Integers(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
 internal unsafe ffi asm(x86) fn i64[min max] LinuxReadHandleBuffer(rawptr<i8[min max]> handle, rawmutptr<i8[min max]> buffer, i64[min max] length)
     in("ebx") handle,
     in("ecx") buffer,
@@ -766,47 +279,6 @@ internal unsafe ffi asm(x86) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[mi
     "movl $$4, %eax\nint $$0x80"
 }
 
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3HandleRequestPointer(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, rawptr<i8[min max]> arg3)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall3AtPath(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall4OpenAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, i64[min max] arg4)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    in("esi") arg4,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
 internal unsafe ffi asm(x86) fn i64[min max] LinuxOpenAt(i64[min max] directoryHandle, rawptr<i8[min max]> path, i64[min max] flags, i64[min max] mode)
     in("ebx") directoryHandle,
     in("ecx") path,
@@ -815,47 +287,6 @@ internal unsafe ffi asm(x86) fn i64[min max] LinuxOpenAt(i64[min max] directoryH
     out("eax") return
 {
     "movl $$295, %eax\nint $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall4RenameAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, rawptr<i8[min max]> arg4)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    in("esi") arg4,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall4StatAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, rawmutptr<i8[min max]> arg3, i64[min max] arg4)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    in("esi") arg4,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(x86) fn i64[min max] LinuxSyscall4HandlePointersInteger(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, rawptr<i8[min max]> arg3, i64[min max] arg4)
-    in("eax") number,
-    in("ebx") arg1,
-    in("ecx") arg2,
-    in("edx") arg3,
-    in("esi") arg4,
-    out("eax") return
-{
-    "int $$0x80"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
-    in("r7") number,
-    in("r0") arg1,
-    out("r0") return
-{
-    "svc #0"
 }
 
 internal unsafe ffi asm(arm) fn i64[min max] LinuxCloseHandle(rawptr<i8[min max]> handle)
@@ -889,61 +320,6 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxCloneThread(i64[min max] flags
     "sub r0, r0, r0\nsub r0, r0, #38"
 }
 
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall1Integer(i64[min max] number, i64[min max] arg1)
-    in("r7") number,
-    in("r0") arg1,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall2Pointers(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall2PathBuffer(i64[min max] number, rawmutptr<i8[min max]> arg1, i64[min max] arg2)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall2HandleInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3Integers(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3HandleBuffer(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    out("r0") return
-{
-    "svc #0"
-}
-
 internal unsafe ffi asm(arm) fn i64[min max] LinuxReadHandleBuffer(rawptr<i8[min max]> handle, rawmutptr<i8[min max]> buffer, i64[min max] length)
     in("r0") handle,
     in("r1") buffer,
@@ -964,47 +340,6 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxWriteHandleBuffer(rawptr<i8[mi
     "mov r7, #4\nsvc #0"
 }
 
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3HandleIntegerInteger(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, i64[min max] arg3)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3HandleRequestPointer(i64[min max] number, rawptr<i8[min max]> arg1, i64[min max] arg2, rawptr<i8[min max]> arg3)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall3AtPath(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall4OpenAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, i64[min max] arg4)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    in("r3") arg4,
-    out("r0") return
-{
-    "svc #0"
-}
-
 internal unsafe ffi asm(arm) fn i64[min max] LinuxOpenAt(i64[min max] directoryHandle, rawptr<i8[min max]> path, i64[min max] flags, i64[min max] mode)
     in("r0") directoryHandle,
     in("r1") path,
@@ -1016,69 +351,7 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxOpenAt(i64[min max] directoryH
     "movw r7, #322\nsvc #0"
 }
 
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall4RenameAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, i64[min max] arg3, rawptr<i8[min max]> arg4)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    in("r3") arg4,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall4StatAt(i64[min max] number, i64[min max] arg1, rawptr<i8[min max]> arg2, rawmutptr<i8[min max]> arg3, i64[min max] arg4)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    in("r3") arg4,
-    out("r0") return
-{
-    "svc #0"
-}
-
-internal unsafe ffi asm(arm) fn i64[min max] LinuxSyscall4HandlePointersInteger(i64[min max] number, rawptr<i8[min max]> arg1, rawptr<i8[min max]> arg2, rawptr<i8[min max]> arg3, i64[min max] arg4)
-    in("r7") number,
-    in("r0") arg1,
-    in("r1") arg2,
-    in("r2") arg3,
-    in("r3") arg4,
-    out("r0") return
-{
-    "svc #0"
-}
-
-const LinuxGetcwdSyscallNumber = 79;
-const LinuxIoctlSyscallNumber = 16;
-const LinuxReadvSyscallNumber = 19;
-const LinuxWritevSyscallNumber = 20;
-const LinuxLseekSyscallNumber = 8;
-const LinuxFsyncSyscallNumber = 74;
-const LinuxGetPidSyscallNumber = 39;
-const LinuxSocketSyscallNumber = 41;
-const LinuxConnectSyscallNumber = 42;
-const LinuxBindSyscallNumber = 49;
-const LinuxListenSyscallNumber = 50;
-const LinuxAccept4SyscallNumber = 288;
-const LinuxShutdownSyscallNumber = 48;
-const LinuxStatAtSyscallNumber = 262;
-const LinuxReadLinkAtSyscallNumber = 267;
-const LinuxSymlinkAtSyscallNumber = 266;
 const LinuxAtSymlinkNoFollowFlag = 256;
-const LinuxMkdirAtSyscallNumber = 258;
-const LinuxFchmodatSyscallNumber = 268;
-const LinuxRenameAtSyscallNumber = 264;
-const LinuxUnlinkAtSyscallNumber = 263;
-const LinuxGetDents64SyscallNumber = 217;
-const LinuxExitGroupSyscallNumber = 231;
-const LinuxSchedYieldSyscallNumber = 24;
-const LinuxNanosleepSyscallNumber = 35;
-const LinuxMunmapSyscallNumber = 11;
-const LinuxFutexSyscallNumber = 202;
-const LinuxEpollCreate1SyscallNumber = 291;
-const LinuxEpollCtlSyscallNumber = 233;
-const LinuxEpollWaitSyscallNumber = 232;
 const LinuxAtFdcwd = -100;
 const LinuxPathBufferCapacity = 4096;
 const LinuxOpenReadOnlyFlag = 0;
@@ -1088,7 +361,6 @@ const LinuxOpenCreateFlag = 64;
 const LinuxOpenExclusiveFlag = 128;
 const LinuxOpenTruncateFlag = 512;
 const LinuxOpenAppendFlag = 1024;
-const LinuxOpenDirectoryFlag = 2 ** 16;
 const LinuxOpenCloseOnExecFlag = 524288;
 const LinuxAddressFamilyInet = 2;
 const LinuxSocketStreamFlag = 1;
@@ -1101,7 +373,6 @@ const LinuxUnlinkAtRemoveDirectoryFlag = 512;
 const LinuxDirent64HeaderLength = 19;
 const LinuxDirent64RecordLengthOffset = 16;
 const LinuxDirent64TypeOffset = 18;
-const LinuxStatModeOffset = 24;
 const LinuxStatSizeOffset = 48;
 const LinuxStatModifiedSecondsOffset = 88;
 const LinuxStatModifiedNanosecondsOffset = 96;
@@ -1120,7 +391,11 @@ const LinuxDirectoryEntrySymlinkType = 10;
 const LinuxTcGetsRequest = 21505;
 const LinuxEpollCloseOnExecFlag = 524288;
 const LinuxEpollControlAdd = 1;
-const LinuxEpollEventBytes = 12;
+// Linux packs epoll_event to 12 bytes on x86_64, while the generic 64-bit ABI
+// used by AArch64 and RISC-V aligns the data field and uses 16 bytes. The
+// runtime reserves and clears the larger representation; x86_64 consumes only
+// its first 12 bytes.
+const LinuxEpollEventStorageBytes = 16;
 const LinuxEpollReadableEvent = 1;
 const LinuxEpollWritableEvent = 4;
 const LinuxFutexWaitPrivateOperation = 128;
@@ -1148,6 +423,7 @@ internal enum FileOpenResult
     Err(i32[min max]),
 }
 
+[StructLayout(C)]
 internal struct LinuxIovec
 {
     rawptr<i8[min max]> Base;
@@ -1170,9 +446,7 @@ internal fn void ExitProcess(i32[min max] code)
 {
     unsafe
     {
-        LinuxSyscall1Integer(
-            LinuxExitGroupSyscallNumber,
-            (i64[min max])code);
+        LinuxKernelExitGroup((i64[min max])code);
         return;
     }
 }
@@ -1181,15 +455,13 @@ internal fn i32[min max] ProcessId()
 {
     unsafe
     {
-        return (i32[min max])LinuxSyscall1Integer(LinuxGetPidSyscallNumber, 0);
+        return (i32[min max])LinuxKernelGetProcessId();
     }
 }
 
 internal unsafe fn void ExitProcessNoCleanup(i32[min max] code)
 {
-    LinuxSyscall1Integer(
-        LinuxExitGroupSyscallNumber,
-        (i64[min max])code);
+    LinuxKernelExitGroup((i64[min max])code);
     return;
 }
 
@@ -1677,10 +949,7 @@ internal unsafe fn i32[min max] UnmapThreadRegion(rawptr<i8[min max]> region, i6
         return -1;
     }
 
-    return (i32[min max])LinuxSyscall2HandleInteger(
-        LinuxMunmapSyscallNumber,
-        region,
-        length);
+    return (i32[min max])LinuxKernelUnmap(region, length);
 }
 
 internal unsafe fn i32[min max] ReleaseThreadReference(rawmutptr<LinuxThreadControl> control)
@@ -1829,7 +1098,7 @@ internal fn void YieldThread()
 {
     unsafe
     {
-        LinuxSyscall1Handle(LinuxSchedYieldSyscallNumber, null);
+        LinuxKernelYield();
         return;
     }
 }
@@ -1848,10 +1117,7 @@ internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds)
             Seconds = milliseconds / 1000,
             Nanoseconds = (milliseconds % 1000) * 1000000
         };
-        LinuxSyscall2Pointers(
-            LinuxNanosleepSyscallNumber,
-            (rawptr<i8[min max]>)(&request),
-            null);
+        LinuxKernelNanoSleep((rawptr<i8[min max]>)(&request), null);
         return;
     }
 }
@@ -1869,7 +1135,7 @@ internal unsafe fn void WriteEpollEvent(rawmutptr<i8[min max]> event, i32[min ma
     *(&event[3]) = (i8[min max])(events >> 24);
 
     stack mut i64[min max] index = 4;
-    while willexit (index < LinuxEpollEventBytes)
+    while willexit (index < LinuxEpollEventStorageBytes)
     {
         *(&event[index]) = (i8[min max])0;
         index += 1;
@@ -1883,9 +1149,7 @@ internal unsafe fn i32[min max] WaitForEvents(rawptr<i8[min max]> handle, i32[mi
         return -1;
     }
 
-    stack i64[min max] epollResult = LinuxSyscall1Integer(
-        LinuxEpollCreate1SyscallNumber,
-        LinuxEpollCloseOnExecFlag);
+    stack i64[min max] epollResult = LinuxKernelEpollCreate(LinuxEpollCloseOnExecFlag);
     if (epollResult < 0)
     {
         return (i32[min max])epollResult;
@@ -1895,23 +1159,21 @@ internal unsafe fn i32[min max] WaitForEvents(rawptr<i8[min max]> handle, i32[mi
     stack mut i8[min max][16] event;
     WriteEpollEvent(&event[0], events);
 
-    stack i64[min max] controlResult = LinuxSyscall4HandlePointersInteger(
-        LinuxEpollCtlSyscallNumber,
+    stack i64[min max] controlResult = LinuxKernelEpollControl(
         epollHandle,
-        (rawptr<i8[min max]>)LinuxEpollControlAdd,
+        LinuxEpollControlAdd,
         handle,
-        (i64[min max])(&event[0]));
+        (rawptr<i8[min max]>)(&event[0]));
     if (controlResult < 0)
     {
         CloseFile(epollHandle);
         return (i32[min max])controlResult;
     }
 
-    stack i64[min max] waitResult = LinuxSyscall4HandlePointersInteger(
-        LinuxEpollWaitSyscallNumber,
+    stack i64[min max] waitResult = LinuxKernelEpollWait(
         epollHandle,
-        (rawptr<i8[min max]>)(&event[0]),
-        (rawptr<i8[min max]>)1,
+        &event[0],
+        1,
         (i64[min max])timeoutMilliseconds);
     CloseFile(epollHandle);
     return (i32[min max])waitResult;
@@ -1934,12 +1196,11 @@ internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[m
         return -14;
     }
 
-    return (i32[min max])LinuxSyscall4HandlePointersInteger(
-        LinuxFutexSyscallNumber,
+    return (i32[min max])LinuxKernelFutex(
         (rawptr<i8[min max]>)address,
-        (rawptr<i8[min max]>)LinuxFutexWaitPrivateOperation,
-        (rawptr<i8[min max]>)((i64[min max])expected),
-        0);
+        LinuxFutexWaitPrivateOperation,
+        (i64[min max])expected,
+        null);
 }
 
 internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count)
@@ -1954,12 +1215,11 @@ internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[m
         return 0;
     }
 
-    return (i32[min max])LinuxSyscall4HandlePointersInteger(
-        LinuxFutexSyscallNumber,
+    return (i32[min max])LinuxKernelFutex(
         (rawptr<i8[min max]>)address,
-        (rawptr<i8[min max]>)LinuxFutexWakePrivateOperation,
-        (rawptr<i8[min max]>)((i64[min max])count),
-        0);
+        LinuxFutexWakePrivateOperation,
+        (i64[min max])count,
+        null);
 }
 
 internal unsafe fn bool TryBuildLinuxPath(rawmutptr<Ascii> destination, ascii path)
@@ -2552,11 +1812,7 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle)
         return false;
     }
 
-    return LinuxSyscall3HandleRequestPointer(
-        LinuxIoctlSyscallNumber,
-        handle,
-        LinuxTcGetsRequest,
-        state) >= 0;
+    return LinuxKernelIoctl(handle, LinuxTcGetsRequest, state) >= 0;
 }
 
 internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text)
@@ -2682,7 +1938,7 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
         return -1;
     }
 
-    return (i32[min max])LinuxSyscall1Handle(LinuxFsyncSyscallNumber, handle);
+    return (i32[min max])LinuxKernelFlush(handle);
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
@@ -2762,11 +2018,7 @@ internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[
         return -1;
     }
 
-    return LinuxSyscall3HandleIntegerInteger(
-        LinuxLseekSyscallNumber,
-        handle,
-        offset,
-        (i64[min max])origin);
+    return LinuxKernelSeek(handle, offset, (i64[min max])origin);
 }
 
 internal fn i32[min max] DeleteFile(ascii path)
@@ -2784,11 +2036,7 @@ internal fn i32[min max] DeleteFile(ascii path)
             return -1;
         }
 
-        return (i32[min max])LinuxSyscall3AtPath(
-            LinuxUnlinkAtSyscallNumber,
-            LinuxAtFdcwd,
-            preparedPath.Data,
-            0);
+        return (i32[min max])LinuxKernelUnlinkAt(LinuxAtFdcwd, preparedPath.Data, 0);
     }
 }
 
@@ -2813,8 +2061,7 @@ internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath)
             return -1;
         }
 
-        return (i32[min max])LinuxSyscall4RenameAt(
-            LinuxRenameAtSyscallNumber,
+        return (i32[min max])LinuxKernelRenameAt(
             LinuxAtFdcwd,
             preparedOldPath.Data,
             LinuxAtFdcwd,
@@ -2845,8 +2092,7 @@ internal unsafe fn i32[min max] StatPathInto(ascii path, rawmutptr<i8[min max]> 
         return -1;
     }
 
-    stack i64[min max] syscallResult = LinuxSyscall4StatAt(
-        LinuxStatAtSyscallNumber,
+    stack i64[min max] syscallResult = LinuxKernelStatAt(
         LinuxAtFdcwd,
         preparedPath.Data,
         statData,
@@ -2873,8 +2119,7 @@ internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode
         return false;
     }
 
-    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
-    *mode = *modePointer;
+    *mode = LinuxKernelStatMode(statData);
     return true;
 }
 
@@ -2956,14 +2201,13 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
         return statStatus;
     }
 
-    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
     stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[LinuxStatSizeOffset]);
     stack rawptr<i64[min max]> modifiedSecondsPointer =
         (rawptr<i64[min max]>)(&statData[LinuxStatModifiedSecondsOffset]);
     stack rawptr<i64[min max]> modifiedNanosecondsPointer =
         (rawptr<i64[min max]>)(&statData[LinuxStatModifiedNanosecondsOffset]);
 
-    stack i32[min max] mode = *modePointer;
+    stack i32[min max] mode = LinuxKernelStatMode(statData);
     stack mut i64[min max] size = *sizePointer;
     if (size < 0)
     {
@@ -3007,8 +2251,7 @@ internal unsafe fn i32[min max] LstatPathInto(ascii path, rawmutptr<i8[min max]>
         return -1;
     }
 
-    stack i64[min max] syscallResult = LinuxSyscall4StatAt(
-        LinuxStatAtSyscallNumber,
+    stack i64[min max] syscallResult = LinuxKernelStatAt(
         LinuxAtFdcwd,
         preparedPath.Data,
         statData,
@@ -3041,14 +2284,13 @@ internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min ma
         return statStatus;
     }
 
-    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
     stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[LinuxStatSizeOffset]);
     stack rawptr<i64[min max]> modifiedSecondsPointer =
         (rawptr<i64[min max]>)(&statData[LinuxStatModifiedSecondsOffset]);
     stack rawptr<i64[min max]> modifiedNanosecondsPointer =
         (rawptr<i64[min max]>)(&statData[LinuxStatModifiedNanosecondsOffset]);
 
-    stack i32[min max] mode = *modePointer;
+    stack i32[min max] mode = LinuxKernelStatMode(statData);
     stack mut i64[min max] size = *sizePointer;
     if (size < 0)
     {
@@ -3095,8 +2337,7 @@ internal unsafe fn i64[min max] ReadSymlinkInto(
         return -1;
     }
 
-    return LinuxSyscall4StatAt(
-        LinuxReadLinkAtSyscallNumber,
+    return LinuxKernelReadLinkAt(
         LinuxAtFdcwd,
         preparedPath.Data,
         (rawmutptr<i8[min max]>)buffer,
@@ -3124,8 +2365,7 @@ internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
             return -1;
         }
 
-        return (i32[min max])LinuxSyscall3HandleRequestPointer(
-            LinuxSymlinkAtSyscallNumber,
+        return (i32[min max])LinuxKernelSymlinkAt(
             preparedTarget.Data,
             LinuxAtFdcwd,
             preparedLink.Data);
@@ -3147,10 +2387,7 @@ internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
             return -1;
         }
 
-        // fchmodat(AT_FDCWD, path, mode, 0). The (dirfd, path, int, int)
-        // register layout matches openat, so it routes through the same wrapper.
-        return (i32[min max])LinuxSyscall4OpenAt(
-            LinuxFchmodatSyscallNumber,
+        return (i32[min max])LinuxKernelChangeModeAt(
             LinuxAtFdcwd,
             preparedPath.Data,
             (i64[min max])mode,
@@ -3173,11 +2410,8 @@ internal fn i32[min max] CreateDirectory(ascii path)
             return -1;
         }
 
-        return (i32[min max])LinuxSyscall3AtPath(
-            LinuxMkdirAtSyscallNumber,
-            LinuxAtFdcwd,
-            preparedPath.Data,
-            LinuxDefaultDirectoryMode);
+        return (i32[min max])LinuxKernelMakeDirectoryAt(
+            LinuxAtFdcwd, preparedPath.Data, LinuxDefaultDirectoryMode);
     }
 }
 
@@ -3196,8 +2430,7 @@ internal fn i32[min max] DeleteDirectory(ascii path)
             return -1;
         }
 
-        return (i32[min max])LinuxSyscall3AtPath(
-            LinuxUnlinkAtSyscallNumber,
+        return (i32[min max])LinuxKernelUnlinkAt(
             LinuxAtFdcwd,
             preparedPath.Data,
             LinuxUnlinkAtRemoveDirectoryFlag);
@@ -3206,7 +2439,24 @@ internal fn i32[min max] DeleteDirectory(ascii path)
 
 internal unsafe fn rawptr<i8[min max]> OpenDirectory(ascii path)
 {
-    return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag | LinuxOpenDirectoryFlag | LinuxOpenCloseOnExecFlag, 0);
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildLinuxPath(&preparedPath, path))
+    {
+        return null;
+    }
+
+    stack i64[min max] syscallResult = LinuxKernelOpenDirectory(LinuxAtFdcwd, preparedPath.Data);
+    if (syscallResult < 0)
+    {
+        return null;
+    }
+
+    return (rawptr<i8[min max]>)syscallResult;
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenDirectoryInto(
@@ -3277,8 +2527,7 @@ internal unsafe inline fn rawptr<i8[min max]> ConnectTcpIPv4(
         *status = 0;
     }
 
-    stack i64[min max] socketResult = LinuxSyscall3Integers(
-        LinuxSocketSyscallNumber,
+    stack i64[min max] socketResult = LinuxKernelSocket(
         LinuxAddressFamilyInet,
         LinuxSocketStreamFlag | LinuxSocketCloseOnExecFlag,
         0);
@@ -3296,8 +2545,7 @@ internal unsafe inline fn rawptr<i8[min max]> ConnectTcpIPv4(
     stack mut i8[min max][16] address;
     WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
 
-    stack i64[min max] connectResult = LinuxSyscall3HandleBuffer(
-        LinuxConnectSyscallNumber,
+    stack i64[min max] connectResult = LinuxKernelConnect(
         handle,
         (rawptr<i8[min max]>)(&address[0]),
         LinuxSockaddrInLength);
@@ -3328,8 +2576,7 @@ internal unsafe inline fn rawptr<i8[min max]> ListenTcpIPv4(
         *status = 0;
     }
 
-    stack i64[min max] socketResult = LinuxSyscall3Integers(
-        LinuxSocketSyscallNumber,
+    stack i64[min max] socketResult = LinuxKernelSocket(
         LinuxAddressFamilyInet,
         LinuxSocketStreamFlag | LinuxSocketCloseOnExecFlag,
         0);
@@ -3347,8 +2594,7 @@ internal unsafe inline fn rawptr<i8[min max]> ListenTcpIPv4(
     stack mut i8[min max][16] address;
     WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
 
-    stack i64[min max] bindResult = LinuxSyscall3HandleBuffer(
-        LinuxBindSyscallNumber,
+    stack i64[min max] bindResult = LinuxKernelBind(
         handle,
         (rawptr<i8[min max]>)(&address[0]),
         LinuxSockaddrInLength);
@@ -3363,10 +2609,7 @@ internal unsafe inline fn rawptr<i8[min max]> ListenTcpIPv4(
         return null;
     }
 
-    stack i64[min max] listenResult = LinuxSyscall2HandleInteger(
-        LinuxListenSyscallNumber,
-        handle,
-        LinuxDefaultTcpListenBacklog);
+    stack i64[min max] listenResult = LinuxKernelListen(handle, LinuxDefaultTcpListenBacklog);
     if (listenResult < 0)
     {
         CloseSocket(handle);
@@ -3470,8 +2713,7 @@ internal unsafe inline fn i64[min max] ReadSocketVector2(
         Length = secondCapacity
     };
 
-    return LinuxSyscall3HandleBuffer(
-        LinuxReadvSyscallNumber,
+    return LinuxKernelReadVector(
         handle,
         (rawptr<i8[min max]>)(&vectors[0]),
         2);
@@ -3518,8 +2760,7 @@ internal unsafe inline fn i64[min max] WriteSocketVector2(
         Length = secondLength
     };
 
-    return LinuxSyscall3HandleBuffer(
-        LinuxWritevSyscallNumber,
+    return LinuxKernelWriteVector(
         handle,
         (rawptr<i8[min max]>)(&vectors[0]),
         2);
@@ -3544,8 +2785,7 @@ internal unsafe inline fn rawptr<i8[min max]> AcceptSocket(
         return null;
     }
 
-    stack i64[min max] acceptResult = LinuxSyscall4HandlePointersInteger(
-        LinuxAccept4SyscallNumber,
+    stack i64[min max] acceptResult = LinuxKernelAccept(
         handle,
         null,
         null,
@@ -3575,10 +2815,7 @@ internal unsafe inline fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle
         return -95;
     }
 
-    return (i32[min max])LinuxSyscall2HandleInteger(
-        LinuxShutdownSyscallNumber,
-        handle,
-        (i64[min max])how);
+    return (i32[min max])LinuxKernelShutdown(handle, (i64[min max])how);
 }
 
 internal unsafe inline fn i32[min max] CloseSocket(rawptr<i8[min max]> handle)
@@ -3684,10 +2921,9 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     {
         if (*readPos >= *readLength)
         {
-            stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(
-                LinuxGetDents64SyscallNumber,
+            stack i64[min max] syscallResult = LinuxKernelGetDirectoryEntries(
                 handle,
-                (rawptr<i8[min max]>)buffer,
+                buffer,
                 capacity);
             if (syscallResult < 0)
             {
@@ -3809,10 +3045,9 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     {
         if (*readPos >= *readLength)
         {
-            stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(
-                LinuxGetDents64SyscallNumber,
+            stack i64[min max] syscallResult = LinuxKernelGetDirectoryEntries(
                 handle,
-                (rawptr<i8[min max]>)buffer,
+                buffer,
                 capacity);
             if (syscallResult < 0)
             {
@@ -3892,10 +3127,9 @@ internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
     {
         if (localReadPos >= localReadLength)
         {
-            stack i64[min max] syscallResult = LinuxSyscall3HandleBuffer(
-                LinuxGetDents64SyscallNumber,
+            stack i64[min max] syscallResult = LinuxKernelGetDirectoryEntries(
                 handle,
-                (rawptr<i8[min max]>)buffer,
+                buffer,
                 capacity);
             if (syscallResult < 0)
             {
@@ -3975,7 +3209,7 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
         return false;
     }
 
-    stack i64[min max] syscallResult = LinuxSyscall2PathBuffer(LinuxGetcwdSyscallNumber, data, capacity);
+    stack i64[min max] syscallResult = LinuxKernelGetCurrentDirectory(data, capacity);
     if (syscallResult <= 0)
     {
         *destination = new Ascii()

@@ -45,6 +45,7 @@ public class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Buffer"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.LinuxSyscalls"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Syscall"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stdout"));
@@ -276,18 +277,24 @@ public class StandardLibraryTestSuite
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.LinuxSyscalls");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOSAbi");
             }
             else if (OperatingSystem.IsMacOS())
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
+                Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.MacOSAbi");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.LinuxSyscalls");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             else
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.LinuxSyscalls");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOSAbi");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
@@ -861,10 +868,18 @@ public class StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define fastcc noundef i32 @WriteAsciiToHandle(", llvm, StringComparison.Ordinal);
-        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 56);
-        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 57);
-        AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, 63);
-        AssemblyLoweringAssertions.ContainsDirectLinuxArm64WriteSyscall(llvm);
+        long[] expectedSyscalls =
+        [
+            17, 20, 21, 22, 29, 34, 35, 36, 38, 53, 56, 57, 61, 62,
+            63, 64, 65, 66, 78, 79, 82, 94, 98, 101, 124, 172, 198,
+            200, 201, 203, 210, 215, 242
+        ];
+        foreach (var syscallNumber in expectedSyscalls)
+        {
+            AssemblyLoweringAssertions.ContainsDirectLinuxArm64Syscall(llvm, syscallNumber);
+        }
+
+        Assert.Contains("movz x2, #0x4000\\0Amovk x2, #0x8, lsl #16", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
     }
     public void StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath()
@@ -938,8 +953,6 @@ public class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.DoesNotContain("define i64 @LinuxSyscall4StatAt(", llvm, StringComparison.Ordinal);
-
         var functionBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef i1 @FileExists(",
@@ -987,7 +1000,6 @@ public class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        Assert.DoesNotContain("define i64 @LinuxSyscall3HandleRequestPointer(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsTerminal(", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 16);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
@@ -1093,7 +1105,9 @@ public class StandardLibraryTestSuite
             // System.Process routes through the System.Runtime.Platform dispatch
             // module, so Windows-target builds load only the Windows backend.
             Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.LinuxSyscalls"));
             Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOSAbi"));
 
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             Assert.Contains("@GetStdHandle(", llvm, StringComparison.Ordinal);
@@ -1135,8 +1149,10 @@ public class StandardLibraryTestSuite
         Assert.NotNull(moduleGraph);
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.LinuxSyscalls"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOSAbi"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);

@@ -10,7 +10,7 @@ internal fn bool StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPathImpl()
     // PORT-NOTE: the C# original reads stdlib/src/System/Runtime/Platform/Linux.stark
     // off disk and compiles it directly with a x86_64-unknown-linux-gnu triple and a
     // FileSystemModuleResolver, then asserts the emitted LLVM defines/calls the
-    // syscall-backed helpers (@LinuxSyscall2PathBuffer, @TryTempDirectory) and never
+    // direct getcwd operation and @TryTempDirectory, and never
     // touches libc (@getcwd, @strlen). The host bridge cannot read the on-disk
     // platform module directly, so this cross-targets a Linux facade probe and
     // asserts it succeeds.
@@ -42,7 +42,7 @@ internal fn bool StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
-    // @WriteAsciiToHandle, routes through @LinuxSyscall3HandleBuffer, and encodes the
+    // @WriteAsciiToHandle, routes through the direct write operation, and encodes the
     // stdout/stderr fds with `inttoptr i8 1/2 to ptr`. The host bridge cannot read
     // the on-disk module directly, so this cross-targets a Linux facade probe and
     // asserts it succeeds.
@@ -71,7 +71,7 @@ internal fn bool StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
-    // @WriteUnicodeToHandle, routes through @LinuxSyscall3HandleBuffer, and never calls
+    // @WriteUnicodeToHandle, routes through the direct write operation, and never calls
     // libc @fputws. The host bridge cannot read the on-disk module directly, so
     // this cross-targets a Linux facade probe and asserts it succeeds.
     stack mut ProgramCompile c = CompileProgramForTarget("linux-console-unicode-syscall-path", raw"""
@@ -101,8 +101,8 @@ internal fn bool StdLibSourceLinuxFileOperationsUseSyscallBackedPathImpl()
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
     // @OpenFileRead/@CloseFile/@ReadFile/@WriteFile, routes through the openat/read/
     // write/rename syscall operations (@LinuxOpenAt, @LinuxCloseHandle,
-    // @LinuxReadHandleBuffer, @LinuxWriteHandleBuffer, @LinuxSyscall3AtPath,
-    // @LinuxSyscall4RenameAt), and
+    // @LinuxReadHandleBuffer, @LinuxWriteHandleBuffer, @LinuxKernelUnlinkAt,
+    // @LinuxKernelRenameAt), and
     // never calls libc stdio (@fopen/@fclose/@fread/@fwrite/@remove/@rename). The
     // host bridge cannot read the on-disk module directly, so this cross-targets a
     // Linux facade probe and asserts it succeeds.
@@ -135,8 +135,8 @@ internal fn bool StdLibSourceLinuxFileExistsUsesStatSyscallPathImpl()
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and walks the emitted LLVM: @FileExists delegates
     // to @PathExists, which delegates to @TryReadPathMode, which delegates to the shared
-    // @StatPathInto helper that issues the statat syscall (@LinuxSyscall4StatAt with the
-    // comptime-folded number 262 and AT_FDCWD -100) rather than open/close or libc
+    // @StatPathInto helper that issues the architecture-selected statat syscall rather
+    // than open/close or libc
     // @stat/@fstatat. The host bridge cannot read the on-disk module directly nor
     // extract balanced function bodies from the LLVM text, so this cross-targets a
     // Linux facade probe and asserts it succeeds.
@@ -168,7 +168,7 @@ internal fn bool StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines the ioctl
-    // shim @LinuxSyscall3HandleRequestPointer and @IsTerminal routes through it rather
+    // direct ioctl operation and @IsTerminal routes through it rather
     // than libc @isatty. The host bridge cannot read the on-disk module directly,
     // so this cross-targets a Linux facade probe and asserts it succeeds.
     stack mut ProgramCompile c = CompileProgramForTarget("linux-terminal-detect-ioctl-syscall-path", raw"""
@@ -262,9 +262,8 @@ internal fn bool StdLibSourceLinuxProcessHelpersUseSyscallBackedPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines @ExitProcess
-    // and @ProcessId routed through the exit_group / getpid syscall numbers
-    // (@LinuxExitGroupSyscallNumber, @LinuxGetPidSyscallNumber) via
-    // @LinuxSyscall1Integer, and never calls libc @exit/@getpid. The compile-only host
+    // and @ProcessId routed through the architecture-selected exit_group/getpid
+    // operations, and never calls libc @exit/@getpid. The compile-only host
     // bridge cannot read the on-disk module directly, so this cross-targets a Linux
     // process facade probe and asserts it succeeds.
     stack mut ProgramCompile c = CompileProgramForTarget("linux-process-helpers-syscall-path", raw"""
@@ -295,11 +294,8 @@ internal fn bool StdLibSourceLinuxEventWaitingUsesEpollSyscallPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
-    // @WriteEpollEvent/@WaitForEvents/@WaitReadable/@WaitWritable, references the epoll
-    // syscall numbers and event masks (@LinuxEpollCreate1SyscallNumber,
-    // @LinuxEpollCtlSyscallNumber, @LinuxEpollWaitSyscallNumber,
-    // @LinuxEpollReadableEvent, @LinuxEpollWritableEvent), routes through
-    // @LinuxSyscall1Integer / @LinuxSyscall4HandlePointersInteger, and that the wait
+    // @WriteEpollEvent/@WaitForEvents/@WaitReadable/@WaitWritable, uses the epoll
+    // event masks and architecture-selected epoll operations, and that the wait
     // function bodies never call libc @poll nor @epoll_wait. The compile-only host
     // bridge cannot read the on-disk module directly nor extract balanced function
     // bodies from the LLVM text, so this cross-targets a Linux wait facade probe and
@@ -367,10 +363,8 @@ internal fn bool StdLibSourceLinuxFutexSynchronizationUsesSyscallPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
     // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
-    // @FutexWait/@FutexWake routed through the futex syscall number and private
-    // wait/wake operation constants (@LinuxFutexSyscallNumber,
-    // @LinuxFutexWaitPrivateOperation, @LinuxFutexWakePrivateOperation) via
-    // @LinuxSyscall4HandlePointersInteger, and never calls a libc @futex. The
+    // @FutexWait/@FutexWake routed through the architecture-selected futex operation
+    // and private wait/wake constants, and never calls a libc @futex. The
     // host bridge cannot read the on-disk module directly, so this cross-targets a
     // Linux futex facade probe and asserts it succeeds.
     stack mut ProgramCompile c = CompileProgramForTarget("linux-futex-sync-syscall-path", raw"""

@@ -1,0 +1,1832 @@
+module System.Runtime.Platform.LinuxSyscalls
+
+// Linux syscall identities are architecture ABI facts, not portable constants.
+// x86_64 values come from arch/x86/entry/syscalls/syscall_64.tbl; AArch64
+// and RISC-V values come from include/uapi/asm-generic/unistd.h. The x86 and
+// ARM32 overloads deliberately report ENOSYS because Stark release targets are
+// 64-bit only.
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelOpenDirectory(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    out("rax") return,
+    clobber("rdx", "r10", "rcx", "r11")
+{
+    "movq $$257, %rax\nmovq $$589824, %rdx\nxorq %r10, %r10\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelOpenDirectory(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path)
+    in("x0") directoryHandle,
+    in("x1") path,
+    out("x0") return,
+    clobber("x2", "x3", "x8")
+{
+    "movz x2, #0x4000\nmovk x2, #0x8, lsl #16\nmov x3, xzr\nmov x8, #56\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelOpenDirectory(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path)
+    in("a0") directoryHandle,
+    in("a1") path,
+    out("a0") return,
+    clobber("a2", "a3", "a7")
+{
+    "li a2, 540672\nli a3, 0\nli a7, 56\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelOpenDirectory(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelOpenDirectory(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path)
+    in("r0") directoryHandle,
+    in("r1") path,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelGetCurrentDirectory(
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("rdi") buffer,
+    in("rsi") capacity,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$79, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelGetCurrentDirectory(
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("x0") buffer,
+    in("x1") capacity,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #17\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelGetCurrentDirectory(
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("a0") buffer,
+    in("a1") capacity,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 17\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelGetCurrentDirectory(
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("ebx") buffer,
+    in("ecx") capacity,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelGetCurrentDirectory(
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("r0") buffer,
+    in("r1") capacity,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelIoctl(
+    rawptr<i8[min max]> handle,
+    i64[min max] request,
+    rawmutptr<i8[min max]> data)
+    in("rdi") handle,
+    in("rsi") request,
+    in("rdx") data,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$16, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelIoctl(
+    rawptr<i8[min max]> handle,
+    i64[min max] request,
+    rawmutptr<i8[min max]> data)
+    in("x0") handle,
+    in("x1") request,
+    in("x2") data,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #29\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelIoctl(
+    rawptr<i8[min max]> handle,
+    i64[min max] request,
+    rawmutptr<i8[min max]> data)
+    in("a0") handle,
+    in("a1") request,
+    in("a2") data,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 29\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelIoctl(
+    rawptr<i8[min max]> handle,
+    i64[min max] request,
+    rawmutptr<i8[min max]> data)
+    in("ebx") handle,
+    in("ecx") request,
+    in("edx") data,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelIoctl(
+    rawptr<i8[min max]> handle,
+    i64[min max] request,
+    rawmutptr<i8[min max]> data)
+    in("r0") handle,
+    in("r1") request,
+    in("r2") data,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelReadVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("rdi") handle,
+    in("rsi") vectors,
+    in("rdx") count,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$19, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelReadVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("x0") handle,
+    in("x1") vectors,
+    in("x2") count,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #65\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelReadVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("a0") handle,
+    in("a1") vectors,
+    in("a2") count,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 65\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelReadVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("ebx") handle,
+    in("ecx") vectors,
+    in("edx") count,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelReadVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("r0") handle,
+    in("r1") vectors,
+    in("r2") count,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelWriteVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("rdi") handle,
+    in("rsi") vectors,
+    in("rdx") count,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$20, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelWriteVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("x0") handle,
+    in("x1") vectors,
+    in("x2") count,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #66\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelWriteVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("a0") handle,
+    in("a1") vectors,
+    in("a2") count,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 66\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelWriteVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("ebx") handle,
+    in("ecx") vectors,
+    in("edx") count,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelWriteVector(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> vectors,
+    i64[min max] count)
+    in("r0") handle,
+    in("r1") vectors,
+    in("r2") count,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelSeek(
+    rawptr<i8[min max]> handle,
+    i64[min max] offset,
+    i64[min max] origin)
+    in("rdi") handle,
+    in("rsi") offset,
+    in("rdx") origin,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$8, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelSeek(
+    rawptr<i8[min max]> handle,
+    i64[min max] offset,
+    i64[min max] origin)
+    in("x0") handle,
+    in("x1") offset,
+    in("x2") origin,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #62\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelSeek(
+    rawptr<i8[min max]> handle,
+    i64[min max] offset,
+    i64[min max] origin)
+    in("a0") handle,
+    in("a1") offset,
+    in("a2") origin,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 62\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelSeek(
+    rawptr<i8[min max]> handle,
+    i64[min max] offset,
+    i64[min max] origin)
+    in("ebx") handle,
+    in("ecx") offset,
+    in("edx") origin,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelSeek(
+    rawptr<i8[min max]> handle,
+    i64[min max] offset,
+    i64[min max] origin)
+    in("r0") handle,
+    in("r1") offset,
+    in("r2") origin,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelFlush(
+    rawptr<i8[min max]> handle)
+    in("rdi") handle,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$74, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelFlush(
+    rawptr<i8[min max]> handle)
+    in("x0") handle,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #82\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelFlush(
+    rawptr<i8[min max]> handle)
+    in("a0") handle,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 82\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelFlush(
+    rawptr<i8[min max]> handle)
+    in("ebx") handle,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelFlush(
+    rawptr<i8[min max]> handle)
+    in("r0") handle,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelGetProcessId()
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$39, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelGetProcessId()
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #172\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelGetProcessId()
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 172\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelGetProcessId()
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelGetProcessId()
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelSocket(
+    i64[min max] domain,
+    i64[min max] socketType,
+    i64[min max] protocol)
+    in("rdi") domain,
+    in("rsi") socketType,
+    in("rdx") protocol,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$41, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelSocket(
+    i64[min max] domain,
+    i64[min max] socketType,
+    i64[min max] protocol)
+    in("x0") domain,
+    in("x1") socketType,
+    in("x2") protocol,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #198\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelSocket(
+    i64[min max] domain,
+    i64[min max] socketType,
+    i64[min max] protocol)
+    in("a0") domain,
+    in("a1") socketType,
+    in("a2") protocol,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 198\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelSocket(
+    i64[min max] domain,
+    i64[min max] socketType,
+    i64[min max] protocol)
+    in("ebx") domain,
+    in("ecx") socketType,
+    in("edx") protocol,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelSocket(
+    i64[min max] domain,
+    i64[min max] socketType,
+    i64[min max] protocol)
+    in("r0") domain,
+    in("r1") socketType,
+    in("r2") protocol,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelConnect(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("rdi") handle,
+    in("rsi") address,
+    in("rdx") addressLength,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$42, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelConnect(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("x0") handle,
+    in("x1") address,
+    in("x2") addressLength,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #203\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelConnect(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("a0") handle,
+    in("a1") address,
+    in("a2") addressLength,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 203\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelConnect(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("ebx") handle,
+    in("ecx") address,
+    in("edx") addressLength,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelConnect(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("r0") handle,
+    in("r1") address,
+    in("r2") addressLength,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelBind(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("rdi") handle,
+    in("rsi") address,
+    in("rdx") addressLength,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$49, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelBind(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("x0") handle,
+    in("x1") address,
+    in("x2") addressLength,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #200\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelBind(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("a0") handle,
+    in("a1") address,
+    in("a2") addressLength,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 200\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelBind(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("ebx") handle,
+    in("ecx") address,
+    in("edx") addressLength,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelBind(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]> address,
+    i64[min max] addressLength)
+    in("r0") handle,
+    in("r1") address,
+    in("r2") addressLength,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelListen(
+    rawptr<i8[min max]> handle,
+    i64[min max] backlog)
+    in("rdi") handle,
+    in("rsi") backlog,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$50, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelListen(
+    rawptr<i8[min max]> handle,
+    i64[min max] backlog)
+    in("x0") handle,
+    in("x1") backlog,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #201\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelListen(
+    rawptr<i8[min max]> handle,
+    i64[min max] backlog)
+    in("a0") handle,
+    in("a1") backlog,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 201\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelListen(
+    rawptr<i8[min max]> handle,
+    i64[min max] backlog)
+    in("ebx") handle,
+    in("ecx") backlog,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelListen(
+    rawptr<i8[min max]> handle,
+    i64[min max] backlog)
+    in("r0") handle,
+    in("r1") backlog,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelAccept(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> address,
+    rawmutptr<i8[min max]> addressLength,
+    i64[min max] flags)
+    in("rdi") handle,
+    in("rsi") address,
+    in("rdx") addressLength,
+    in("r10") flags,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$288, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelAccept(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> address,
+    rawmutptr<i8[min max]> addressLength,
+    i64[min max] flags)
+    in("x0") handle,
+    in("x1") address,
+    in("x2") addressLength,
+    in("x3") flags,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #242\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelAccept(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> address,
+    rawmutptr<i8[min max]> addressLength,
+    i64[min max] flags)
+    in("a0") handle,
+    in("a1") address,
+    in("a2") addressLength,
+    in("a3") flags,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 242\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelAccept(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> address,
+    rawmutptr<i8[min max]> addressLength,
+    i64[min max] flags)
+    in("ebx") handle,
+    in("ecx") address,
+    in("edx") addressLength,
+    in("esi") flags,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelAccept(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> address,
+    rawmutptr<i8[min max]> addressLength,
+    i64[min max] flags)
+    in("r0") handle,
+    in("r1") address,
+    in("r2") addressLength,
+    in("r3") flags,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelShutdown(
+    rawptr<i8[min max]> handle,
+    i64[min max] how)
+    in("rdi") handle,
+    in("rsi") how,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$48, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelShutdown(
+    rawptr<i8[min max]> handle,
+    i64[min max] how)
+    in("x0") handle,
+    in("x1") how,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #210\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelShutdown(
+    rawptr<i8[min max]> handle,
+    i64[min max] how)
+    in("a0") handle,
+    in("a1") how,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 210\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelShutdown(
+    rawptr<i8[min max]> handle,
+    i64[min max] how)
+    in("ebx") handle,
+    in("ecx") how,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelShutdown(
+    rawptr<i8[min max]> handle,
+    i64[min max] how)
+    in("r0") handle,
+    in("r1") how,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelStatAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> statData,
+    i64[min max] flags)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    in("rdx") statData,
+    in("r10") flags,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$262, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelStatAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> statData,
+    i64[min max] flags)
+    in("x0") directoryHandle,
+    in("x1") path,
+    in("x2") statData,
+    in("x3") flags,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #79\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelStatAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> statData,
+    i64[min max] flags)
+    in("a0") directoryHandle,
+    in("a1") path,
+    in("a2") statData,
+    in("a3") flags,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 79\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelStatAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> statData,
+    i64[min max] flags)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    in("edx") statData,
+    in("esi") flags,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelStatAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> statData,
+    i64[min max] flags)
+    in("r0") directoryHandle,
+    in("r1") path,
+    in("r2") statData,
+    in("r3") flags,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelReadLinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    in("rdx") buffer,
+    in("r10") capacity,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$267, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelReadLinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("x0") directoryHandle,
+    in("x1") path,
+    in("x2") buffer,
+    in("x3") capacity,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #78\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelReadLinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("a0") directoryHandle,
+    in("a1") path,
+    in("a2") buffer,
+    in("a3") capacity,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 78\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelReadLinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    in("edx") buffer,
+    in("esi") capacity,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelReadLinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("r0") directoryHandle,
+    in("r1") path,
+    in("r2") buffer,
+    in("r3") capacity,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelSymlinkAt(
+    rawptr<i8[min max]> target,
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> linkPath)
+    in("rdi") target,
+    in("rsi") directoryHandle,
+    in("rdx") linkPath,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$266, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelSymlinkAt(
+    rawptr<i8[min max]> target,
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> linkPath)
+    in("x0") target,
+    in("x1") directoryHandle,
+    in("x2") linkPath,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #36\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelSymlinkAt(
+    rawptr<i8[min max]> target,
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> linkPath)
+    in("a0") target,
+    in("a1") directoryHandle,
+    in("a2") linkPath,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 36\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelSymlinkAt(
+    rawptr<i8[min max]> target,
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> linkPath)
+    in("ebx") target,
+    in("ecx") directoryHandle,
+    in("edx") linkPath,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelSymlinkAt(
+    rawptr<i8[min max]> target,
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> linkPath)
+    in("r0") target,
+    in("r1") directoryHandle,
+    in("r2") linkPath,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelMakeDirectoryAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    in("rdx") mode,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$258, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelMakeDirectoryAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode)
+    in("x0") directoryHandle,
+    in("x1") path,
+    in("x2") mode,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #34\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelMakeDirectoryAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode)
+    in("a0") directoryHandle,
+    in("a1") path,
+    in("a2") mode,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 34\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelMakeDirectoryAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    in("edx") mode,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelMakeDirectoryAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode)
+    in("r0") directoryHandle,
+    in("r1") path,
+    in("r2") mode,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelChangeModeAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode,
+    i64[min max] flags)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    in("rdx") mode,
+    in("r10") flags,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$268, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelChangeModeAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode,
+    i64[min max] flags)
+    in("x0") directoryHandle,
+    in("x1") path,
+    in("x2") mode,
+    in("x3") flags,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #53\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelChangeModeAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode,
+    i64[min max] flags)
+    in("a0") directoryHandle,
+    in("a1") path,
+    in("a2") mode,
+    in("a3") flags,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 53\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelChangeModeAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode,
+    i64[min max] flags)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    in("edx") mode,
+    in("esi") flags,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelChangeModeAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] mode,
+    i64[min max] flags)
+    in("r0") directoryHandle,
+    in("r1") path,
+    in("r2") mode,
+    in("r3") flags,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelRenameAt(
+    i64[min max] oldDirectoryHandle,
+    rawptr<i8[min max]> oldPath,
+    i64[min max] newDirectoryHandle,
+    rawptr<i8[min max]> newPath)
+    in("rdi") oldDirectoryHandle,
+    in("rsi") oldPath,
+    in("rdx") newDirectoryHandle,
+    in("r10") newPath,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$264, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelRenameAt(
+    i64[min max] oldDirectoryHandle,
+    rawptr<i8[min max]> oldPath,
+    i64[min max] newDirectoryHandle,
+    rawptr<i8[min max]> newPath)
+    in("x0") oldDirectoryHandle,
+    in("x1") oldPath,
+    in("x2") newDirectoryHandle,
+    in("x3") newPath,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #38\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelRenameAt(
+    i64[min max] oldDirectoryHandle,
+    rawptr<i8[min max]> oldPath,
+    i64[min max] newDirectoryHandle,
+    rawptr<i8[min max]> newPath)
+    in("a0") oldDirectoryHandle,
+    in("a1") oldPath,
+    in("a2") newDirectoryHandle,
+    in("a3") newPath,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 38\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelRenameAt(
+    i64[min max] oldDirectoryHandle,
+    rawptr<i8[min max]> oldPath,
+    i64[min max] newDirectoryHandle,
+    rawptr<i8[min max]> newPath)
+    in("ebx") oldDirectoryHandle,
+    in("ecx") oldPath,
+    in("edx") newDirectoryHandle,
+    in("esi") newPath,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelRenameAt(
+    i64[min max] oldDirectoryHandle,
+    rawptr<i8[min max]> oldPath,
+    i64[min max] newDirectoryHandle,
+    rawptr<i8[min max]> newPath)
+    in("r0") oldDirectoryHandle,
+    in("r1") oldPath,
+    in("r2") newDirectoryHandle,
+    in("r3") newPath,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelUnlinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] flags)
+    in("rdi") directoryHandle,
+    in("rsi") path,
+    in("rdx") flags,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$263, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelUnlinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] flags)
+    in("x0") directoryHandle,
+    in("x1") path,
+    in("x2") flags,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #35\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelUnlinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] flags)
+    in("a0") directoryHandle,
+    in("a1") path,
+    in("a2") flags,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 35\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelUnlinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] flags)
+    in("ebx") directoryHandle,
+    in("ecx") path,
+    in("edx") flags,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelUnlinkAt(
+    i64[min max] directoryHandle,
+    rawptr<i8[min max]> path,
+    i64[min max] flags)
+    in("r0") directoryHandle,
+    in("r1") path,
+    in("r2") flags,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelGetDirectoryEntries(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("rdi") handle,
+    in("rsi") buffer,
+    in("rdx") capacity,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$217, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelGetDirectoryEntries(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("x0") handle,
+    in("x1") buffer,
+    in("x2") capacity,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #61\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelGetDirectoryEntries(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("a0") handle,
+    in("a1") buffer,
+    in("a2") capacity,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 61\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelGetDirectoryEntries(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("ebx") handle,
+    in("ecx") buffer,
+    in("edx") capacity,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelGetDirectoryEntries(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]> buffer,
+    i64[min max] capacity)
+    in("r0") handle,
+    in("r1") buffer,
+    in("r2") capacity,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelExitGroup(
+    i64[min max] code)
+    in("rdi") code,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$231, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelExitGroup(
+    i64[min max] code)
+    in("x0") code,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #94\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelExitGroup(
+    i64[min max] code)
+    in("a0") code,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 94\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelExitGroup(
+    i64[min max] code)
+    in("ebx") code,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelExitGroup(
+    i64[min max] code)
+    in("r0") code,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelYield()
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$24, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelYield()
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #124\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelYield()
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 124\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelYield()
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelYield()
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelNanoSleep(
+    rawptr<i8[min max]> request,
+    rawmutptr<i8[min max]> remaining)
+    in("rdi") request,
+    in("rsi") remaining,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$35, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelNanoSleep(
+    rawptr<i8[min max]> request,
+    rawmutptr<i8[min max]> remaining)
+    in("x0") request,
+    in("x1") remaining,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #101\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelNanoSleep(
+    rawptr<i8[min max]> request,
+    rawmutptr<i8[min max]> remaining)
+    in("a0") request,
+    in("a1") remaining,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 101\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelNanoSleep(
+    rawptr<i8[min max]> request,
+    rawmutptr<i8[min max]> remaining)
+    in("ebx") request,
+    in("ecx") remaining,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelNanoSleep(
+    rawptr<i8[min max]> request,
+    rawmutptr<i8[min max]> remaining)
+    in("r0") request,
+    in("r1") remaining,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelUnmap(
+    rawptr<i8[min max]> address,
+    i64[min max] length)
+    in("rdi") address,
+    in("rsi") length,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$11, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelUnmap(
+    rawptr<i8[min max]> address,
+    i64[min max] length)
+    in("x0") address,
+    in("x1") length,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #215\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelUnmap(
+    rawptr<i8[min max]> address,
+    i64[min max] length)
+    in("a0") address,
+    in("a1") length,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 215\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelUnmap(
+    rawptr<i8[min max]> address,
+    i64[min max] length)
+    in("ebx") address,
+    in("ecx") length,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelUnmap(
+    rawptr<i8[min max]> address,
+    i64[min max] length)
+    in("r0") address,
+    in("r1") length,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelFutex(
+    rawptr<i8[min max]> address,
+    i64[min max] operation,
+    i64[min max] value,
+    rawptr<i8[min max]> timeout)
+    in("rdi") address,
+    in("rsi") operation,
+    in("rdx") value,
+    in("r10") timeout,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$202, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelFutex(
+    rawptr<i8[min max]> address,
+    i64[min max] operation,
+    i64[min max] value,
+    rawptr<i8[min max]> timeout)
+    in("x0") address,
+    in("x1") operation,
+    in("x2") value,
+    in("x3") timeout,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #98\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelFutex(
+    rawptr<i8[min max]> address,
+    i64[min max] operation,
+    i64[min max] value,
+    rawptr<i8[min max]> timeout)
+    in("a0") address,
+    in("a1") operation,
+    in("a2") value,
+    in("a3") timeout,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 98\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelFutex(
+    rawptr<i8[min max]> address,
+    i64[min max] operation,
+    i64[min max] value,
+    rawptr<i8[min max]> timeout)
+    in("ebx") address,
+    in("ecx") operation,
+    in("edx") value,
+    in("esi") timeout,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelFutex(
+    rawptr<i8[min max]> address,
+    i64[min max] operation,
+    i64[min max] value,
+    rawptr<i8[min max]> timeout)
+    in("r0") address,
+    in("r1") operation,
+    in("r2") value,
+    in("r3") timeout,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelEpollCreate(
+    i64[min max] flags)
+    in("rdi") flags,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$291, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelEpollCreate(
+    i64[min max] flags)
+    in("x0") flags,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #20\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelEpollCreate(
+    i64[min max] flags)
+    in("a0") flags,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 20\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelEpollCreate(
+    i64[min max] flags)
+    in("ebx") flags,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelEpollCreate(
+    i64[min max] flags)
+    in("r0") flags,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelEpollControl(
+    rawptr<i8[min max]> epollHandle,
+    i64[min max] operation,
+    rawptr<i8[min max]> targetHandle,
+    rawptr<i8[min max]> event)
+    in("rdi") epollHandle,
+    in("rsi") operation,
+    in("rdx") targetHandle,
+    in("r10") event,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$233, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelEpollControl(
+    rawptr<i8[min max]> epollHandle,
+    i64[min max] operation,
+    rawptr<i8[min max]> targetHandle,
+    rawptr<i8[min max]> event)
+    in("x0") epollHandle,
+    in("x1") operation,
+    in("x2") targetHandle,
+    in("x3") event,
+    out("x0") return,
+    clobber("x8")
+{
+    "mov x8, #21\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelEpollControl(
+    rawptr<i8[min max]> epollHandle,
+    i64[min max] operation,
+    rawptr<i8[min max]> targetHandle,
+    rawptr<i8[min max]> event)
+    in("a0") epollHandle,
+    in("a1") operation,
+    in("a2") targetHandle,
+    in("a3") event,
+    out("a0") return,
+    clobber("a7")
+{
+    "li a7, 21\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelEpollControl(
+    rawptr<i8[min max]> epollHandle,
+    i64[min max] operation,
+    rawptr<i8[min max]> targetHandle,
+    rawptr<i8[min max]> event)
+    in("ebx") epollHandle,
+    in("ecx") operation,
+    in("edx") targetHandle,
+    in("esi") event,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelEpollControl(
+    rawptr<i8[min max]> epollHandle,
+    i64[min max] operation,
+    rawptr<i8[min max]> targetHandle,
+    rawptr<i8[min max]> event)
+    in("r0") epollHandle,
+    in("r1") operation,
+    in("r2") targetHandle,
+    in("r3") event,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelEpollWait(
+    rawptr<i8[min max]> epollHandle,
+    rawmutptr<i8[min max]> events,
+    i64[min max] maximumEvents,
+    i64[min max] timeoutMilliseconds)
+    in("rdi") epollHandle,
+    in("rsi") events,
+    in("rdx") maximumEvents,
+    in("r10") timeoutMilliseconds,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "movq $$232, %rax\nsyscall"
+}
+
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelEpollWait(
+    rawptr<i8[min max]> epollHandle,
+    rawmutptr<i8[min max]> events,
+    i64[min max] maximumEvents,
+    i64[min max] timeoutMilliseconds)
+    in("x0") epollHandle,
+    in("x1") events,
+    in("x2") maximumEvents,
+    in("x3") timeoutMilliseconds,
+    out("x0") return,
+    clobber("x8", "x4", "x5")
+{
+    "mov x4, xzr\nmov x5, xzr\nmov x8, #22\nsvc #0"
+}
+
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelEpollWait(
+    rawptr<i8[min max]> epollHandle,
+    rawmutptr<i8[min max]> events,
+    i64[min max] maximumEvents,
+    i64[min max] timeoutMilliseconds)
+    in("a0") epollHandle,
+    in("a1") events,
+    in("a2") maximumEvents,
+    in("a3") timeoutMilliseconds,
+    out("a0") return,
+    clobber("a7", "a4", "a5")
+{
+    "li a4, 0\nli a5, 0\nli a7, 22\necall"
+}
+
+internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelEpollWait(
+    rawptr<i8[min max]> epollHandle,
+    rawmutptr<i8[min max]> events,
+    i64[min max] maximumEvents,
+    i64[min max] timeoutMilliseconds)
+    in("ebx") epollHandle,
+    in("ecx") events,
+    in("edx") maximumEvents,
+    in("esi") timeoutMilliseconds,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelEpollWait(
+    rawptr<i8[min max]> epollHandle,
+    rawmutptr<i8[min max]> events,
+    i64[min max] maximumEvents,
+    i64[min max] timeoutMilliseconds)
+    in("r0") epollHandle,
+    in("r1") events,
+    in("r2") maximumEvents,
+    in("r3") timeoutMilliseconds,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}
+
+internal unsafe ffi asm(x86_64) fn i32[min max] LinuxKernelStatMode(rawptr<i8[min max]> statData)
+    in("rdi") statData,
+    out("rax") return
+{
+    "movl 24(%rdi), %eax"
+}
+
+internal unsafe ffi asm(aarch64) fn i32[min max] LinuxKernelStatMode(rawptr<i8[min max]> statData)
+    in("x0") statData,
+    out("x0") return
+{
+    "ldr w0, [x0, #16]"
+}
+
+internal unsafe ffi asm(riscv64) fn i32[min max] LinuxKernelStatMode(rawptr<i8[min max]> statData)
+    in("a0") statData,
+    out("a0") return
+{
+    "lw a0, 16(a0)"
+}
+
+internal unsafe ffi asm(x86) fn i32[min max] LinuxKernelStatMode(rawptr<i8[min max]> statData)
+    in("ebx") statData,
+    out("eax") return
+{
+    "movl $$-38, %eax"
+}
+
+internal unsafe ffi asm(arm) fn i32[min max] LinuxKernelStatMode(rawptr<i8[min max]> statData)
+    in("r1") statData,
+    out("r0") return
+{
+    "mov r0, #0\nsub r0, r0, #38"
+}

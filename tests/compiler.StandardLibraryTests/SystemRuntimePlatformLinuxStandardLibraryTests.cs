@@ -53,8 +53,6 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
 
         Assert.Contains("define fastcc void @ExitProcess(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ProcessId(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxExitGroupSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxGetPidSyscallNumber", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 231);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 39);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
@@ -84,9 +82,6 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @WaitForEvents(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WaitReadable(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WaitWritable(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxEpollCreate1SyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxEpollCtlSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxEpollWaitSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxEpollReadableEvent", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxEpollWritableEvent", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 291);
@@ -213,7 +208,6 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
 
         Assert.Contains("define fastcc noundef i32 @FutexWait(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @FutexWake(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@LinuxFutexSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxFutexWaitPrivateOperation", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxFutexWakePrivateOperation", llvm, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(llvm, 202);

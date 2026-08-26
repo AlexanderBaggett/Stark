@@ -197,9 +197,9 @@ internal fn bool StdLibSourcePromotedNetTcpBufferReadsUseBulkPathsImpl()
         return false;
     }
 
-    if (!Contains(fixed512Read, "LinuxSyscall3HandleBuffer")
-        && !Contains(fixed4096Read, "LinuxSyscall3HandleBuffer")
-        && !Contains(fixed8192Read, "LinuxSyscall3HandleBuffer"))
+    if (!Contains(fixed512Read, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
+        && !Contains(fixed4096Read, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
+        && !Contains(fixed8192Read, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\""))
     {
         return false;
     }
@@ -242,7 +242,7 @@ internal fn bool StdLibSourcePromotedNetTcpBufferReadsUseBulkPathsImpl()
         return false;
     }
 
-    if (!Contains(dynamicRead, "LinuxSyscall3HandleBuffer")
+    if (!Contains(dynamicRead, "call i64 asm sideeffect \"xorq %rax, %rax\\0Asyscall\"")
         || !Contains(dynamicRead, "DynamicByteBuffer_WriteSlice"))
     {
         return false;

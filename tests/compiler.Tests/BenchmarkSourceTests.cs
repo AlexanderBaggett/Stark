@@ -178,12 +178,8 @@ public sealed class BenchmarkSourceTests
             "define internal dso_local fastcc noundef i64 @__stark_inline_clone_System_Runtime_Platform_Linux_WriteSocketVector2(",
             "Expected Linux write-vector inline clone to be emitted.");
         Assert.Contains("%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }", scatterGather, StringComparison.Ordinal);
-        // LinuxReadvSyscallNumber / LinuxWritevSyscallNumber are comptime `const`s in
-        // System.Runtime.Platform.Linux. Now that imported source-module bodies are
-        // type-checked in the consuming build (cross-module monomorphization fix), the
-        // consts fold to their literal syscall numbers (readv = 19, writev = 20) here
-        // instead of an external global load. Preserve both the folded values and their
-        // direct inline-assembly call sites, including the ABI clobber set.
+        // The architecture-selected readv/writev operations lower directly into the
+        // consuming build. Preserve their ABI call sites and clobber sets.
         AssertDirectLinuxX64Syscall(scatterReadVectorClone, 19);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
