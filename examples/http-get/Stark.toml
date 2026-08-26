@@ -6,10 +6,3 @@ kind = "executable"
 [executable]
 root = "HttpGet.stark"
 output = "http-get"
-
-[native]
-sources = ["HttpsNative.c"]
-pkg-config = ["openssl"]
-
-[native.fallback.linux]
-libraries = ["ssl", "crypto"]

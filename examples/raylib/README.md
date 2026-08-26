@@ -1,9 +1,10 @@
 # Raylib Bindings
 
-This directory contains standalone Stark bindings for Raylib 6.0, split by
-Raylib area for readability. New code can also use the bundled `Vendor.Raylib`
-package under `/vendor`; both bindings use Stark's direct C ABI aggregate
-carrier lowering for C-layout Raylib structs.
+This directory contains a normal SDK-consumer example plus standalone Stark
+bindings for Raylib 6.0, split by Raylib area for readability. `Stark.toml`
+builds `VendorRaylibSafeApis.stark` against the bundled `Vendor.Raylib`,
+`Vendor.Raymath`, and `Vendor.Rlgl` packages with no native setup. The local
+binding sources remain available for contributors using `build-package.sh`.
 
 - `Raylib/Types.stark`: structs, aliases, callback pointer aliases, enum constants, color helpers, and small constructors.
 - `Raylib/Core.stark`
@@ -28,6 +29,13 @@ With an installed target SDK, an application imports `Vendor.Raylib` and uses
 `stark build` or `stark run`; it does not run the package builder, add `-I`, or
 install Raylib. The commands in this section deliberately exercise repository
 source/package development instead.
+
+Build the ordinary SDK-consumer project with:
+
+```bash
+cd examples
+stark build raylib
+```
 
 `VendorRaylibSafeApis.stark` demonstrates the preferred bundled binding style:
 safe slices for file/data/audio payloads, Raylib-owned byte/text result owners,

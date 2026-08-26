@@ -88,8 +88,8 @@ before running these examples.
     <a href="/examples/standard-library/">Source</a>
   </article>
   <article class="example-card">
-    <strong>HTTPS GET</strong>
-    <span>HTTPS request/response sample with a small OpenSSL native shim.</span>
+    <strong>HTTP GET</strong>
+    <span>HTTP request/response sample using the SDK's `System.Net.Tcp` package.</span>
     <a href="/examples/http-get/">Details</a>
     <a href="/examples/http-get/">Source</a>
   </article>
