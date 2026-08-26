@@ -275,6 +275,37 @@ public fn void DrawModelWiresEx(Model model, Vector3 position, Vector3 rotationA
     return;
 }
 
+[LinkName("rlEnablePointMode")]
+internal unsafe ffi fn void stark_raylib_points_rlEnablePointMode();
+[LinkName("rlDisablePointMode")]
+internal unsafe ffi fn void stark_raylib_points_rlDisablePointMode();
+[LinkName("rlEnableBackfaceCulling")]
+internal unsafe ffi fn void stark_raylib_points_rlEnableBackfaceCulling();
+[LinkName("rlDisableBackfaceCulling")]
+internal unsafe ffi fn void stark_raylib_points_rlDisableBackfaceCulling();
+
+public fn void DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint) {
+    unsafe {
+        stark_raylib_points_rlEnablePointMode();
+        stark_raylib_points_rlDisableBackfaceCulling();
+        stark_raylib_DrawModel(model, position, scale, tint);
+        stark_raylib_points_rlEnableBackfaceCulling();
+        stark_raylib_points_rlDisablePointMode();
+    }
+    return;
+}
+
+public fn void DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint) {
+    unsafe {
+        stark_raylib_points_rlEnablePointMode();
+        stark_raylib_points_rlDisableBackfaceCulling();
+        stark_raylib_DrawModelEx(model, position, rotationAxis, rotationAngle, scale, tint);
+        stark_raylib_points_rlEnableBackfaceCulling();
+        stark_raylib_points_rlDisablePointMode();
+    }
+    return;
+}
+
 [LinkName("DrawBoundingBox")]
 internal unsafe ffi fn void stark_raylib_DrawBoundingBox(BoundingBox box, Color color);
 public fn void DrawBoundingBox(BoundingBox box, Color color) {

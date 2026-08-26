@@ -489,6 +489,8 @@ public sealed partial class VendorBindingAuditTests
         var directFfiNames = DirectFfiNameRegex().Matches(bindingText).Select(static match => match.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
         var boundNativeNames = new HashSet<string>(linkNames, StringComparer.Ordinal);
         boundNativeNames.UnionWith(directFfiNames.Where(static name => !name.StartsWith("stark_", StringComparison.Ordinal)));
+        var supportedNativeNames = new HashSet<string>(coreFunctions, StringComparer.Ordinal);
+        supportedNativeNames.UnionWith(rlglFunctions);
 
         Assert.Equal(597, coreFunctions.Count);
         Assert.Equal(35, coreStructs.Count);
@@ -498,7 +500,7 @@ public sealed partial class VendorBindingAuditTests
         Assert.Equal(163, rlglFunctions.Count);
 
         Assert.Empty(coreFunctions.Except(boundNativeNames, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
-        Assert.Empty(boundNativeNames.Except(coreFunctions, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(boundNativeNames.Except(supportedNativeNames, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(coreStructs.Except(ExtractPublicStructNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(enumValues.Except(ExtractPublicConstNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
         Assert.Empty(callbacks.Except(ExtractPublicAliasNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
