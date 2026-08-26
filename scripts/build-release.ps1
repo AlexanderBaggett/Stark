@@ -604,6 +604,7 @@ foreach ($entry in $matrixEntries) {
         "-ArchivePath", $archivePath,
         "-TargetTriple", [string]$entry.target_triple,
         "-WorkDir", (Join-Path $diagnosticsRoot ("archive-smoke-$targetId")),
+        "-FullSourceSuite",
         "-IsolatePath"
     )
     $commands += New-ReleaseCommand -PhaseName "Smoke" -TargetId $targetId -Label "Qualify archive-local installer lifecycle" -Executable $powerShellPath -Arguments @(

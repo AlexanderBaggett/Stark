@@ -24,6 +24,15 @@ scripts\run-benchmarks.ps1
 Both runners compile executable Stark, C, and Rust benchmarks and perform one
 warmup execution per binary.
 
+Release archive qualification is intentionally different from a performance
+measurement run. `scripts/smoke-release-archive.ps1 -FullSourceSuite` discovers
+every `.stark` benchmark, compiles it with the packaged compiler, and executes
+each runnable program exactly once. It performs no warmup or measured repetition,
+does not build C or Rust counterparts, and enforces no timing threshold. Sources
+marked `stark-bench: compile-only` are compiled to objects instead. This checks
+that the complete Stark benchmark surface still compiles and runs on each
+release target; use the runners above for actual performance results.
+
 The Bash runner records executable size plus Stark object/link/toolchain timing
 and writes CSV rows:
 

@@ -1,62 +1,68 @@
 import System.Console
-import System.Text
+import System.Net
+import System.Net.Tcp
+import System.Runtime.Buffer
 module HttpGetExample
 
-const ReadBufferLength = 4096;
-
-struct ResponseBuffer {
-    i8[min max][4096] Storage;
-}
-
-internal unsafe ffi fn rawptr<i8[min max]> stark_https_client_connect(ascii host, i32[min max] port);
-internal unsafe ffi fn i64[min max] stark_https_client_write(rawptr<i8[min max]> client, ascii source);
-internal unsafe ffi fn i64[min max] stark_https_client_read(
-    rawptr<i8[min max]> client,
-    rawmutptr<i8[min max]> destination,
-    i64[0 max] capacity);
-internal unsafe ffi fn void stark_https_client_close(rawptr<i8[min max]> client);
-
 export unsafe fn i32[min max] main() {
-    stack rawptr<i8[min max]> client = stark_https_client_connect("www.google.com", 443);
-    if (client == null) {
-        WriteErrorLine("failed to establish TLS connection to https://www.google.com/");
-        return 1;
-    }
-
-    stack ascii request = "GET / HTTP/1.0\r\nHost: www.google.com\r\nUser-Agent: Stark-Https-Example\r\nAccept: */*\r\nAccept-Encoding: identity\r\n\r\n";
-    stack i64[min max] expectedWriteCount = AsciiLength(request);
-    stack i64[min max] writeCount = stark_https_client_write(client, request);
-
-    if (writeCount != expectedWriteCount) {
-        stark_https_client_close(client);
-        WriteErrorLine("failed to send HTTPS request");
-        return 2;
-    }
-
-    stack mut ResponseBuffer buffer = new ResponseBuffer();
-    stack mut Ascii responseChunk = new Ascii() {
-        Data = &buffer.Storage[0],
-        Length = 0,
-        Capacity = ReadBufferLength
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
+        Address = new System.Net.IPv4Address() {
+            A = 93,
+            B = 184,
+            C = 216,
+            D = 34
+        },
+        Port = 80
     };
 
-    while non-deterministic (true) {
-        stack i64[min max] readCount = stark_https_client_read(client, &buffer.Storage[0], ReadBufferLength);
-        if (readCount < 0) {
-            stark_https_client_close(client);
-            WriteErrorLine("failed to read HTTPS response");
-            return 3;
-        }
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected) {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var connectError):
+            System.Console.WriteErrorLine("failed to connect to example.com over HTTP");
+            return 1;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var clientValue):
+            stack mut System.Net.Tcp.TcpClient client = clientValue;
+            stack i8[min max][56] request = {
+                71, 69, 84, 32, 47, 32, 72, 84,
+                84, 80, 47, 49, 46, 48, 13, 10,
+                72, 111, 115, 116, 58, 32, 101, 120,
+                97, 109, 112, 108, 101, 46, 99, 111,
+                109, 13, 10, 67, 111, 110, 110, 101,
+                99, 116, 105, 111, 110, 58, 32, 99,
+                108, 111, 115, 101, 13, 10, 13, 10
+            };
+            stack System.Net.NetResult<u64[0 2 ** 63 - 1]> written = client.Write(request);
+            switch (written) {
+                case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var writeError):
+                    client.Close();
+                    System.Console.WriteErrorLine("failed to send HTTP request");
+                    return 2;
+                case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var writtenBytes):
+                    if (writtenBytes != 56) {
+                        client.Close();
+                        System.Console.WriteErrorLine("sent an incomplete HTTP request");
+                        return 3;
+                    }
+            }
 
-        if (readCount == 0) {
-            stark_https_client_close(client);
-            return 0;
-        }
-
-        responseChunk.Length = readCount;
-        Write(AsciiView(responseChunk));
+            while non-deterministic (true) {
+                stack mut System.Runtime.Buffer.FixedByteBuffer4096 response = new();
+                stack System.Net.NetResult<u64[0 2 ** 63 - 1]> read = client.Read(response);
+                switch (read) {
+                    case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var readError):
+                        client.Close();
+                        System.Console.WriteErrorLine("failed to read HTTP response");
+                        return 4;
+                    case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var readBytes):
+                        if (readBytes == 0) {
+                            client.Close();
+                            return 0;
+                        }
+                        System.Console.Write(response);
+                }
+            }
     }
 
-    stark_https_client_close(client);
     return 0;
 }

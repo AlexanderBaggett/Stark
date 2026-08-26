@@ -18,14 +18,16 @@ export unsafe ffi fn i32[min max] main() {
     }
 
     for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
-        if (!Ok(values.Set(i, i))) {
+        stack u32[0 max] key = (u32[0 max])i;
+        if (!Ok(values.Set(key, key))) {
             return 2;
         }
     }
 
     for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
+        stack u32[0 max] key = (u32[0 max])i;
         stack u32[0 max] value = (u32[0 max])(i * 5);
-        if (!Ok(values.Set(i, value))) {
+        if (!Ok(values.Set(key, value))) {
             return 3;
         }
     }
@@ -33,7 +35,8 @@ export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
     stack mut u32[0 max] found = 0;
     for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
-        if (!values.TryGet(i, found)) {
+        stack u32[0 max] key = (u32[0 max])i;
+        if (!values.TryGet(key, found)) {
             return 4;
         }
 

@@ -30,21 +30,6 @@ members = [
 ]
 
 [defaults]
-build = [
-  "basic-syntax",
-  "type-system",
-  "modules",
-  "borrowing",
-  "ffi",
-  "neural-network",
-  "simple-database",
-  "bit-torrent",
-  "arithmetic",
-  "control-flow",
-  "multi-module",
-  "data-model",
-  "static-library",
-]
 run = "basic-syntax"
 test = [
   "standard-library-tests",
