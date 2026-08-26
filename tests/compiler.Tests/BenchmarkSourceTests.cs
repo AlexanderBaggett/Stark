@@ -146,7 +146,7 @@ public sealed class BenchmarkSourceTests
             loopback,
             "define internal dso_local fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowi8_minmax____(",
             "Expected TcpClient slice write inline clone to be emitted.");
-        AssertDirectLinuxX64WriteSyscall(loopbackSliceWriteClone);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64WriteSyscall(loopbackSliceWriteClone);
         Assert.DoesNotContain("call i64 @LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("call i64 @System_Runtime_Platform_Linux_LinuxSyscall", loopbackSliceWriteClone, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Runtime_Platform_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
@@ -180,10 +180,10 @@ public sealed class BenchmarkSourceTests
         Assert.Contains("%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }", scatterGather, StringComparison.Ordinal);
         // The architecture-selected readv/writev operations lower directly into the
         // consuming build. Preserve their ABI call sites and clobber sets.
-        AssertDirectLinuxX64Syscall(scatterReadVectorClone, 19);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(scatterReadVectorClone, 19);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
-        AssertDirectLinuxX64Syscall(scatterWriteVectorClone, 20);
+        AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(scatterWriteVectorClone, 20);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.DoesNotContain("call i64 @LinuxSyscall", scatterGather, StringComparison.Ordinal);
@@ -495,54 +495,6 @@ public sealed class BenchmarkSourceTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for benchmark source tests.");
-    }
-
-    private static void AssertDirectLinuxX64Syscall(string text, long syscallNumber)
-    {
-        var firstArgument = $"(i64 {syscallNumber}";
-        var callLine = text
-            .Split('\n')
-            .FirstOrDefault(line =>
-            {
-                if (!line.Contains("call i64 asm sideeffect \"syscall\"", StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                var argumentIndex = line.IndexOf(firstArgument, StringComparison.Ordinal);
-                if (argumentIndex < 0)
-                {
-                    return false;
-                }
-
-                var delimiterIndex = argumentIndex + firstArgument.Length;
-                return delimiterIndex < line.Length
-                    && line[delimiterIndex] is ',' or ')';
-            });
-
-        Assert.NotNull(callLine);
-        Assert.Contains(
-            "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}",
-            callLine,
-            StringComparison.Ordinal);
-        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
-    }
-
-    private static void AssertDirectLinuxX64WriteSyscall(string text)
-    {
-        var callLine = text
-            .Split('\n')
-            .FirstOrDefault(line =>
-                line.Contains(
-                    "call i64 asm sideeffect \"movq $$1, %rax\\0Asyscall\"",
-                    StringComparison.Ordinal));
-
-        Assert.NotNull(callLine);
-        Assert.Contains(
-            "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}",
-            callLine,
-            StringComparison.Ordinal);
-        Assert.Contains(" nounwind", callLine, StringComparison.Ordinal);
     }
 
     private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
