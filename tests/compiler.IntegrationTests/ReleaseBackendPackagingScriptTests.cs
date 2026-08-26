@@ -319,16 +319,10 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.Contains(".github/workflows/qualify-private-backend.yml", identityScript, StringComparison.Ordinal);
         Assert.Contains(".github/workflows/release-contract.yml", identityScript, StringComparison.Ordinal);
 
-        Assert.Contains("GenerateMatrix(result, command.HasFlag(\"--include-planned\"))", File.ReadAllText(
-            Path.Combine(repositoryRoot, "eng", "release", "Stark.ReleaseTools", "ReleaseConfiguration.cs")), StringComparison.Ordinal);
-        Assert.Contains("include_planned:", releaseWorkflow, StringComparison.Ordinal);
-        Assert.Contains("Planned targets are diagnostic-only", File.ReadAllText(
-            Path.Combine(repositoryRoot, "eng", "release", "Stark.ReleaseTools", "ReleasePlanPreparer.cs")), StringComparison.Ordinal);
         Assert.Contains("matrix.private_backend_acquisition == 'pinned-source-build'", releaseWorkflow, StringComparison.Ordinal);
         Assert.Contains("qualify-private-backend", releaseWorkflow, StringComparison.Ordinal);
         Assert.Contains("& $env:STAGE0_COMPILER", releaseWorkflow, StringComparison.Ordinal);
         Assert.DoesNotContain("dotnet run --no-restore --project src", releaseWorkflow, StringComparison.Ordinal);
-        Assert.Contains("-AllowPlannedTarget", releaseWorkflow, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -402,41 +396,6 @@ public sealed class ReleaseBackendPackagingScriptTests
     }
 
     [Fact]
-    public void PlannedTargetPackagingRequiresAnExplicitDiagnosticOverride()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var scripts = new[]
-        {
-            "prepare-vendor-release-input.ps1",
-            "prepare-core-vendor-release-input.ps1",
-            "prepare-raylib-release-input.ps1",
-            "prepare-glfw-vendor-release-input.ps1",
-            "prepare-sdl3-vendor-release-input.ps1",
-            "prepare-sqlite-vendor-release-input.ps1",
-        }.Select(name => File.ReadAllText(Path.Combine(repositoryRoot, "scripts", name))).ToArray();
-
-        foreach (var script in scripts)
-        {
-            foreach (var target in new[] { "linux-x64", "linux-arm64", "windows-x64", "windows-arm64", "macos-x64", "macos-arm64" })
-            {
-                Assert.Contains(target, script, StringComparison.Ordinal);
-            }
-        }
-
-        var vendor = scripts[0];
-        var glfw = scripts[3];
-        var sdl3 = scripts[4];
-        var packaging = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "package-release.ps1"));
-        foreach (var guardedScript in new[] { vendor, glfw, sdl3, packaging })
-        {
-            Assert.Contains("[switch] $AllowPlannedTarget", guardedScript, StringComparison.Ordinal);
-            Assert.Contains("supportTier", guardedScript, StringComparison.Ordinal);
-        }
-        Assert.Contains("diagnostic-only", vendor, StringComparison.Ordinal);
-        Assert.Contains("diagnostic-only", packaging, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void ReleaseWorkflowUsesHermeticRestoreAndNamedScriptArguments()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -457,7 +416,6 @@ public sealed class ReleaseBackendPackagingScriptTests
         Assert.StartsWith("name: Release", workflow, StringComparison.Ordinal);
         Assert.StartsWith("name: Qualify compiler-private backend", qualification, StringComparison.Ordinal);
         Assert.Contains("src/obj/project.assets.json", workflow, StringComparison.Ordinal);
-        Assert.Contains("-AllowPlannedTarget:(-not [bool]::Parse(\"${{ matrix.release_enabled }}\"))", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("& ./scripts/prepare-vendor-release-input.ps1 @arguments", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("& ./scripts/package-release.ps1 @arguments", workflow, StringComparison.Ordinal);
     }

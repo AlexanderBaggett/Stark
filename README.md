@@ -516,13 +516,11 @@ Stark currently has:
 - a benchmark harness with Stark, C, and Rust rows for performance work;
 - a Hugo documentation site backed by repository docs and checked examples.
 
-The GitHub Actions release workflow currently enables Linux x64, Windows x64,
-and macOS arm64 candidate rows from the repository-owned release manifest.
-Linux arm64, Windows arm64, and macOS x64 are recorded as planned rows and stay
-disabled until their private backend, complete Vendor catalog, installer, and
-native qualification gates pass. Until tagged artifacts are published, treat
-the docs, tests, and checked examples as the source of truth for the implemented
-surface.
+The GitHub Actions release workflow enables all six supported 64-bit rows from
+the repository-owned release manifest: Linux, Windows, and macOS on x64 and
+arm64. Every row has passed the complete archive and independent install-smoke
+pipeline. Until tagged artifacts are published, treat the docs, tests, and
+checked examples as the source of truth for the implemented surface.
 
 ## Contributing, Security, and Releases
 

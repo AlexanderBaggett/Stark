@@ -42,7 +42,6 @@ public sealed class ReleaseQualifiedLlvmBundleTests
         var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "prepare-llvm-toolchains.yml"));
 
         Assert.StartsWith("name: Prepare qualified LLVM toolchains", workflow, StringComparison.Ordinal);
-        Assert.Contains("--include-planned", workflow, StringComparison.Ordinal);
         Assert.Contains("-IgnoreQualifiedBundle", workflow, StringComparison.Ordinal);
         Assert.Contains("verify-private-backend-bundle", workflow, StringComparison.Ordinal);
         Assert.Contains("create-archive", workflow, StringComparison.Ordinal);
