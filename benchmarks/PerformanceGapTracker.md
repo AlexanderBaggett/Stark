@@ -4,7 +4,82 @@ This is a working list for investigation, not a performance claim. The initial e
 
 C criterion: Stark average > C average. Rust criterion: Stark average >= Rust average. The Rust `rust-fixed-batch` variant is not the canonical Rust row.
 
-## Latest affected-benchmark rerun (October 26, 2026)
+## Full benchmark suite (October 27, 2026)
+
+The suite ran 74 runnable Stark scenarios with one warmup and 100 process-level samples per language. Two compile-only surfaces were skipped by the harness. Groups ran sequentially on the passively cooled, temperature-capped Ryzen 7 5700G. The network group initially timed out in the restricted sandbox; its loopback cases completed when retried with local socket access. Results are fixed-order averages, and observed spreads are often larger than the differences shown.
+
+Using the latest full-suite averages, 39 scenarios meet the Stark-slower-than-C criterion and 4 meet the Stark-not-faster-than-Rust criterion. The table lists their union; C = 1.000. Rust variants are excluded. A listed difference is a raw average, not a claim of statistical significance.
+
+| Benchmark | Stark / C | Rust / C | Stark slower than C | Stark not faster than Rust |
+| --- | ---: | ---: | :---: | :---: |
+| `benchmarks/allocator/ArenaAllocator` | 3.7508 | 1.0398 | Yes | Yes |
+| `benchmarks/allocator/MemoryCopyFill` | 1.0023 | 1.0387 | Yes | — |
+| `benchmarks/collections/DictionaryInsert` | 1.0023 | 1.0715 | Yes | — |
+| `benchmarks/collections/DictionaryLookup` | 1.0238 | 1.1931 | Yes | — |
+| `benchmarks/collections/DictionaryRemove` | 1.0038 | 1.0697 | Yes | — |
+| `benchmarks/collections/LinkedListBuildClear` | 1.0027 | 1.0372 | Yes | — |
+| `benchmarks/collections/LinkedListChurn` | 1.0157 | 1.0460 | Yes | — |
+| `benchmarks/collections/LinkedListPopOnly` | 1.0130 | 1.0437 | Yes | — |
+| `benchmarks/collections/LinkedListPush` | 1.0130 | 1.0388 | Yes | — |
+| `benchmarks/collections/ListGrowth` | 1.0115 | 1.0331 | Yes | — |
+| `benchmarks/collections/ListIteration` | 1.0109 | 1.0437 | Yes | — |
+| `benchmarks/collections/QueueChurn` | 1.0105 | 1.0172 | Yes | — |
+| `benchmarks/collections/QueueDequeue` | 1.0306 | 1.0300 | Yes | Yes |
+| `benchmarks/collections/QueueGrowth` | 1.0065 | 1.0345 | Yes | — |
+| `benchmarks/collections/StackGrowth` | 1.0149 | 1.0389 | Yes | — |
+| `benchmarks/console/ConsoleWrites` | 1.0480 | 1.0703 | Yes | — |
+| `benchmarks/io/FileSystemPathTranscode` | 1.0055 | 1.0377 | Yes | — |
+| `benchmarks/micro/Arithmetic` | 1.0013 | 1.0361 | Yes | — |
+| `benchmarks/micro/BranchSelectPredication` | 1.0067 | 1.0259 | Yes | — |
+| `benchmarks/micro/Branching` | 1.0127 | 1.0263 | Yes | — |
+| `benchmarks/micro/FactDrivenBranchPruning` | 1.0143 | 1.0439 | Yes | — |
+| `benchmarks/micro/FunctionPointerDevirtualization` | 1.0200 | 1.0310 | Yes | — |
+| `benchmarks/micro/GlobalScalarLoadForwarding` | 1.0017 | 1.0460 | Yes | — |
+| `benchmarks/micro/IndependentRawPointerRegions` | 1.0085 | 1.0234 | Yes | — |
+| `benchmarks/micro/IndependentSliceAdd` | 1.0129 | 1.0352 | Yes | — |
+| `benchmarks/micro/MemoryAccess` | 1.0154 | 1.0549 | Yes | — |
+| `benchmarks/micro/PureCallGlobalForwarding` | 1.0075 | 1.0360 | Yes | — |
+| `benchmarks/micro/ReadonlyOtherLocalFieldStore` | 1.0098 | 1.0366 | Yes | — |
+| `benchmarks/micro/StackFieldLoadForwarding` | 1.0038 | 1.0279 | Yes | — |
+| `benchmarks/micro/TailCalls` | 1.0038 | 1.0428 | Yes | — |
+| `benchmarks/network/TcpLoopbackThroughput` | 1.0144 | 1.0400 | Yes | — |
+| `benchmarks/network/TcpScatterGatherLoopback` | 1.0092 | 1.0327 | Yes | — |
+| `benchmarks/text/AsciiToUnicodeConversionRuntime` | 1.0213 | 1.1286 | Yes | — |
+| `benchmarks/text/OwnedPathAllocation` | 1.0173 | 1.0413 | Yes | — |
+| `benchmarks/text/OwnedTextAllocation` | 1.0005 | 1.0460 | Yes | — |
+| `benchmarks/text/PathJoin` | 1.0476 | 1.0384 | Yes | Yes |
+| `benchmarks/text/PathNormalize` | 1.0263 | 1.0460 | Yes | — |
+| `benchmarks/text/PathRepeatedSmallOps` | 1.0553 | 1.0372 | Yes | Yes |
+| `benchmarks/text/TextConcatCopy` | 1.0180 | 1.0540 | Yes | — |
+
+Full-run CSVs:
+
+- [allocator](results/limb-suite-20261027/results-20261027T225351Z.niUTuQ.csv)
+- [collections](results/limb-suite-20261027/results-20261027T225516Z.WymI4P.csv)
+- [console](results/limb-suite-20261027/results-20261027T225736Z.Y1pe8O.csv)
+- [io](results/limb-suite-20261027/results-20261027T225904Z.GsV5NA.csv)
+- [micro](results/limb-suite-20261027/results-20261027T230344Z.3xuuk8.csv)
+- [runtime](results/limb-suite-20261027/results-20261027T231601Z.KUsciK.csv)
+- [text](results/limb-suite-20261027/results-20261027T231624Z.Ml6EDh.csv)
+- [network](results/limb-suite-20261027/results-20261027T232330Z.mwD5Y3.csv)
+
+The full-suite TextParsing averages were Stark 5704 µs, C 5728 µs and Rust 5963 µs: Stark / C 0.9958 and Rust / C 1.0410. The separate focused rerun below provides an additional sample.
+
+## Focused TextParsing rerun after limb-and-carry implementation (October 27, 2026)
+
+The Unicode signed and unsigned 1024-bit parsers now use an inlined, explicit 16-limb multiply-and-carry helper. The existing digit and overflow checks remain in place. On this machine, the resulting signed and unsigned parser arithmetic each contains 15 `mul` and 15 `adc` instructions, matching the shape measured in the IR experiment below. Release runtime tests passed for signed and unsigned bounds, error ordering, leading zeros, and deterministic random wide values.
+
+The harness ran one warmup and 100 process-level samples per language in fixed order; this passively cooled, temperature-capped computer and the observed spread limit the interpretation of small differences. The benchmark implementations have the representation and workload differences described below.
+
+| Benchmark | Stark µs | C µs | Rust µs | Stark / C | Rust / C | Spread % (S / C / R) | Evidence |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `benchmarks/text/TextParsing` | 5576 | 5594 | 5917 | 0.9968 | 1.0577 | 10.5 / 14.1 / 16.7 | [CSV](results/results-20261027T225315Z.z1rwIJ.csv) · [machine](results/machine-20261027T225315Z.0QdgDW.txt) |
+
+The prior same-machine focused sample was Stark 5782 µs and C 5611 µs (Stark / C 1.0305). This latest sample no longer meets either the slower-than-C or not-faster-than-Rust criterion; its differences are smaller than the spreads. The full-suite results are listed above.
+
+To isolate process payloads, the old Stark executable, the implemented Stark executable and C were additionally run in a randomized CPU-0-pinned sequence, 300 times each in `/tmp`. All passed. Mean / median times were 1086.2 / 1071.7 µs before, 930.8 / 919.0 µs after, and 936.6 / 924.6 µs for C. With C = 1.000, the means are 1.160 before and 0.994 after; startup remains included. The implemented mean was 14.3% below the old Stark executable in this sample. Raw local samples are in the ignored `benchmarks/codegen/text-parsing-20261026/ir-controls/implemented-interleaved.json`.
+
+## Previous affected-benchmark rerun (October 26, 2026)
 
 After adding buffered reads for read-only, fully buffered files, allowing LLVM to recognize the disjoint byte-copy loop, and skipping unnecessary early wide-integer overflow comparisons, these three scenarios were rerun sequentially with one warmup and 100 measured processes per language. The machine and tools are the same as the preceding focused run below; the checkout includes uncommitted changes. Spread is `(max - min) / average`, not a confidence interval. Fixed language order, passive cooling and the temperature cap can affect comparisons, particularly the small gaps.
 
@@ -14,9 +89,66 @@ After adding buffered reads for read-only, fully buffered files, allowing LLVM t
 | `benchmarks/runtime/RuntimeBufferDynamic` | 5418 | 5448 | 5869 | 0.9945 | 0.9232 | 6.8 / 8.9 / 10.4 | [CSV](results/results-20261027T022334Z.Tf9eX9.csv) · [machine](results/machine-20261027T022334Z.A8Xq02.txt) |
 | `benchmarks/text/TextParsing` | 5782 | 5611 | 5871 | 1.0305 | 0.9848 | 14.0 / 15.8 / 8.5 | [CSV](results/results-20261027T022346Z.mmyJls.csv) · [machine](results/machine-20261027T022346Z.EswYpp.txt) |
 
-For these three, the C criterion now includes only `TextParsing`; the Rust criterion includes none. The small measured differences are below the observed spreads. The four other previously rerun scenarios retain their prior measurements; they were not rerun for these changes. Compared with the preceding run, Stark's raw averages changed from 10723 to 9154 µs for file I/O, 5519 to 5418 µs for dynamic buffers, and 5850 to 5782 µs for text parsing. Those separate, fixed-order samples do not isolate the changes from thermal and other variation.
+For these three in that run, the C criterion included only `TextParsing`; the Rust criterion included none. The small measured differences are below the observed spreads. The four other previously rerun scenarios retain their prior measurements; they were not rerun for these changes. Compared with the preceding run, Stark's raw averages changed from 10723 to 9154 µs for file I/O, 5519 to 5418 µs for dynamic buffers, and 5850 to 5782 µs for text parsing. Those separate, fixed-order samples do not isolate the changes from thermal and other variation.
 
 The file result still compares different workloads: Stark allocates a dynamic buffer for the final write, C writes directly, and Rust uses different buffering and read allocation. Read buffering is enabled for `FileMode.Read` with `FileBuffering.Full`; read/write handles continue to use direct reads. The copy helper now reaches LLVM as a loop that becomes `llvm.memcpy`, and the dynamic benchmark's fixed-size copy emits vector loads/stores. The Unicode 1024-bit parsers retain digit validation and signed/unsigned overflow checks while avoiding wide cutoff comparisons for prefixes that cannot overflow; the remaining wide multiply/add and different C input representation are still possible opportunities for investigation.
+
+## TextParsing: isolated LLVM IR difference before implementation
+
+**The measured gap was reproducible by changing only the wide arithmetic representation in Stark's actual LLVM IR.** Before the implementation, Stark's [Text.stark](../stdlib/src/System/Text.stark) Unicode parsers emitted `mul nuw i1024 %value, 10` followed by `add nuw i1024` for each digit. Clang's optimized IR for the C benchmark exposes sixteen 64-bit limbs: each limb is widened to `i128`, multiplied by 10, added to the incoming carry, truncated to 64 bits, and shifted right by 64 to obtain the next carry. Both versions use the same installed Clang/LLVM 23.1.4 backend with `-O3`; Stark's executable path also uses ThinLTO. The source languages did not hand LLVM the same computation graph.
+
+For a controlled test, the actual Stark benchmark was compiled with `--save-temps`. An experimental script changed only the multiply/add in `System_Text_ParseI1024Unicode` and `System_Text_ParseU1024Unicode` in the saved `System_Text.ll`: it substituted an always-inlined, explicit 16-limb `i128` multiply/add-with-carry sequence, leaving all input handling, overflow checks, result construction, the benchmark, and other modules unchanged. The modified module was recompiled and linked with the original saved objects using the original `-O3` ThinLTO strategy. An unchanged relink was included as a control. Every benchmark run returned success, checking the signed minimum and unsigned maximum. The experiment is not a production implementation and does not establish behavior for invalid or overflowing inputs.
+
+In the resulting unsigned parser, the arithmetic sequence changed from **15 `mul` and 47 `adc` instructions** to **15 `mul` and 15 `adc` instructions**; those are static x86-64 counts, not hardware counters. The checked-out LLVM source's `SelectionDAG/LegalizeIntegerTypes.cpp` separately expands wide `MUL` and `ADD` in `ExpandIntRes_MUL` and `ExpandIntRes_ADDSUB`, respectively, and `SelectionDAG/TargetLowering.cpp` contains the multiply expansion machinery. These are the relevant source paths for tracing the lowering; source inspection alone does not prove the exact internal path selected by the installed binary.
+
+One warmup and 300 randomized, interleaved executions per executable were run on CPU 0 in `/tmp`; times include process startup. All returned success. As elsewhere, this passively cooled, temperature-capped machine and scheduler can vary, and the C workload retains its known differences.
+
+| Executable | Mean µs | Median µs | Mean / C |
+| --- | ---: | ---: | ---: |
+| Original Stark | 1087.6 | 1075.8 | 1.1583 |
+| Stark, unchanged relink control | 1095.1 | 1077.3 | 1.1662 |
+| Stark, explicit-limb IR experiment | 935.4 | 921.8 | 0.9962 |
+| C | 939.0 | 925.7 | 1.0000 |
+
+The modified Stark mean was 14.0% below the original, and approximately matched C in this run. This isolates the particular emitted arithmetic shape as a substantial cause for this workload; it does not establish that every Stark wide operation should be lowered this way. The compiled outputs and the transformation script are retained locally under ignored `benchmarks/codegen/text-parsing-20261026/ir-controls/`.
+
+A second, smaller control used the same 309 32-bit digits and result for two functions compiled by the same backend: one took the Stark-shaped `i1024` recurrence and one used Clang-shaped limbs. Each was called 1000 times per process. Across 100 randomized, CPU-pinned samples, the wide version with the same `nuw` flags averaged 5150.4 µs and the limb version 3570.8 µs. Removing `nuw` changed the wide mean to 5140.0 µs, so those flags did not explain this difference. The functions also matched on 5000 deterministic, valid random decimal inputs of 1–308 digits. This control omits parser validation and overflow reporting; it demonstrates arithmetic lowering, not full parser equivalence.
+
+**Implemented for these parsers:** an internal standard-library helper exposes the measured limb/carry form to LLVM. General compiler recognition for other wide multiply/add operations remains a separate opportunity; the experiment does not establish its effect on other programs or targets.
+
+## Earlier TextParsing investigation after the prefix optimization
+
+The ordinary harness above measured Stark / C = 1.0305, but both spreads exceed that difference. To look past its shell timing overhead, the current Release compiler and Clang built the same sources with their normal optimization settings. A Python driver pinned itself and its children to CPU 0, warmed each binary, then executed 100 randomized, interleaved samples per variant in a temporary directory. All executions returned success; times include process startup. Passive cooling, scheduling, frequency variation and outliers still apply. Sources, binaries, disassembly and raw samples are in the ignored local `benchmarks/codegen/text-parsing-20261026/` directory.
+
+| Variant | Mean µs | Median µs |
+| --- | ---: | ---: |
+| Current Stark, full benchmark | 1124.5 | 1073.4 |
+| Previous Stark, before skipping safe-prefix cutoff checks | 1256.2 | 1222.2 |
+| C, full benchmark | 978.9 | 923.0 |
+| C, wide inputs represented as 32-bit code points | 959.3 | 921.6 |
+| Stark, signed wide parse only | 855.6 | 819.7 |
+| C, signed wide parse only | 759.4 | 730.5 |
+| Stark, unsigned wide parse only | 876.2 | 837.2 |
+| C, unsigned wide parse only | 757.9 | 732.9 |
+
+The isolated variants remove the other wide parse and adjust the checksum; both retain the small parses and their success checks. They are process timings, not direct per-parser measurements. The interleaved full-result ratio is 1.149 in this sample; the old and new Stark binaries share the same driver conditions, but the samples still do not independently prove a causal improvement. The 32-bit C control changes only the two wide inputs and their reader types; its near-identical median makes input width an unlikely explanation for the gap in this particular workload. It does not make all semantics equivalent: C uses volatile pointers and byte-oriented libc routines for the small inputs, while Stark folds its small literal parses and performs Unicode wide parses with distinct error results.
+
+Before the limb implementation, Stark `main` called each wide parser 50 times even though its inputs were immutable literals. Each parser validated each code point, then performed a 1024-bit multiply by 10 and added the digit. The emitted LLVM had separate `mul nuw i1024` and `add nuw i1024`; the unsigned x86-64 loop contained 15 `mul` and 47 `adc` instructions in its arithmetic region. C's explicit 16-limb `unsigned __int128` multiply/add had 16 `mul` and 16 `adc` instructions in the corresponding region. Counts are from static disassembly, not measured executed instruction counts. The prefix optimization removed most wide cutoff comparisons for these inputs, but did not remove the per-digit wide arithmetic or result construction and comparison.
+
+As an algorithm control, a temporary C version accumulates up to 19 validated decimal digits in a `uint64_t`, then performs one 1024-bit limb multiply by the corresponding power of ten and adds the chunk. It checks carry overflow after each chunk and produces the same successful benchmark results; it is not a complete implementation of Stark's error contract. In a separate 200-sample randomized, interleaved run with the same setup:
+
+| C control | Mean µs | Median µs |
+| --- | ---: | ---: |
+| Original byte-input parser | 954.3 | 921.3 |
+| Original 32-bit-input parser | 947.0 | 923.5 |
+| 19-digit chunks, byte input | 598.9 | 582.9 |
+| 19-digit chunks, 32-bit input | 605.9 | 581.2 |
+
+Earlier candidate opportunities, before the targeted IR experiment above:
+
+1. **Batch decimal digits in the Stark wide parsers.** Nineteen decimal digits fit in `u64`; the first 304 digits are within both signed and unsigned 1024-bit magnitudes, so sixteen 19-digit chunks can replace 304 wide multiply/add operations on the guaranteed-safe prefix. Keep digit validation and use the existing checked per-digit path for the remaining digits. Preserve empty input, optional minus, signed minimum, leading zeros, overflow and invalid-format ordering, including invalid characters after an already-overflowing prefix. The C control demonstrates potential on this workload, not the performance or correctness of an unimplemented Stark version; measure the Stark change on matched runtime inputs and boundary cases.
+2. **Improve lowering of wide multiply/add by a small operand.** The targeted IR experiment above has now isolated and measured this opportunity in the actual benchmark.
+3. **Hoist or fold invariant wide literal parses when permitted.** The current code repeats the same pure-looking computations 50 times. Investigate whether effect, termination, immutable-input, error-result and result-identity semantics permit commoning or compile-time evaluation; `finite` alone does not prove absence of side effects. This specifically benefits this literal benchmark and should be assessed separately from runtime-input parsing, since C deliberately uses volatile input pointers.
 
 ## Previous focused rerun (October 26, 2026)
 

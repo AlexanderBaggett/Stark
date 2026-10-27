@@ -6910,6 +6910,63 @@ public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source)
     }
 }
 
+// The checked parsers call this only when the decimal result fits in 1024 bits.
+// Expose a single limb carry chain to LLVM for the multiply and digit addition.
+inline finite law u1024[0 max] MultiplyU1024By10AddDigit(u1024[0 max] value, u8[0 9] digit)
+{
+    stack u1024[0 max] mask = (u1024[0 max])(2 ** 64 - 1);
+    stack mut u128[0 max] carry = (u128[0 max])digit;
+    stack mut u1024[0 max] result = 0;
+    stack u128[0 max] part0 = (u128[0 max])((u64[0 max])(value & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part0 & (u128[0 max])(2 ** 64 - 1)));
+    carry = part0 >> 64;
+    stack u128[0 max] part1 = (u128[0 max])((u64[0 max])((value >> 64) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part1 & (u128[0 max])(2 ** 64 - 1))) << 64;
+    carry = part1 >> 64;
+    stack u128[0 max] part2 = (u128[0 max])((u64[0 max])((value >> 128) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part2 & (u128[0 max])(2 ** 64 - 1))) << 128;
+    carry = part2 >> 64;
+    stack u128[0 max] part3 = (u128[0 max])((u64[0 max])((value >> 192) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part3 & (u128[0 max])(2 ** 64 - 1))) << 192;
+    carry = part3 >> 64;
+    stack u128[0 max] part4 = (u128[0 max])((u64[0 max])((value >> 256) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part4 & (u128[0 max])(2 ** 64 - 1))) << 256;
+    carry = part4 >> 64;
+    stack u128[0 max] part5 = (u128[0 max])((u64[0 max])((value >> 320) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part5 & (u128[0 max])(2 ** 64 - 1))) << 320;
+    carry = part5 >> 64;
+    stack u128[0 max] part6 = (u128[0 max])((u64[0 max])((value >> 384) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part6 & (u128[0 max])(2 ** 64 - 1))) << 384;
+    carry = part6 >> 64;
+    stack u128[0 max] part7 = (u128[0 max])((u64[0 max])((value >> 448) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part7 & (u128[0 max])(2 ** 64 - 1))) << 448;
+    carry = part7 >> 64;
+    stack u128[0 max] part8 = (u128[0 max])((u64[0 max])((value >> 512) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part8 & (u128[0 max])(2 ** 64 - 1))) << 512;
+    carry = part8 >> 64;
+    stack u128[0 max] part9 = (u128[0 max])((u64[0 max])((value >> 576) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part9 & (u128[0 max])(2 ** 64 - 1))) << 576;
+    carry = part9 >> 64;
+    stack u128[0 max] part10 = (u128[0 max])((u64[0 max])((value >> 640) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part10 & (u128[0 max])(2 ** 64 - 1))) << 640;
+    carry = part10 >> 64;
+    stack u128[0 max] part11 = (u128[0 max])((u64[0 max])((value >> 704) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part11 & (u128[0 max])(2 ** 64 - 1))) << 704;
+    carry = part11 >> 64;
+    stack u128[0 max] part12 = (u128[0 max])((u64[0 max])((value >> 768) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part12 & (u128[0 max])(2 ** 64 - 1))) << 768;
+    carry = part12 >> 64;
+    stack u128[0 max] part13 = (u128[0 max])((u64[0 max])((value >> 832) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part13 & (u128[0 max])(2 ** 64 - 1))) << 832;
+    carry = part13 >> 64;
+    stack u128[0 max] part14 = (u128[0 max])((u64[0 max])((value >> 896) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part14 & (u128[0 max])(2 ** 64 - 1))) << 896;
+    carry = part14 >> 64;
+    stack u128[0 max] part15 = (u128[0 max])((u64[0 max])((value >> 960) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part15 & (u128[0 max])(2 ** 64 - 1))) << 960;
+    return result;
+}
+
 public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
 {
     unsafe
@@ -6967,7 +7024,7 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
                 return TextResult<i1024[min max]>.Err(TextError.Overflow);
             }
 
-            value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
+            value = MultiplyU1024By10AddDigit(value, unsignedDigit);
             index += 1;
         }
 
@@ -7052,7 +7109,7 @@ public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source)
                 return TextResult<u1024[0 max]>.Err(TextError.Overflow);
             }
 
-            value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
+            value = MultiplyU1024By10AddDigit(value, unsignedDigit);
             index += 1;
         }
 

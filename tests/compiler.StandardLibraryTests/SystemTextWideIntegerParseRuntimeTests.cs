@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
@@ -11,6 +12,18 @@ public sealed class SystemTextWideIntegerParseRuntimeTests : StandardLibraryTest
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var target)) return;
         var signedLimit = BigInteger.One << 1023;
         var unsignedLimit = BigInteger.One << 1024;
+        var random = new Random(31024);
+        var randomChecks = new StringBuilder();
+        var bytes = new byte[128];
+        for (var i = 0; i < 12; i++)
+        {
+            random.NextBytes(bytes);
+            var unsigned = new BigInteger(bytes, isUnsigned: true, isBigEndian: false);
+            var signed = unsigned % signedLimit;
+            randomChecks.AppendLine($"if (!Unsigned((unicode)\"{unsigned}\", (u1024[0 max]){unsigned})) {{ return 11; }}");
+            randomChecks.AppendLine($"if (!Signed((unicode)\"{signed}\", (i1024[min max]){signed})) {{ return 12; }}");
+            randomChecks.AppendLine($"if (!Signed((unicode)\"-{signed}\", (i1024[min max])(-{signed}))) {{ return 13; }}");
+        }
         var source = """
             import System.Text
             module WideParse
@@ -49,6 +62,7 @@ public sealed class SystemTextWideIntegerParseRuntimeTests : StandardLibraryTest
                 if (!UnsignedError((unicode)"UNSIGNED_LIMIT", System.Text.TextError.Overflow)) { return 8; }
                 if (!SignedError((unicode)"SIGNED_LIMITx", System.Text.TextError.Overflow)) { return 9; }
                 if (!UnsignedError((unicode)"xUNSIGNED_LIMIT", System.Text.TextError.InvalidFormat)) { return 10; }
+                // RANDOM_CASES
                 return 0;
             }
             """.Replace("ZERO_PREFIX", new string('0', 310), StringComparison.Ordinal)
@@ -56,7 +70,8 @@ public sealed class SystemTextWideIntegerParseRuntimeTests : StandardLibraryTest
                 .Replace("UNSIGNED_LIMIT", unsignedLimit.ToString(), StringComparison.Ordinal)
                 .Replace("UNSIGNED_MAX", (unsignedLimit - 1).ToString(), StringComparison.Ordinal)
                 .Replace("SIGNED_LIMIT", signedLimit.ToString(), StringComparison.Ordinal)
-                .Replace("SIGNED_MAX", (signedLimit - 1).ToString(), StringComparison.Ordinal);
+                .Replace("SIGNED_MAX", (signedLimit - 1).ToString(), StringComparison.Ordinal)
+                .Replace("// RANDOM_CASES", randomChecks.ToString(), StringComparison.Ordinal);
         var directory = Directory.CreateTempSubdirectory("stark-wide-parse-");
         try
         {
