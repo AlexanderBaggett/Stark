@@ -581,7 +581,7 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] ownership integration for scope-exit cleanup
   - [x] MIR/SSA/LLVM lowering for destructor calls
 - [x] Implement ASM Functions
-  - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
+  - [x] Establish the v1 `ffi asm(arch) fn` surface for syscall-oriented stdlib shims, deferring methods, generics, and trait/doctrine integration; assembly declarations also support `finite`.
   - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`,
     `clobber(...)`, typed opaque `symbol(...)`, and explicit `memory(...)`
     clauses. Omitted memory remains the conservative compatibility behavior.

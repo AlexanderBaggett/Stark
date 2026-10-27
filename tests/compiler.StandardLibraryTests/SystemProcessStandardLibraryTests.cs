@@ -16,7 +16,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module Demo
 
-                fn i32[min max] ReadCurrentProcess()
+                finite u32[0 max] ReadCurrentProcess()
                 {
                     return System.Process.CurrentId();
                 }
@@ -86,7 +86,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                             stack mut System.Process.ProcessCommand mutableCommand = command;
                             mutableCommand.AddArgument("-c");
                             mutableCommand.AddArgument("printf ok; printf err 1>&2; exit 7");
-                            if (System.Process.CurrentId() < 0)
+                            if ((i32[min max])System.Process.CurrentId() < 0)
                             {
                                 switch (System.Process.RunCaptureWithInput(mutableCommand, "ignored"))
                                 {
@@ -170,7 +170,8 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
 
                 export fn i32[min max] main()
                 {
-                    if (System.Process.CurrentId() <= 0)
+                    stack u32[0 max] id = System.Process.CurrentId();
+                    if (id == 0)
                     {
                         return 3;
                     }
@@ -777,7 +778,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
 
                 fn i32[min max] Run()
                 {
-                    if (System.Process.CurrentId() < 0)
+                    if ((i32[min max])System.Process.CurrentId() < 0)
                     {
                         return 1;
                     }

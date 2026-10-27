@@ -55,7 +55,7 @@ public struct DynamicByteBuffer
     finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow DynamicByteBuffer self);
     fn System.Memory.MemoryStatus Reserve(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] additional);
     fn System.Memory.MemoryStatus WriteByte(mut borrow DynamicByteBuffer self, i8[min max] value);
-    fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count);
+    inline fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count);
     fn System.Memory.MemoryStatus WriteFill(mut borrow DynamicByteBuffer self, i8[min max] value, u64[0 2 ** 63 - 1] count);
     fn bool TryReadByte(mut borrow DynamicByteBuffer self, out i8[min max] value);
     fn void AdvanceRead(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] count);

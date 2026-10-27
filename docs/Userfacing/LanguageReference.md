@@ -3090,6 +3090,10 @@ direction-flag, floating-point-status, and flags clobbers. Ordinary calls and
 function addresses use normal reachability; only explicit `symbol(...)`
 references are rooted through `@llvm.used`.
 
+An assembly declaration can use `finite` in place of `fn` when its author
+guarantees that it returns. This does not make the assembly a `law` or remove
+its side effects.
+
 ### 13.3 Unsafe Operations
 
 Stark's unsafe model marks proof boundaries rather than disabling the language's ordinary safety rules.

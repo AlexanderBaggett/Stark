@@ -7488,7 +7488,7 @@ fn bool TypedGenericInstantiationPlansCaptureTraitBaseTargets()
 [Fact]
 fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
 {
-    stack ascii source = "module Effects.Backend\nfn void Plain() { }\nexport fn void Exported() { }\nfinite law fn void Law(ascii text) { }\ntail finite law inline hot fn i32[min max] TailHot(i32[min max] value) { return value; }\nstrictfp noinline finite law fn f32 Precise(f32 value) { return value; }\nunsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);\n[Backend(Opaque)]\ninline fn void Opaque() { }\nasm fn void Fence();\nstruct Box { finite law fn i32[min max] Method(borrow Box self) { return 1; } }\n";
+    stack ascii source = "module Effects.Backend\nfn void Plain() { }\nexport fn void Exported() { }\nfinite law fn void Law(ascii text) { }\ntail finite law inline hot fn i32[min max] TailHot(i32[min max] value) { return value; }\nstrictfp noinline finite law fn f32 Precise(f32 value) { return value; }\nunsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);\n[Backend(Opaque)]\ninline fn void Opaque() { }\nasm fn void Fence();\nasm finite fn void FiniteFence();\nstruct Box { finite law fn i32[min max] Method(borrow Box self) { return 1; } }\n";
     stack mut TokenStream stream = new();
     stack mut TypedFunctionEffectSummaryTable summaries = new();
     if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
@@ -7504,9 +7504,10 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     stack u32[0 max] nativeSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Native");
     stack u32[0 max] opaqueSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Opaque");
     stack u32[0 max] fenceSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Fence");
+    stack u32[0 max] finiteFenceSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "FiniteFence");
     stack u32[0 max] methodSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Method");
     if (summaries.Count() == 0) { return Fail("function-effects empty table"); }
-    if (summaries.Count() != 9) { return Fail("function-effects backend count before slots"); }
+    if (summaries.Count() != 10) { return Fail("function-effects backend count before slots"); }
     if (plainSlot == 0) { return Fail("function-effects missing Plain"); }
     if (exportedSlot == 0) { return Fail("function-effects missing Exported"); }
     if (lawSlot == 0) { return Fail("function-effects missing Law"); }
@@ -7515,6 +7516,7 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     if (nativeSlot == 0) { return Fail("function-effects missing Native"); }
     if (opaqueSlot == 0) { return Fail("function-effects missing Opaque"); }
     if (fenceSlot == 0) { return Fail("function-effects missing Fence"); }
+    if (finiteFenceSlot == 0) { return Fail("function-effects missing FiniteFence"); }
     if (methodSlot == 0) { return Fail("function-effects missing Method"); }
 
     stack u64[0 2 ** 63 - 1] plain = (u64[0 2 ** 63 - 1])(plainSlot - 1);
@@ -7525,6 +7527,7 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     stack u64[0 2 ** 63 - 1] native = (u64[0 2 ** 63 - 1])(nativeSlot - 1);
     stack u64[0 2 ** 63 - 1] opaque = (u64[0 2 ** 63 - 1])(opaqueSlot - 1);
     stack u64[0 2 ** 63 - 1] fence = (u64[0 2 ** 63 - 1])(fenceSlot - 1);
+    stack u64[0 2 ** 63 - 1] finiteFence = (u64[0 2 ** 63 - 1])(finiteFenceSlot - 1);
     stack u64[0 2 ** 63 - 1] method = (u64[0 2 ** 63 - 1])(methodSlot - 1);
     if (summaries.OwnerKindAt(plain) != TypedFunctionEffectOwnerKind.Declaration) { return Fail("function-effects plain owner"); }
     if (!summaries.HasBodyAt(plain)) { return Fail("function-effects plain body"); }
@@ -7554,6 +7557,8 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     if (!summaries.IsFfiAt(fence)) { return Fail("function-effects asm ffi"); }
     if (summaries.WillReturnAt(fence)) { return Fail("function-effects asm willreturn"); }
     if (summaries.MustProgressAt(fence)) { return Fail("function-effects asm mustprogress"); }
+    if (summaries.FunctionKindAt(finiteFence) != TypedDeclarationFunctionKind.Finite) { return Fail("function-effects finite asm kind"); }
+    if (!summaries.WillReturnAt(finiteFence) || !summaries.MustProgressAt(finiteFence)) { return Fail("function-effects finite asm progress"); }
     if (summaries.OwnerKindAt(method) != TypedFunctionEffectOwnerKind.MemberMethod) { return Fail("function-effects method owner"); }
     if (!summaries.IsPureAt(method)) { return Fail("function-effects method pure"); }
     if (!summaries.ReadsArgumentMemoryAt(method)) { return Fail("function-effects method argument-memory"); }

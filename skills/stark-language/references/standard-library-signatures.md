@@ -901,7 +901,7 @@ Source: `stdlib/src/System/Process.stark`
 Top-level functions:
 
 ```stark
-public fn i32[min max] CurrentId();
+public finite u32[0 max] CurrentId();
 public fn void Exit(i32[min max] code);
 
 public enum ProcessError;
@@ -1035,7 +1035,7 @@ finite law retborrow i8[min max][] ReadSlice(borrow DynamicByteBuffer self);
 finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow DynamicByteBuffer self);
 fn System.Memory.MemoryStatus Reserve(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] additional);
 fn System.Memory.MemoryStatus WriteByte(mut borrow DynamicByteBuffer self, i8[min max] value);
-fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);
+inline fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);
 fn System.Memory.MemoryStatus WriteFill(mut borrow DynamicByteBuffer self, i8[min max] value, u64[0 2 ** 63 - 1] count);
 fn bool TryReadByte(mut borrow DynamicByteBuffer self, out i8[min max] value);
 fn void AdvanceRead(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] count);

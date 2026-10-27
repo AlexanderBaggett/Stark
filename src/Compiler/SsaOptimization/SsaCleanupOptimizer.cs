@@ -2869,7 +2869,7 @@ internal sealed class SsaCleanupOptimizer
         }
     }
 
-    private static IEnumerable<SsaValue> EnumerateInstructionOperands(SsaInstruction instruction)
+    internal static IEnumerable<SsaValue> EnumerateInstructionOperands(SsaInstruction instruction)
     {
         return instruction switch
         {
@@ -2931,7 +2931,7 @@ internal sealed class SsaCleanupOptimizer
         };
     }
 
-    private static IEnumerable<SsaValue> EnumerateTerminatorOperands(SsaTerminator terminator)
+    internal static IEnumerable<SsaValue> EnumerateTerminatorOperands(SsaTerminator terminator)
     {
         if (terminator.Condition is not null)
         {

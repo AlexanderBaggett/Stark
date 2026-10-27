@@ -51,7 +51,7 @@ internal struct MacOSThreadContext
 }
 
 internal unsafe ffi fn void exit(i32[min max] status);
-internal unsafe ffi fn i32[min max] getpid();
+internal unsafe ffi finite i32[min max] getpid();
 internal unsafe ffi varargs fn i32[min max] open(rawptr<i8[min max]> path, i32[min max] flags);
 internal unsafe ffi fn i32[min max] close(i32[min max] fileDescriptor);
 internal unsafe ffi fn i32[min max] fsync(i32[min max] fileDescriptor);
@@ -748,7 +748,7 @@ internal fn void ExitProcess(i32[min max] code)
     }
 }
 
-internal fn i32[min max] ProcessId()
+internal finite i32[min max] ProcessId()
 {
     unsafe
     {

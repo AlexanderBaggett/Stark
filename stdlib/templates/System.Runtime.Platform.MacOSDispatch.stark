@@ -17,7 +17,7 @@ internal fn void ExitProcess(i32[min max] code)
     }
 }
 
-internal fn i32[min max] ProcessId()
+internal finite i32[min max] ProcessId()
 {
     return System.Runtime.Platform.MacOS.ProcessId();
 }

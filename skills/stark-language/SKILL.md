@@ -1050,7 +1050,7 @@ internal unsafe ffi asm(x86_64) fn i64[min max] Syscall1(
 }
 ```
 
-Use `unsafe ffi asm(arch) fn`, `in("reg") parameter`, `out("reg") return`,
+Use `unsafe ffi asm(arch) fn` or `unsafe ffi asm(arch) finite`, `in("reg") parameter`, `out("reg") return`,
 and `clobber(...)`. Supported value families are integer scalars, floating
 point scalars, raw pointers, and `void` returns. Calls require unsafe context.
 Avoid non-return `out("reg") parameter` in source asm bodies; it parses but is

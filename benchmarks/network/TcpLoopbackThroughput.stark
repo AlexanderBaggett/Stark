@@ -11,7 +11,7 @@ const Iterations = 256;
 const ExpectedBytes = 1048576;
 
 fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
-    stack i32[min max] processId = System.Process.CurrentId();
+    stack u32[0 max] processId = System.Process.CurrentId();
     stack mut u32[0 max] positiveProcessId = 0;
     if (processId > 0) {
         positiveProcessId = (u32[0 max])processId;

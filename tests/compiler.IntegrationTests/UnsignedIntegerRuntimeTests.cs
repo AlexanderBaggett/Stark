@@ -5,6 +5,40 @@ namespace compiler.IntegrationTests;
 public sealed class UnsignedIntegerRuntimeTests
 {
     [Fact]
+    public async Task BoundedLoopCountersPreserveRuntimeBehavior()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            export fn i32[min max] main()
+            {
+                stack mut i32[min max] count = 0;
+                for willexit (stack mut u24[0 66000] i = 0; i < 66000; i += 1)
+                {
+                    count += 1;
+                }
+
+                stack mut i64[min max] sum = 0;
+                for willexit (stack mut u24[0 66000] i = 0; i < 66000; i += 1)
+                {
+                    sum += (i64[min max])i;
+                }
+
+                if (count != 66000 || sum != 2177967000) { return 1; }
+                return 0;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task UnsignedSmallMediumAndWideIntegerOperationsRunCorrectly()
     {
         var exitCode = await CompileAndRunExitCodeAsync(

@@ -46,9 +46,9 @@ unsafe fn i64[min max] RawSyscall1(i64[min max] number, i64[min max] value)
 
 Current v1 assembly declarations must use:
 
-- `unsafe ffi asm(arch) fn`
+- `unsafe ffi asm(arch) fn` or `unsafe ffi asm(arch) finite`
 - no generics
-- no `finite`, `law`, `inline`, `noinline`, `hot`, `cold`, or `strictfp`
+- no `law`, `inline`, `noinline`, `hot`, `cold`, or `strictfp`
 - a single string assembly template body
 
 The body is not a Stark statement block. It is one string passed to LLVM inline

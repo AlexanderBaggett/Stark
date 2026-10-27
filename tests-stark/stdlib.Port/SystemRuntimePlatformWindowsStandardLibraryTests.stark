@@ -412,7 +412,7 @@ module Demo
 
 export unsafe fn i32[min max] main()
 {
-    stack i32[min max] id = System.Process.CurrentId();
+    stack u32[0 max] id = System.Process.CurrentId();
     if (id == 0)
     {
         return 2;
@@ -1086,7 +1086,7 @@ module Demo
 
 export unsafe fn i32[min max] main()
 {
-    stack i32[min max] id = System.Process.CurrentId();
+    stack u32[0 max] id = System.Process.CurrentId();
     if (id == 0)
     {
         return 2;

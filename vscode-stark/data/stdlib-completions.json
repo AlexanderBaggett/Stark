@@ -9463,11 +9463,11 @@
     "kind": "function",
     "module": "System.Process",
     "source": "stdlib/src/System/Process.stark",
-    "detail": "public fn i32[min max] CurrentId()",
-    "signature": "public fn i32[min max] CurrentId()",
+    "detail": "public finite u32[0 max] CurrentId()",
+    "signature": "public finite u32[0 max] CurrentId()",
     "visibility": "public",
     "qualifiedName": "System.Process.CurrentId",
-    "documentation": "```stark\npublic fn i32[min max] CurrentId();\n```\n\nSystem.Process\n\nVisibility: public"
+    "documentation": "```stark\npublic finite u32[0 max] CurrentId();\n```\n\nSystem.Process\n\nVisibility: public"
   },
   {
     "label": "Exit",
@@ -10191,11 +10191,11 @@
     "module": "System.Runtime.Buffer",
     "owner": "DynamicByteBuffer",
     "source": "stdlib/src/System/Runtime/Buffer.stark",
-    "detail": "fn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source)",
-    "signature": "fn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source)",
+    "detail": "inline fn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source)",
+    "signature": "inline fn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source)",
     "visibility": "public",
     "qualifiedName": "System.Runtime.Buffer.DynamicByteBuffer.WriteSlice",
-    "documentation": "```stark\nfn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);\n```\n\nSystem.Runtime.Buffer.DynamicByteBuffer\n\nVisibility: public"
+    "documentation": "```stark\ninline fn System.Memory.MemoryStatus WriteSlice( mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);\n```\n\nSystem.Runtime.Buffer.DynamicByteBuffer\n\nVisibility: public"
   },
   {
     "label": "FixedByteBuffer4096",

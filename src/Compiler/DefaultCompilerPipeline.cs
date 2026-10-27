@@ -741,14 +741,14 @@ public static class DefaultCompilerPipeline
 
                 return new FunctionEffectProfile(
                     Name: name,
-                    Kind: StarkFunctionKind.Fn,
+                    Kind: function.Kind,
                     ReadsArgumentMemory: touchesMemory,
                     IsPure: false,
                     NoSync: false,
                     NoFree: false,
                     NoUnwind: true,
-                    WillReturn: false,
-                    MustProgress: false,
+                    WillReturn: function.Kind == StarkFunctionKind.Finite,
+                    MustProgress: function.Kind == StarkFunctionKind.Finite,
                     UseFastCallingConvention: false,
                     IsFfi: true,
                     IsVarargs: false,
@@ -5418,13 +5418,15 @@ public static class DefaultCompilerPipeline
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
 
             var folded = new SsaIntegerArithmeticFolder().Optimize(ssa);
-            if (ReferenceEquals(folded, ssa))
+            var propagated = ReferenceEquals(folded, ssa)
+                ? ssa
+                : new SsaConstantPropagator().Optimize(new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded));
+            var widened = new SsaLoopCounterWidening().Optimize(propagated);
+            if (ReferenceEquals(widened, ssa))
             {
                 return;
             }
 
-            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded);
-            var propagated = new SsaConstantPropagator().Optimize(cleaned);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
@@ -5432,8 +5434,8 @@ public static class DefaultCompilerPipeline
                 semanticValidation,
                 loadedModules,
                 specializationCodegenStrategy);
-            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, widened);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(widened));
         }
     }
 

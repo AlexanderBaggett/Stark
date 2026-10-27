@@ -775,7 +775,7 @@ internal finite law u32[0 max] BuildNormalFunctionEffectFlags(
     return flags;
 }
 
-internal finite law u32[0 max] BuildAsmFunctionEffectFlags(bool hasBody, bool touchesMemory)
+internal finite law u32[0 max] BuildAsmFunctionEffectFlags(bool hasBody, bool touchesMemory, bool isFinite)
 {
     stack mut u32[0 max] flags = TypedFunctionEffectFlagNoUnwind() | TypedFunctionEffectFlagFfi() | TypedFunctionEffectFlagAsm();
     if (hasBody)
@@ -786,6 +786,11 @@ internal finite law u32[0 max] BuildAsmFunctionEffectFlags(bool hasBody, bool to
     if (touchesMemory)
     {
         flags = flags | TypedFunctionEffectFlagReadsArgumentMemory();
+    }
+
+    if (isFinite)
+    {
+        flags = flags | TypedFunctionEffectFlagWillReturn() | TypedFunctionEffectFlagMustProgress();
     }
 
     return flags;
@@ -959,8 +964,9 @@ internal fn System.Memory.MemoryStatus AppendTypedFunctionEffectForDeclaration(
     stack mut TypedDeclarationFunctionKind storedKind = declarations.FunctionKindAt(index);
     if (isAsm)
     {
-        storedKind = TypedDeclarationFunctionKind.Fn;
-        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature));
+        stack bool isFinite = storedKind == TypedDeclarationFunctionKind.Finite;
+        if (!isFinite) { storedKind = TypedDeclarationFunctionKind.Fn; }
+        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature), isFinite);
     }
     else
     {
@@ -1075,8 +1081,9 @@ internal fn System.Memory.MemoryStatus AppendTypedFunctionEffectForMember(
     stack mut TypedDeclarationFunctionKind storedKind = members.FunctionKindAt(index);
     if (isAsm)
     {
-        storedKind = TypedDeclarationFunctionKind.Fn;
-        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature));
+        stack bool isFinite = storedKind == TypedDeclarationFunctionKind.Finite;
+        if (!isFinite) { storedKind = TypedDeclarationFunctionKind.Fn; }
+        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature), isFinite);
     }
     else
     {
