@@ -101,6 +101,7 @@ internal fn bool StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelp
     stack ascii dynamicWriteFillBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteFill");
 
     if (!Contains(dynamicWriteSliceBody, "@__stark_inline_clone_System_Memory_InitializeBytesDisjoint")
+        && !Contains(dynamicWriteSliceBody, "@System_Memory_InitializeBytesDisjoint(")
         && !Contains(dynamicWriteSliceBody, "@llvm.memcpy.p0.p0.i64"))
     {
         return false;

@@ -590,7 +590,7 @@ unsafe fn FileBuffering DefaultBufferingForHandle(rawptr<i8[min max]> handle)
     return FileBuffering.Full;
 }
 
-unsafe fn File CreateFile(rawptr<i8[min max]> handle, System.Text.Encoding encoding, FileBuffering buffering)
+unsafe fn File CreateFile(rawptr<i8[min max]> handle, System.Text.Encoding encoding, FileBuffering buffering, bool readOnly)
 {
     stack mut bool bufferWrites = true;
     stack mut bool flushOnLine = false;
@@ -615,7 +615,10 @@ unsafe fn File CreateFile(rawptr<i8[min max]> handle, System.Text.Encoding encod
         Encoding = encoding,
         BufferWrites = bufferWrites,
         FlushOnLine = flushOnLine,
-        WriteBufferLength = 0
+        WriteBufferLength = 0,
+        BufferReads = readOnly && buffering == FileBuffering.Full,
+        ReadBufferPosition = 0,
+        ReadBufferLength = 0
     };
 }
 
@@ -643,6 +646,10 @@ public struct File
     bool FlushOnLine;
     i64[min max] WriteBufferLength;
     i8[min max][8192] WriteBufferStorage;
+    bool BufferReads;
+    i64[min max] ReadBufferPosition;
+    i64[min max] ReadBufferLength;
+    i8[min max][4096] ReadBufferStorage;
 
     inline fn bool IsOpen(borrow File self)
     {
@@ -881,7 +888,33 @@ public struct File
             return 0;
         }
 
-        return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
+        if (!self.BufferReads || (self.ReadBufferPosition == self.ReadBufferLength && count >= 4096))
+        {
+            return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
+        }
+
+        if (self.ReadBufferPosition == self.ReadBufferLength)
+        {
+            stack i64[min max] readCount = System.Runtime.Platform.ReadFileBytesFast(&self.ReadBufferStorage[0], 4096, self.Handle);
+            if (readCount <= 0)
+            {
+                return readCount;
+            }
+
+            self.ReadBufferPosition = 0;
+            self.ReadBufferLength = readCount;
+        }
+
+        stack i64[min max] available = self.ReadBufferLength - self.ReadBufferPosition;
+        stack mut u64[0 2 ** 63 - 1] copied = count;
+        if (copied > (u64[0 2 ** 63 - 1])available)
+        {
+            copied = (u64[0 2 ** 63 - 1])available;
+        }
+
+        CopyAsciiBytes(buffer, &self.ReadBufferStorage[self.ReadBufferPosition], (u32[0 max])copied);
+        self.ReadBufferPosition += (i64[min max])copied;
+        return (i64[min max])copied;
     }
 
     internal unsafe inline fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count)
@@ -913,7 +946,24 @@ public struct File
                 return -1;
             }
 
-            return System.Runtime.Platform.SeekFile(self.Handle, offset, SeekOriginCode(origin));
+            stack mut i64[min max] platformOffset = offset;
+            if (origin == SeekOrigin.Current)
+            {
+                stack i64[min max] unread = self.ReadBufferLength - self.ReadBufferPosition;
+                if (offset < (i64[min max])(-(2 ** 63)) + unread)
+                {
+                    return -1;
+                }
+                platformOffset -= unread;
+            }
+
+            stack i64[min max] result = System.Runtime.Platform.SeekFile(self.Handle, platformOffset, SeekOriginCode(origin));
+            if (result >= 0)
+            {
+                self.ReadBufferPosition = 0;
+                self.ReadBufferLength = 0;
+            }
+            return result;
         }
     }
 
@@ -1514,7 +1564,7 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.E
             case OpenHandleResult.Err(var error):
                 return System.IO.IOResult<File>.Err(error);
             case OpenHandleResult.Ok(var handle):
-                return FileResult(CreateFile(handle, encoding, DefaultBufferingForHandle(handle)));
+                return FileResult(CreateFile(handle, encoding, DefaultBufferingForHandle(handle), mode == FileMode.Read));
         }
     }
 }
@@ -1528,7 +1578,7 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.E
             case OpenHandleResult.Err(var error):
                 return System.IO.IOResult<File>.Err(error);
             case OpenHandleResult.Ok(var handle):
-                return FileResult(CreateFile(handle, encoding, buffering));
+                return FileResult(CreateFile(handle, encoding, buffering, mode == FileMode.Read));
         }
     }
 }

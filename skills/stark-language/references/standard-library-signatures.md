@@ -801,7 +801,7 @@ public inline fn MemoryStatus AppendFillBytes(mut borrow dynamic i8[min max] sto
 public inline fn MemoryStatus AppendCodePointsDisjoint(mut borrow dynamic i32[min max] storage, borrow i32[min max][] source, u64[0 2 ** 63 - 1] count);
 public fn MemoryStatus AppendCodePoints(mut borrow dynamic i32[min max] storage, borrow i32[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(storage, source);
 public inline fn MemoryStatus AppendFillCodePoints(mut borrow dynamic i32[min max] storage, i32[min max] value, u64[0 2 ** 63 - 1] count);
-public inline finite MemoryStatus InitializeBytesDisjoint(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
+public inlinehint finite MemoryStatus InitializeBytesDisjoint(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite MemoryStatus InitializeBytes(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite void CopyBytesDisjointInfallible(borrow i8[min max][] source, borrow mut i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite MemoryStatus CopyBytesDisjoint(borrow i8[min max][] source, borrow mut i8[min max][] destination, u64[0 2 ** 63 - 1] count);

@@ -8495,11 +8495,11 @@
     "kind": "function",
     "module": "System.Memory",
     "source": "stdlib/src/System/Memory.stark",
-    "detail": "public inline finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count)",
-    "signature": "public inline finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count)",
+    "detail": "public inlinehint finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count)",
+    "signature": "public inlinehint finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count)",
     "visibility": "public",
     "qualifiedName": "System.Memory.InitializeBytesDisjoint",
-    "documentation": "```stark\npublic inline finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);\n```\n\nSystem.Memory\n\nVisibility: public"
+    "documentation": "```stark\npublic inlinehint finite MemoryStatus InitializeBytesDisjoint( borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);\n```\n\nSystem.Memory\n\nVisibility: public"
   },
   {
     "label": "InitializeCodePoints",

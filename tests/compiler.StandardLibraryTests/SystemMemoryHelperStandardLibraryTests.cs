@@ -892,7 +892,10 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var initializeCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %MemoryStatus @InitializeCodePointsDisjoint(");
         var fillBytesBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %MemoryStatus @FillBytes(");
 
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", appendBytesDisjointBody, StringComparison.Ordinal);
+        Assert.True(
+            appendBytesDisjointBody.Contains("@llvm.memcpy.p0.p0.i64", StringComparison.Ordinal)
+            || appendBytesDisjointBody.Contains("@InitializeBytesDisjoint(", StringComparison.Ordinal),
+            "The byte append must use the bulk-copy intrinsic directly or through the initialization helper.");
         Assert.Contains("@llvm.memcpy.p0.p0.i64", appendCodePointsDisjointBody, StringComparison.Ordinal);
         Assert.Contains("@llvm.memset.p0.i64", appendFillBytesBody, StringComparison.Ordinal);
         Assert.Contains("@llvm.memcpy.p0.p0.i64", initializeBytesDisjointBody, StringComparison.Ordinal);
@@ -982,7 +985,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 sourceLlvm,
                 "define fastcc noundef %MemoryStatus @FillBytes(");
 
-            string[] copyAttributes = ["readonly captures(none)", "noalias captures(none)", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] copyAttributes = ["readonly captures(none)", "noalias captures(none)", "nounwind willreturn mustprogress", "inlinehint"];
             string[] fillAttributes = ["noalias captures(none)", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
             AssertContainsAll(copyDeclaration, copyAttributes);
             AssertContainsAll(copyDefinition, copyAttributes);
@@ -1106,23 +1109,10 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
 
     private static string ExtractLlvmDeclaration(string llvm, string functionSignatureFragment)
     {
-        var signatureIndex = llvm.IndexOf(functionSignatureFragment, StringComparison.Ordinal);
-        Assert.True(signatureIndex >= 0, $"Unable to find LLVM declaration fragment '{functionSignatureFragment}'.");
-
-        var start = llvm.LastIndexOf("\ndeclare ", signatureIndex, StringComparison.Ordinal);
-        if (start < 0)
-        {
-            start = llvm.LastIndexOf("declare ", signatureIndex, StringComparison.Ordinal);
-        }
-
-        Assert.True(start >= 0, $"Unable to find LLVM declaration start for '{functionSignatureFragment}'.");
-
-        var end = llvm.IndexOf('\n', signatureIndex);
-        if (end < 0)
-        {
-            end = llvm.Length;
-        }
-
-        return llvm[start..end];
+        var declaration = llvm.Split('\n').FirstOrDefault(line =>
+            line.StartsWith("declare ", StringComparison.Ordinal)
+            && line.Contains(functionSignatureFragment, StringComparison.Ordinal));
+        Assert.True(declaration is not null, $"Unable to find LLVM declaration for '{functionSignatureFragment}'.");
+        return declaration!;
     }
 }

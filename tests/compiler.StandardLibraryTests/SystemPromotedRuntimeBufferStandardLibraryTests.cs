@@ -357,6 +357,7 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
 
         Assert.True(
             dynamicWriteSliceBody.Contains("@__stark_inline_clone_System_Memory_InitializeBytesDisjoint", StringComparison.Ordinal)
+            || dynamicWriteSliceBody.Contains("@System_Memory_InitializeBytesDisjoint(", StringComparison.Ordinal)
             || dynamicWriteSliceBody.Contains("@llvm.memcpy.p0.p0.i64", StringComparison.Ordinal),
             "Expected DynamicByteBuffer.WriteSlice to use a tail-region copy helper or a direct memcpy.");
         Assert.Contains("@llvm.memset.p0.i64", dynamicWriteFillBody, StringComparison.Ordinal);

@@ -6945,6 +6945,13 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
         {
             cutlim = 8;
         }
+        // Any 307 decimal digits fit in the signed 1024-bit magnitude.
+        // Account for the optional leading minus when comparing the index.
+        stack mut i64[min max] uncheckedDigitEnd = 307;
+        if (negative)
+        {
+            uncheckedDigitEnd = 308;
+        }
         stack mut u1024[0 max] value = 0;
         while willexit (index < length)
         {
@@ -6955,7 +6962,7 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
             }
 
             stack u8[0 9] unsignedDigit = (u8[0 9])digit;
-            if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim))
+            if (index >= uncheckedDigitEnd && (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)))
             {
                 return TextResult<i1024[min max]>.Err(TextError.Overflow);
             }
@@ -7039,7 +7046,8 @@ public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source)
             }
 
             stack u8[0 9] unsignedDigit = (u8[0 9])digit;
-            if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim))
+            // Any 308 decimal digits fit in an unsigned 1024-bit value.
+            if (index >= 308 && (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)))
             {
                 return TextResult<u1024[0 max]>.Err(TextError.Overflow);
             }

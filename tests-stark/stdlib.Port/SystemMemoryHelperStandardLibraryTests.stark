@@ -131,7 +131,8 @@ internal fn bool StdLibSourceMemoryModuleLowersRuntimeDisjointAppendFastPathsImp
 // inspects per-function LLVM bodies for AppendBytesDisjoint /
 // AppendCodePointsDisjoint / AppendFillBytes / InitializeBytesDisjoint /
 // InitializeCodePointsDisjoint / FillBytes, asserting each lowers its hot tail
-// to @llvm.memcpy / @llvm.memset and contains no `_phi = phi` scalar fallback.
+// to @llvm.memcpy / @llvm.memset, directly or through the byte initialization
+// helper, and contains no `_phi = phi` scalar fallback.
 // The Stark port compiles the same on-disk module through the host-test bridge
 // and scopes each assertion to the helper body.
 internal fn bool StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsicsImpl()
@@ -152,7 +153,8 @@ internal fn bool StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsicsImp
     stack ascii initializeCodePointsDisjointBody = LlvmDefinitionBody(llvm, "InitializeCodePointsDisjoint");
     stack ascii fillBytesBody = LlvmDefinitionBody(llvm, "FillBytes");
 
-    return Contains(appendBytesDisjointBody, "@llvm.memcpy.p0.p0.i64")
+    return (Contains(appendBytesDisjointBody, "@llvm.memcpy.p0.p0.i64")
+            || Contains(appendBytesDisjointBody, "@InitializeBytesDisjoint("))
         && Contains(appendCodePointsDisjointBody, "@llvm.memcpy.p0.p0.i64")
         && Contains(appendFillBytesBody, "@llvm.memset.p0.i64")
         && Contains(initializeBytesDisjointBody, "@llvm.memcpy.p0.p0.i64")
@@ -169,7 +171,8 @@ internal fn bool StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsicsImp
 // manifest and compares the imported helper *declarations* (InitializeBytesDisjoint
 // / FillBytes) against the from-source helper *definitions*, asserting both
 // carry the same LLVM attribute fragments (readonly captures(none), noalias captures(none),
-// memory(write, argmem: readwrite), nounwind willreturn mustprogress, alwaysinline).
+// memory(write, argmem: readwrite), nounwind willreturn mustprogress, and each
+// helper's declared inline preference).
 // The compile-only bridge cannot run the packaging CLI nor diff a packaged
 // declaration against a source definition, so the same on-disk source module is
 // compiled directly and the helper definition headers are checked for the
@@ -190,7 +193,7 @@ internal fn bool PackagedMemoryHelpersPreserveImportedAttributesImpl()
     return Contains(copyHeader, "readonly captures(none)")
         && Contains(copyHeader, "noalias captures(none)")
         && Contains(copyHeader, "nounwind willreturn mustprogress")
-        && Contains(copyHeader, "alwaysinline")
+        && Contains(copyHeader, "inlinehint")
         && Contains(fillHeader, "noalias captures(none)")
         && Contains(fillHeader, "memory(write, argmem: readwrite)")
         && Contains(fillHeader, "nounwind willreturn mustprogress")
