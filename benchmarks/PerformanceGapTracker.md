@@ -4,6 +4,12 @@ This is a working list for investigation, not a performance claim. The initial e
 
 C criterion: Stark average > C average. Rust criterion: Stark average >= Rust average. The Rust `rust-fixed-batch` variant is not the canonical Rust row.
 
+## Next investigation: ArenaAllocator
+
+`benchmarks/allocator/ArenaAllocator` is the clearest next candidate in the latest suite: its 100-run process averages were Stark 24673 µs, C 6578 µs, and Rust 6840 µs. With C = 1.000, Stark = **3.751** and Rust = **1.040**. It meets both tracking criteria, and the gap is much larger than the recorded Stark / C / Rust spreads of 14.2% / 9.6% / 15.4%. This is one fixed-order run on the current passively cooled, temperature-capped machine; reproduce it with interleaved samples before attributing a cause. [Results](results/limb-suite-20261027/results-20261027T225351Z.niUTuQ.csv) · [machine](results/limb-suite-20261027/machine-20261027T225351Z.Juq0NN.txt).
+
+The three sources perform the same round count, item count and checksum self-test, but their allocation strategies differ. Stark uses an arena-backed dynamic array and arena-allocated pairs; C allocates one block per round and bumps offsets within it; Rust uses two preallocated `Vec`s. These differences matter when interpreting the ratios. Next, inspect the generated LLVM IR and machine code and the actual allocator paths for each implementation, then use matched allocation controls to separate allocation cost from loop and code-generation differences. No cause has been established yet.
+
 ## Full benchmark suite (October 27, 2026)
 
 The suite ran 74 runnable Stark scenarios with one warmup and 100 process-level samples per language. Two compile-only surfaces were skipped by the harness. Groups ran sequentially on the passively cooled, temperature-capped Ryzen 7 5700G. The network group initially timed out in the restricted sandbox; its loopback cases completed when retried with local socket access. Results are fixed-order averages, and observed spreads are often larger than the differences shown.
