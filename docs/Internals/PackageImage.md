@@ -250,6 +250,16 @@ facts, compile package-owned native sources when present, add package-owned
 library search directories, and pass package-owned native libraries/link
 arguments to the final link.
 
+`NativeDependencies.ImplicitLibraries` optionally identifies entries in `Libraries`
+that the compiler inferred rather than the package author requested. Currently
+the math-intrinsic scan records `m` this way. Consumers preserve the conservative
+requirement until final linking: on Linux and FreeBSD, only this inferred math
+dependency uses scoped `--as-needed`, so optimized-away math does not load libm.
+Explicit libraries and link arguments retain their requested behavior. Packages
+without this optional fact retain the existing unconditional library behavior.
+The fact survives normalization, binary package encoding, content identities and
+source-free SDK consumption; the package image remains its authoritative source.
+
 When a dependency is not available through `pkg-config`, package authors can
 spell the same information explicitly with `--native-include-dir`,
 `--native-library-dir`, `--native-library`, and `--native-link-arg`. This keeps

@@ -68,7 +68,8 @@ internal sealed record StarkPackageNativeDependencyManifest(
     IReadOnlyList<string>? LibraryDirectories = null,
     IReadOnlyList<string>? Libraries = null,
     IReadOnlyList<string>? LinkArguments = null,
-    IReadOnlyList<string>? PkgConfigPackages = null);
+    IReadOnlyList<string>? PkgConfigPackages = null,
+    IReadOnlyList<string>? ImplicitLibraries = null);
 
 internal sealed record StarkPackageModuleManifest(
     string ModuleName,

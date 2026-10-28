@@ -191,6 +191,12 @@ internal static partial class PackageImageLoader
             "STK7115",
             diagnostics,
             manifestLocation);
+        ValidateNativeDependencyList(
+            manifest.NativeDependencies?.ImplicitLibraries,
+            "implicit native library",
+            "STK7113",
+            diagnostics,
+            manifestLocation);
         TargetCompatibilityValidator.ValidateManifestTarget(manifest, manifestPath, diagnostics);
         ValidateManifestBuildProfile(manifest.BuildProfile, diagnostics, manifestLocation);
         diagnostics.AddRange(ValidateManifestIdentity(manifest, manifestPath));
