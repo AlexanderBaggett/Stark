@@ -1345,7 +1345,8 @@ public fn System.Memory.MemoryStatus TryJoin(
         }
 }
 
-public fn System.Memory.MemoryStatus TryJoinConst(
+// Keep const input pointers and lengths visible to the caller's copy specialization.
+public inline fn System.Memory.MemoryStatus TryJoinConst(
     mut borrow System.Text.OwnedAscii destination,
     const ascii left,
     const ascii right)
