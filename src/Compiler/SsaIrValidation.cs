@@ -1567,6 +1567,7 @@ internal sealed class SsaIrValidator
                 ValidateIntegerValue(function, makeSlice.Length, "slice length", location);
                 ValidateRawPointerValue(function, makeSlice.Pointer, "slice pointer", location);
                 ValidateSliceResultType(function, makeSlice.Type, makeSlice.Pointer.Type.ElementType, "slice creation from pointer", location);
+                ValidateSourceStorageType(function, makeSlice.SourceStorageType, makeSlice.Type.ElementType, location);
                 break;
             case SsaDynamicStorageAllocationRValue allocation:
                 ValidateValue(function, allocation.Capacity, valueDefinitions, location);
@@ -1721,6 +1722,7 @@ internal sealed class SsaIrValidator
                 ValidatePointerElementShape(function, elementAddress.Address.Type, elementAddress.AggregateType, "element address base", location);
                 ValidateRawPointerType(function, elementAddress.Type, "element address result", location);
                 ValidateElementAddressResult(function, elementAddress, location);
+                ValidateSourceStorageType(function, elementAddress.SourceStorageType, elementAddress.Type.ElementType, location);
                 break;
             case SsaSliceElementAddressRValue sliceElementAddress:
                 ValidateValue(function, sliceElementAddress.Slice, valueDefinitions, location);
@@ -3408,6 +3410,17 @@ internal sealed class SsaIrValidator
         }
 
         ValidatePointerElementShape(function, elementAddress.Type, aggregateType, "element address result", location);
+    }
+
+    private void ValidateSourceStorageType(SsaFunction function, StarkTypeSymbol? sourceType,
+        StarkTypeSymbol? elementType, SourceLocation? location)
+    {
+        if (sourceType is null) return;
+        if (sourceType.Kind != StarkTypeKind.Dynamic || sourceType.ElementType is null || elementType is null
+            || !HaveSameLlvmValueShape(sourceType.ElementType, elementType))
+        {
+            Report(function, location, "structured storage access requires a dynamic source with a matching element type.");
+        }
     }
 
     private void ValidateRawPointerValue(

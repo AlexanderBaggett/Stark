@@ -5805,7 +5805,8 @@ internal sealed partial class MidLevelIrLowerer
                     start,
                     ConstantIndex: null,
                     AddressType(elementType, dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType)),
-                    $"{target.Text}[{startText}]"),
+                    $"{target.Text}[{startText}]",
+                    SourceStorageType: target.Type),
                 "addr");
             if (elementAddress is null)
             {
@@ -5828,7 +5829,8 @@ internal sealed partial class MidLevelIrLowerer
                         elementAddress,
                         length,
                         sliceType,
-                        $"{target.Text}[{startText}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]"),
+                        $"{target.Text}[{startText}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]",
+                        SourceStorageType: target.Type),
                     "slice");
             }
 

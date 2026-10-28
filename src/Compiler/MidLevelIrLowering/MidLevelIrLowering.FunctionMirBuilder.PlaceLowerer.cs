@@ -1363,7 +1363,8 @@ internal sealed partial class MidLevelIrLowerer
                                 segment.IndexOperand,
                                 ConstantIndex: null,
                                 AddressType(segment.SegmentType, currentAddressIsMutable),
-                                $"{dynamicValue.Text}[{segment.IndexOperand.Text}]"),
+                                $"{dynamicValue.Text}[{segment.IndexOperand.Text}]",
+                                SourceStorageType: dynamicValue.Type),
                             "addr");
                         currentType = segment.SegmentType;
                         currentValue = null;

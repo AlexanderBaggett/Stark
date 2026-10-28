@@ -1036,7 +1036,8 @@ internal sealed class SsaConstantPropagator
                 RewriteValue(makeSlice.Pointer, replacements),
                 RewriteValue(makeSlice.Length, replacements),
                 makeSlice.Type,
-                makeSlice.Text),
+                makeSlice.Text,
+                makeSlice.SourceStorageType),
             SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                 RewriteValue(allocation.Capacity, replacements),
                 allocation.Type,
@@ -1105,7 +1106,8 @@ internal sealed class SsaConstantPropagator
                 elementAddress.Index is null ? null : RewriteValue(elementAddress.Index, replacements),
                 elementAddress.ConstantIndex,
                 elementAddress.Type,
-                elementAddress.Text),
+                elementAddress.Text,
+                elementAddress.SourceStorageType),
             SsaSliceElementAddressRValue sliceElementAddress => new SsaSliceElementAddressRValue(
                 RewriteValue(sliceElementAddress.Slice, replacements),
                 RewriteValue(sliceElementAddress.Index, replacements),

@@ -4913,6 +4913,20 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private static SsaValueFactModel AnalyzeSsaValueFacts(
+        CompilerPassContext context,
+        SsaIrModule ssa,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>>? directCallParameterEffects = null)
+    {
+        // Recomputing facts after a rewrite must use the same call effects as the
+        // original analysis; otherwise even read-only calls erase storage facts.
+        directCallParameterEffects ??= SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+            context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation),
+            context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules),
+            context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy));
+        return new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(ssa);
+    }
+
     private sealed class SsaValueFactsPass : ICompilerPass
     {
         public string Id => "value-facts";
@@ -4934,7 +4948,7 @@ public static class DefaultCompilerPipeline
                 semanticValidation,
                 loadedModules,
                 specializationCodegenStrategy);
-            var facts = new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(ssa);
+            var facts = AnalyzeSsaValueFacts(context, ssa, directCallParameterEffects);
             context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, facts);
             context.Logs.Info(
                 category: "optimization",
@@ -5112,7 +5126,7 @@ public static class DefaultCompilerPipeline
             }
 
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, specialized));
         }
     }
 
@@ -5143,7 +5157,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(specialized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5179,7 +5193,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated, directCallParameterEffects));
         }
     }
 
@@ -5214,7 +5228,7 @@ public static class DefaultCompilerPipeline
                 loadedModules,
                 specializationCodegenStrategy);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated, directCallParameterEffects));
         }
     }
 
@@ -5239,7 +5253,7 @@ public static class DefaultCompilerPipeline
             }
 
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, specialized));
         }
     }
 
@@ -5267,7 +5281,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(pruned);
             var optimized = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(optimized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, optimized));
         }
     }
 
@@ -5295,7 +5309,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5323,7 +5337,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5350,7 +5364,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5378,7 +5392,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5398,7 +5412,7 @@ public static class DefaultCompilerPipeline
 
             var shaped = new SsaCleanupOptimizer(enableSelectPredication: true).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, shaped);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(shaped));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, shaped));
         }
     }
 
@@ -5435,7 +5449,7 @@ public static class DefaultCompilerPipeline
                 loadedModules,
                 specializationCodegenStrategy);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, widened);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(widened));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, widened, directCallParameterEffects));
         }
     }
 

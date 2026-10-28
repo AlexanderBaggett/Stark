@@ -8179,7 +8179,8 @@ internal sealed partial class MidLevelIrLowerer
                     start,
                     ConstantIndex: null,
                     AddressType(elementType, dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType)),
-                    $"{target.Text}[{indexExpressions[0].GetText()}]"),
+                    $"{target.Text}[{indexExpressions[0].GetText()}]",
+                    SourceStorageType: target.Type),
                 "addr");
             if (elementAddress is null)
             {
@@ -8202,7 +8203,8 @@ internal sealed partial class MidLevelIrLowerer
                         elementAddress,
                         length,
                         sliceType,
-                        $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]"),
+                        $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]",
+                        SourceStorageType: target.Type),
                     "slice");
             }
 

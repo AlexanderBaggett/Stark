@@ -52,6 +52,8 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
     private readonly IReadOnlyDictionary<string, ImportedInlineBodyPlan> _closedWorldImportedInlineBodies;
+    private readonly IReadOnlyDictionary<string, string> _deadPayloadOrigins;
+    private readonly IReadOnlyDictionary<string, IReadOnlySet<string>> _deadPayloadParameters;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
     private readonly bool _isOptimizedBuild;
     private readonly bool _emitFallbackDeclarationsForSourceBodies;
@@ -176,6 +178,45 @@ internal sealed class LlvmIrEmitter
             enumLayoutModel.Layouts,
             targetInfo,
             _publishedConcreteLayouts);
+        _deadPayloadOrigins = new Dictionary<string, string>(StringComparer.Ordinal);
+        _deadPayloadParameters = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        if (isOptimizedBuild)
+        {
+            var roots = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var declaration in syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            {
+                var name = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration);
+                roots.Add(name);
+                roots.Add($"{syntaxModel.ModuleName}.{name}");
+            }
+            var payloadPlan = new SsaDeadPayloadSpecializer(typeModel, _allFunctionEffects, ssaValueFacts,
+                GetAllocatorSizeType() == "i32" ? 32 : 64).Optimize(ssa, roots);
+            _deadPayloadOrigins = payloadPlan.Origins;
+            _deadPayloadParameters = payloadPlan.PayloadParameters;
+            if (!ReferenceEquals(payloadPlan.Module, ssa))
+            {
+                ssa = payloadPlan.Module;
+                _ssa = ssa;
+                var signatures = new Dictionary<string, TypedFunctionSignature>(_allFunctionSignatures, StringComparer.Ordinal);
+                var effects = new Dictionary<string, FunctionEffectProfile>(_allFunctionEffects, StringComparer.Ordinal);
+                var abis = new Dictionary<string, AbiFunctionSignature>(_allAbiFunctions, StringComparer.Ordinal);
+                foreach (var (clone, origin) in payloadPlan.Origins)
+                {
+                    signatures[clone] = signatures[origin] with { Name = clone, SourceName = clone, Visibility = StarkVisibility.Module };
+                    effects[clone] = effects[origin] with { Name = clone };
+                    abis[clone] = abis[origin] with { Name = clone, SymbolName = clone, SourceName = clone };
+                }
+                _allFunctionSignatures = signatures;
+                _allFunctionEffects = effects;
+                _allAbiFunctions = abis;
+                _ssaFunctionsByName.Clear();
+                foreach (var function in ssa.Functions)
+                {
+                    _ssaFunctionsByName.TryAdd(function.Name, function);
+                    if (function.HasBody) _ssaFunctionBodyNames.Add(function.Name);
+                }
+            }
+        }
         _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
         _ownedFunctionDefinitionFilter = BuildOwnedFunctionDefinitionFilter();
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
@@ -553,6 +594,19 @@ internal sealed class LlvmIrEmitter
         }
 
         var emittedDeclarationSymbols = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (clone, origin) in _deadPayloadOrigins)
+        {
+            builder.AppendLine($"; private dead-payload specialization of {origin}");
+            // Keep the source identity for typed records, value facts and debug
+            // locations, just as imported law clones do. Only the ABI symbol is
+            // private; scalar values and CFG identities have not changed.
+            EmitFunctionDefinition(builder, internalize: true, availableExternally: false,
+                _allFunctionSignatures[origin], _allAbiFunctions[clone], _allFunctionEffects[origin],
+                GetFunctionMemoryEffects(origin, hasBody: true), _ssaFunctionsByName[clone] with { Name = origin },
+                GetParameterEffects(clone, hasBody: true), resolveCallAbi);
+            builder.AppendLine();
+            handledFunctionNames.Add(clone);
+        }
         foreach (var abiFunction in _abiModel.Functions.Values
                      .Where(function => !handledFunctionNames.Contains(function.Name)
                                         )
@@ -2761,6 +2815,15 @@ internal sealed class LlvmIrEmitter
 
     private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetParameterEffects(string functionName, bool hasBody)
     {
+        if (_deadPayloadOrigins.TryGetValue(functionName, out var origin))
+        {
+            // The private consumer cannot observe the discarded initialization.
+            // Extent, alignment, disjointness and capture facts remain valid.
+            return GetParameterEffects(origin, hasBody: true)?.ToDictionary(static pair => pair.Key,
+                pair => _deadPayloadParameters[functionName].Contains(pair.Key)
+                    ? pair.Value with { InitializationRanges = null, GuaranteedWriteOnly = false }
+                    : pair.Value, StringComparer.Ordinal);
+        }
         Dictionary<string, ParameterMemoryEffectSummary>? parameterEffects = null;
         if (hasBody
             && HasSsaBody(functionName)
@@ -2861,6 +2924,10 @@ internal sealed class LlvmIrEmitter
 
     private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
     {
+        if (_deadPayloadOrigins.TryGetValue(functionName, out var origin))
+        {
+            return GetFunctionMemoryEffects(origin, hasBody: true);
+        }
         if (hasBody
             && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation))

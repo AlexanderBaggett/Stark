@@ -8,6 +8,23 @@ public sealed class SsaIrValidationTests
     private static readonly StarkTypeSymbol I32 = StarkTypeSymbols.Integer(32);
     private static readonly StarkTypeSymbol UnsizedInteger = new(StarkTypeKind.Integer, "integer");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StructuredStorageOriginMustMatchTheAccessElementType(bool slice)
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var address = new SsaGlobalAddressValue("values", I32, pointer);
+        var wrongOrigin = StarkTypeSymbols.Dynamic(StarkTypeSymbols.Bool);
+        SsaRValue operation = slice
+            ? new SsaMakeSliceFromPointerRValue(address, new SsaIntegerConstant(1, I32),
+                StarkTypeSymbols.Slice(I32), "view", wrongOrigin)
+            : new SsaElementAddressRValue(address, I32, new SsaIntegerConstant(0, I32), null,
+                pointer, "element", wrongOrigin);
+        var diagnostics = Validate(BuildVoidFunction([new SsaValueInstruction("v0", operation)]));
+        AssertDiagnostic(diagnostics, "STK5002", "structured storage access", "matching element type");
+    }
+
     [Fact]
     public void UndefinedSsaValueReferenceFailsBeforeLlvmEmission()
     {

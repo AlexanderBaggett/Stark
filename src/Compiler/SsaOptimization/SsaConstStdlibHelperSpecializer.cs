@@ -18,6 +18,40 @@ internal sealed class SsaConstStdlibHelperSpecializer
         _targetInfo = targetInfo;
     }
 
+    internal static IEnumerable<string> EnumeratePotentialConstRetargets(
+        string functionName, string moduleName, TypeCheckModel types)
+    {
+        string targetModule;
+        string targetName;
+        if (TryResolveConstPathVariant(functionName, moduleName, out var path, out _))
+        {
+            targetModule = "System.IO.Path";
+            targetName = path.SimpleName;
+        }
+        else if (TryResolveConstTextVariant(functionName, moduleName, out var text))
+        {
+            targetModule = "System.Text";
+            targetName = text.TargetSimpleName;
+        }
+        else
+        {
+            yield break;
+        }
+
+        var count = types.Functions.GetValueOrDefault(functionName)?.Parameters.Count;
+        foreach (var name in EnumerateRetargetNameCandidates(functionName, moduleName, targetModule, targetName))
+        {
+            if (types.Functions.TryGetValue(name, out var direct) && (count is null || direct.Parameters.Count == count))
+            {
+                yield return direct.Name;
+            }
+            foreach (var overload in types.Overloads.GetValueOrDefault(name) ?? [])
+            {
+                if (count is null || overload.Parameters.Count == count) yield return overload.Name;
+            }
+        }
+    }
+
     public SsaIrModule Optimize(
         SsaIrModule module,
         SsaValueFactModel facts)

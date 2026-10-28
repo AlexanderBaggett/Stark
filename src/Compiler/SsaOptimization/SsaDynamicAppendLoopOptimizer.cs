@@ -197,7 +197,8 @@ internal sealed class SsaDynamicAppendLoopOptimizer
                 startLength,
                 ConstantIndex: null,
                 match.ElementAddress.Type,
-                $"{match.ElementAddress.Text}:tail"),
+                $"{match.ElementAddress.Text}:tail",
+                match.ElementAddress.SourceStorageType),
             dataStore.Location));
 
         var finalLengthName = AllocateName(cloneContext.UsedNames, "dynamic_append_final_length");

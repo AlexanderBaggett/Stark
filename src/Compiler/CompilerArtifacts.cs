@@ -5397,7 +5397,8 @@ public sealed record MidLevelIrMakeSliceFromPointerRValue(
     MidLevelIrOperand Pointer,
     MidLevelIrOperand Length,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrDynamicStorageAllocationRValue(
@@ -5500,7 +5501,8 @@ public sealed record MidLevelIrElementAddressRValue(
     MidLevelIrOperand? Index,
     int? ConstantIndex,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrSliceElementAddressRValue(
@@ -6006,7 +6008,8 @@ public sealed record SsaMakeSliceFromPointerRValue(
     SsaValue Pointer,
     SsaValue Length,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaDynamicStorageAllocationRValue(
@@ -6111,7 +6114,8 @@ public sealed record SsaElementAddressRValue(
     SsaValue? Index,
     int? ConstantIndex,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaSliceElementAddressRValue(

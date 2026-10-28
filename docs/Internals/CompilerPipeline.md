@@ -154,10 +154,10 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    This pass uses typed constant-initializer facts to replace fixed-array `const` global element reads and helper-shaped const slice loads with SSA constants, including package-image-backed initializers whose producer source is not present. It then reruns SSA cleanup and constant propagation when it changes the graph. At `O0` and `Og`, it is bypassed.
 28. `value-facts`
    Computes SSA value facts for later optimization and LLVM emission.
-   This pass records integer ranges, known bits, boolean constants, nullability, pointer alignment, length/capacity/initialized-prefix ranges, text literal payloads, bounded raw-pointer regions, dynamic-storage regions, and block-entry/block-exit fact maps. It also publishes a summary log entry so optimization decisions can be inspected.
+   This pass records integer ranges, known bits, boolean constants, nullability, pointer alignment, length/capacity/initialized-prefix ranges, text literal payloads, bounded raw-pointer regions, dynamic-storage regions, and block-entry/block-exit fact maps. Recomputations after later SSA rewrites use the same semantic direct-call parameter effects, including available package and specialization summaries, so read-only calls do not discard established storage facts. It also publishes a summary log entry so optimization decisions can be inspected.
 29. `dynamic-storage-ssa`
    Optimizes dynamic storage operations using SSA value and region facts.
-   This pass removes provably no-op reserves, folds provably successful `TryReserve`/`TryReserveCapacity` calls, removes frees for storage proven to have no backing allocation, and preserves dynamic-storage facts across calls only when semantic summaries prove the call cannot observe or mutate the owner. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
+   This pass removes provably no-op reserves, folds provably successful `TryReserve`/`TryReserveCapacity` calls, removes frees for storage proven to have no backing allocation, and preserves dynamic-storage facts across calls when semantic parameter summaries prove the argument is neither written nor captured. Read-only observation alone does not invalidate those facts. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
 30. `dynamic-append-loop-ssa`
    Rewrites canonical append-through-length loops into tail initialization loops.
    This pass recognizes loops that append through a dynamic storage `Length`, hoists stable length/data facts into the preheader, writes through a tail pointer plus induction index, and commits the final length once on loop exit. It refuses loops where the initialized value observes the changing length, then reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
@@ -222,7 +222,22 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    consumes the closed-world optimization model for caller-sensitive
    law-path specialization decisions, can materialize internal root-side clones
    of eligible imported law bodies and imported inline bodies for closed-world
-   optimization, emits optimized raw-pointer and slice loops as
+   optimization, proves whole-function liveness of fresh runtime-owned scalar
+   dynamic payloads separately from their headers, and privately specializes
+   supported call chains to discard writes only when no observable payload read or
+   escape remains. Header fields, reserve/error paths and destruction stay in
+   the graph. Unknown calls, ambiguous merges, unsupported pointer operations,
+   arena backing and observed payloads keep their general implementations.
+   Private bodies retain the original typed/value-fact identity and ABI
+   metadata; discarded output initialization is not promised to LLVM.
+   Structured dynamic indexing/slicing retains its source storage type through
+   MIR, SSA rewrites and common-subexpression matching. Arbitrary nonzero raw
+   pointer offsets and explicit raw slices cannot inherit that storage contract.
+   Imported typed generic package bodies regenerate the same origin facts.
+   Binary reachability retains possible const-helper retarget bodies and their
+   dependency closure using the specializer's authoritative target map, so
+   later specialization does not lose them at the binary/inspection boundary.
+   The emitter also emits optimized raw-pointer and slice loops as
    `memcpy`, `memmove`, or `memset` when the source contracts prove the shape,
    emits imported Stark declarations using the ABI model, and qualifies non-FFI
    symbols for library builds. Declaration-only emission is reserved for true
