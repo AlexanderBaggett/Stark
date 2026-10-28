@@ -602,6 +602,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var runtimeAllocationAttributes = trapsOnFailure
             ? "noalias nonnull noundef align 16"
             : "noalias noundef";
+        const int arenaBlockLinkBytes = 8;
+        var arenaSlabPayloadBytes = RuntimeAllocatorBucketSizes[^1] - arenaBlockLinkBytes;
 
         builder.AppendLine(
             $"define linkonce_odr hidden {returnAttributes} @{helperName}(ptr {CapturesNoneAttribute} %frame, {AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
@@ -645,9 +647,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         builder.AppendLine("allocate_size:");
-        builder.AppendLine("  %use_slab = icmp ult i64 %minimum_payload_raw, 4096");
-        builder.AppendLine("  %payload_size = select i1 %use_slab, i64 4096, i64 %minimum_payload_raw");
-        builder.AppendLine("  %block_size = add i64 %payload_size, 8");
+        // Include the arena's block link in the largest cached runtime bucket.
+        builder.AppendLine($"  %use_slab = icmp ult i64 %minimum_payload_raw, {arenaSlabPayloadBytes}");
+        builder.AppendLine($"  %payload_size = select i1 %use_slab, i64 {arenaSlabPayloadBytes}, i64 %minimum_payload_raw");
+        builder.AppendLine($"  %block_size = add i64 %payload_size, {arenaBlockLinkBytes}");
         builder.AppendLine($"  %block = call {runtimeAllocationAttributes} ptr @{runtimeAllocatorName}({AllocatorSizeType} noundef %block_size, {AllocatorSizeType} noundef 16)");
         if (!trapsOnFailure)
         {
@@ -659,7 +662,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         builder.AppendLine("  %old_head = load ptr, ptr %head_slot, align 8");
         builder.AppendLine("  store ptr %old_head, ptr %block, align 8");
-        builder.AppendLine("  %data = getelementptr i8, ptr %block, i64 8");
+        builder.AppendLine($"  %data = getelementptr i8, ptr %block, i64 {arenaBlockLinkBytes}");
         builder.AppendLine($"  %data_int = ptrtoint ptr %data to {AllocatorSizeType}");
         builder.AppendLine("  %new_biased = add i64 %data_int, %alignment_minus_one");
         builder.AppendLine("  %new_aligned_int = and i64 %new_biased, %mask");
