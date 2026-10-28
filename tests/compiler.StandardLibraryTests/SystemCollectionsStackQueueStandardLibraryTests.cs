@@ -238,6 +238,34 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
                 return 4;
             }
 
+            {
+                stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> wrapped = new();
+                if (!Ok(wrapped.Reserve(0)) || !Ok(wrapped.Reserve(8))) { return 17; }
+                for willexit (stack mut u8[0 8] i = 0; i < 8; i += 1)
+                {
+                    if (!Ok(wrapped.Enqueue(i))) { return 18; }
+                }
+                stack mut u32[0 2 ** 31 - 1] value = 0;
+                for willexit (stack mut u8[0 6] i = 0; i < 6; i += 1)
+                {
+                    if (!wrapped.TryDequeue(value) || value != i) { return 19; }
+                }
+                if (!Ok(wrapped.Reserve(0)) || !Ok(wrapped.Reserve(6))) { return 20; }
+                for willexit (stack mut u8[0 20] i = 8; i < 20; i += 1)
+                {
+                    if (!Ok(wrapped.Enqueue(i))) { return 21; }
+                }
+                if (!TooLarge(wrapped.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))) || wrapped.Count() != 14)
+                {
+                    return 22;
+                }
+                for willexit (stack mut u8[0 20] i = 6; i < 20; i += 1)
+                {
+                    if (!wrapped.TryDequeue(value) || value != i) { return 23; }
+                }
+                if (!wrapped.IsEmpty()) { return 24; }
+            }
+
             stack mut i64[min max] checksum = 0;
             while willexit (!experimental.IsEmpty())
             {
@@ -339,6 +367,60 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
             if (DropCounter != 25)
             {
                 return 16;
+            }
+
+            {
+                stack mut System.Collections.Queue<Resource> growingDrops = new();
+                if (!Ok(growingDrops.Enqueue(new Resource() { Value = 1 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 2 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 3 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 4 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 5 })))
+                {
+                    return 25;
+                }
+                growingDrops.Clear();
+                if (DropCounter != 40)
+                {
+                    return 26;
+                }
+            }
+            if (DropCounter != 40)
+            {
+                return 27;
+            }
+
+            {
+                stack mut System.Collections.Queue<Resource> ring = new();
+                if (!Ok(ring.Enqueue(new Resource() { Value = 1 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 2 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 3 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 4 })))
+                {
+                    return 28;
+                }
+                stack mut Resource first = new Resource() { Value = 0 };
+                stack mut Resource second = new Resource() { Value = 0 };
+                if (!ring.TryDequeue(first) || !ring.TryDequeue(second)
+                    || first.Value != 1 || second.Value != 2)
+                {
+                    return 29;
+                }
+                if (!Ok(ring.Enqueue(new Resource() { Value = 5 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 6 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 7 })))
+                {
+                    return 30;
+                }
+                if (ring.Peek().Value != 3 || ring.Count() != 5)
+                {
+                    return 31;
+                }
+                ring.Clear();
+                if (DropCounter != 65)
+                {
+                    return 32;
+                }
             }
 
             return 0;

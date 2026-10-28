@@ -623,15 +623,21 @@ internal struct SparseSlots<T>
         }
 
         stack rawmutptr<T> nextItems = (rawmutptr<T>)nextAllocation.Pointer;
-        for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < length; offset += 1)
+        stack mut u64[0 2 ** 63 - 1] firstCount = length;
+        stack u64[0 2 ** 63 - 1] remaining = (u64[0 2 ** 63 - 1])(oldCapacity - oldHead);
+        if (firstCount > remaining)
         {
-            stack mut u64[0 2 ** 63 - 1] sourceIndex = (u64[0 2 ** 63 - 1])(oldHead + offset);
-            if (sourceIndex >= oldCapacity)
-            {
-                sourceIndex = (u64[0 2 ** 63 - 1])(sourceIndex - oldCapacity);
-            }
+            firstCount = remaining;
+        }
 
-            *(&nextItems[offset]) = *(&oldItems[sourceIndex]);
+        for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < firstCount; offset += 1)
+        {
+            *(&nextItems[offset]) = *(&oldItems[(u64[0 2 ** 63 - 1])(oldHead + offset)]);
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] offset = firstCount; offset < length; offset += 1)
+        {
+            *(&nextItems[offset]) = *(&oldItems[(u64[0 2 ** 63 - 1])(offset - firstCount)]);
         }
 
         if (self.Allocation.Pointer != null)
@@ -700,6 +706,11 @@ public struct Queue<T>
 
     fn System.Memory.MemoryStatus Reserve(mut borrow Queue<T> self, u64[0 2 ** 63 - 1] additional)
     {
+        if (self.Length <= self.Items.Capacity() && additional <= self.Items.Capacity() - self.Length)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
         stack mut u64[0 2 ** 63 - 1] nextCapacity = self.Items.Capacity();
         stack System.Memory.MemoryStatus capacityStatus =
             ComputeContiguousGrowthCapacity(self.Length, self.Items.Capacity(), additional, 4, nextCapacity);
