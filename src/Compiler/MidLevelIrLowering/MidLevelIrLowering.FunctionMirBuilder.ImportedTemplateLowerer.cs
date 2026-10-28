@@ -6527,7 +6527,7 @@ internal sealed partial class MidLevelIrLowerer
                             ?? ResolveIndirectArgumentLocal(parameterType, argument)
                         : null);
                     functionPointerIndirectAddresses.Add(indirectArgumentAddress);
-                    RecordMoveFromOperand(argument, parameterType);
+                    RecordCallArgumentMove(argument, parameterType);
                 }
 
                 call = new LoweredIndirectCallParts(
@@ -6611,7 +6611,7 @@ internal sealed partial class MidLevelIrLowerer
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -6782,7 +6782,7 @@ internal sealed partial class MidLevelIrLowerer
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(

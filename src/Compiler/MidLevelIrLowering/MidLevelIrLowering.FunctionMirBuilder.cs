@@ -9193,7 +9193,7 @@ internal sealed partial class MidLevelIrLowerer
                     ? ResolveIndirectArgumentLocal(parameterType, lowered) ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -9432,7 +9432,7 @@ internal sealed partial class MidLevelIrLowerer
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -9521,7 +9521,7 @@ internal sealed partial class MidLevelIrLowerer
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -10407,7 +10407,7 @@ internal sealed partial class MidLevelIrLowerer
                 indirectArgumentAddresses.Add(indirectArgumentLocal is null
                     ? indirectArgumentAddress
                     : null);
-                RecordMoveFromOperand(receiverOperand, receiverParameterType);
+                RecordCallArgumentMove(receiverOperand, receiverParameterType);
             }
 
             for (var index = 0; index < Math.Min(loweredExplicitArguments.Count, explicitParameterCount); index++)
@@ -10430,7 +10430,7 @@ internal sealed partial class MidLevelIrLowerer
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             if (signature.IsVarargs)

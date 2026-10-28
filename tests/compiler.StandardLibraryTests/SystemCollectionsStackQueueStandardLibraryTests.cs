@@ -171,6 +171,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         module App
 
         static mut i32[min max] DropCounter = 0;
+        static mut i32[min max] Drops1 = 0;
+        static mut i32[min max] Drops2 = 0;
+        static mut i32[min max] Drops3 = 0;
+        static mut i32[min max] Drops4 = 0;
+        static mut i32[min max] Drops5 = 0;
+        static mut i32[min max] Drops6 = 0;
+        static mut i32[min max] Drops7 = 0;
 
         fn bool Ok(MemoryStatus status)
         {
@@ -197,6 +204,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         fn void Bump(i32[min max] value)
         {
             DropCounter = DropCounter + value;
+            if (value == 1) { Drops1 += 1; }
+            if (value == 2) { Drops2 += 1; }
+            if (value == 3) { Drops3 += 1; }
+            if (value == 4) { Drops4 += 1; }
+            if (value == 5) { Drops5 += 1; }
+            if (value == 6) { Drops6 += 1; }
+            if (value == 7) { Drops7 += 1; }
             return;
         }
 
@@ -208,6 +222,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
             {
                 Bump(self.Value);
             }
+        }
+
+        noinline fn void WriteResource(out Resource output)
+        {
+            stack mut Resource produced = new Resource() { Value = 8 };
+            output = produced;
+            return;
         }
 
         export fn i32[min max] main()
@@ -390,6 +411,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
                 return 27;
             }
 
+            Drops1 = 0;
+            Drops2 = 0;
+            Drops3 = 0;
+            Drops4 = 0;
+            Drops5 = 0;
+            Drops6 = 0;
+            Drops7 = 0;
             {
                 stack mut System.Collections.Queue<Resource> ring = new();
                 if (!Ok(ring.Enqueue(new Resource() { Value = 1 }))
@@ -417,10 +445,53 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
                     return 31;
                 }
                 ring.Clear();
-                if (DropCounter != 65)
+                if (DropCounter != 65 || Drops1 != 0 || Drops2 != 0
+                    || Drops3 != 1 || Drops4 != 1 || Drops5 != 1 || Drops6 != 1 || Drops7 != 1)
                 {
                     return 32;
                 }
+            }
+            if (DropCounter != 68 || Drops1 != 1 || Drops2 != 1
+                || Drops3 != 1 || Drops4 != 1 || Drops5 != 1 || Drops6 != 1 || Drops7 != 1)
+            {
+                return 33;
+            }
+            {
+                stack mut Resource output = new Resource() { Value = 0 };
+                WriteResource(output);
+                if (output.Value != 8)
+                {
+                    return 34;
+                }
+            }
+            if (DropCounter != 76)
+            {
+                return 35;
+            }
+            {
+                stack mut Resource output = new Resource() { Value = 0 };
+                stack fnptr<fn void(out Resource)> writer = WriteResource;
+                writer(output);
+                if (output.Value != 8)
+                {
+                    return 36;
+                }
+            }
+            if (DropCounter != 84)
+            {
+                return 37;
+            }
+            {
+                stack mut System.Collections.Queue<Resource> empty = new();
+                stack mut Resource output = new Resource() { Value = 9 };
+                if (empty.TryDequeue(output) || output.Value != 9)
+                {
+                    return 38;
+                }
+            }
+            if (DropCounter != 93)
+            {
+                return 39;
             }
 
             return 0;

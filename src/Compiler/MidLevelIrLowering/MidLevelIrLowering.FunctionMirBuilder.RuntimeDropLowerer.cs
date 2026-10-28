@@ -21,6 +21,14 @@ internal sealed partial class MidLevelIrLowerer
             _runtimeDropLowerer.RecordMoveFromOperand(operand, destinationType);
         }
 
+        private void RecordCallArgumentMove(MidLevelIrOperand? operand, StarkTypeSymbol parameterType)
+        {
+            if (parameterType.InitializationKind != StarkInitializationKind.Out)
+            {
+                RecordMoveFromOperand(operand, parameterType);
+            }
+        }
+
         private bool RequiresRuntimeDrop(StarkTypeSymbol type)
         {
             return _runtimeDropLowerer.RequiresRuntimeDrop(type);
