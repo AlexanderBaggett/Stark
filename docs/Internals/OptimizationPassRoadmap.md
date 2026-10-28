@@ -101,7 +101,9 @@ immutability, and emit sound invariant/readonly/capture facts.
           literal `System.IO.Path` facts and projections. The pass precomputes
           `GetFacts`/`GetConstFacts` field values and folds literal
           `Extension`/`BaseName`/`DirectoryName` calls using target-aware path
-          separator semantics.
+          separator semantics. The producer matches the current nine-field
+          `PathFacts` contract, including root length and absolute status,
+          Windows drive-relative/absolute paths and trimmed root-only paths.
     - [x] Retarget literal or permanently const-provenance path writes from
           snapshot-capable helpers to const variants (`TryJoinConst`,
           `JoinConst`, `TryNormalizeSeparatorsConst`,
@@ -436,8 +438,10 @@ existing value/range facts and retains source identities for clone metadata.
 Structured storage origins survive MIR/SSA rewrites and common-subexpression
 matching; arbitrary raw offsets and explicit raw slices decline this proof.
 Binary reachability keeps possible const-helper replacement bodies using the
-same retarget map as specialization. `PathRepeatedSmallOps` now eliminates its
-25,000 repeated payload writes; LLVM vectorizes the remaining checksum loop.
+same retarget map as specialization. `PathRepeatedSmallOps` eliminates its
+25,000 repeated payload writes. Restoring the complete nine-field literal
+`PathFacts` producer also lets LLVM eliminate the checksum loop; the checked
+reserve, allocation-failure result and real cleanup remain.
 
 General field-sensitive interprocedural summaries remain open. The owner's header
 and its backing allocation are distinct memory regions: reading `Length` or

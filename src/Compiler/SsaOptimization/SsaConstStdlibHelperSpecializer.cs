@@ -752,10 +752,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
             "Path" => new SsaStringConstant(facts.PathLiteralText, field.Type),
             "Length" => new SsaIntegerConstant(facts.Length, field.Type),
             "End" => new SsaIntegerConstant(facts.End, field.Type),
+            "RootLength" => new SsaIntegerConstant(facts.RootLength, field.Type),
             "SegmentStart" => new SsaIntegerConstant(facts.SegmentStart, field.Type),
             "ExtensionStart" => new SsaIntegerConstant(facts.ExtensionStart, field.Type),
             "DirectoryLength" => new SsaIntegerConstant(facts.DirectoryLength, field.Type),
             "HasExtension" => new SsaBoolConstant(facts.HasExtension),
+            "Absolute" => new SsaBoolConstant(facts.Absolute),
             _ => throw new InvalidOperationException(
                 $"Unsupported System.IO.Path.PathFacts field '{field.Name}' in const stdlib helper specialization.")
         };
@@ -770,7 +772,7 @@ internal sealed class SsaConstStdlibHelperSpecializer
             || string.IsNullOrWhiteSpace(type.NamedType)
             || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
             || !IsPathFactsTypeName(namedType.Name)
-            || namedType.OrderedFields.Count != 7)
+            || namedType.OrderedFields.Count != 9)
         {
             return false;
         }
@@ -779,10 +781,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
         if (!IsAsciiField(fields[0], "Path")
             || !IsIntegerField(fields[1], "Length", 64)
             || !IsIntegerField(fields[2], "End", 64)
-            || !IsIntegerField(fields[3], "SegmentStart", 64)
-            || !IsIntegerField(fields[4], "ExtensionStart", 64)
-            || !IsIntegerField(fields[5], "DirectoryLength", 64)
-            || !IsBoolField(fields[6], "HasExtension"))
+            || !IsIntegerField(fields[3], "RootLength", 64)
+            || !IsIntegerField(fields[4], "SegmentStart", 64)
+            || !IsIntegerField(fields[5], "ExtensionStart", 64)
+            || !IsIntegerField(fields[6], "DirectoryLength", 64)
+            || !IsBoolField(fields[7], "HasExtension")
+            || !IsBoolField(fields[8], "Absolute"))
         {
             return false;
         }
@@ -806,6 +810,19 @@ internal sealed class SsaConstStdlibHelperSpecializer
         var separators = ResolvePathSeparators(_targetInfo);
         var end = pathBytes.Count;
         var length = end;
+        var windows = IsWindowsTarget(_targetInfo);
+        var rootLength = 0;
+        if (windows && length >= 2
+            && (pathBytes[0] is >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z')
+            && pathBytes[1] == (byte)':')
+        {
+            rootLength = length >= 3 && IsDirectorySeparator(pathBytes[2], separators) ? 3 : 2;
+        }
+        if (rootLength == 0 && length > 0 && IsDirectorySeparator(pathBytes[0], separators))
+        {
+            rootLength = 1;
+        }
+        var absolute = windows ? rootLength > 2 : rootLength > 0;
         while (end > 1 && IsDirectorySeparator(pathBytes[end - 1], separators))
         {
             end--;
@@ -828,12 +845,24 @@ internal sealed class SsaConstStdlibHelperSpecializer
             separator--;
         }
 
-        var segmentStart = separator + 1;
-        var directoryLength = separator == 0
-            ? 1
-            : separator > 0
-                ? separator
-                : 0;
+        // Match GetFacts/GetConstFacts, including roots longer than the
+        // trimmed end (for example Windows "C:/"). Keep every field instead
+        // of reconstructing root information from a later projection.
+        var segmentStart = Math.Max(separator + 1, rootLength);
+        var directoryLength = 0;
+        if (end <= rootLength && rootLength > 0)
+        {
+            directoryLength = rootLength;
+            segmentStart = end;
+        }
+        else if (separator >= 0)
+        {
+            directoryLength = separator < rootLength ? rootLength : separator == 0 ? 1 : separator;
+        }
+        else if (rootLength > 0)
+        {
+            directoryLength = rootLength;
+        }
 
         var extensionStart = end - 1;
         var hasExtension = false;
@@ -852,10 +881,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
             pathLiteralText,
             length,
             end,
+            rootLength,
             segmentStart,
             extensionStart,
             directoryLength,
-            hasExtension);
+            hasExtension,
+            absolute);
         return true;
     }
 
@@ -1444,6 +1475,10 @@ internal sealed class SsaConstStdlibHelperSpecializer
     private static bool IsWindowsTarget(LlvmTargetInfo? targetInfo)
     {
         var triple = targetInfo?.Triple;
+        if (string.IsNullOrWhiteSpace(triple))
+        {
+            return OperatingSystem.IsWindows();
+        }
         return !string.IsNullOrWhiteSpace(triple)
                && (triple.Contains("windows", StringComparison.OrdinalIgnoreCase)
                    || triple.Contains("win32", StringComparison.OrdinalIgnoreCase)
@@ -1526,10 +1561,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
         string PathLiteralText,
         BigInteger Length,
         BigInteger End,
+        BigInteger RootLength,
         BigInteger SegmentStart,
         BigInteger ExtensionStart,
         BigInteger DirectoryLength,
-        bool HasExtension)
+        bool HasExtension,
+        bool Absolute)
     {
         public static PathFactsValue Empty() => new(
             TextLiteralDecoder.EncodeStringLiteral(string.Empty),
@@ -1538,6 +1575,8 @@ internal sealed class SsaConstStdlibHelperSpecializer
             BigInteger.Zero,
             BigInteger.Zero,
             BigInteger.Zero,
+            BigInteger.Zero,
+            false,
             false);
     }
 

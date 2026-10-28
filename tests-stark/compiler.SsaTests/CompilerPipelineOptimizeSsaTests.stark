@@ -2829,11 +2829,11 @@ internal fn bool ConstStdlibHelperSpecializationPrecomputesPathFactsForLiteralIm
 {
     // PORT-NOTE: original asserts no GetConstFacts call survives and inspects the
     // SsaInsertFieldRValue field stores for the precomputed PathFacts values
-    // (Length 14, End 14, SegmentStart 6, ExtensionStart 10, DirectoryLength 5,
-    // HasExtension true); reduced to a successful compile through
-    // specialize-const-stdlib-helpers-ssa plus a text signal that GetConstFacts is
-    // gone.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    // (Length 14, End 14, RootLength 0, SegmentStart 6, ExtensionStart 10,
+    // DirectoryLength 5, HasExtension true, Absolute false); reduced to a
+    // successful compile and no value-producing GetConstFacts call in the
+    // optimized artifact. The unused function declaration may still remain.
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p3-conststdlib-precomputes-path-facts-literal",
         raw"""
 module System.IO.Path
@@ -2843,10 +2843,12 @@ public struct PathFacts
     internal ascii Path;
     internal i64[min max] Length;
     internal i64[min max] End;
+    internal i64[min max] RootLength;
     internal i64[min max] SegmentStart;
     internal i64[min max] ExtensionStart;
     internal i64[min max] DirectoryLength;
     internal bool HasExtension;
+    internal bool Absolute;
 }
 
 public finite law PathFacts GetConstFacts(const ascii path);
@@ -2857,7 +2859,7 @@ fn PathFacts Run()
 }
 """,
         "specialize-const-stdlib-helpers-ssa");
-    return Succeeds(compiled) && !SsaContains(compiled, "GetConstFacts");
+    return Succeeds(compiled) && !SsaContains(compiled, " = GetConstFacts(");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.ConstStdlibHelperSpecializationPrecomputesLiteralPathProjections.
@@ -2927,10 +2929,12 @@ public struct PathFacts
     internal ascii Path;
     internal i64[min max] Length;
     internal i64[min max] End;
+    internal i64[min max] RootLength;
     internal i64[min max] SegmentStart;
     internal i64[min max] ExtensionStart;
     internal i64[min max] DirectoryLength;
     internal bool HasExtension;
+    internal bool Absolute;
 }
 
 public finite law PathFacts GetFacts(ascii path);
@@ -3268,10 +3272,12 @@ public struct PathFacts
     internal ascii Path;
     internal i64[min max] Length;
     internal i64[min max] End;
+    internal i64[min max] RootLength;
     internal i64[min max] SegmentStart;
     internal i64[min max] ExtensionStart;
     internal i64[min max] DirectoryLength;
     internal bool HasExtension;
+    internal bool Absolute;
 }
 
 public finite law PathFacts GetConstFacts(const ascii path);

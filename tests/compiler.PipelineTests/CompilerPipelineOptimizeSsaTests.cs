@@ -3939,10 +3939,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetConstFacts(const ascii path);
@@ -4038,10 +4040,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetFacts(ascii path);
@@ -4408,10 +4412,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetConstFacts(const ascii path);
