@@ -306,6 +306,144 @@ STARK_BENCH_LANGUAGES=stark,c,rust scripts/run-benchmarks.sh
 
 Report ratios with C = 1.000, retain the CSV and machine metadata, and describe the fixed language order, whole-process timing and thermal variation. Do not compare the machine's numbers directly with the earlier Ryzen 7 9800X3D results. The full six-target release workflow is an expensive final integration check; do not use it in place of focused compiler and runtime validation.
 
+## FileSystemPathTranscode investigation (October 28, 2026)
+
+**Separate optimization to consider later:** directly widen each element of a short, ASCII-range input into a UTF-16 code unit at runtime, rather than calling the general UTF-16 converter. This works for arbitrary inputs within that range; non-ASCII text needs the existing general conversion. It is not compile-time literal pre-encoding. A temporary production edit tried this approach while retaining separate text/newline writes; in its 1,000-run sample it did not show a measurable improvement. That direct-widening edit was removed while matching the requested combined diagnostic. It has not been implemented in the current source.
+
+**Status: fixed and closed at the user's direction.** The standard library now uses the combined diagnostic for the benchmark's unbuffered short UTF-16 lines. The user explicitly accepted that a failed combined write may leave a different partial line. The implementation includes **literal-specific runtime checks for `child` and `wide`** with pre-encoded output; it is not a general compiler constant-encoding optimization. Other short ASCII-range inputs use the general converter and combined write, and other cases retain the prior path.
+
+The actual-source executable, compiled with the saved Release compiler, completed one warmup and 1,000 randomized interleaved CPU-0-pinned processes per binary in isolated `/tmp`. Only explanatory comments identifying the literal-specific checks were added to that source after the build. With C = 1.000:
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Saved Stark baseline | 2321.4 | 2298.4 | **1.011** | 84.9 |
+| Current source | 2292.5 | 2260.9 | **0.998** | 120.8 |
+| Prior combined diagnostic | 2293.9 | 2263.2 | **0.999** | 113.9 |
+| C | 2297.2 | 2267.9 | **1.000** | 86.1 |
+| Rust | 2649.3 | 2620.4 | **1.153** | 112.3 |
+
+The current mean was 28.9 µs (1.24%) below the saved baseline; a 5,000-resample paired bootstrap interval was −38.0 to −19.9 µs, assuming independent rounds. Samples include process startup and filesystem work on the passively cooled, temperature-capped machine; thermal, filesystem and other-host activity may violate that assumption. C/Rust perform different work, as described below. Results are local evidence, not a guarantee of a general speedup.
+
+The current executable made 32 writes for the 16 iterations and produced the same bytes as the baseline on representative success/fallback inputs. Short-write, immediate-error and short-then-error injections matched the **accepted combined diagnostic**, including its different partial-file output on failure. The focused Release packaged test passed; the Stark port's host-compiler check passed; 13 emitted LLVM modules verified. The independently observed supplementary-character cast issue is unchanged. Current raw results and analysis are in ignored `utf16-controls/actual-interleaved-1000.json` and `actual-analysis-1000.json`.
+
+The remaining subsections are historical experiments and prior decisions; descriptions of separate writes, open status, or rejection of changed partial output refer to the source state before the user's explicit acceptance above.
+
+### Narrow production ASCII-range conversion (October 28, 2026)
+
+**Follow-up: preserving write boundaries (October 28).** Rechecked the isolated short-write-then-error test on the baseline, the production two-write path and the combined control. All returned zero, but the baseline and production files matched while the combined file contained an extra single `0a` byte. The first baseline request was limited to the ten text bytes, so the injected second-call `EIO` occurred before any newline byte was written. The twelve-byte combined request was shortened to 11 bytes, writing the first newline byte; the following `EIO` left it in the file. An earlier immediate-error test likewise showed that baseline attempts the newline after a failed text write. Source paths and traces are under ignored `utf16-controls/shortfail-recheck-*.json` and `short-then-fail.py`.
+
+An unconditional single `write` or `writev` across the text/newline boundary cannot in general preserve those exact outcomes for arbitrary streams: a partial result may already have exposed a newline byte before an error, and streams such as pipes cannot generally roll it back. A fallback after the error is too late for that case. Issuing the text and newline as two separately bounded writes preserves the boundary but does not reduce the syscall count. A different contract that permits changed partial output, or a proven infallible/transactional destination with suitable isolation, would be a separate design; neither is established for the benchmark's existing unbuffered `File`. No safe combined implementation or production behavior change was made in this follow-up.
+
+As a reference, a fresh **1,000-run** randomized interleaved CPU-0-pinned sample per binary (one warmup, isolated `/tmp`, process startup included) returned success: saved baseline Stark **1.013**, current two-write source build **1.014**, unsafe combined diagnostic **0.998**, C **1.000**, Rust **1.157**, normalized to C. Means were 2306.9, 2309.1, 2273.3, 2278.3 and 2635.1 µs; min-to-max spreads were 127.2%, 137.2%, 123.4%, 126.0% and 124.3%. A descriptive paired-bootstrap 95% interval for current minus baseline was −7.2 to +11.9 µs and for unsafe combined minus baseline was −43.0 to −24.1 µs, assuming independent rounds. The unsafe number is not a valid result for the requested behavior-preserving optimization. Thermal, filesystem and shared-host effects and unequal C/Rust workloads remain. Raw samples and analysis are in ignored `utf16-controls/failure-boundary-interleaved-1000.json` and `failure-boundary-analysis-1000.json`.
+
+The real `System.IO.File` source now has a generic fast path for short, nonempty ASCII-range text written to unbuffered UTF-16 files: it widens the input directly to UTF-16 units and handles the newline. It does not hard-code benchmark literals, does not precompute constant encodings in the compiler, and falls back for non-ASCII, empty, long, buffered and other-encoding inputs. It deliberately preserves **separate text and newline writes**. This is a partial promotion of the diagnostic, not the combined-write or compiler-specialization optimization requested; those remain open.
+
+The first proposed production version combined writes and retried the newline after a text-side error. A stronger child-process fault control showed why that was insufficient: when the first combined write succeeds for 11 bytes (all ten text bytes plus one newline byte) and the next write fails, it leaves an odd byte of UTF-16 where the original separate writes leave none. That candidate was removed from production. The narrowed version matches the baseline's file contents for normal representative inputs, immediate `EIO`, an injected short write, and a short write followed by `EIO`; it retains 64 benchmark writes. These controls do not prove every platform and failure pattern.
+
+The focused Release packaged-standard-library executable test passed, covering short ASCII and Unicode lines, empty text and a non-BMP fallback, and its maintained Stark-side port passed its compile check. The generated Stark LLVM modules verified; the repository-wide audit covered callers, tests, ported tests and documentation. The earlier supplementary-character cast issue is unchanged. The short-then-error injector and results are local ignored artifacts under `utf16-controls/`.
+
+In a fresh 1,000-run randomized interleaved CPU-0-pinned sample per binary, with C = 1.000, saved baseline Stark averaged **1.014**, the production source build **1.015**, the unsafe combined diagnostic **1.000**, C **1.000** and Rust **1.160**. Their mean times were respectively 2321.0, 2323.7, 2288.2, 2288.3 and 2655.0 µs; process startup/filesystem work are included and the shared host, passive cooling and temperature cap limit the inference. For production minus baseline, the paired mean difference was +2.7 µs and a descriptive 5,000-resample paired bootstrap 95% interval was −6.6 to +12.1 µs, assuming independent rounds. **No timing improvement is established for the production path.** The prior diagnostic timing must not be attributed to it. Raw samples and analysis: ignored `utf16-controls/promoted-interleaved-1000.json` and `promoted-analysis-1000.json`.
+
+The combined operation requires a deliberate write/failure/visibility contract that permits its changed behavior; a compiler constant-encoding optimization also requires a general proof and package/input coverage. Neither is implemented here, and FileSystemPathTranscode remains open.
+
+### Combined UTF-16 line and literal control (October 28, 2026)
+
+**1,000-run rerun:** all six binaries matched the previous hashes. After one warmup per binary, **1,000 randomized interleaved, CPU-0-pinned processes per binary** succeeded in an isolated `/tmp` directory, which was empty afterward. Measurements include startup and filesystem operations; passive cooling, the temperature cap, scheduling and unconfirmed concurrent activity still apply. With C = 1.000:
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Stark baseline | 2323.9 | 2291.7 | **1.010** | 73.6 |
+| Line-only control | 2294.3 | 2263.2 | **0.997** | 72.8 |
+| Literal-only control | 2319.9 | 2282.6 | **1.008** | 137.5 |
+| Combined control | 2281.7 | 2253.1 | **0.992** | 87.5 |
+| C | 2301.2 | 2262.1 | **1.000** | 163.1 |
+| Rust | 2644.1 | 2616.2 | **1.149** | 93.0 |
+
+The combined mean was **42.2 µs (1.82%) lower** than baseline. A 5,000-resample percentile bootstrap of within-round paired mean differences (control minus baseline) gave a 95% interval of **−51.5 to −32.7 µs** for combined, **−39.5 to −19.7 µs** for line-only and **−16.2 to +8.7 µs** for literal-only. These descriptive intervals assume the randomized rounds are independent; common thermal, filesystem and shared-host effects may violate that assumption. The result supports a lower mean for this diagnostic in this sample, not a general or guaranteed speedup. Min-to-max spreads are not confidence intervals. The C/Rust workloads remain unequal, and the combined control still changes failure behavior, so it is not shippable as-is. Raw samples and reproducible paired analysis are in ignored `utf16-controls/combined-interleaved-1000.json` and `utf16-controls/combined-analysis-1000.json`.
+
+**500-run rerun:** the same six binary hashes as the 100-run control were checked before measuring. After one warmup per binary, **500 randomized interleaved, CPU-0-pinned processes per binary** succeeded in an isolated `/tmp` directory, which was empty afterward. The samples include startup and filesystem work; passive cooling, the temperature cap, scheduling and unconfirmed concurrent activity still apply. With C = 1.000:
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Stark baseline | 2371.5 | 2305.8 | **1.010** | 149.7 |
+| Line-only control | 2354.1 | 2282.5 | **1.003** | 182.8 |
+| Literal-only control | 2358.6 | 2300.2 | **1.005** | 131.7 |
+| Combined control | 2343.9 | 2266.6 | **0.999** | 238.5 |
+| C | 2347.0 | 2271.4 | **1.000** | 111.8 |
+| Rust | 2722.6 | 2646.1 | **1.160** | 138.9 |
+
+The combined mean was 27.6 µs, or 1.17%, below the Stark baseline; its median was 39.2 µs lower. A 5,000-resample percentile bootstrap of **within-round paired mean differences** (control minus baseline) gave a 95% interval of **−55.8 to +1.6 µs** for combined, **−46.0 to +12.9 µs** for line-only, and **−38.6 to +13.0 µs** for literal-only. These descriptive intervals assume the 500 randomized rounds can be treated as independent and do not remove common thermal, filesystem or shared-host bias. All include zero; increasing sample count did not eliminate the outliers or establish a reliable improvement. Min-to-max spread can increase with more samples and is not an estimate of uncertainty in the mean. Unequal C/Rust workloads and the combined control's injected-error behavior below remain unchanged. Raw data and the reproducible paired analysis are in ignored `utf16-controls/combined-interleaved-500.json` and `utf16-controls/combined-analysis-500.json`.
+
+**Result: the approaches combine in a diagnostic control, but the combined write retains the failure-behavior difference described below.** An isolated stdlib copy starts from the line control and adds runtime guards for the `child` and `wide` literal contents. On a match, it writes pre-encoded UTF-16 text and newline together; other inputs retain the line control's checked conversion/fallback. The benchmark source is unchanged, and the saved Release compiler binary is identical to the one used for the earlier controls. This is hand-written, benchmark-specific runtime guarding, not compiler constant propagation or production code.
+
+The final machine code for a matching line compares the input against the literal, stores the pre-encoded units including newline, and enters a partial-write retry loop without calling the UTF-16 converter. Unmatched inputs still reach the general conversion and original fallback paths. The separate line-only control still calls the converter; the literal-only control pre-encodes the text but writes its newline separately. A child-process trace showed **32 writes** for the combined control: 16 twelve-byte `child\n` and 16 ten-byte `wide\n` writes. Baseline and literal-only each made 64 writes; line-only also made 32. All captured benchmark output bytes matched. All **13 combined-control LLVM modules** passed verification.
+
+On the prior parity executable, baseline, line-only, literal-only and combined all returned zero and produced the same **2,096 bytes**, including the long and fallback inputs; the baseline supplementary-character limitation described below still applies. When the first write was deliberately shortened to two bytes, both baseline and combined retried and produced that same file. When the first write was instead failed with `EIO`, both returned zero but produced different files: baseline subsequently wrote the first newline, while combined lost it with the failed text. Therefore the combined control is **not behaviorally equivalent on failure** and must not be shipped as-is. These tests do not cover every partial-write, buffering, interleaving or encoding case.
+
+One warmup and **100 randomized interleaved CPU-0-pinned processes per binary** all succeeded in an isolated `/tmp` directory. C/Rust and the other controls are the same binaries used in the previous sample. Times include process startup and filesystem work; passive cooling, thermal limits, shared-host activity and unknown concurrent load apply. With C = 1.000:
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Stark baseline | 2358.8 | 2296.6 | **1.022** | 93.9 |
+| Line-only control | 2327.1 | 2284.6 | **1.008** | 124.7 |
+| Literal-only control | 2348.9 | 2302.0 | **1.017** | 153.4 |
+| Combined control | 2331.1 | 2268.8 | **1.010** | 65.8 |
+| C | 2308.8 | 2271.2 | **1.000** | 43.9 |
+| Rust | 2705.2 | 2661.8 | **1.172** | 36.9 |
+
+The combined mean was 1.2% below baseline in this sample, far smaller than the spreads; the data does not establish a speedup or distinguish the controls. Next work must resolve the write failure/visibility contract and demonstrate real compiler propagation of encoding and literal facts, with general inputs and package boundaries, before an implementation. Evidence is in ignored `benchmarks/codegen/fs-path-transcode-investigation/utf16-controls/`: `combined-sdk/`, `combined-temps/`, linked disassemblies, parity/trace/failure and short-write results, and `combined-interleaved.json`. The existing workload differences and supplementary-character issue remain. FileSystemPathTranscode stays open.
+
+### UTF-16 line and literal controls (October 28, 2026)
+
+Two separate diagnostic stdlib copies were compiled with the same saved Release compiler binary as the baseline. The benchmark source is unchanged. In each copy only `System/IO/File.stark` differs from the current stdlib; no production source was edited. Both controls and the baseline returned success for the benchmark.
+
+- **Combined line control:** for an unbuffered UTF-16 file and nonempty ASCII-range input of at most 1,023 code units, scan the input, use the existing general UTF-16 converter, append the newline and write the combined buffer. Empty, larger, non-ASCII, buffered and other-encoding cases use the original path. This is a diagnostic of the possible syscall reduction, not a safe general implementation.
+- **Literal control:** add runtime equality guards inside the UTF-16 writers for the benchmark's `child`, `wide` and newline literals and write pre-encoded code units on a match. Other inputs use the original converter, and text and newline remain separate writes. This tests guarded manual pre-encoding with its comparison cost; it is not an implementation of compile-time constant propagation, and it does not demonstrate what an unguarded compiler-specialized call would cost.
+
+The child-process syscall trace confirms the line control makes **32 writes** (16 of 12 bytes and 16 of 10), compared with **64** for the baseline and literal control (16 of 10, 16 of 8 and 32 of 2). Captured write buffers contain the same benchmark bytes on this little-endian host. The line control's final machine code still performs the input scan and calls the general conversion helpers before its single write; the literal control's matching branch performs runtime input comparisons and writes constant code units without taking the conversion branch. Its general decoder/converter remains reachable for unmatched inputs. These are final-linked-code observations, not claims that the compiler automatically discovers the constants. Each control's 13 emitted LLVM modules passed verification.
+
+A separate native parity executable wrote the benchmark literals plus an empty string, another ASCII value, non-ASCII UTF-8, a supplementary-character cast and a 1,024-byte input. Baseline and both controls returned zero and produced the **same 2,096-byte file**. This checks representative success and fallback behavior, not all inputs or partial writes. An independent UTF-16LE oracle revealed that `(unicode)\"🌍\"` produced two replacement characters in all three, including the unchanged baseline, rather than the expected surrogate pair. This pre-existing observation is outside these controls and means that this parity check must not be cited as proof of supplementary-character correctness.
+
+**Failure behavior blocks the combined control as written.** A child-only `ptrace` control suppressed the first write and returned `EIO`, then let subsequent writes proceed. The baseline and literal control both returned zero and left a file beginning with the newline: their first text write failed but the separate newline write was still attempted. The line control also returned zero but its file began with `wide`, because text and newline were combined into the failed write. This is an observable difference, even though the current public `WriteLine` result did not report the injected error. It also illustrates why partial writes, failure propagation, buffering and interleaving need explicit contracts before combining writes. Do not ship this control or assume that fewer writes preserve behavior. The literal control matched baseline for this injected failure, but the test does not establish its correctness for all failures or inputs.
+
+One warmup and **100 randomized interleaved, CPU-0-pinned processes per binary** all returned success in an isolated `/tmp` directory. C/Rust are the existing binaries built with the harness flags for the preceding investigation; all timings include startup and filesystem work. The checkout was dirty, other work was active, and passive cooling/thermal limits and unknown concurrent activity apply.
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Stark baseline | 2315.4 | 2290.1 | **1.012** | 21.6 |
+| Combined-line control | 2281.9 | 2264.0 | **0.998** | 50.3 |
+| Guarded literal control | 2354.7 | 2290.1 | **1.029** | 132.2 |
+| C | 2287.4 | 2261.8 | **1.000** | 18.3 |
+| Rust | 2633.5 | 2612.9 | **1.151** | 27.2 |
+
+The line control's mean is 1.4% below baseline and the literal control's is 1.7% above in this sample; neither difference is credible relative to the spreads. The controls establish the syscall and code-shape differences, not a stable speedup. Next, define or preserve line-write failure and visibility behavior before pursuing combined writes, and test actual compiler propagation of known encoding/literal values with general-input and package-boundary regressions before proposing literal specialization. The independently identified normalization payload opportunity below remains open. Local evidence is in ignored `benchmarks/codegen/fs-path-transcode-investigation/utf16-controls/`, including source copies, compiler snapshot, binaries, LLVM, disassembly, syscall traces, injected-failure outputs, parity source and `interleaved.json`.
+
+The programs perform materially different work. Each makes a directory, writes the same two UTF-16 lines, reads a directory entry, renames and deletes the file, and removes the directory, 16 times. Stark additionally allocates and joins the child path, calls `IsFile` after closing it, and normalizes a separate literal path; the C and Rust programs use a longer child-path literal directly and do not perform the metadata check or normalization. Their checksums differ accordingly (880 versus 1296). C uses buffered `FILE`; Stark uses `FileBuffering.None`; Rust writes directly with `File::write_all`. The differing names, allocation/error paths, library contracts and filesystem operations make this an unequal-work comparison. Do not remove Stark's extra observable checks or allocation failure behavior as an optimization.
+
+**Observed Linux system calls:** a child-only `ptrace` diagnostic ran each freshly compiled executable in its own temporary directory; all returned zero. Counts include startup. Across the full 16-iteration process, Stark issued **64 `write` calls** (16 each of 10-byte and 8-byte text plus 32 two-byte newlines), C issued **16** writes of 22 bytes, and Rust issued **176** writes of two bytes. The traced requested buffers contain the same UTF-16LE bytes for `child\nwide\n` on this host, split into those respective chunks. Stark's 16 additional `newfstatat` calls correspond to its `IsFile` work; each program issued 16 `getdents64` calls. C also made 32 more `fstat` calls than Stark in the whole-process trace, so counts of one syscall family alone do not establish total overhead. `mkdirat`/`renameat`/`unlinkat` in Stark and libc's `mkdir`/`rename`/`unlink`/`rmdir` in C/Rust are different syscall interfaces for the comparable operations. Tracing was outside the timing run and does not measure untraced syscall cost.
+
+**Generated code:** Stark root LLVM calls the literal `JoinConst` and `NormalizeSeparatorsConst` paths, the file and directory operations, and an `IsFile` check. In the final linked `main`, the join remains an external call because its result's bytes feed the file open and metadata check. The normalization helper is inlined: on success the code calls `__stark_runtime_try_realloc` for 24 bytes, materializes 23 normalized bytes with vector/scalar stores, uses the result length, and frees the buffer; failure yields the existing `-1` result. The normalized bytes themselves are not read in this benchmark. The final `main` also contains the metadata syscall and path copy, large temporary initializations, and calls to `Directory.ReadNext` and file-writing helpers. The latter still contain general UTF-8/Unicode-to-UTF-16 conversion: the linked ASCII helper calls `TryDecodeUtf8CodePoint`, and the Unicode helper calls `TryConvertUnicodeToUtf16`. LLVM cannot be assumed to have folded the known literal through those call boundaries merely because the benchmark uses literals.
+
+Clang's `-O3` IR emits repeated `fwrite` calls for the constant two-byte units, while the C library buffers them into one 22-byte kernel write per iteration. Rust IR retains UTF-16 encoding and `write_all` paths, and the traced executable makes one two-byte write per code unit. The Stark/C/Rust output and trace evidence is specific to this host and these inputs; it does not measure all paths of the libraries. All 13 emitted Stark LLVM modules and fresh C/Rust LLVM IR passed LLVM verification. The Stark compiler was freshly built in Release; uncommitted unrelated specializer/test changes were present in the checkout, so the binary and input hashes in the local evidence are important when reproducing it.
+
+After one warmup, 100 randomized interleaved, CPU-0-pinned process runs per binary completed successfully in an isolated `/tmp` working directory that was empty afterward. This timing includes process startup and filesystem activity; `/tmp` and the process timer differ from the fixed-order harness and earlier machines. The machine is passively cooled and temperature-capped, and exclusive use was not established.
+
+| Variant | Mean µs | Median µs | Mean / C | Spread % |
+| --- | ---: | ---: | ---: | ---: |
+| Stark | 2385.4 | 2301.5 | **1.002** | 104.6 |
+| C | 2380.0 | 2282.2 | **1.000** | 106.4 |
+| Rust | 2671.4 | 2625.9 | **1.122** | 48.6 |
+
+These distributions are too broad to attribute the 0.2% Stark/C mean difference or claim a stable ranking. In this sample Stark/Rust is **0.893**, but the unequal workloads and spreads prevent a conclusion about equivalent language performance. The syscall trace and machine code establish work differences, not their share of elapsed time.
+
+**Concrete opportunities to investigate, not yet implemented:**
+
+1. Combine the UTF-16 encoded text and newline into a single bounded write when the whole line fits, reducing this benchmark's four writes per iteration to two while preserving byte order, long-line chunking, partial writes, errors and cross-platform behavior. The trace proves the current split; it does not prove the performance effect or that buffering policy may be changed without semantic consequences.
+2. Preserve constant encoding and literal contents through the `File`/write call boundary and test specialization that precomputes valid literal UTF-16 bytes. Retain general decoding for nonconstant and malformed input, surrogate handling, runtime encoding choices, error and write behavior. The linked helpers' actual decode calls show the present boundary; an isolated control is needed before claiming a benefit.
+3. Extend bounded payload-liveness reasoning through the owning `MemoryResult<OwnedAscii>`/`PathLength` case so the normalization's unobserved byte stores can disappear while the allocation, failure result, length and actual cleanup remain. The joined path must remain readable because later filesystem calls consume it. Include byte-reading, escaped-view, allocation-failure and ownership negative cases; no existing proof has been shown to cover this result shape. Likewise, inspect the repeated large buffer zeroing against actual initialized ranges before proposing removal; do not infer that it is dead from its size alone.
+
+Evidence is in ignored `benchmarks/codegen/fs-path-transcode-investigation/`: current binaries and hashes, `stark-temps/`, C/Rust LLVM IR, final disassemblies, child-process `syscalls.py` and JSON traces, and `measure.py`/`interleaved.json`. These artifacts are local and may be absent on another checkout. QueueDequeue and PathRepeatedSmallOps remain independent open work.
+
 ## QueueDequeue investigation (October 27, 2026)
 
 **Status: open.** The `Queue.Reserve` fast path and split growth copy are implemented; the user explicitly wants the benchmark investigation to remain open. The dequeue optimization below is not implemented and needs further investigation.

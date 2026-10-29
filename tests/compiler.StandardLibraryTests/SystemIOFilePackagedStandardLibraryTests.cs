@@ -562,6 +562,23 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                         Capacity = 1
                     };
 
+                    stack mut System.IO.File.File unbuffered = OpenOrEmpty(System.IO.File.Open("utf16-unbuffered.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16, System.IO.File.FileBuffering.None));
+                    if (!StatusOk(unbuffered.WriteLine("child"))
+                        || !StatusOk(unbuffered.WriteLine((unicode)"wide"))
+                        || !StatusOk(unbuffered.WriteLine(""))
+                        || !StatusOk(unbuffered.WriteLine(System.Text.UnicodeView(gothic)))
+                        || !StatusOk(unbuffered.Close()))
+                    {
+                        return 4;
+                    }
+
+                    gothic = new Unicode()
+                    {
+                        Data = &gothicBuffer[0],
+                        Length = 1,
+                        Capacity = 1
+                    };
+
                     stack mut System.IO.File.File utf32 = OpenOrEmpty(System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32));
                     utf32.WriteText("Z");
                     utf32.WriteText(System.Text.UnicodeView(gothic));
@@ -615,6 +632,9 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
             Assert.Equal(
                 System.Text.Encoding.Unicode.GetBytes("A" + gothic + "Î²\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16.txt")));
+            Assert.Equal(
+                System.Text.Encoding.Unicode.GetBytes("child\nwide\n\n" + gothic + "\n"),
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16-unbuffered.txt")));
             Assert.Equal(
                 System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "Î³\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));

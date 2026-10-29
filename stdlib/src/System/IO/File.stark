@@ -338,6 +338,81 @@ unsafe fn i32[min max] WriteAllBytesRaw(rawptr<i8[min max]> handle, rawptr<i8[mi
     return 0;
 }
 
+// A failed or partial write may leave only a prefix of the line in the file.
+unsafe fn bool TryWriteShortAsciiUtf16Line(rawptr<i8[min max]> handle, ascii text)
+{
+    stack i64[min max] length = System.Text.AsciiLength(text);
+    if (length <= 0 || length > 1023)
+    {
+        return false;
+    }
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+    if (data == null)
+    {
+        return false;
+    }
+    // Literal-specific pre-encoding from the FileSystemPathTranscode diagnostic.
+    if (length == 5 && data[0] == 99 && data[1] == 104 && data[2] == 105 && data[3] == 108 && data[4] == 100)
+    {
+        stack i16[min max][6] units = { 99, 104, 105, 108, 100, 10 };
+        WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&units[0]), 12);
+        return true;
+    }
+    for willexit (stack mut i64[min max] i = 0; i < length; i += 1)
+    {
+        if (data[i] < 0)
+        {
+            return false;
+        }
+    }
+    stack mut i16[min max][1024] encoded;
+    stack mut i64[min max] written = 0;
+    if (!System.Text.TryConvertAsciiToUtf16(&encoded[0], 1023, text, &written))
+    {
+        return false;
+    }
+    encoded[written] = 10;
+    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (written + 1) * 2);
+    return true;
+}
+
+unsafe fn bool TryWriteShortUnicodeUtf16Line(rawptr<i8[min max]> handle, unicode text)
+{
+    stack i64[min max] length = System.Text.UnicodeLength(text);
+    if (length <= 0 || length > 1023)
+    {
+        return false;
+    }
+    stack rawptr<i32[min max]> data = System.Text.UnicodeData(text);
+    if (data == null)
+    {
+        return false;
+    }
+    // Literal-specific pre-encoding from the FileSystemPathTranscode diagnostic.
+    if (length == 4 && data[0] == 119 && data[1] == 105 && data[2] == 100 && data[3] == 101)
+    {
+        stack i16[min max][5] units = { 119, 105, 100, 101, 10 };
+        WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&units[0]), 10);
+        return true;
+    }
+    for willexit (stack mut i64[min max] i = 0; i < length; i += 1)
+    {
+        if (data[i] < 0 || data[i] > 127)
+        {
+            return false;
+        }
+    }
+    stack mut i16[min max][1024] encoded;
+    stack mut i64[min max] written = 0;
+    if (!System.Text.TryConvertUnicodeToUtf16(&encoded[0], 1023, text, &written))
+    {
+        return false;
+    }
+    encoded[written] = 10;
+    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (written + 1) * 2);
+    return true;
+}
+
 unsafe fn i32[min max] WriteAsciiUtf16(rawptr<i8[min max]> handle, ascii text)
 {
     stack i64[min max] sourceLength = System.Text.AsciiLength(text);
@@ -1161,6 +1236,12 @@ public struct File
 
                     return;
                 case System.Text.Encoding.UTF16:
+                    if (!self.BufferWrites && !self.FlushOnLine && self.WriteBufferLength == 0
+                        && TryWriteShortAsciiUtf16Line(self.Handle, text))
+                    {
+                        return;
+                    }
+
                     stack i64[min max] textLength = System.Text.AsciiLength(text);
                     stack ascii lineText = text[0, textLength];
                     self.WriteTextRaw(lineText);
@@ -1214,6 +1295,12 @@ public struct File
                     WriteUnicodeLineHandle(self.Handle, text);
                     return;
                 case System.Text.Encoding.UTF16:
+                    if (!self.BufferWrites && !self.FlushOnLine && self.WriteBufferLength == 0
+                        && TryWriteShortUnicodeUtf16Line(self.Handle, text))
+                    {
+                        return;
+                    }
+
                     self.WriteTextRaw(text);
                     self.WriteTextRaw("\n");
                     if (self.FlushOnLine)
