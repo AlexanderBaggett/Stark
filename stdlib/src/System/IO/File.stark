@@ -351,28 +351,19 @@ unsafe fn bool TryWriteShortAsciiUtf16Line(rawptr<i8[min max]> handle, ascii tex
     {
         return false;
     }
-    // Literal-specific pre-encoding from the FileSystemPathTranscode diagnostic.
-    if (length == 5 && data[0] == 99 && data[1] == 104 && data[2] == 105 && data[3] == 108 && data[4] == 100)
-    {
-        stack i16[min max][6] units = { 99, 104, 105, 108, 100, 10 };
-        WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&units[0]), 12);
-        return true;
-    }
+    stack mut i16[min max][1024] encoded;
     for willexit (stack mut i64[min max] i = 0; i < length; i += 1)
     {
-        if (data[i] < 0)
+        stack i8[min max] value = data[i];
+        if (value < 0)
         {
             return false;
         }
+        // An ASCII-range byte is already its UTF-16 code unit.
+        encoded[i] = (i16[min max])value;
     }
-    stack mut i16[min max][1024] encoded;
-    stack mut i64[min max] written = 0;
-    if (!System.Text.TryConvertAsciiToUtf16(&encoded[0], 1023, text, &written))
-    {
-        return false;
-    }
-    encoded[written] = 10;
-    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (written + 1) * 2);
+    encoded[length] = 10;
+    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (length + 1) * 2);
     return true;
 }
 
@@ -388,28 +379,19 @@ unsafe fn bool TryWriteShortUnicodeUtf16Line(rawptr<i8[min max]> handle, unicode
     {
         return false;
     }
-    // Literal-specific pre-encoding from the FileSystemPathTranscode diagnostic.
-    if (length == 4 && data[0] == 119 && data[1] == 105 && data[2] == 100 && data[3] == 101)
-    {
-        stack i16[min max][5] units = { 119, 105, 100, 101, 10 };
-        WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&units[0]), 10);
-        return true;
-    }
+    stack mut i16[min max][1024] encoded;
     for willexit (stack mut i64[min max] i = 0; i < length; i += 1)
     {
-        if (data[i] < 0 || data[i] > 127)
+        stack i32[min max] value = data[i];
+        if (value < 0 || value > 127)
         {
             return false;
         }
+        // The range check proves there is exactly one unchanged UTF-16 unit.
+        encoded[i] = (i16[min max])value;
     }
-    stack mut i16[min max][1024] encoded;
-    stack mut i64[min max] written = 0;
-    if (!System.Text.TryConvertUnicodeToUtf16(&encoded[0], 1023, text, &written))
-    {
-        return false;
-    }
-    encoded[written] = 10;
-    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (written + 1) * 2);
+    encoded[length] = 10;
+    WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&encoded[0]), (length + 1) * 2);
     return true;
 }
 

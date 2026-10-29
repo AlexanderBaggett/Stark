@@ -525,6 +525,82 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                             return new();
                     }
                 }
+                unsafe fn bool WriteRuntimeUtf16Lines(ascii path, System.IO.File.FileBuffering buffering)
+                {
+                    stack mut System.IO.File.File writer = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write, System.Text.Encoding.UTF16, buffering));
+                    stack mut i8[min max][1025] bytes;
+                    stack mut i32[min max][1025] points;
+                    for willexit (stack mut i64[min max] i = 0; i < 1025; i += 1)
+                    {
+                        bytes[i] = (i8[min max])(i % 128);
+                        points[i] = (i32[min max])(i % 128);
+                    }
+
+                    // Include embedded NULs, all ASCII values, and both sides of the fast-path bound.
+                    stack i64[min max][10] lengths = { 0, 1, 4, 5, 127, 128, 1022, 1023, 1024, 1025 };
+                    for willexit (stack mut i64[min max] c = 0; c < 10; c += 1)
+                    {
+                        stack Ascii a = new Ascii()
+                        {
+                            Data = &bytes[0],
+                            Length = lengths[c],
+                            Capacity = 1025
+                        };
+                        stack Unicode u = new Unicode()
+                        {
+                            Data = &points[0],
+                            Length = lengths[c],
+                            Capacity = 1025
+                        };
+                        if (!StatusOk(writer.WriteLine(System.Text.AsciiView(a)))
+                            || !StatusOk(writer.WriteLine(System.Text.UnicodeView(u))))
+                        {
+                            return false;
+                        }
+                    }
+
+                    // Reject after a converted ASCII prefix without writing that prefix twice.
+                    bytes[0] = 65;
+                    bytes[1] = 0;
+                    bytes[2] = 66;
+                    bytes[3] = -61;
+                    bytes[4] = -87;
+                    stack Ascii utf8 = new Ascii()
+                    {
+                        Data = &bytes[0],
+                        Length = 5,
+                        Capacity = 1025
+                    };
+                    if (!StatusOk(writer.WriteLine(System.Text.AsciiView(utf8))))
+                    {
+                        return false;
+                    }
+                    bytes[3] = -1;
+                    stack Ascii malformed = new Ascii()
+                    {
+                        Data = &bytes[0],
+                        Length = 4,
+                        Capacity = 1025
+                    };
+                    if (!StatusOk(writer.WriteLine(System.Text.AsciiView(malformed))))
+                    {
+                        return false;
+                    }
+                    points[0] = 65;
+                    points[1] = 0;
+                    points[2] = 66;
+                    points[3] = 128;
+                    points[4] = 66376;
+                    points[5] = 65533;
+                    stack Unicode nonascii = new Unicode()
+                    {
+                        Data = &points[0],
+                        Length = 6,
+                        Capacity = 1025
+                    };
+                    return StatusOk(writer.WriteLine(System.Text.UnicodeView(nonascii))) && StatusOk(writer.Close());
+                }
+
                 export unsafe fn i32[min max] main()
                 {
                     stack mut i32[min max][1] gothicBuffer =
@@ -588,6 +664,13 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                         return 3;
                     }
 
+                    if (!WriteRuntimeUtf16Lines("utf16-runtime-none.txt", System.IO.File.FileBuffering.None)
+                        || !WriteRuntimeUtf16Lines("utf16-runtime-full.txt", System.IO.File.FileBuffering.Full)
+                        || !WriteRuntimeUtf16Lines("utf16-runtime-line.txt", System.IO.File.FileBuffering.Line))
+                    {
+                        return 5;
+                    }
+
                     return 0;
                 }
                 """);
@@ -638,6 +721,26 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
             Assert.Equal(
                 System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "Î³\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));
+
+            var runtimeText = new System.Text.StringBuilder();
+            foreach (var length in new[] { 0, 1, 4, 5, 127, 128, 1022, 1023, 1024, 1025 })
+            {
+                for (var representation = 0; representation < 2; representation++)
+                {
+                    for (var i = 0; i < length; i++)
+                    {
+                        runtimeText.Append((char)(i % 128));
+                    }
+                    runtimeText.Append('\n');
+                }
+            }
+            runtimeText.Append("A\0B\u00e9\nA\0B\ufffd\nA\0B\u0080" + gothic + "\ufffd\n");
+            var expectedRuntimeBytes = System.Text.Encoding.Unicode.GetBytes(runtimeText.ToString());
+            foreach (var mode in new[] { "none", "full", "line" })
+            {
+                Assert.Equal(expectedRuntimeBytes,
+                    await File.ReadAllBytesAsync(Path.Combine(appDirectory, $"utf16-runtime-{mode}.txt")));
+            }
         }
         finally
         {

@@ -308,25 +308,48 @@ Report ratios with C = 1.000, retain the CSV and machine metadata, and describe 
 
 ## FileSystemPathTranscode investigation (October 28, 2026)
 
-**Separate optimization to consider later:** directly widen each element of a short, ASCII-range input into a UTF-16 code unit at runtime, rather than calling the general UTF-16 converter. This works for arbitrary inputs within that range; non-ASCII text needs the existing general conversion. It is not compile-time literal pre-encoding. A temporary production edit tried this approach while retaining separate text/newline writes; in its 1,000-run sample it did not show a measurable improvement. That direct-widening edit was removed while matching the requested combined diagnostic. It has not been implemented in the current source.
+**Status: fixed and closed at the user's direction; generalization follow-up completed. Coordination: builds, checks, and benchmark timing for this follow-up are finished.** Other agents may resume timing work.
 
-**Status: fixed and closed at the user's direction.** The standard library now uses the combined diagnostic for the benchmark's unbuffered short UTF-16 lines. The user explicitly accepted that a failed combined write may leave a different partial line. The implementation includes **literal-specific runtime checks for `child` and `wide`** with pre-encoded output; it is not a general compiler constant-encoding optimization. Other short ASCII-range inputs use the general converter and combined write, and other cases retain the prior path.
+The benchmark-specific runtime checks for `child` and `wide` have been removed from `System.IO.File`. Both short UTF-16 line helpers now validate and widen arbitrary ASCII-range input in one pass: each checked value in `[0, 127]` is already its UTF-16 code unit. That value is used immediately, rather than discarding the proof at a call to the general converter. The checked source length also gives the exact encoded length, so the helpers append LF at `encoded[length]` and write exactly `2 * (length + 1)` bytes through the existing short-write retry helper.
 
-The actual-source executable, compiled with the saved Release compiler, completed one warmup and 1,000 randomized interleaved CPU-0-pinned processes per binary in isolated `/tmp`. Only explanatory comments identifying the literal-specific checks were added to that source after the build. With C = 1.000:
+This retains combined writes for nonempty ASCII-range text of at most 1,023 input elements on unbuffered UTF-16 files, with the existing buffering/flush guards. A non-ASCII value rejects the fast path before any file write; a partially widened prefix stays private and the existing converter handles the complete input once. Empty and longer inputs retain the existing path. The change works for runtime-built text and arbitrary literals. It performs runtime widening; compiler literal pre-encoding is a separate opportunity. The previously accepted combined-write partial-file behavior is retained.
+
+**Validation:** the expanded packaged Release encoding test passed (1 test, no skips). It checks exact file bytes for both text representations at lengths 0, 1, 4, 5, 127, 128, 1,022, 1,023, 1,024 and 1,025, including embedded NULs and all ASCII values, across unbuffered/full/line modes. Additional runtime buffers contain a valid UTF-8 sequence, malformed UTF-8, and non-ASCII/supplementary Unicode after an ASCII prefix, checking that fallback does not duplicate that prefix. The matching Stark port passed its focused host-compiler check; that bridge validates compilation of the embedded program rather than native execution. All 13 emitted Stark LLVM modules and fresh C/Rust IR verified. Repository-wide searches covered the helpers, callers, conversion/buffering assumptions, source and port tests, benchmarks, scripts and documentation; no remaining consumers require the removed content checks or converter calls.
+
+**Generated code and writes:** emitted LLVM retains the successful range-check assumptions beside the widening stores. Final x86-64 code loads/checks/stores each input value and appends LF, without the general converter on these fast paths. General conversion remains in the non-ASCII/long-input fallback. A child-only syscall trace observed Stark **32 writes** (16 each of 12 and 10 bytes), C **16 writes** (22 bytes each), and Rust **176 writes** (2 bytes each), with the expected UTF-16LE payloads. Short-write, immediate-error, and short-then-error injections produced the same requested write sizes/payloads and exit status as the previous implementation compiled with the same compiler. These controls do not change the pre-existing public write-error reporting behavior.
+
+**Fresh 1,000-run comparison:** the current Release compiler built both the general implementation and a control using the `eb66444` `File.stark` with all other current SDK sources unchanged. Fresh Clang and repository Rust builds used the harness optimization flags. After one warmup per binary, the driver ran 1,000 balanced randomized interleaved rounds, pinned to CPU 0 in an isolated `/tmp` directory. All 4,000 measured processes succeeded and left the directory empty. No local builds/tests overlapped timing; exclusive host use was not confirmed. Timings include process startup and filesystem work. No samples were removed.
+
+| Variant | Mean µs | Median µs | Mean / C | CV % |
+| --- | ---: | ---: | ---: | ---: |
+| C | 2374.1 | 2274.2 | **1.000** | 32.2 |
+| Rust | 2721.7 | 2633.4 | **1.146** | 11.3 |
+| Stark, general checked widening | 2351.0 | 2279.3 | **0.990** | 10.1 |
+| Stark, previous string checks, same compiler | 2351.2 | 2274.1 | **0.990** | 10.2 |
+
+Stark / Rust is **0.864**; new Stark / previous Stark is **0.9999**. A paired 25-round block bootstrap (5,000 resamples) gave descriptive 95% intervals of **0.9666–1.0056** for Stark / C, **0.8566–0.8707** for Stark / Rust, and **0.9923–1.0072** for new / previous Stark. The samples support similar performance after removing the string exceptions. The Stark/C interval includes parity; C had a 25.3 ms outlier and the median ratio is about 1.002. Passive cooling, the temperature cap, filesystem effects and shared-host activity remain limitations of this short measurement window.
+
+The C/Rust workloads remain unequal to Stark: C buffers its writes; Rust writes each UTF-16 unit separately; Stark additionally joins a path, normalizes another path and checks file metadata. These ratios describe the existing benchmark implementations, rather than equivalent-work language performance. Source/IR/assembly, the same-compiler control SDK, child traces, fault controls, test logs, tool versions, hashes, all individual samples and the reproducible driver are retained locally under ignored `benchmarks/codegen/fs-path-transcode-general-20261028/` (`interleaved-1000.json`, `measure.py`, `validation.json`, `llvm-verification.json`).
+
+### Historical benchmark-specific implementation (superseded)
+
+The following results describe the removed runtime content checks for `child` and `wide`. Direct ASCII widening was also tried earlier with separate text/newline writes; the current implementation combines the general widening with line writes.
+
+The superseded benchmark-specific executable, compiled with the saved Release compiler, completed one warmup and 1,000 randomized interleaved CPU-0-pinned processes per binary in isolated `/tmp`. Only explanatory comments identifying the literal-specific checks were added to that source after the build. With C = 1.000:
 
 | Variant | Mean µs | Median µs | Mean / C | Spread % |
 | --- | ---: | ---: | ---: | ---: |
 | Saved Stark baseline | 2321.4 | 2298.4 | **1.011** | 84.9 |
-| Current source | 2292.5 | 2260.9 | **0.998** | 120.8 |
+| Benchmark-specific implementation | 2292.5 | 2260.9 | **0.998** | 120.8 |
 | Prior combined diagnostic | 2293.9 | 2263.2 | **0.999** | 113.9 |
 | C | 2297.2 | 2267.9 | **1.000** | 86.1 |
 | Rust | 2649.3 | 2620.4 | **1.153** | 112.3 |
 
-The current mean was 28.9 µs (1.24%) below the saved baseline; a 5,000-resample paired bootstrap interval was −38.0 to −19.9 µs, assuming independent rounds. Samples include process startup and filesystem work on the passively cooled, temperature-capped machine; thermal, filesystem and other-host activity may violate that assumption. C/Rust perform different work, as described below. Results are local evidence, not a guarantee of a general speedup.
+That implementation's mean was 28.9 µs (1.24%) below the saved baseline; a 5,000-resample paired bootstrap interval was −38.0 to −19.9 µs, assuming independent rounds. Samples include process startup and filesystem work on the passively cooled, temperature-capped machine; thermal, filesystem and other-host activity may violate that assumption. C/Rust perform different work, as described below. Results are local evidence, not a guarantee of a general speedup.
 
-The current executable made 32 writes for the 16 iterations and produced the same bytes as the baseline on representative success/fallback inputs. Short-write, immediate-error and short-then-error injections matched the **accepted combined diagnostic**, including its different partial-file output on failure. The focused Release packaged test passed; the Stark port's host-compiler check passed; 13 emitted LLVM modules verified. The independently observed supplementary-character cast issue is unchanged. Current raw results and analysis are in ignored `utf16-controls/actual-interleaved-1000.json` and `actual-analysis-1000.json`.
+That executable made 32 writes for the 16 iterations and produced the same bytes as the baseline on representative success/fallback inputs. Short-write, immediate-error and short-then-error injections matched the **accepted combined diagnostic**, including its different partial-file output on failure. The focused Release packaged test passed; the Stark port's host-compiler check passed; 13 emitted LLVM modules verified. The independently observed supplementary-character cast issue is unchanged. Historical raw results and analysis are in ignored `utf16-controls/actual-interleaved-1000.json` and `actual-analysis-1000.json`.
 
-The remaining subsections are historical experiments and prior decisions; descriptions of separate writes, open status, or rejection of changed partial output refer to the source state before the user's explicit acceptance above.
+The remaining subsections are historical experiments and prior decisions; descriptions of separate writes, pending direct widening, open status, or rejection of changed partial output refer to earlier source states and decisions.
 
 ### Narrow production ASCII-range conversion (October 28, 2026)
 
