@@ -48,6 +48,7 @@ public static class DefaultCompilerPipeline
             .Add(new PropagateSsaConstantsPass())
             .Add(new DevirtualizeSsaIrPass())
             .Add(new InlineSsaIrPass())
+            .Add(new VersionQueueDequeueLoopsSsaPass())
             .Add(new CseConstGraphCallsSsaPass())
             .Add(new OptimizeConstLookupTablesSsaPass())
             .Add(new SsaValueFactsPass())
@@ -4881,6 +4882,28 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class VersionQueueDequeueLoopsSsaPass : ICompilerPass
+    {
+        public string Id => "queue-dequeue-loop-ssa";
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+        public IReadOnlyList<string> Dependencies => ["inline-ssa", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var strategies = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var effects = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var parameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation),
+                context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules), strategies);
+            var versioned = new SsaQueueDequeueLoopVersioner(strategies, effects, parameterEffects).Optimize(ssa);
+            if (ReferenceEquals(ssa, versioned)) return;
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(versioned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, new SsaConstantPropagator().Optimize(cleaned));
+        }
+    }
+
     private sealed class CseConstGraphCallsSsaPass : ICompilerPass
     {
         public string Id => "cse-const-graph-calls-ssa";
@@ -4889,7 +4912,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["inline-ssa", "refine-function-effects", "semantic-validate", "type-check"];
+        public IReadOnlyList<string> Dependencies => ["queue-dequeue-loop-ssa", "refine-function-effects", "semantic-validate", "type-check"];
 
         public void Execute(CompilerPassContext context)
         {
