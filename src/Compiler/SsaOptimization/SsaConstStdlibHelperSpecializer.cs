@@ -320,7 +320,26 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
         out SsaValueInstruction retargeted)
     {
         retargeted = valueInstruction;
-        if (!TryResolveConstPathVariant(call.FunctionName, moduleName, out var constVariant, out var sourceArgumentIndexes)
+        if (!TryResolveConstPathVariant(call.FunctionName, moduleName, out var constVariant, out var sourceArgumentIndexes))
+        {
+            return false;
+        }
+
+        if (constVariant.SimpleName == "TryJoinConst")
+        {
+            if (call.Arguments.Count <= 1)
+            {
+                return false;
+            }
+
+            sourceArgumentIndexes = Enumerable.Range(1, call.Arguments.Count - 1).ToArray();
+        }
+        else if (constVariant.SimpleName == "JoinConst")
+        {
+            sourceArgumentIndexes = Enumerable.Range(0, call.Arguments.Count).ToArray();
+        }
+
+        if (sourceArgumentIndexes.Count == 0
             || call.Arguments.Count <= sourceArgumentIndexes.Max()
             || !AllArgumentsHaveConstMemoryProvenance(
                 function,
@@ -609,13 +628,15 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
         out string replaced)
     {
         replaced = string.Empty;
-        var separatorIndex = sourceFunctionName.LastIndexOf('.');
+        var overloadIndex = sourceFunctionName.IndexOf("#(", StringComparison.Ordinal);
+        var baseName = overloadIndex < 0 ? sourceFunctionName : sourceFunctionName[..overloadIndex];
+        var separatorIndex = baseName.LastIndexOf('.');
         if (separatorIndex < 0)
         {
             return false;
         }
 
-        replaced = $"{sourceFunctionName[..(separatorIndex + 1)]}{targetSimpleName}";
+        replaced = $"{baseName[..(separatorIndex + 1)]}{targetSimpleName}";
         return true;
     }
 
@@ -1553,6 +1574,12 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
 
     private static bool IsPathFunction(string functionName, string moduleName, string simpleName)
     {
+        var overloadIndex = functionName.IndexOf("#(", StringComparison.Ordinal);
+        if (overloadIndex >= 0)
+        {
+            functionName = functionName[..overloadIndex];
+        }
+
         return string.Equals(functionName, $"System.IO.Path.{simpleName}", StringComparison.Ordinal)
                || string.Equals(moduleName, "System.IO.Path", StringComparison.Ordinal)
                && string.Equals(functionName, simpleName, StringComparison.Ordinal);
