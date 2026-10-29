@@ -923,6 +923,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     break;
                 case SsaStringConstant:
                 case SsaTextDataAddressValue:
+                case SsaStaticArrayAddressValue:
                     break;
                 default:
                     AddAddressValueRoots(value, visitedValueNames);

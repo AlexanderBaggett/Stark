@@ -3174,6 +3174,16 @@ internal sealed class LlvmIrEmitter
             case SsaTextDataAddressValue textData:
                 AddStringLiteral(textData.LiteralText, textData.TextType, constants, ref index);
                 return;
+            case SsaStaticArrayAddressValue data:
+                var shape = LlvmStaticArrayConstant.Describe(data);
+                var key = new StringConstantKey(StarkTypeKind.RawPointer, shape.ArrayType, shape.Initializer,
+                    data.Elements.Count, shape.AlignmentBytes);
+                if (!constants.ContainsKey(key))
+                {
+                    constants[key] = new EmittedStringConstant($".data.{index++}", shape.ArrayType,
+                        shape.Initializer, data.Elements.Count, shape.AlignmentBytes);
+                }
+                return;
             case SsaUseRValue use:
                 AddStringConstant(use.Value, constants, ref index);
                 return;

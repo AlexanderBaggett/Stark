@@ -23,6 +23,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaFloatConstant floating => FormatFloatLiteral(floating),
             SsaStringConstant text => FormatStringConstantValue(text),
             SsaTextDataAddressValue textData => FormatStringDataPointer(textData.LiteralText, textData.TextType),
+            SsaStaticArrayAddressValue data => FormatStaticArrayDataPointer(data),
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}",
@@ -37,6 +38,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private string ResolveFunctionAddressSymbolName(string functionName)
     {
         return _resolveCallAbi(_function.Name, functionName)?.SymbolName ?? functionName;
+    }
+
+    private string FormatStaticArrayDataPointer(SsaStaticArrayAddressValue data)
+    {
+        var constant = _context.ResolveStaticArrayConstant(data);
+        return $"getelementptr inbounds ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
     }
 
     private string FormatClosureValue(SsaClosureValue closure)
@@ -1633,6 +1640,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return value switch
         {
             SsaTextDataAddressValue => true,
+            SsaStaticArrayAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsImmutableGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => ResolvePermanentInvariantMemoryReference(reference, visitedValueNames),
             _ => false

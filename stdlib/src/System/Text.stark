@@ -9977,6 +9977,55 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, u
 }
 internal unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
+// Compiler-selected constant transcoding keeps the converter's capacity semantics.
+internal unsafe finite bool TryCopyPreencodedUtf16(
+    rawmutptr<i16[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
+    rawptr<i16[min max]> data,
+    i64[min max] unitCount,
+    rawmutptr<i64[min max]> writtenLength,
+    bool writePrefix)
+{
+    if (writtenLength == null)
+    {
+        return false;
+    }
+    *writtenLength = 0;
+    stack mut i64[min max] copyCount = unitCount;
+    if (unitCount > capacity)
+    {
+        if (!writePrefix)
+        {
+            return false;
+        }
+        copyCount = (i64[min max])capacity;
+        // Do not copy half of a supplementary character on capacity failure.
+        if (copyCount > 0)
+        {
+            stack i32[min max] last = (i32[min max])data[copyCount - 1] & 65535;
+            if (55296 <= last && last <= 56319)
+            {
+                copyCount -= 1;
+            }
+        }
+    }
+    if (copyCount > 0 && destination == null)
+    {
+        return false;
+    }
+    for willexit (stack mut i64[min max] i = 0; i < copyCount; i += 1)
+    {
+        destination[i] = data[i];
+    }
+    if (unitCount > capacity)
+    {
+        *writtenLength = 0;
+        return false;
+    }
+    *writtenLength = unitCount;
+    return true;
+}
+
 internal unsafe fn bool TryConvertAsciiToUtf16(
     rawmutptr<i16[min max]>[capacity] destination,
     u64[0 2 ** 63 - 1] capacity,

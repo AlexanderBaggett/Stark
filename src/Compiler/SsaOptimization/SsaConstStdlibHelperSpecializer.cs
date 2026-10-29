@@ -5,7 +5,7 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed class SsaConstStdlibHelperSpecializer
+internal sealed partial class SsaConstStdlibHelperSpecializer
 {
     private readonly TypeCheckModel _typeModel;
     private readonly LlvmTargetInfo? _targetInfo;
@@ -23,7 +23,19 @@ internal sealed class SsaConstStdlibHelperSpecializer
     {
         string targetModule;
         string targetName;
-        if (TryResolveConstPathVariant(functionName, moduleName, out var path, out _))
+        var addedParameters = 0;
+        if (TryResolveUtf16ConversionVariant(functionName, moduleName))
+        {
+            targetModule = "System.Text";
+            targetName = "TryCopyPreencodedUtf16";
+            addedParameters = 2;
+        }
+        else if (TryResolveUtf16FileVariant(functionName, moduleName, out targetName))
+        {
+            targetModule = "System.IO.File";
+            addedParameters = 5;
+        }
+        else if (TryResolveConstPathVariant(functionName, moduleName, out var path, out _))
         {
             targetModule = "System.IO.Path";
             targetName = path.SimpleName;
@@ -38,7 +50,7 @@ internal sealed class SsaConstStdlibHelperSpecializer
             yield break;
         }
 
-        var count = types.Functions.GetValueOrDefault(functionName)?.Parameters.Count;
+        var count = types.Functions.GetValueOrDefault(functionName)?.Parameters.Count + addedParameters;
         foreach (var name in EnumerateRetargetNameCandidates(functionName, moduleName, targetModule, targetName))
         {
             if (types.Functions.TryGetValue(name, out var direct) && (count is null || direct.Parameters.Count == count))
@@ -141,6 +153,22 @@ internal sealed class SsaConstStdlibHelperSpecializer
                 continue;
             }
 
+            if (instruction is SsaCallInstruction effect
+                && TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
+                    constProvenanceLocalNames, effect, out var encodedEffect))
+            {
+                instructions.Add(effect with
+                {
+                    FunctionName = encodedEffect.FunctionName,
+                    Arguments = encodedEffect.Arguments,
+                    Text = encodedEffect.Text,
+                    IndirectArgumentLocalNames = encodedEffect.IndirectArgumentLocalNames,
+                    IndirectArgumentAddresses = encodedEffect.IndirectArgumentAddresses
+                });
+                changed = true;
+                blockChanged = true;
+                continue;
+            }
             instructions.Add(instruction);
         }
 
@@ -161,6 +189,13 @@ internal sealed class SsaConstStdlibHelperSpecializer
         out IReadOnlyList<SsaInstruction> replacements)
     {
         replacements = [];
+
+        if (TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
+                constProvenanceLocalNames, call, out var encoded))
+        {
+            replacements = [valueInstruction with { Value = encoded }];
+            return true;
+        }
 
         if (TryRetargetConstTextVariant(
             function,
@@ -352,6 +387,7 @@ internal sealed class SsaConstStdlibHelperSpecializer
         {
             SsaStringConstant => true,
             SsaTextDataAddressValue => true,
+            SsaStaticArrayAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsPermanentConstGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => HasConstMemoryProvenance(
                 function,

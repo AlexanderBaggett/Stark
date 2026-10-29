@@ -35,13 +35,21 @@ internal readonly record struct DecodedTextLiteral(string Value)
     {
         get
         {
-            var units = new int[Value.Length];
+            var units = new List<int>(Value.Length);
             for (var index = 0; index < Value.Length; index++)
             {
-                units[index] = Value[index];
+                if (char.IsHighSurrogate(Value[index]) && index + 1 < Value.Length
+                    && char.IsLowSurrogate(Value[index + 1]))
+                {
+                    units.Add(char.ConvertToUtf32(Value[index], Value[++index]));
+                }
+                else
+                {
+                    units.Add(Value[index]);
+                }
             }
 
-            return units;
+            return units.ToArray();
         }
     }
 }

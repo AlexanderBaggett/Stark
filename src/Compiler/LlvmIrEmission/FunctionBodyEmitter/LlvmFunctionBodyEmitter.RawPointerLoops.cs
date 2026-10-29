@@ -3355,6 +3355,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaIntegerConstant
                 or SsaFloatConstant
                 or SsaStringConstant
+                or SsaTextDataAddressValue
+                or SsaStaticArrayAddressValue
                 or SsaBoolConstant
                 or SsaNullConstant
                 or SsaGlobalAddressValue

@@ -5625,6 +5625,12 @@ public sealed record SsaTextDataAddressValue(
     StarkTypeSymbol Type)
     : SsaValue(Type, $"&{LiteralText}.data");
 
+// Integer elements keep their target representation until LLVM lays them out.
+public sealed record SsaStaticArrayAddressValue(
+    IReadOnlyList<BigInteger> Elements,
+    StarkTypeSymbol Type)
+    : SsaValue(Type, $"readonly[{string.Join(",", Elements)}]");
+
 public sealed record SsaBoolConstant(bool Value)
     : SsaValue(StarkTypeSymbols.Bool, Value ? "true" : "false");
 

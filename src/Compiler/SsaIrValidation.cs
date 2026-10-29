@@ -3089,6 +3089,24 @@ internal sealed class SsaIrValidator
             case SsaTextDataAddressValue textDataAddress:
                 ValidateTextDataAddress(function, textDataAddress, location);
                 break;
+            case SsaStaticArrayAddressValue data:
+                ValidateRawPointerType(function, data.Type, "static array address", location);
+                if (data.Type.IsMutablePointer)
+                {
+                    Report(function, location, "static array address cannot provide mutable storage.");
+                }
+                if (data.Type.ElementType is not { Kind: StarkTypeKind.Integer } elementType)
+                {
+                    Report(function, location, "static array address requires integer elements.");
+                }
+                else
+                {
+                    foreach (var element in data.Elements)
+                    {
+                        ValidateIntegerConstant(function, new SsaIntegerConstant(element, elementType), location);
+                    }
+                }
+                break;
             case SsaBoolConstant:
             case SsaNullConstant:
             case SsaUndefValue:

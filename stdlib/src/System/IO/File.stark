@@ -395,6 +395,21 @@ unsafe fn bool TryWriteShortUnicodeUtf16Line(rawptr<i8[min max]> handle, unicode
     return true;
 }
 
+// Chunk lengths preserve the general converter's write and error boundaries.
+unsafe fn void WritePreencodedUtf16Chunks(rawptr<i8[min max]> handle, rawptr<i16[min max]> data, rawptr<i64[min max]> chunks, i64[min max] chunkCount)
+{
+    stack mut i64[min max] offset = 0;
+    for willexit (stack mut i64[min max] i = 0; i < chunkCount; i += 1)
+    {
+        stack i64[min max] length = chunks[i];
+        if (WriteAllBytesRaw(handle, (rawptr<i8[min max]>)(&data[offset]), length * 2) != 0)
+        {
+            return;
+        }
+        offset += length;
+    }
+}
+
 unsafe fn i32[min max] WriteAsciiUtf16(rawptr<i8[min max]> handle, ascii text)
 {
     stack i64[min max] sourceLength = System.Text.AsciiLength(text);
@@ -1501,6 +1516,90 @@ public struct File
             return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
         }
 
+        self.WriteLineRaw(text);
+        return System.IO.IOStatus.Ok;
+    }
+
+    // Compiler-selected only when the complete immutable text payload is known.
+    internal unsafe fn System.IO.IOStatus WriteTextPreencoded(mut borrow File self, ascii text, rawptr<i16[min max]> data, i64[min max] unitCount, rawptr<i64[min max]> chunks, i64[min max] chunkCount, bool combineLine)
+    {
+        if (!self.IsOpen())
+        {
+            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        }
+        if (self.Encoding == System.Text.Encoding.UTF16 && !self.BufferWrites
+            && !self.FlushOnLine && self.WriteBufferLength == 0)
+        {
+            WritePreencodedUtf16Chunks(self.Handle, data, chunks, chunkCount);
+            return System.IO.IOStatus.Ok;
+        }
+        self.WriteTextRaw(text);
+        return System.IO.IOStatus.Ok;
+    }
+
+    // Compiler-selected only when the complete immutable text payload is known.
+    internal unsafe fn System.IO.IOStatus WriteTextPreencoded(mut borrow File self, unicode text, rawptr<i16[min max]> data, i64[min max] unitCount, rawptr<i64[min max]> chunks, i64[min max] chunkCount, bool combineLine)
+    {
+        if (!self.IsOpen())
+        {
+            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        }
+        if (self.Encoding == System.Text.Encoding.UTF16 && !self.BufferWrites
+            && !self.FlushOnLine && self.WriteBufferLength == 0)
+        {
+            WritePreencodedUtf16Chunks(self.Handle, data, chunks, chunkCount);
+            return System.IO.IOStatus.Ok;
+        }
+        self.WriteTextRaw(text);
+        return System.IO.IOStatus.Ok;
+    }
+
+    // Compiler-selected only when the complete immutable text payload is known.
+    internal unsafe fn System.IO.IOStatus WriteLinePreencoded(mut borrow File self, ascii text, rawptr<i16[min max]> data, i64[min max] unitCount, rawptr<i64[min max]> chunks, i64[min max] chunkCount, bool combineLine)
+    {
+        if (!self.IsOpen())
+        {
+            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        }
+        if (self.Encoding == System.Text.Encoding.UTF16 && !self.BufferWrites
+            && !self.FlushOnLine && self.WriteBufferLength == 0)
+        {
+            if (combineLine)
+            {
+                WriteAllBytesRaw(self.Handle, (rawptr<i8[min max]>)data, (unitCount + 1) * 2);
+            }
+            else
+            {
+                WritePreencodedUtf16Chunks(self.Handle, data, chunks, chunkCount);
+                WriteAllBytesRaw(self.Handle, (rawptr<i8[min max]>)(&data[unitCount]), 2);
+            }
+            return System.IO.IOStatus.Ok;
+        }
+        self.WriteLineRaw(text);
+        return System.IO.IOStatus.Ok;
+    }
+
+    // Compiler-selected only when the complete immutable text payload is known.
+    internal unsafe fn System.IO.IOStatus WriteLinePreencoded(mut borrow File self, unicode text, rawptr<i16[min max]> data, i64[min max] unitCount, rawptr<i64[min max]> chunks, i64[min max] chunkCount, bool combineLine)
+    {
+        if (!self.IsOpen())
+        {
+            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        }
+        if (self.Encoding == System.Text.Encoding.UTF16 && !self.BufferWrites
+            && !self.FlushOnLine && self.WriteBufferLength == 0)
+        {
+            if (combineLine)
+            {
+                WriteAllBytesRaw(self.Handle, (rawptr<i8[min max]>)data, (unitCount + 1) * 2);
+            }
+            else
+            {
+                WritePreencodedUtf16Chunks(self.Handle, data, chunks, chunkCount);
+                WriteAllBytesRaw(self.Handle, (rawptr<i8[min max]>)(&data[unitCount]), 2);
+            }
+            return System.IO.IOStatus.Ok;
+        }
         self.WriteLineRaw(text);
         return System.IO.IOStatus.Ok;
     }

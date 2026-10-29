@@ -531,6 +531,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaTextDataAddressValue textData:
                 alignmentBytes = ResolveStringConstant(textData.LiteralText, textData.TextType).AlignmentBytes;
                 return true;
+            case SsaStaticArrayAddressValue data:
+                alignmentBytes = LlvmStaticArrayConstant.Describe(data).AlignmentBytes;
+                return true;
             case SsaAddressOfLocalRValue addressOfLocal:
                 alignmentBytes = GetLocalObjectAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType) ?? 1;
                 return true;

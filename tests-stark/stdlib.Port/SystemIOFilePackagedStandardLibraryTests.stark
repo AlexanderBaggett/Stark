@@ -500,6 +500,104 @@ unsafe fn bool WriteRuntimeUtf16Lines(ascii path, System.IO.File.FileBuffering b
     return StatusOk(writer.WriteLine(System.Text.UnicodeView(nonascii))) && StatusOk(writer.Close());
 }
 
+unsafe fn bool WriteConstantEncodedLines(ascii path, System.Text.Encoding encoding, System.IO.File.FileBuffering buffering)
+{
+    stack mut System.IO.File.File writer = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write, encoding, buffering));
+    stack ascii original = "arbitrary\0text";
+    stack ascii copy = original;
+    stack unicode wide = (unicode)"café 🌍\0";
+    if (System.Text.UnicodeLength(wide) != 7 || System.Text.UnicodeData(wide)[5] != 127757)
+    {
+        return false;
+    }
+    stack ascii utf8 = "AéZ";
+    if (!StatusOk(writer.WriteLine(copy)) || !StatusOk(writer.WriteLine(wide))
+        || !StatusOk(writer.WriteLine(wide[5, 1])) || !StatusOk(writer.WriteLine(utf8[2, 1]))
+        || !StatusOk(writer.WriteText((unicode)"Ω🌍")) || !StatusOk(writer.WriteLine("")))
+    {
+        return false;
+    }
+    return StatusOk(writer.Close());
+}
+
+unsafe noinline fn bool DynamicAscii(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, ascii source, rawmutptr<i64[min max]> written)
+    where disjoint(source, destination[0, capacity])
+{
+    return System.Text.TryConvertAsciiToUtf16(destination, capacity, source, written);
+}
+unsafe noinline fn bool DynamicUnicode(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, unicode source, rawmutptr<i64[min max]> written)
+    where disjoint(source, destination[0, capacity])
+{
+    return System.Text.TryConvertUnicodeToUtf16(destination, capacity, source, written);
+}
+// This finite caller checks the helper's contract after source/package loading.
+unsafe finite bool CopyKnownUtf16(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, rawptr<i16[min max]> data, i64[min max] count, rawmutptr<i64[min max]> written)
+{
+    return System.Text.TryCopyPreencodedUtf16(destination, capacity, data, count, written, true);
+}
+
+unsafe fn i32[min max] CheckUtf16ConversionCapacity()
+{
+    stack mut i16[min max][8] expected = { -123, -123, -123, -123, -123, -123, -123, -123 };
+    stack mut i16[min max][8] actual = { -123, -123, -123, -123, -123, -123, -123, -123 };
+    for willexit (stack mut i64[min max] iteration = 0; iteration <= 8; iteration += 1)
+    {
+        stack u8[0 8] capacity = (u8[0 8])iteration;
+        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+        {
+            expected[i] = -123;
+            actual[i] = -123;
+        }
+        stack mut i64[min max] a = -1;
+        stack mut i64[min max] b = -1;
+        stack bool x = DynamicAscii(&expected[0], capacity, "Aé🌍Z", &a);
+        stack bool y = System.Text.TryConvertAsciiToUtf16(&actual[0], capacity, "Aé🌍Z", &b);
+        if (x != y || a != b)
+        {
+            return 1;
+        }
+        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+        {
+            if (expected[i] != actual[i])
+            {
+                return 2;
+            }
+            expected[i] = -123;
+            actual[i] = -123;
+        }
+        a = -1;
+        b = -1;
+        stack bool u = DynamicUnicode(&expected[0], capacity, (unicode)"Aé🌍Z", &a);
+        stack bool v = System.Text.TryConvertUnicodeToUtf16(&actual[0], capacity, (unicode)"Aé🌍Z", &b);
+        if (u != v || a != b)
+        {
+            return 3;
+        }
+        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+        {
+            if (expected[i] != actual[i])
+            {
+                return 4;
+            }
+        }
+    }
+    stack mut i64[min max] written = -1;
+    if (System.Text.TryConvertAsciiToUtf16(&actual[0], 8, "Aé🌍Z", null))
+    {
+        return 7;
+    }
+    stack i16[min max][2] known =
+    {
+        65, 66
+    };
+    if (!CopyKnownUtf16(&actual[0], 8, &known[0], 2, &written)
+        || written != 2 || actual[0] != 65 || actual[1] != 66)
+    {
+        return 10;
+    }
+    return 0;
+}
+
 export unsafe fn i32[min max] main()
 {
     stack mut i32[min max][1] gothicBuffer =
@@ -568,6 +666,19 @@ export unsafe fn i32[min max] main()
         || !WriteRuntimeUtf16Lines("utf16-runtime-line.txt", System.IO.File.FileBuffering.Line))
     {
         return 5;
+    }
+
+    if (!WriteConstantEncodedLines("constant-none.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.None)
+        || !WriteConstantEncodedLines("constant-full.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.Full)
+        || !WriteConstantEncodedLines("constant-line.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.Line)
+        || !WriteConstantEncodedLines("constant-utf8.txt", System.Text.Encoding.UTF8, System.IO.File.FileBuffering.None))
+    {
+        return 6;
+    }
+
+    if (CheckUtf16ConversionCapacity() != 0)
+    {
+        return 7;
     }
 
     return 0;

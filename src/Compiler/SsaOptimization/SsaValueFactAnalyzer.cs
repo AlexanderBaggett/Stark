@@ -868,6 +868,13 @@ internal sealed class SsaValueFactAnalyzer
             SsaBoolConstant boolean => CreateBooleanConstantFacts(valueName, boolean.Value),
             SsaNullConstant nullConstant => CreateNullFacts(valueName, nullConstant.Type),
             SsaStringConstant text => CreateTextConstantFacts(valueName, text.Type, text.LiteralText),
+            SsaStaticArrayAddressValue data => CreateAddressFacts(valueName, data.Type, data.Type.ElementType!) with
+            {
+                BoundedRawPointerRegionKind = SsaFactLatticeKind.Known,
+                BoundedRawPointerRegion = new SsaBoundedRawPointerRegionFact(
+                    new SsaIntegerConstant(data.Elements.Count, StarkTypeSymbols.Integer(64)),
+                    new SsaIntegerRangeFact(data.Elements.Count, data.Elements.Count))
+            },
             SsaGlobalAddressValue globalAddress => CreateAddressFacts(valueName, globalAddress.Type, globalAddress.PointeeType),
             SsaFunctionAddressValue functionAddress => CreateNonNullFacts(valueName, functionAddress.Type),
             SsaZeroInitializerValue { Type.Kind: StarkTypeKind.Dynamic } dynamicZero
@@ -3682,7 +3689,28 @@ internal sealed class SsaValueFactAnalyzer
             return false;
         }
 
-        var slicedText = payload.DecodedText.Substring((int)start, (int)length);
+        // Unicode indices count UTF-32 scalars; ascii indices count UTF-8 bytes.
+        // A byte slice of non-ASCII UTF-8 can split a scalar and is not a .NET substring.
+        if (type.Kind == StarkTypeKind.Ascii && !payload.IsAsciiOnly)
+        {
+            return false;
+        }
+        string slicedText;
+        if (type.Kind == StarkTypeKind.Unicode)
+        {
+            var units = payload.Utf32Length == 0 ? [] : payload.Utf32PayloadHex.Split(',');
+            var builder = new StringBuilder();
+            foreach (var unit in units.Skip((int)start).Take((int)length))
+            {
+                var scalar = int.Parse(unit, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                builder.Append(scalar <= char.MaxValue ? ((char)scalar).ToString() : char.ConvertFromUtf32(scalar));
+            }
+            slicedText = builder.ToString();
+        }
+        else
+        {
+            slicedText = payload.DecodedText.Substring((int)start, (int)length);
+        }
         slicedPayload = CreateTextLiteralPayload(new DecodedTextLiteral(slicedText));
         return type.Kind != StarkTypeKind.Ascii || slicedPayload.IsAsciiOnly;
     }

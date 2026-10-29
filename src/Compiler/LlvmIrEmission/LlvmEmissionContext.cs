@@ -118,6 +118,13 @@ internal sealed class LlvmEmissionContext
 
     public IReadOnlyList<EmittedStringConstant> StringConstants { get; }
 
+    public EmittedStringConstant ResolveStaticArrayConstant(SsaStaticArrayAddressValue value)
+    {
+        var shape = LlvmStaticArrayConstant.Describe(value);
+        return StringConstants.First(constant => constant.ArrayType == shape.ArrayType
+                                                && constant.Initializer == shape.Initializer);
+    }
+
     public LlvmTargetInfo? TargetInfo { get; }
 
     // Mach-O has no COMDAT support; linkonce_odr definitions must be emitted without
