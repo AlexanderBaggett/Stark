@@ -1395,17 +1395,17 @@ internal unsafe fn i32[min max] WriteBufferLineToHandle(
 
     if (length < 8192)
     {
-        stack mut System.Runtime.Buffer.FixedByteBuffer8192 lineBuffer = new System.Runtime.Buffer.FixedByteBuffer8192();
+        stack mut i8[min max][8192] lineStorage;
         for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
         {
-            lineBuffer.Storage[index] = *(&buffer[index]);
+            lineStorage[index] = *(&buffer[index]);
         }
 
-        lineBuffer.Storage[length] = (i8[min max])10;
+        lineStorage[length] = (i8[min max])10;
         stack mut i32[min max] lineStatus = 0;
         unsafe
         {
-            lineStatus = WriteBufferToHandle(handle, &lineBuffer.Storage[0], (u64[0 2 ** 63 - 1])(length + 1));
+            lineStatus = WriteBufferToHandle(handle, &lineStorage[0], (u16[1 8192])(length + 1));
         }
 
         return lineStatus;

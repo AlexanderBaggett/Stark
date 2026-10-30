@@ -7744,7 +7744,7 @@ public finite TextResult<u768[0 max]> ParseU768Unicode(unicode source)
     }
 }
 
-fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
+finite law i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
 {
     unsafe
     {
@@ -7789,7 +7789,7 @@ fn i64[min max] Utf8EncodedLength(i32[min max] codePoint)
     return 4;
 }
 
-unsafe fn void WriteUtf8CodePoint(
+internal unsafe finite void WriteUtf8CodePoint(
     rawmutptr<i8[min max]>[capacity] destination,
     u64[0 2 ** 63 - 1] capacity,
     rawmutptr<i64[min max]> writeIndex,

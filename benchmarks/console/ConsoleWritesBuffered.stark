@@ -1,0 +1,61 @@
+import System.Console
+import System.Runtime.Buffer
+import System.Text
+import System.IO
+import System.Memory
+module Benchmarks.Console.ConsoleWritesBuffered
+
+const Iterations = 64;
+
+fn bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool MemoryOk(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Text.OwnedAscii owned = new();
+    if (!MemoryOk(owned.AppendAscii(" line"))) {
+        return 1;
+    }
+
+    stack mut i8[min max][31] payload = {
+        98, 117, 102, 102, 101, 114, 32, 112,
+        97, 121, 108, 111, 97, 100, 32, 48,
+        49, 50, 51, 52, 53, 54, 55, 56,
+        57, 65, 66, 67, 68, 69, 70
+    };
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+    if (!MemoryOk(fixedBuffer.WriteSlice(payload, 31))) {
+        return 2;
+    }
+
+    stack mut System.Console.BufferedUtf8Writer output = new();
+    stack ascii ownedView = owned.View();
+    stack i8[min max][] payloadView = fixedBuffer.ReadSlice();
+
+    for willexit (stack mut u8[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
+        if (!IOOk(output.Write("small"))
+            || !IOOk(output.WriteLine(ownedView))
+            || !IOOk(output.WriteLine((unicode)"wide α"))
+            || !IOOk(output.WriteLine(payloadView))
+            || !IOOk(System.Console.WriteErrorLine("err"))) {
+            return 3;
+        }
+    }
+
+    if (!IOOk(output.Flush())) { return 4; }
+    return 0;
+}

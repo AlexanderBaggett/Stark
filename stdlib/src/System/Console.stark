@@ -471,6 +471,196 @@ public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.FixedBy
     return WriteErrorLine(source.ReadSlice());
 }
 
+// Compiler-selected for constant text whose immediate output fits one existing chunk.
+// Windows immediate console text keeps its original platform-specific path.
+internal unsafe fn System.IO.IOStatus WritePreencodedUtf8(
+    rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length, bool error)
+{
+    if (error)
+    {
+        return StatusFromWriteResult(System.Runtime.Platform.WriteStderrBytes(data, length));
+    }
+    return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutBytes(data, length));
+}
+
+/// An explicitly buffered UTF-8 byte sink, equivalent to Console.Write(byteSlice).
+/// Write accepts bytes into a private 4096-byte buffer; Flush delivers pending bytes.
+/// No automatic final flush: the owner must check Flush before dropping the writer.
+/// Errors are sticky: after failure no later operation retries potentially delivered bytes.
+/// Use one owner; synchronize externally when sharing a destination with other writers.
+public struct BufferedUtf8Writer
+{
+    i8[min max][4096] Storage;
+    u16[0 4096] Pending;
+    bool Error;
+    System.IO.IOStatus Failure;
+
+    BufferedUtf8Writer()
+    {
+        self.Pending = 0;
+        self.Error = false;
+        self.Failure = System.IO.IOStatus.Ok;
+    }
+
+    BufferedUtf8Writer(bool error)
+    {
+        self.Pending = 0;
+        self.Error = error;
+        self.Failure = System.IO.IOStatus.Ok;
+    }
+
+    finite law u16[0 4096] PendingBytes(borrow BufferedUtf8Writer self)
+    {
+        return self.Pending;
+    }
+
+    fn System.IO.IOStatus Flush(mut borrow BufferedUtf8Writer self)
+    {
+        switch (self.Failure)
+        {
+            case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+        }
+        if (self.Pending == 0) { return System.IO.IOStatus.Ok; }
+        unsafe
+        {
+            stack mut i32[min max] result = 0;
+            if (self.Error)
+            {
+                result = System.Runtime.Platform.WriteStderrBytes(&self.Storage[0], self.Pending);
+            }
+            else
+            {
+                result = System.Runtime.Platform.WriteStdoutBytes(&self.Storage[0], self.Pending);
+            }
+            if (result < 0)
+            {
+                self.Failure = StatusFromWriteResult(result);
+                return self.Failure;
+            }
+        }
+        self.Pending = 0;
+        return System.IO.IOStatus.Ok;
+    }
+
+    internal unsafe fn System.IO.IOStatus WritePreencodedUtf8(mut borrow BufferedUtf8Writer self,
+        rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+    {
+        switch (self.Failure)
+        {
+            case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+        }
+        if (length > 0 && data == null)
+        {
+            self.Failure = System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            return self.Failure;
+        }
+        stack mut u64[0 2 ** 63 - 1] consumed = 0;
+        while willexit (consumed < length)
+        {
+            if (self.Pending == 4096)
+            {
+                switch (self.Flush())
+                {
+                    case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+                    case System.IO.IOStatus.Ok:
+                }
+            }
+            stack mut u64[0 2 ** 63 - 1] count = length - consumed;
+            stack u16[0 4096] available = 4096 - self.Pending;
+            if (count > available) { count = available; }
+            for willexit (stack mut u16[0 4096] index = 0; index < count; index += 1)
+            {
+                self.Storage[self.Pending + index] = *(&data[consumed + index]);
+            }
+            self.Pending = (u16[0 4096])(self.Pending + count);
+            consumed += count;
+        }
+        return System.IO.IOStatus.Ok;
+    }
+
+    fn System.IO.IOStatus Write(mut borrow BufferedUtf8Writer self, ascii text)
+    {
+        unsafe
+        {
+            stack i64[min max] length = System.Text.AsciiLength(text);
+            if (length < 0)
+            {
+                self.Failure = System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                return self.Failure;
+            }
+            return self.WritePreencodedUtf8(System.Text.AsciiData(text), (u64[0 2 ** 63 - 1])length);
+        }
+    }
+
+    fn System.IO.IOStatus Write(mut borrow BufferedUtf8Writer self, borrow i8[min max][] bytes)
+    {
+        unsafe
+        {
+            stack System.Runtime.ByteSliceParts parts = System.Runtime.GetByteSliceParts(bytes);
+            return self.WritePreencodedUtf8(parts.Data, parts.Length);
+        }
+    }
+
+    fn System.IO.IOStatus Write(mut borrow BufferedUtf8Writer self, unicode text)
+    {
+        unsafe
+        {
+            stack i64[min max] length = System.Text.UnicodeLength(text);
+            stack rawptr<i32[min max]> data = System.Text.UnicodeData(text);
+            if (length < 0 || (length > 0 && data == null))
+            {
+                self.Failure = System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+                return self.Failure;
+            }
+            for willexit (stack mut i64[min max] index = 0; index < length; index += 1)
+            {
+                stack mut i8[min max][4] encoded;
+                stack mut i64[min max] written = 0;
+                System.Text.WriteUtf8CodePoint(&encoded[0], 4, &written, *(&data[index]));
+                switch (self.WritePreencodedUtf8(&encoded[0], (u8[1 4])written))
+                {
+                    case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+                    case System.IO.IOStatus.Ok:
+                }
+            }
+        }
+        // Even an empty write observes the sticky failure.
+        return self.Failure;
+    }
+
+    fn System.IO.IOStatus WriteLine(mut borrow BufferedUtf8Writer self, ascii text)
+    {
+        switch (self.Write(text))
+        {
+            case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+        }
+        return self.Write("\n");
+    }
+
+    fn System.IO.IOStatus WriteLine(mut borrow BufferedUtf8Writer self, unicode text)
+    {
+        switch (self.Write(text))
+        {
+            case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+        }
+        return self.Write("\n");
+    }
+
+    fn System.IO.IOStatus WriteLine(mut borrow BufferedUtf8Writer self, borrow i8[min max][] bytes)
+    {
+        switch (self.Write(bytes))
+        {
+            case System.IO.IOStatus.Err(var error): return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+        }
+        return self.Write("\n");
+    }
+}
+
 public fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadBytes(
     mut borrow System.Runtime.Buffer.DynamicByteBuffer destination,
     u64[0 2 ** 63 - 1] maxCount)

@@ -24,7 +24,13 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
         string targetModule;
         string targetName;
         var addedParameters = 0;
-        if (TryResolveUtf16ConversionVariant(functionName, moduleName))
+        if (TryResolveConsoleWrite(functionName, moduleName, out var buffered, out _, out _))
+        {
+            targetModule = "System.Console";
+            targetName = buffered ? "BufferedUtf8Writer.WritePreencodedUtf8" : "WritePreencodedUtf8";
+            addedParameters = buffered ? 1 : 2;
+        }
+        else if (TryResolveUtf16ConversionVariant(functionName, moduleName))
         {
             targetModule = "System.Text";
             targetName = "TryCopyPreencodedUtf16";
@@ -154,8 +160,10 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
             }
 
             if (instruction is SsaCallInstruction effect
-                && TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
-                    constProvenanceLocalNames, effect, out var encodedEffect))
+                && (TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
+                    constProvenanceLocalNames, effect, out var encodedEffect)
+                    || TryPreencodeConsoleCall(function, moduleName, facts, valueDefinitions,
+                        constProvenanceLocalNames, effect, out encodedEffect)))
             {
                 instructions.Add(effect with
                 {
@@ -191,7 +199,9 @@ internal sealed partial class SsaConstStdlibHelperSpecializer
         replacements = [];
 
         if (TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
-                constProvenanceLocalNames, call, out var encoded))
+                constProvenanceLocalNames, call, out var encoded)
+            || TryPreencodeConsoleCall(function, moduleName, facts, valueDefinitions,
+                constProvenanceLocalNames, call, out encoded))
         {
             replacements = [valueInstruction with { Value = encoded }];
             return true;

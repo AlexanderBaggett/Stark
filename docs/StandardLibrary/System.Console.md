@@ -64,9 +64,40 @@ public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read();
 - End of input returns `Ok` with empty owned text.
 - Owned input results can be kept by the caller; convert them to text views with `.View()` when passing them to APIs that accept `ascii` or `unicode`.
 
+## Explicit UTF-8 buffering
+
+`BufferedUtf8Writer` owns a 4,096-byte stack buffer. Construct `new()` for stdout
+or `new(true)` for stderr. `Write` and `WriteLine` accept `ascii`, `unicode`, or a
+borrowed byte slice; use `.View()` for owned text and `.ReadSlice()` for buffers.
+`PendingBytes()` reports buffered bytes. Unicode scalars are encoded as UTF-8,
+with invalid scalars replaced by U+FFFD. ASCII and byte slices retain their exact
+bytes, including embedded NULs. Output uses the same byte sink as `Write(byteSlice)`;
+it does not use Windows' immediate Unicode-console path.
+
+Check each returned `IOStatus` and call `Flush()` explicitly before the writer
+leaves scope. Writes can succeed by accepting bytes without delivering them yet;
+a full buffer is flushed when more space is needed. `Flush()` delivers pending
+bytes and is a no-op when empty. There is no destructor flush. After any write
+failure, the writer retains that failure and refuses subsequent writes/flushes:
+it cannot safely replay a buffer whose prefix may already have been delivered.
+After a failed flush, `PendingBytes()` retains the buffer snapshot size rather
+than identifying the undelivered suffix.
+
+Keep a single logical owner, pass it by mutable borrow, and synchronize callers
+externally when sharing a destination. Flush before mixing buffered output with
+immediate console operations when cross-stream visibility or ordering matters.
+Existing immediate `Write`/`WriteLine` behavior is unchanged.
+
+The compiler pre-encodes eligible constant text into read-only UTF-8 byte arrays,
+including the newline for constant lines. Runtime values retain normal encoding.
+This also works for source-free package consumers. Immediate text specialization
+preserves existing chunk boundaries and leaves Windows console text handling on
+its original path.
+
 ## Error Model
 
-- `IOStatus.Ok` means the underlying platform write returned a non-negative result.
+- For immediate writes, `IOStatus.Ok` means the underlying platform write returned a non-negative result.
+- Buffered writes may return `Ok` before I/O; check `Flush()` to observe delivery failures.
 - `IOStatus.Err(IOError.Unknown(code))` is used when the current platform boundary reports a negative result code.
 
 ## Example
