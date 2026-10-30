@@ -707,9 +707,9 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         var sparseReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_SparseSlots_ReserveRing__u32_0_2147483647(");
-        var dictionaryReserveBody = ExtractDefinedFunctionText(
+        var dictionaryStorageBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_GrowStorage__u32_0_2147483647__u32_0_2147483647(");
 
         Assert.Contains("SparseSlots_ReserveRing__u32", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Allocate(", sparseReserveBody, StringComparison.Ordinal);
@@ -718,11 +718,11 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         Assert.DoesNotContain("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic_try_reserve", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("llvm.memmove", sparseReserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Allocate(", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Free(", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("%slot_nextValueSlots", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", dictionaryStorageBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", dictionaryStorageBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryValueSlot", dictionaryStorageBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("%slot_nextValueSlots", dictionaryStorageBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve", dictionaryStorageBody, StringComparison.Ordinal);
     }
 
     [Fact]

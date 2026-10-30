@@ -1,7 +1,7 @@
 namespace Stark.Compiler;
 
-// Widen a private, bounded induction counter so the backend need not legalize
-// an i24 loop counter on every iteration. All other shapes remain untouched.
+// Select native storage for a bounded SSA induction. Source-width values remain
+// explicit conversions, so ABI/layout and every non-control use keep their types.
 internal sealed class SsaLoopCounterWidening
 {
     public SsaIrModule Optimize(SsaIrModule module)
@@ -18,18 +18,9 @@ internal sealed class SsaLoopCounterWidening
 
     private static SsaFunction OptimizeFunction(SsaFunction function)
     {
-        if (!function.HasBody || !function.SupportsDirectCodeGeneration
-            || function.Blocks.Any(block => block.Instructions.Any(instruction =>
-                instruction is not SsaValueInstruction { Value: SsaBinaryRValue or SsaConvertRValue or SsaCallRValue or SsaSelectRValue or SsaUnaryRValue or SsaUseRValue })))
-        {
-            return function;
-        }
-
+        if (!function.HasBody || !function.SupportsDirectCodeGeneration) return function;
         var current = function;
-        while (TryWiden(current, out var next))
-        {
-            current = next;
-        }
+        while (TryWiden(current, out var next)) current = next;
         return current;
     }
 
@@ -37,81 +28,109 @@ internal sealed class SsaLoopCounterWidening
     {
         result = function;
         var blocks = function.Blocks.ToDictionary(block => block.Id);
+        var definitions = function.Blocks.SelectMany(block => block.Instructions.OfType<SsaValueInstruction>()
+            .Select(instruction => (Block: block.Id, Instruction: instruction)))
+            .ToDictionary(pair => pair.Instruction.ResultName, StringComparer.Ordinal);
+        var names = definitions.Keys.Concat(function.Blocks.SelectMany(block => block.Phis.Select(phi => phi.ResultName)))
+            .ToHashSet(StringComparer.Ordinal);
+        string Fresh(string prefix)
+        {
+            var name = prefix;
+            for (var suffix = 1; !names.Add(name); suffix++) name = prefix + suffix;
+            return name;
+        }
+
         foreach (var header in function.Blocks)
         {
             if (header.Terminator is not { Kind: SsaTerminatorKind.Branch, Condition: SsaValueReference condition, Targets.Count: 2 }
-                || !blocks.TryGetValue(header.Terminator.Targets[0], out var body)
-                || body.Terminator is not { Kind: SsaTerminatorKind.Goto, Targets.Count: 1 }
-                || body.Terminator.Targets[0] != header.Id
+                || !definitions.TryGetValue(condition.Name, out var compareDefinition)
+                || compareDefinition.Block != header.Id
+                || compareDefinition.Instruction.Value is not SsaBinaryRValue
+                { Operator: SsaBinaryOperator.LessThan, Left: SsaValueReference converted, Right: SsaIntegerConstant limit } comparison
+                || limit.Value <= 0 || limit.Value >= (1 << 23)
+                || !definitions.TryGetValue(converted.Name, out var convertDefinition)
+                || convertDefinition.Block != header.Id
+                || convertDefinition.Instruction.Value is not SsaConvertRValue
+                { Operand: SsaValueReference counter, TargetType.BitWidth: 24, TargetType.IsUnsigned: false } conversion)
+                continue;
+            var phi = header.Phis.SingleOrDefault(candidate => candidate.ResultName == counter.Name);
+            if (phi is not { Type.BitWidth: 24, Type.IsUnsigned: true, Incomings.Count: 2 }
+                || phi.Type.RangeMin != 0 || phi.Type.RangeMax is null || phi.Type.RangeMax < limit.Value
                 || function.Blocks.Count(block => block.Terminator.Targets.Contains(header.Id)) != 2)
                 continue;
 
-            var comparisonInstruction = header.Instructions.OfType<SsaValueInstruction>().SingleOrDefault(i => i.ResultName == condition.Name);
-            if (comparisonInstruction?.Value is not SsaBinaryRValue { Operator: SsaBinaryOperator.LessThan, Left: SsaValueReference converted, Right: SsaIntegerConstant limit } comparison
-                || limit.Value <= 0 || limit.Value >= (1 << 23))
-                continue;
-            var conversionInstruction = header.Instructions.OfType<SsaValueInstruction>().SingleOrDefault(i => i.ResultName == converted.Name);
-            if (conversionInstruction?.Value is not SsaConvertRValue { Operand: SsaValueReference counter, TargetType.BitWidth: 24, TargetType.IsUnsigned: false } conversion)
-                continue;
-            var phi = header.Phis.SingleOrDefault(p => p.ResultName == counter.Name);
-            if (phi is not { Type.BitWidth: 24, Type.IsUnsigned: true, Incomings.Count: 2 }
-                || phi.Type.RangeMin != 0 || phi.Type.RangeMax is null || phi.Type.RangeMax < limit.Value)
-                continue;
-            var initial = phi.Incomings.SingleOrDefault(i => i.PredecessorBlockId != body.Id);
-            var back = phi.Incomings.SingleOrDefault(i => i.PredecessorBlockId == body.Id);
-            if (initial?.Value is not SsaIntegerConstant { Value.IsZero: true }
-                || back?.Value is not SsaValueReference update
-                || !blocks.TryGetValue(initial.PredecessorBlockId, out var preheader)
-                || preheader.Terminator is not { Kind: SsaTerminatorKind.Goto, Targets.Count: 1 }
-                || preheader.Terminator.Targets[0] != header.Id)
-                continue;
-            var updateInstruction = body.Instructions.OfType<SsaValueInstruction>().SingleOrDefault(i => i.ResultName == update.Name);
-            if (updateInstruction?.Value is not SsaBinaryRValue { Operator: SsaBinaryOperator.Add, Left: SsaValueReference updateCounter, Right: SsaIntegerConstant step } increment
-                || updateCounter.Name != counter.Name || step.Value != 1)
+            var initialEdges = phi.Incomings.Where(incoming => incoming.Value is SsaIntegerConstant { Value.IsZero: true }).ToArray();
+            if (initialEdges.Length != 1 || initialEdges[0].PredecessorBlockId == header.Id) continue;
+            var initial = initialEdges[0];
+            var back = phi.Incomings.Single(incoming => !ReferenceEquals(incoming, initial));
+            if (back.Value is not SsaValueReference update
+                || !definitions.TryGetValue(update.Name, out var updateDefinition)
+                || updateDefinition.Block == header.Id
+                || !blocks.TryGetValue(back.PredecessorBlockId, out var latch)
+                || !latch.Terminator.Targets.Contains(header.Id)
+                || updateDefinition.Instruction.Value is not SsaBinaryRValue
+                { Operator: SsaBinaryOperator.Add, Left: SsaValueReference updateCounter, Right: SsaIntegerConstant step } increment
+                || updateCounter.Name != counter.Name || step.Value != 1
+                // Every increment must be guarded by counter < limit. Exits may
+                // contain cleanup or nested control flow, but cannot reach it
+                // again without passing through this header's true edge.
+                || !CanReach(header.Terminator.Targets[0], updateDefinition.Block, header.Id, blocks)
+                || CanReach(header.Terminator.Targets[1], updateDefinition.Block, header.Id, blocks))
                 continue;
 
-            // No other use may observe the changed width, including the exit value.
-            var uses = CountUses(function);
-            if (uses.GetValueOrDefault(counter.Name) != 2 || uses.GetValueOrDefault(converted.Name) != 1 || uses.GetValueOrDefault(update.Name) != 1)
-                continue;
-
-            var wideCounter = StarkTypeSymbols.Integer(32, 0, phi.Type.RangeMax, isUnsigned: true);
-            var wideCompare = StarkTypeSymbols.Integer(32);
-            var newPhi = phi with { Type = wideCounter, Incomings = phi.Incomings.Select(i => i with { Value = i.Value switch
+            var wideCounter = StarkTypeSymbols.Integer(32, 0, limit.Value, isUnsigned: true);
+            var wideCompare = StarkTypeSymbols.Integer(32, conversion.TargetType.RangeMin, conversion.TargetType.RangeMax);
+            var counterName = Fresh(counter.Name + "_native");
+            var nextName = Fresh(update.Name + "_native");
+            var compareName = Fresh(converted.Name + "_native");
+            var counterValue = new SsaValueReference(counterName, wideCounter);
+            var nextValue = new SsaValueReference(nextName, wideCounter);
+            var newPhi = phi with { ResultName = counterName, Type = wideCounter, Incomings =
+            [new(initial.PredecessorBlockId, new SsaIntegerConstant(0, wideCounter)), new(back.PredecessorBlockId, nextValue)] };
+            result = function with { Blocks = function.Blocks.Select(block =>
             {
-                SsaIntegerConstant n => new SsaIntegerConstant(n.Value, wideCounter),
-                SsaValueReference v => new SsaValueReference(v.Name, wideCounter),
-                _ => i.Value
-            } }).ToArray() };
-            var newConversion = conversionInstruction with { Value = new SsaConvertRValue(new SsaValueReference(counter.Name, wideCounter), wideCompare, conversion.Text) };
-            var newComparison = comparisonInstruction with { Value = comparison with { Left = new SsaValueReference(converted.Name, wideCompare), Right = new SsaIntegerConstant(limit.Value, wideCompare) } };
-            var newUpdate = updateInstruction with { Value = new SsaBinaryRValue(increment.Operator, new SsaValueReference(counter.Name, wideCounter), new SsaIntegerConstant(1, wideCounter), wideCounter, increment.Text) };
-            result = function with { Blocks = function.Blocks.Select(block => block.Id == header.Id
-                ? block with { Phis = block.Phis.Select(p => p.ResultName == phi.ResultName ? newPhi : p).ToArray(), Instructions = block.Instructions.Select(i => ReferenceEquals(i, conversionInstruction) ? newConversion : ReferenceEquals(i, comparisonInstruction) ? newComparison : i).ToArray() }
-                : block.Id == body.Id
-                    ? block with { Instructions = block.Instructions.Select(i => ReferenceEquals(i, updateInstruction) ? newUpdate : i).ToArray() }
-                    : block).ToArray() };
+                var instructions = new List<SsaInstruction>();
+                if (block.Id == header.Id)
+                    instructions.Add(new SsaValueInstruction(counter.Name,
+                        new SsaConvertRValue(counterValue, phi.Type, "source-width induction value"), phi.Location));
+                foreach (var instruction in block.Instructions)
+                {
+                    if (ReferenceEquals(instruction, compareDefinition.Instruction))
+                    {
+                        instructions.Add(convertDefinition.Instruction with { ResultName = compareName,
+                            Value = new SsaConvertRValue(counterValue, wideCompare, conversion.Text) });
+                        instructions.Add(compareDefinition.Instruction with { Value = comparison with
+                        { Left = new SsaValueReference(compareName, wideCompare), Right = new SsaIntegerConstant(limit.Value, wideCompare) } });
+                    }
+                    else if (ReferenceEquals(instruction, updateDefinition.Instruction))
+                    {
+                        instructions.Add(updateDefinition.Instruction with { ResultName = nextName,
+                            Value = increment with { Left = counterValue, Right = new SsaIntegerConstant(1, wideCounter), Type = wideCounter } });
+                        instructions.Add(updateDefinition.Instruction with
+                        { Value = new SsaConvertRValue(nextValue, increment.Type, "source-width increment value") });
+                    }
+                    else instructions.Add(instruction);
+                }
+                return block with { Phis = block.Phis.Select(candidate => ReferenceEquals(candidate, phi) ? newPhi : candidate).ToArray(),
+                    Instructions = instructions.ToArray() };
+            }).ToArray() };
             return true;
         }
         return false;
     }
 
-    private static Dictionary<string, int> CountUses(SsaFunction function)
+    private static bool CanReach(int start, int target, int barrier, IReadOnlyDictionary<int, SsaBasicBlock> blocks)
     {
-        var uses = new Dictionary<string, int>(StringComparer.Ordinal);
-        void Count(SsaValue value)
+        var pending = new Stack<int>();
+        var visited = new HashSet<int>();
+        pending.Push(start);
+        while (pending.TryPop(out var id))
         {
-            if (value is SsaValueReference reference)
-                uses[reference.Name] = uses.GetValueOrDefault(reference.Name) + 1;
+            if (id == barrier || !visited.Add(id)) continue;
+            if (id == target) return true;
+            if (blocks.TryGetValue(id, out var block))
+                foreach (var successor in block.Terminator.Targets) pending.Push(successor);
         }
-        foreach (var block in function.Blocks)
-        {
-            foreach (var phi in block.Phis)
-                foreach (var incoming in phi.Incomings) Count(incoming.Value);
-            foreach (var instruction in block.Instructions)
-                foreach (var operand in SsaCleanupOptimizer.EnumerateInstructionOperands(instruction)) Count(operand);
-            foreach (var operand in SsaCleanupOptimizer.EnumerateTerminatorOperands(block.Terminator)) Count(operand);
-        }
-        return uses;
+        return false;
     }
 }

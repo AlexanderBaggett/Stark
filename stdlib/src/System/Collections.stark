@@ -243,7 +243,7 @@ public inline fn void Sort<T>(mut borrow T[] values)
     return;
 }
 
-internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
+internal inline finite System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
     u64[0 2 ** 63 - 1] length,
     u64[0 2 ** 63 - 1] currentCapacity,
     u64[0 2 ** 63 - 1] additional,
@@ -287,7 +287,7 @@ internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
     return System.Memory.MemoryStatus.Ok;
 }
 
-internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
+internal inline finite System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
     u64[0 2 ** 63 - 1] length,
     u64[0 2 ** 63 - 1] currentCapacity,
     u64[0 2 ** 63 - 1] additional,
@@ -310,14 +310,14 @@ internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
     }
 
-    stack mut u64[0 2 ** 63 - 1] targetCapacity = required;
+    stack mut u64[0 2 ** 62] targetCapacity = (u64[0 2 ** 62])required;
     if (targetCapacity <= (u64[0 2 ** 63 - 1])(2 ** 61))
     {
-        targetCapacity = (u64[0 2 ** 63 - 1])(targetCapacity * 2);
+        targetCapacity = (u64[0 2 ** 62])(targetCapacity * 2);
     }
     else
     {
-        targetCapacity = (u64[0 2 ** 63 - 1])(2 ** 62);
+        targetCapacity = (u64[0 2 ** 62])(2 ** 62);
     }
 
     if (targetCapacity <= currentCapacity)
@@ -344,6 +344,8 @@ internal inline finite law i64[min max] DictionaryStateHighBits()
     return -9187201950435737472;
 }
 
+// The subtract-based mask can also flag a lane following a true match.
+// Consumers must stop at or before the first empty lane before comparing keys.
 internal inline finite law i64[min max] DictionaryStateMatchMask(
     i64[min max] stateWord,
     i64[min max] repeatedByte)
@@ -1113,17 +1115,13 @@ public struct Dictionary<K, V>
         }
     }
 
-    internal unsafe inline fn void InsertEntryIntoStorage(
-        mut borrow Dictionary<K, V> self,
+    internal unsafe static inline fn void InsertEntryIntoStorage(
         u64[0 2 ** 63 - 1] capacity,
         rawmutptr<K> keys,
         rawmutptr<V> values,
         rawmutptr<u8[0 2]> states,
         K key,
         V value)
-        where overlap(self, keys),
-              overlap(self, values),
-              overlap(self, states)
     {
         stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(capacity - 1);
         stack mut K pendingKey = key;
@@ -1186,7 +1184,35 @@ public struct Dictionary<K, V>
             stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(self.StorageCapacity - 1);
             stack mut u64[0 2 ** 63 - 1] index =
                 (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-            stack mut u64[0 2 ** 63 - 1] probe = 0;
+            // Probe the home bucket before setting up aligned group scans.
+            stack u8[0 2] firstState = *(&self.States[index]);
+            if (firstState == 0)
+            {
+                return self.StorageCapacity;
+            }
+            if (firstState == 1 && DictionaryKey.Equals(self.Keys[index], key))
+            {
+                return index;
+            }
+            // Continue after the already-tested bucket, including at the wrap boundary.
+            index += 1;
+            if (index >= self.StorageCapacity)
+            {
+                index = 0;
+            }
+            return self.FindIndexAfterHome(key, index);
+        }
+    }
+
+    // Keep collision machinery out of the first-bucket caller's register set.
+    internal noinline finite law u64[0 2 ** 63 - 1] FindIndexAfterHome(
+        borrow Dictionary<K, V> self, borrow K key, u64[0 2 ** 63 - 1] startIndex)
+        where overlap(self, key)
+    {
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = startIndex;
+            stack mut u64[0 2 ** 63 - 1] probe = 1;
             stack i64[min max] oneBytes = DictionaryStateOneBytes();
 
             stack mut bool scanScalarPrefix = true;
@@ -1249,7 +1275,7 @@ public struct Dictionary<K, V>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
                         if (lowerEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) <= (i64[min max])candidateBit)
                             {
                             return self.StorageCapacity;
                         }
@@ -1281,7 +1307,7 @@ public struct Dictionary<K, V>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
                         if (upperEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) <= (i64[min max])candidateBit)
                             {
                             return self.StorageCapacity;
                         }
@@ -1439,7 +1465,7 @@ public struct Dictionary<K, V>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
                         if (lowerEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) <= (i64[min max])candidateBit)
                             {
                             if (firstDeleted < self.StorageCapacity)
                             {
@@ -1493,7 +1519,7 @@ public struct Dictionary<K, V>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
                         if (upperEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) <= (i64[min max])candidateBit)
                             {
                             if (firstDeleted < self.StorageCapacity)
                             {
@@ -1575,25 +1601,48 @@ public struct Dictionary<K, V>
             }
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow Dictionary<K, V> self, u64[0 2 ** 63 - 1] additional)
+    inline fn System.Memory.MemoryStatus Reserve(mut borrow Dictionary<K, V> self, u64[0 2 ** 63 - 1] additional)
     {
         unsafe
         {
-            stack mut u64[0 2 ** 63 - 1] nextCapacity = self.StorageCapacity;
+            stack u64[0 2 ** 63 - 1] length = self.Length;
+            stack u64[0 2 ** 63 - 1] capacity = self.StorageCapacity;
+            stack mut u64[0 2 ** 63 - 1] nextCapacity = capacity;
             stack System.Memory.MemoryStatus capacityStatus =
-                ComputeHashStorageGrowthCapacity(self.Length, self.StorageCapacity, additional, nextCapacity);
+                ComputeHashStorageGrowthCapacity(length, capacity, additional, nextCapacity);
             switch (capacityStatus)
             {
                 case System.Memory.MemoryStatus.Err(var error):
-                    return System.Memory.MemoryStatus.Err(error);
+                    return capacityStatus;
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            if (nextCapacity <= self.StorageCapacity)
+            if (nextCapacity <= capacity)
             {
                 return System.Memory.MemoryStatus.Ok;
             }
 
+            // Allocation/rehashing is cold. Commit the planned header facts here so
+            // callers retain them across the opaque storage operation.
+            stack System.Memory.MemoryStatus status = self.GrowStorage(nextCapacity);
+            self.Length = length;
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    self.StorageCapacity = capacity;
+                    return status;
+                case System.Memory.MemoryStatus.Ok:
+                    self.StorageCapacity = nextCapacity;
+                    return System.Memory.MemoryStatus.Ok;
+            }
+        }
+    }
+
+    internal noinline fn System.Memory.MemoryStatus GrowStorage(
+        mut borrow Dictionary<K, V> self, u64[0 2 ** 63 - 1] nextCapacity)
+    {
+        unsafe
+        {
             stack u64[0 2 ** 63 - 1] keySize = sizeof(K);
             stack u64[0 2 ** 63 - 1] valueSize = sizeof(V);
             stack u64[0 2 ** 63 - 1] stateSize = sizeof(u8[0 2]);
@@ -1647,7 +1696,7 @@ public struct Dictionary<K, V>
                 {
                     stack K movedKey = *(&self.Keys[oldIndex]);
                     stack V movedValue = *(&self.Values[oldIndex]);
-                    self.InsertEntryIntoStorage(nextCapacity, nextKeys, nextValues, nextStates, movedKey, movedValue);
+                    Dictionary<K, V>.InsertEntryIntoStorage(nextCapacity, nextKeys, nextValues, nextStates, movedKey, movedValue);
                 }
 
                 oldIndex += 1;
@@ -1683,51 +1732,55 @@ public struct Dictionary<K, V>
     {
         unsafe
         {
-            if (self.Length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+            // Keep header facts independent of sparse payload writes.
+            stack u64[0 2 ** 63 - 1] length = self.Length;
+            stack mut u64[0 2 ** 63 - 1] capacity = self.StorageCapacity;
+            if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
             {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
             stack u64[0 max] keyHash = DictionaryKey.Hash(key);
             stack mut bool foundExisting = false;
-            if (self.StorageCapacity > 0)
+            if (capacity > 0)
             {
                 stack u64[0 2 ** 63 - 1] existingIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
                 if (foundExisting)
                 {
                     stack V oldValue = *(&self.Values[existingIndex]);
                     *(&self.Values[existingIndex]) = value;
+                    self.Length = length;
+                    self.StorageCapacity = capacity;
                     return System.Memory.MemoryStatus.Ok;
                 }
             }
 
-            stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(self.Length + 1);
-            stack mut bool shouldGrow = self.StorageCapacity == 0 || required >= self.StorageCapacity;
-            if (!shouldGrow)
+            stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(length + 1);
+            stack mut u64[0 2 ** 63 - 1] nextCapacity = capacity;
+            stack System.Memory.MemoryStatus capacityStatus =
+                ComputeHashStorageGrowthCapacity(length, capacity, 1, nextCapacity);
+            switch (capacityStatus)
             {
-                if (required > (u64[0 2 ** 63 - 1])(2 ** 62 - 1))
-                {
-                    shouldGrow = true;
-                }
-                else
-                {
-                    shouldGrow = (u64[0 2 ** 63 - 1])(required * 2) >= self.StorageCapacity;
-                }
+                case System.Memory.MemoryStatus.Err(var error):
+                    return capacityStatus;
+                case System.Memory.MemoryStatus.Ok:
             }
 
-            if (shouldGrow)
+            if (nextCapacity > capacity)
             {
-                stack System.Memory.MemoryStatus status = self.Reserve(1);
+                stack System.Memory.MemoryStatus status = self.GrowStorage(nextCapacity);
                 switch (status)
                 {
                     case System.Memory.MemoryStatus.Err(var error):
-                        return System.Memory.MemoryStatus.Err(error);
+                        return status;
                     case System.Memory.MemoryStatus.Ok:
                 }
+                capacity = nextCapacity;
             }
 
-            self.InsertEntryIntoStorage(self.StorageCapacity, self.Keys, self.Values, self.States, key, value);
-            self.Length += 1;
+            Dictionary<K, V>.InsertEntryIntoStorage(capacity, self.Keys, self.Values, self.States, key, value);
+            self.StorageCapacity = capacity;
+            self.Length = required;
             return System.Memory.MemoryStatus.Ok;
         }
     }
@@ -2124,7 +2177,7 @@ public struct HashSet<T>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
                         if (lowerEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) <= (i64[min max])candidateBit)
                         {
                             return self.StorageCapacity;
                         }
@@ -2156,7 +2209,7 @@ public struct HashSet<T>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
                         if (upperEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) <= (i64[min max])candidateBit)
                         {
                             return self.StorageCapacity;
                         }
@@ -2314,7 +2367,7 @@ public struct HashSet<T>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
                         if (lowerEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(lowerEmptyMask) <= (i64[min max])candidateBit)
                         {
                             if (firstDeleted < self.StorageCapacity)
                             {
@@ -2368,7 +2421,7 @@ public struct HashSet<T>
                         stack u64[0 2 ** 63 - 1] candidateBit =
                             (u64[0 2 ** 63 - 1])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
                         if (upperEmptyMask != 0
-                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[min max])candidateBit)
+                            && System.BitOperations.TrailingZeroCount(upperEmptyMask) <= (i64[min max])candidateBit)
                         {
                             if (firstDeleted < self.StorageCapacity)
                             {

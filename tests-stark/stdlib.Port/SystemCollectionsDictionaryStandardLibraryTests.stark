@@ -98,7 +98,7 @@ internal fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl()
     }
 
     // PORT-NOTE: the C# test targets x86_64-linux explicitly and inspects extracted
-    // Reserve/TryGet function bodies for libc-free sparse storage (no @malloc/@realloc/
+    // GrowStorage/TryGet function bodies for libc-free sparse storage (no @malloc/@realloc/
     // @free, no DictionaryValueSlot, Allocate/Free present). The bridge cannot pin the
     // target triple or extract per-function bodies, so these are applied over the whole
     // LLVM text and the per-body Allocate/Free presence checks are dropped.

@@ -16,12 +16,60 @@ public sealed class SsaLoopCounterWideningTests
         Assert.Equal(24, Assert.Single(input.Functions).Blocks.Single(block => block.Id == 1).Phis[0].Type.BitWidth);
     }
 
-    [Theory]
-    [InlineData(0, false)]
-    [InlineData(300000, true)]
-    public void LeavesCounterNarrowForEmptyOrObservableCounters(int limit, bool escape)
+    [Fact]
+    public void LeavesCounterNarrowForEmptyLoops()
     {
-        var input = Loop(limit, escape);
+        var input = Loop(0);
+        Assert.Same(input, new SsaLoopCounterWidening().Optimize(input));
+    }
+
+    [Fact]
+    public void PreservesTheSourceWidthOfAnObservedExitValue()
+    {
+        var input = Loop(300000, escape: true);
+        var function = Assert.Single(new SsaLoopCounterWidening().Optimize(input).Functions);
+        Assert.Equal(24, function.ReturnType.BitWidth);
+        Assert.Equal(24, function.Blocks.Single(block => block.Id == 3).Terminator.Value!.Type.BitWidth);
+        Assert.Equal(32, Assert.Single(function.Blocks.Single(block => block.Id == 1).Phis).Type.BitWidth);
+    }
+
+    [Fact]
+    public void WidensAcrossBranchesAndUnrelatedStorageKeepingNarrowDataUses()
+    {
+        var module = Loop(300000);
+        var function = Assert.Single(module.Functions);
+        var header = function.Blocks.Single(block => block.Id == 1);
+        var body = function.Blocks.Single(block => block.Id == 2);
+        var narrow = header.Phis[0].Type;
+        var blocks = function.Blocks.Select(block => block.Id switch
+        {
+            0 => block with { Instructions = [new SsaAllocateLocalInstruction("saved", narrow)] },
+            1 => block with { Phis = [header.Phis[0] with { Incomings =
+                [header.Phis[0].Incomings[0], new SsaPhiIncoming(4, header.Phis[0].Incomings[1].Value)] }] },
+            2 => block with { Instructions = [new SsaStoreLocalInstruction("saved", narrow, new SsaValueReference("counter", narrow))],
+                Terminator = new SsaTerminator(SsaTerminatorKind.Branch, [4, 5], Condition: new SsaBoolConstant(true)) },
+            _ => block
+        }).Concat(new[]
+        {
+            new SsaBasicBlock(4, "latch", [], body.Instructions, new SsaTerminator(SsaTerminatorKind.Goto, [1])),
+            new SsaBasicBlock(5, "early-exit", [], [], new SsaTerminator(SsaTerminatorKind.Return, [], Value: new SsaIntegerConstant(2, function.ReturnType)))
+        }).ToArray();
+        var output = Assert.Single(new SsaLoopCounterWidening().Optimize(module with { Functions = [function with { Blocks = blocks }] }).Functions);
+        var phi = Assert.Single(output.Blocks.Single(block => block.Id == 1).Phis);
+        Assert.Equal(32, phi.Type.BitWidth);
+        Assert.Equal(300000, phi.Type.RangeMax);
+        var store = Assert.IsType<SsaStoreLocalInstruction>(Assert.Single(output.Blocks.Single(block => block.Id == 2).Instructions));
+        Assert.Equal(24, store.LocalType.BitWidth);
+        Assert.Equal(24, store.Value.Type.BitWidth);
+    }
+
+    [Fact]
+    public void DoesNotWidenWhenTheFailedGuardCanStillExecuteTheIncrement()
+    {
+        var module = Loop(300000);
+        var function = Assert.Single(module.Functions);
+        var input = module with { Functions = [function with { Blocks = function.Blocks.Select(block => block.Id == 3
+            ? block with { Terminator = new SsaTerminator(SsaTerminatorKind.Goto, [2]) } : block).ToArray() }] };
         Assert.Same(input, new SsaLoopCounterWidening().Optimize(input));
     }
 
@@ -55,6 +103,6 @@ public sealed class SsaLoopCounterWideningTests
             new SsaBasicBlock(3, "exit", [], [], new SsaTerminator(SsaTerminatorKind.Return, [],
                 Value: escape ? counter : new SsaIntegerConstant(0, result)))
         };
-        return new SsaIrModule("Demo", [new SsaFunction("Run", result, [], true, true, 0, blocks)]);
+        return new SsaIrModule("Demo", [new SsaFunction("Run", escape ? narrow : result, [], true, true, 0, blocks)]);
     }
 }

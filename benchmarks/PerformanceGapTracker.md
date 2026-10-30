@@ -6,6 +6,8 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
+**Current work (October 29, 2026): DictionaryLookup implementation validated.** First-bucket lookup, private counter widening and explicit capacity planning are implemented. Two final interleaved 1,000-round runs average Stark **1.019 × C**, down from **1.140 × C** for the preserved pre-change executable; Rust is **2.602 × C**. Removing the remaining capacity mask still needs a loop/capacity proof. Timing is finished; no build/test/timing window is active. See the investigation below. Preserve unrelated PathJoin/QueueDequeue tracker work and the untracked installer.
+
 ### Agent coordination (October 27, 2026)
 
 This tracker is shared with another agent working on benchmark performance. This chat completed **PathRepeatedSmallOps and compiler fact preservation** and now owns the user-requested **guarded QueueDequeue loop versioning** implementation. The inline const-join wrapper eliminated external copies; the new payload-liveness proof now also eliminates all 25,000 benchmark payload stores in the host executable. Preserve the other agent's earlier **QueueDequeue/collections evidence** and current filesystem/source/test changes. Re-read the relevant section before each edit and patch only the intended text.
@@ -405,6 +407,66 @@ The combined implementation takes approximately **0.70 times buffered Rust's mea
 The driver pinned itself/children to CPU 0, warmed each executable once, and randomized seven variants per round using different seeds. All **14,000 measured processes** succeeded; executable hashes were stable. Stdout was `/dev/null`; each variant's stderr was a separate regular file truncated before timing. Builds/tests finished before timing and a tracker note requested a quiet interval; exclusive host access was not established. Startup is included. Spreads ranged **58–106%** in the first run and **41–171%** in the second; the passively cooled/temperature-capped shared host still limits precision. The matched buffered trio has identical output; preserved immediate Stark/direct-C controls retain the old ASCII `wide a` while original C/Rust use alpha, as documented in the investigation.
 
 Reproducible scripts, exact binaries/hashes, raw samples, compiler/CPU metadata, IR/disassembly, native fault traces and final test logs are under ignored `benchmarks/codegen/console-combined-implementation-20261029/`. The benchmark is closed at the user's request; unrelated installer/tracker work remains untouched.
+
+## PathNormalize investigation (October 29, 2026)
+
+**Fresh code check:** the current Stark executable eliminates both normalizations, all 5,000 iterations, payload writes and checksum work. Its `main` retains only the initial fallible 64-byte allocation, failure result and cleanup. Clang reduces C to `return 0`; Rust also eliminates normalization/payload/allocation work. Therefore the historical 1.0263 × C ratio is not a current normalization optimization target. The remaining allocator issue is already documented under PathRepeatedSmallOps/PathJoin; do not reintroduce scan/copy work or discard allocation failure merely to match C. Fresh saved IR and disassembly are under ignored `benchmarks/codegen/path-normalize-investigation-20261029/`.
+
+## DictionaryLookup investigation (October 29, 2026)
+
+**Status: implementation validated; capacity-mask proof remains open.** Timing and validation are finished; no build/test/timing window from this chat is active. The reviewed implementation is recorded with this tracker update. The benchmark sources are unchanged.
+
+### Production implementation and final comparison
+
+1. **First-bucket lookup:** `Dictionary.FindIndex` tests the home bucket before group setup and returns immediately on a hit or empty bucket. A collision continues from the next bucket, counting the bucket already tested, so equality is not repeated. The existing grouped fallback is outlined into `internal noinline finite law FindIndexAfterHome`; both lookup helpers retain their read-only, guaranteed-return contract and `overlap(self, key)` allowance. This is independent of key contents, hash implementation and benchmark sizes.
+2. **Private native counter with preserved values:** `SsaLoopCounterWidening` now recognizes the guarded, multi-block unsigned 24-bit induction despite unrelated memory operations and data uses. It proves zero initialization, unit increment, a representable positive bound and that the failed guard cannot reach the increment without another header visit. The new 32-bit induction retains the proven `[0, limit]` range. Explicit source-width conversions keep data/call/exit values and ABI/layout at 24 bits. Address-mutated counters retain their original semantics. The actual benchmark's per-iteration `0xffffff` counter mask is gone; its source declaration remains `u24[0 100000]`.
+3. **Capacity facts retained through storage work:** both shared capacity planners are `inline finite` (their output mutation rules out `law`), and the hash planner retains its checked `[0, 2**62]` target range. `Reserve` separates planning from the cold `GrowStorage` allocation/rehash worker and commits the planned capacity and preserved count explicitly. `Set` uses the same authoritative planner, retains its count/capacity locals across sparse payload writes and growth, returns error statuses intact, and commits the planned header. The unused mutable dictionary receiver was removed from the static insertion worker. This avoids treating payload insertion as an arbitrary header mutation and avoids the former half-full boundary's redundant reserve call. Allocation/error/drop behavior remains tested. **The final lookup still masks its bounded key with the runtime capacity mask:** these source facts do not yet prove the insertion loop never grows or retain the required power-of-two lower bits through that loop. No unsupported unchanged-capacity assumption or benchmark-specific rule was added.
+
+**Related correctness repair:** wrapped collision regression cases exposed an existing shared grouped-probe bug. Subtract-based byte matching can mark an empty lane immediately after an occupied lane as another occupied candidate. Lookup/insertion previously stopped only *after* the first empty lane, permitting a comparison against uninitialized key storage and a false existing-key result (reproduced with key zero on the preserved source). All eight Dictionary/HashSet consumers now stop **at or before** the first empty lane. The shared mask algorithm remains unchanged.
+
+**Generated-code check:** the final hot path has a native counter, home-state/key comparison and value read; SWAR/trailing-zero work runs only after a home collision. The first production build measured **1.072 × C**: its large inline collision fallback forced a values-pointer reload on every successful lookup. Outlining that fallback recovered the lost register allocation. A separate 1,000-round interleaved diagnostic measured inline Stark **1.074 × C**, outlined Stark **1.022 × C**, and the previous combined control **1.015 × C**. The final table below is a fresh measurement of the accepted production build, not that diagnostic.
+
+**Final pooled averages:** two equally sized randomized, interleaved **1,000-round** runs, **2,000 samples per executable**, pinned to CPU 0. All **8,000 measured processes** passed the existing checksum; no samples were removed and binary hashes stayed fixed. C and Rust were freshly compiled with the harness flags. The before row uses the preserved original executable, whose hash matches the earlier investigation. Each batch warms every executable once. Stdout is `/dev/null`; stderr uses separately truncated regular files. No builds/tests from this chat overlapped sampling; exclusive host use was not confirmed. Process startup, passive cooling, temperature capping and shared-host activity remain included.
+
+| Variant | Pooled mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 641.1 | **1.000** |
+| Stark, before | 731.1 | **1.140** |
+| Stark, implemented | 653.1 | **1.019** |
+| Rust, standard HashMap | 1668.0 | **2.602** |
+
+Implemented Stark / before = **0.8934**, a **10.7%** lower mean. Implemented Stark / Rust = **0.3916**. The residual Stark–C difference is **1.9%** in this window. These workloads still differ: C uses a fixed-capacity identity-hashed integer table; Rust uses standard randomized HashMap; Stark retains general dictionary allocation, insertion and cleanup behavior. The Rust difference cannot be assigned to compiler quality alone.
+
+**Validation:** **29 focused Release tests passed** (9 counter proof/native checks and 20 library checks). Native source/package cases cover empty/home hits, arbitrary wrapped collisions, missing keys inside/outside clusters, zero keys, custom Hash/Equals, overlapping key/output, removal/backward shifting, update counts, growth/reservation boundaries and overflow failure preserving contents/header. Existing source-free package checks cover owned-value move/drop and text-key collections; directly affected HashSet, cross-family and reserve-lowering checks pass. Both the full collection source and the changed Stark port module pass source checking. The final Stark, C and Rust LLVM modules verify. No full release workflow was run. The repository-wide stale-assumption audit covered counter consumers/ABI, insertion receivers, capacity helpers and errors, grouped-mask consumers, codegen fixtures, package tests, Stark ports, benchmarks and documentation. Sparse-storage assertions now inspect the allocation worker; grouped-probe assertions inspect the outlined fallback. Other-agent tracker sections and the unrelated installer were preserved.
+
+Evidence is under ignored `benchmarks/codegen/dictionary-lookup-implementation-20261029/`: final/before/C/Rust binaries, final saved LLVM IR, disassembly, exact production/compiler/benchmark source snapshots, `fixture.json` hashes/tool flags, `measure.py`, both `interleaved-1000-*.json` raw files and `pooled-summary.json`. The initial production and outlining diagnostics are retained separately. **Remaining work:** a general insertion-loop/capacity proof to remove the lookup mask; benchmark status remains open for that fact-preservation follow-up.
+
+### Pre-implementation investigation (historical)
+
+**Prior investigation:** PathNormalize's fresh executable is already folded, so DictionaryLookup is the next substantive candidate. Its snapshot ratio (1.0238 × C) understated the current direct-process payload gap. Two isolated, general optimization controls recover most of that gap. Both diagnostic timing windows had finished; no production compiler/library source had changed at that point.
+
+Pooled results combine all **2,000 samples per variant** from the two equally sized runs. Ratios divide pooled means.
+
+| Variant | Pooled mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 643.9 | **1.000** |
+| Stark, current | 734.0 | **1.140** |
+| Stark, first-bucket probe SDK control | 685.5 | **1.065** |
+| Stark, native-width counter source control | 725.1 | **1.126** |
+| Stark, both controls | 651.0 | **1.011** |
+| Rust, standard HashMap | 1676.6 | **2.604** |
+
+The combined control lowers Stark's measured mean by **11.3%**, bringing it within approximately **1% of C**, below the timing spread. The individual improvements interact; do not add their percentage gains. These controls establish useful directions, not a production correctness proof for every dictionary/key/loop shape.
+
+**Concrete opportunity 1 — first-bucket success before group setup.** `Dictionary.FindIndex` first aligns an initial hash slot to an 8-byte boundary, then uses 16-state group scans with occupied/empty masks and trailing-zero operations. Integer hashing is an identity conversion. Every one of this benchmark's 100,000 successful lookups hits its initial slot; exactly 12,500 start at aligned slots and pay group decoding despite an immediate match. The other 87,500 take the scalar-prefix path after its alignment/probe scaffolding. A three-line isolated SDK control checks the initial state/key first and returns immediately on a hit or empty slot, retaining the existing fallback for collisions/deleted slots. This is a generic hash-table fast path, not a benchmark key/content test. It saves approximately 48.5 µs here. Before production, choose how to continue after the first miss so collision-heavy/expensive-equality cases avoid unnecessary duplicate comparisons, and validate misses, collision chains, wraparound, removals, custom keys, aliasing and owned values. Retain `finite law` on the pure lookup.
+
+**Concrete opportunity 2 — widen private counter storage while retaining its range.** The final hot loop contains `and r10d, 0xffffff` on every iteration of the `u24[0 100000]` counter. C uses a native counter without that truncation. A source control using a private `u32[0 max]` counter removes the mask and preserves the checksum; combined with the first-hit path it produces the best control above. Production should extend `SsaLoopCounterWidening`, not weaken the benchmark's range or globally change u24 layout/ABI. The existing pass rejects functions containing non-value instructions, requires a single-block loop body, and permits only induction-update/comparison uses. This loop takes the counter's value for the key expression and has collection storage/control flow, so those gates exclude it. Prove the private induction cannot wrap or expose its width, retain the original `[0, 100000]` value fact through all uses/phis, and remap rather than drop the facts when selecting 32-bit storage. Preserve genuinely observed narrowing, address-taking, overflow and exit values.
+
+**Lower-priority fact opportunity — retain table-capacity invariants through Set.** The source reserves 2,048 entries, yielding power-of-two storage capacity 4,096. Set does not shrink storage; even its boundary reserve call can return without growing it. C's constant-capacity table eliminates the initial slot mask after `key = i % 2048`; Stark still masks that bounded key with the runtime storage mask. Carrying capacity/power-of-two and field-specific mutation facts from Reserve through successful Set calls and the read-only lookup phase could remove that redundant operation and strengthen bounds. This has no isolated performance measurement yet and should follow the two demonstrated controls. Do not assume capacity is unchanged across arbitrary mutating calls.
+
+**Work comparison:** C uses a custom identity-hashed open-addressed integer table. Stark uses its general Dictionary with the same effective table capacity and 32-bit integer entries for these nonnegative keys. Rust uses standard randomized HashMap hashing/probing; its larger time cannot be assigned to compiler code quality alone. The Stark main still contains general allocation/insertion/cleanup machinery; the proposed lookup fast path preserves it and allocation failures.
+
+Both runs used one warmup plus 1,000 randomized interleaved rounds per variant, CPU 0 affinity, stdout `/dev/null`, and separately truncated regular stderr files. All **12,000 measured executions** passed the existing checksum with no output and stable binary hashes. Builds finished before timing and coordination was requested here; exclusive host access was not established. Startup remains included. Max–min spreads were **45–86%** in run 1 and **62–112%** in run 2; passive cooling, temperature capping and shared activity still limit precision. These direct-process results are not numerically comparable to the older shell harness. Saved compiler IR, final main disassemblies, exact SDK/source controls, binary hashes, build state and all samples are retained under ignored `benchmarks/codegen/dictionary-lookup-investigation-20261029/`. All saved Stark/control LLVM modules passed verification. Those controls preceded the validated production implementation above.
 
 ## FileSystemPathTranscode investigation (October 28, 2026)
 
@@ -1158,7 +1220,7 @@ Times are process-level averages in microseconds. Ratios below 1 mean Stark is f
 | Benchmark | Stark / C | Status |
 | --- | ---: | --- |
 | `benchmarks/collections/DictionaryInsert` | 1.0241 | Historical; needs current reproduction |
-| `benchmarks/collections/DictionaryLookup` | 1.0352 | Historical; needs current reproduction |
+| `benchmarks/collections/DictionaryLookup` | 1.0352 | Implemented: fresh pooled Stark / C = 1.019; capacity-mask proof remains open |
 | `benchmarks/collections/DictionaryRemove` | 1.0297 | Historical; needs current reproduction |
 | `benchmarks/collections/DictionaryUpdate` | 1.0419 | Historical; needs current reproduction |
 | `benchmarks/collections/LinkedListBuildClear` | 1.0439 | Historical; needs current reproduction |

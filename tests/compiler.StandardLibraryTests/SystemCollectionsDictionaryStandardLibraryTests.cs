@@ -524,18 +524,18 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryValueSlot", llvm.Text, StringComparison.Ordinal);
 
-        var reserveBody = ExtractDefinedFunctionText(
+        var storageBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(",
-            "Expected Dictionary.Reserve specialization to be emitted.");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_GrowStorage__u32_0_2147483647__u32_0_2147483647(",
+            "Expected Dictionary.GrowStorage specialization to be emitted.");
         var tryGetBody = ExtractDefinedFunctionText(
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__u32_0_2147483647__u32_0_2147483647(",
             "Expected Dictionary.TryGet specialization to be emitted.");
 
-        Assert.Contains("@System_Memory_Allocate(", reserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Free(", reserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", storageBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", storageBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve", storageBody, StringComparison.Ordinal);
         Assert.DoesNotContain("switch", tryGetBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DictionaryValueSlot", tryGetBody, StringComparison.Ordinal);
     }
@@ -561,7 +561,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var findIndexBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__u32__u32(");
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndexAfterHome__u32__u32(");
         var findInsertionBody = ExtractDefinedFunctionText(
             llvm,
             "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__u32__u32(");
