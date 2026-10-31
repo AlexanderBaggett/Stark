@@ -794,6 +794,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
             : null;
         if (indirectArgumentAddress is not null)
         {
+            if (TryGetPointerBackedBorrowArgumentType(parameter, argument, out var borrowType)
+                && TryResolvePointerBackedBorrowIndirectAddress(
+                    indirectArgumentAddress, borrowType, new HashSet<string>(StringComparer.Ordinal),
+                    out var referentAddress, out var referentAlignment))
+            {
+                value = LoadDictionaryKeyScalarValue(
+                    llvmType, keyType, referentAddress,
+                    GetAlignmentSuffix(referentAlignment, includeByteAlignment: true),
+                    $"dict_key_arg_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                return true;
+            }
+
             value = LoadDictionaryKeyScalarValue(
                 llvmType,
                 keyType,
@@ -2196,7 +2208,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 indirectArgumentAddress,
                 borrowType,
                 new HashSet<string>(StringComparer.Ordinal),
-                out var forwardedSourceAddress))
+                out var forwardedSourceAddress,
+                out _))
         {
             renderedArgument = RenderIndirectArgumentPointer(
                 abiCallee,
@@ -2225,9 +2238,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
         SsaValue address,
         StarkTypeSymbol borrowType,
         ISet<string> visitedValueNames,
-        out string sourceAddress)
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
     {
         sourceAddress = string.Empty;
+        sourceAlignmentBytes = null;
         if (address is not SsaValueReference reference
             || !visitedValueNames.Add(reference.Name)
             || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
@@ -2242,19 +2257,21 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     use.Value,
                     borrowType,
                     visitedValueNames,
-                    out sourceAddress);
+                    out sourceAddress,
+                    out sourceAlignmentBytes);
             case SsaAddressOfParameterRValue addressOfParameter
                 when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfParameter.PointeeType)
                      && _abiFunction.UserParameters.Any(parameter =>
                          string.Equals(parameter.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal)
                          && StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)):
                 sourceAddress = FormatValue(reference);
+                sourceAlignmentBytes = GetKnownPointerAlignmentBytes(reference, StarkTypeSymbols.BorrowReturnValueType(borrowType));
                 return true;
             case SsaAddressOfLocalRValue addressOfLocal
                 when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfLocal.PointeeType):
                 if ((TryResolveSingleStoreLocalValue(addressOfLocal.LocalName, out var storedValue)
                         || TryResolveCurrentStoredLocalValue(addressOfLocal.LocalName, out storedValue))
-                    && TryResolveStoredPointerBackedBorrowSource(storedValue, borrowType, out var storedSourceAddress))
+                    && TryResolveStoredPointerBackedBorrowSource(storedValue, borrowType, out var storedSourceAddress, out sourceAlignmentBytes))
                 {
                     sourceAddress = storedSourceAddress;
                     return true;
@@ -2264,6 +2281,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 sourceAddress = EmitPointerBackedBorrowSlotLoad(
                     GetLocalSlotPointer(addressOfLocal.LocalName),
                     GetLocalSlotAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType));
+                sourceAlignmentBytes = GetTypeAlignmentBytes(StarkTypeSymbols.BorrowReturnValueType(borrowType));
                 return true;
             default:
                 return false;
@@ -2300,16 +2318,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private bool TryResolveStoredPointerBackedBorrowSource(
         SsaValue storedValue,
         StarkTypeSymbol borrowType,
-        out string sourceAddress)
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
     {
         if (storedValue is SsaValueReference storedReference
             && _valueAliases.TryGetValue(storedReference.Name, out var alias))
         {
             sourceAddress = alias;
+            sourceAlignmentBytes = GetTypeAlignmentBytes(StarkTypeSymbols.BorrowReturnValueType(borrowType));
             return true;
         }
 
-        return TryResolveAggregateSourceAddress(storedValue, borrowType, out sourceAddress);
+        return TryResolveAggregateSourceAddress(storedValue, borrowType, out sourceAddress, out sourceAlignmentBytes);
     }
 
     private static bool TryGetPointerBackedBorrowArgumentType(

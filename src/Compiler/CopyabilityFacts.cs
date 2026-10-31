@@ -15,12 +15,17 @@ namespace Stark.Compiler;
 /// </summary>
 internal sealed class CopyabilityFacts
 {
-    private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
+    private readonly Func<string, NamedTypeSymbol?> _resolveNamedType;
     private readonly Dictionary<string, bool> _cache = new(StringComparer.Ordinal);
 
     public CopyabilityFacts(IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        : this(name => namedTypes.TryGetValue(name, out var type) ? type : null)
     {
-        _namedTypes = namedTypes;
+    }
+
+    public CopyabilityFacts(Func<string, NamedTypeSymbol?> resolveNamedType)
+    {
+        _resolveNamedType = resolveNamedType;
     }
 
     public bool IsCopyable(StarkTypeSymbol type)
@@ -87,7 +92,7 @@ internal sealed class CopyabilityFacts
 
     private bool ComputeNamedCopyability(string name)
     {
-        if (!_namedTypes.TryGetValue(name, out var namedType))
+        if (_resolveNamedType(name) is not { } namedType)
         {
             return false;
         }

@@ -17,6 +17,14 @@ public sealed class SystemDictionaryLookupOptimizationTests : StandardLibraryTes
             static finite law u64[0 max] Hash(borrow CollisionKey key) { return 63; }
             static finite law bool Equals(borrow CollisionKey a, borrow CollisionKey b) where overlap(a,b) { return a.Value == b.Value; }
         }
+        static mut u32[0 max] Dropped = 0;
+        struct PlainValue { u32[0 max] Value; i8[min max] Tag; }
+        struct Resource { u32[0 max] Id; mut drop { Dropped += self.Id; } }
+        struct Envelope { Resource Owned; }
+        noinline finite law bool Same(borrow u32[0 max] a, borrow u32[0 max] b) where overlap(a,b) {
+            stack borrow u32[0 max] saved = a;
+            return DictionaryKey.Equals(saved,b);
+        }
         export unsafe ffi fn i32[min max] main() {
             stack mut Dictionary<u32[0 max],u32[0 max]> table = new();
             stack mut u32[0 max] found = 123;
@@ -69,6 +77,33 @@ public sealed class SystemDictionaryLookupOptimizationTests : StandardLibraryTes
             stack u64[0 2 ** 63 - 1] oldCapacity = table.Capacity();
             if (Ok(table.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))) || table.Capacity()!=oldCapacity || table.Count()!=32
                 || !table.TryGet(zero,found) || found!=77) { return 22; }
+            table.Clear();
+            if (table.Count()!=0 || table.Capacity()!=oldCapacity || table.TryGet(zero,found)) { return 23; }
+            if (!Ok(table.Set(0,42)) || table.Count()!=1 || !table.TryGet(zero,found) || found!=42) { return 24; }
+            table.Clear();
+            table.Clear();
+            if (table.Count()!=0 || table.Capacity()!=oldCapacity) { return 25; }
+            stack u32[0 max][4] keys = {0,42,0,42};
+            if (!Same(keys[1],keys[3])) { return 26; }
+            stack mut Dictionary<u32[0 max],PlainValue> plain = new();
+            if (!(comptime System.Compiler.IsCopyable<PlainValue>()) || (comptime System.Compiler.IsCopyable<Envelope>())) { return 27; }
+            if (!Ok(plain.Set(0,new PlainValue(){Value=19,Tag=7}))) { return 28; }
+            stack mut PlainValue item = new PlainValue(){Value=0,Tag=0};
+            if (!plain.TryGet(zero,item) || item.Value!=19 || item.Tag!=7) { return 29; }
+            plain.Clear();
+            if (plain.Count()!=0 || plain.TryGet(zero,item) || !Ok(plain.Set(0,new PlainValue(){Value=23,Tag=4}))) { return 30; }
+            if (!plain.TryGet(zero,item) || item.Value!=23 || item.Tag!=4) { return 31; }
+            {
+                stack mut Dictionary<u32[0 max],Envelope> owned = new();
+                for willexit(stack mut u8[0 4] i=0; i<4; i+=1) {
+                    if (!Ok(owned.Set((u32[0 max])i,new Envelope(){Owned=new Resource(){Id=(u32[0 max])i+1}}))) { return 32; }
+                }
+                owned.Clear();
+                if (Dropped!=10 || owned.Count()!=0) { return 33; }
+                owned.Clear();
+                if (Dropped!=10) { return 34; }
+            }
+            if (Dropped!=10) { return 35; }
             return 0;
         }
         """;

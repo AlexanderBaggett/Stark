@@ -317,7 +317,7 @@ finite law i64[min max] Score<T>()
 }
 ```
 
-Available predicates: `IsBool`, `IsInteger`, `IsFloat`, `IsRawPointer`,
+Available predicates: `IsCopyable`, `IsBool`, `IsInteger`, `IsFloat`, `IsRawPointer`,
 `IsFixedArray`, `IsSlice`, `IsDynamic`, `IsFunctionPointer`, `IsClosure`,
 `IsNamed`, `IsStruct`, `IsRecord`, `IsEnum`, `IsTrait`, `IsDoctrine`,
 `IsDynTrait`, and `HasConcreteLayout`.

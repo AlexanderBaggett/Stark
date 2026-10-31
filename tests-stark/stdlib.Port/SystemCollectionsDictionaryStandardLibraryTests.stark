@@ -331,9 +331,6 @@ internal fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsC
     stack ascii tryGetBody = LlvmDefinitionBody(
         llvm,
         "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32");
-    stack ascii findIndexBody = LlvmDefinitionBody(
-        llvm,
-        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32");
     stack ascii findInsertionIndexBody = LlvmDefinitionBody(
         llvm,
         "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__Symbol__u32");
@@ -341,15 +338,12 @@ internal fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsC
         || !System.Testing.Contains(symbolEqualsBody, "icmp eq i32")
         || !System.Testing.Contains(setBody, "load i32")
         || !System.Testing.Contains(setBody, "Dictionary_FindInsertionIndex__Symbol__u32")
-        || !System.Testing.Contains(tryGetBody, "Dictionary_FindIndex__Symbol__u32")
-        || !System.Testing.Contains(findIndexBody, "icmp eq i32")
+        || !System.Testing.Contains(tryGetBody, "icmp eq i32")
         || !System.Testing.Contains(findInsertionIndexBody, "icmp eq i32")
         || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Equals")
         || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Equals")
-        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Hash")
-        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Equals")
         || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Equals"))
     {

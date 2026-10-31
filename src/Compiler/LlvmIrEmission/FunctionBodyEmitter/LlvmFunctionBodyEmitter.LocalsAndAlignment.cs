@@ -518,7 +518,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         && (string.Equals(candidate.LlvmName, reference.Name, StringComparison.Ordinal)
                             || string.Equals(candidate.SourceName, reference.Name, StringComparison.Ordinal)));
                 if (indirectParameter is not null
-                    && GetTypeAlignmentBytes(indirectParameter.SourceType) is { } parameterAlignmentBytes)
+                    && GetTypeAlignmentBytes(StarkTypeSymbols.BorrowReturnValueType(indirectParameter.SourceType)) is { } parameterAlignmentBytes)
                 {
                     alignmentBytes = parameterAlignmentBytes;
                     return true;
@@ -548,7 +548,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 if (sourceParameter.Kind == AbiParameterKind.IndirectIn)
                 {
-                    if (GetTypeAlignmentBytes(sourceParameter.SourceType) is { } indirectAlignmentBytes)
+                    if (GetTypeAlignmentBytes(StarkTypeSymbols.BorrowReturnValueType(sourceParameter.SourceType)) is { } indirectAlignmentBytes)
                     {
                         alignmentBytes = indirectAlignmentBytes;
                         return true;

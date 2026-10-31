@@ -735,18 +735,12 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32",
             "Expected custom-key Dictionary.TryGet specialization to be emitted.");
-        var findIndexBody = ExtractDefinedFunctionText(
-            llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32",
-            "Expected custom-key Dictionary.FindIndex specialization to be emitted.");
-        Assert.Contains("load i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("zext i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("!tbaa", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("load i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("zext i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("!tbaa", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Hash", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Equals", tryGetBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
     }
 
     [Fact]

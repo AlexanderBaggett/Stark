@@ -1797,7 +1797,30 @@ public struct Dictionary<K, V>
     {
         unsafe
         {
-            stack u64[0 2 ** 63 - 1] index = self.FindIndex(key);
+            // A home hit is already in range; keep that success edge separate
+            // from the collision helper's capacity sentinel.
+            if (self.StorageCapacity == 0)
+            {
+                return false;
+            }
+            stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(self.StorageCapacity - 1);
+            stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(key) & (u64[0 max])mask);
+            stack u8[0 2] state = *(&self.States[index]);
+            if (state == 0)
+            {
+                return false;
+            }
+            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key))
+            {
+                value = *(&self.Values[index]);
+                return true;
+            }
+            index += 1;
+            if (index >= self.StorageCapacity)
+            {
+                index = 0;
+            }
+            index = self.FindIndexAfterHome(key, index);
             if (index >= self.StorageCapacity)
             {
                 return false;
@@ -1930,6 +1953,17 @@ public struct Dictionary<K, V>
     {
         unsafe
         {
+            // The shared copy proof guarantees no element drop obligation.
+            // Reset every state for reuse without reading sparse payloads.
+            if (comptime (System.Compiler.IsCopyable<K>() && System.Compiler.IsCopyable<V>()))
+            {
+                for willexit (stack mut u64[0 2 ** 63 - 1] clearIndex = 0; clearIndex < self.StorageCapacity; clearIndex += 1)
+                {
+                    *(&self.States[clearIndex]) = 0;
+                }
+                self.Length = 0;
+                return;
+            }
             stack mut u64[0 2 ** 63 - 1] index = 0;
             while willexit (index < self.StorageCapacity)
             {

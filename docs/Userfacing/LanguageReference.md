@@ -1155,6 +1155,12 @@ derived structurally:
 * a type with a destructor is never copyable
 * anything owning — `dynamic` storage, the `Ascii` / `Unicode` owning text containers, heap closures, heap `dyn` trait objects — is never copyable
 
+Generic code can query the shared proof with
+`comptime System.Compiler.IsCopyable<T>()`. A true result guarantees a
+byte-safe copy with no drop obligation, allowing collection cleanup to use a
+bulk operation. The query is conservative for unresolved generic types and
+borrow-qualified values; false does not necessarily mean destruction has effects.
+
 Reads of copyable values out of fields, indexed places, and locals are
 copies, not moves: the source stays usable, and accessors can return the
 value directly.
