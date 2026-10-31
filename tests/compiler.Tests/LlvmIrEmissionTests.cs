@@ -10810,6 +10810,34 @@ public sealed partial class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void AlignedCStructPreservesPhysicalSizeAndFieldOffsetsForPointerIndexing()
+    {
+        var result = Compile(
+            """
+            module Demo
+            [StructLayout(C), Align(64)]
+            struct AlignedRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Value;
+            }
+            unsafe finite law u32[0 max] ReadSecond(rawptr<AlignedRecord>[2] records)
+            {
+                return records[1].Value;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        // The declared size is the array/pointer stride, including tail padding.
+        Assert.Contains("%AlignedRecord = type <{ i8, [3 x i8], i32, [56 x i8] }>", llvm, StringComparison.Ordinal);
+        var body = ExtractDefinitionBody(llvm, "ReadSecond");
+        Assert.Matches(@"getelementptr[^\n]* %AlignedRecord, ptr ", body);
+        Assert.Contains("i64 4", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FfiCStructLayoutArgumentsUseX64SysVCAbiCarriers()
     {
         var result = Compile(

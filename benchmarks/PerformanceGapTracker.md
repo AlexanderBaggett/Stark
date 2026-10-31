@@ -6,7 +6,70 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Completed (October 31, 2026): DictionaryLookup and production x86 branch placement.** The fact-preserving lookup/cleanup changes and default native/ThinLTO branch placement are implemented, validated and accepted. The final 1,000-round comparison averages Stark **0.984 × C**, versus matched previous placement **1.017 × C** (3.2% lower mean); Stark/Rust is **0.376**. QueueDequeue and buffered console controls showed no regression. The user requested closure and a commit of the source changes. All build/test/timing windows have ended. The capacity/power-of-two proof is an optional future opportunity; preserve separate other-agent tracker work.
+**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill and DictionaryInsert beat both C and Rust in fresh 1,000-round comparisons and are complete. DictionaryRemove is next. Previously accepted DictionaryLookup work remains complete. No build/test/timing window is active.
+
+## Sequential completion goal (October 31, 2026)
+
+**Status: active. Next benchmark: DictionaryRemove.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+
+**User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
+
+**Current evidence:** 3 of 52 initially open items are complete. DictionaryInsert completed on goal turn 2 at **0.9863 × C / 0.6167 × Rust**, using final production and 1,000 randomized balanced rounds. It beat C directly; no tie rule was used. DictionaryRemove is next. No build/test/timing window is active. Preserve other-agent notes and the uncommitted skill.
+
+| Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 1 | `benchmarks/allocator/ArenaAllocator` | Complete | 1 | 0.9559 | 0.8588 |
+| 2 | `benchmarks/allocator/MemoryCopyFill` | Complete | 1 | 0.9821 | 0.8122 |
+| 3 | `benchmarks/collections/DictionaryInsert` | Complete | 2 | 0.9863 | 0.6167 |
+| 4 | `benchmarks/collections/DictionaryRemove` | Queued | 0 | — | — |
+| 5 | `benchmarks/collections/LinkedListBuildClear` | Queued | 0 | — | — |
+| 6 | `benchmarks/collections/LinkedListChurn` | Queued | 0 | — | — |
+| 7 | `benchmarks/collections/LinkedListPopOnly` | Queued | 0 | — | — |
+| 8 | `benchmarks/collections/LinkedListPush` | Queued | 0 | — | — |
+| 9 | `benchmarks/collections/ListGrowth` | Queued | 0 | — | — |
+| 10 | `benchmarks/collections/ListIteration` | Queued | 0 | — | — |
+| 11 | `benchmarks/collections/QueueChurn` | Queued | 0 | — | — |
+| 12 | `benchmarks/collections/QueueGrowth` | Queued | 0 | — | — |
+| 13 | `benchmarks/collections/StackGrowth` | Queued | 0 | — | — |
+| 14 | `benchmarks/micro/Arithmetic` | Queued | 0 | — | — |
+| 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
+| 16 | `benchmarks/micro/Branching` | Queued | 0 | — | — |
+| 17 | `benchmarks/micro/FactDrivenBranchPruning` | Queued | 0 | — | — |
+| 18 | `benchmarks/micro/FunctionPointerDevirtualization` | Queued | 0 | — | — |
+| 19 | `benchmarks/micro/GlobalScalarLoadForwarding` | Queued | 0 | — | — |
+| 20 | `benchmarks/micro/IndependentRawPointerRegions` | Queued | 0 | — | — |
+| 21 | `benchmarks/micro/IndependentSliceAdd` | Queued | 0 | — | — |
+| 22 | `benchmarks/micro/MemoryAccess` | Queued | 0 | — | — |
+| 23 | `benchmarks/micro/PureCallGlobalForwarding` | Queued | 0 | — | — |
+| 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Queued | 0 | — | — |
+| 25 | `benchmarks/micro/StackFieldLoadForwarding` | Queued | 0 | — | — |
+| 26 | `benchmarks/micro/TailCalls` | Queued | 0 | — | — |
+| 27 | `benchmarks/network/TcpLoopbackThroughput` | Queued | 0 | — | — |
+| 28 | `benchmarks/network/TcpScatterGatherLoopback` | Queued | 0 | — | — |
+| 29 | `benchmarks/text/AsciiToUnicodeConversionRuntime` | Queued | 0 | — | — |
+| 30 | `benchmarks/text/OwnedPathAllocation` | Queued | 0 | — | — |
+| 31 | `benchmarks/text/OwnedTextAllocation` | Queued | 0 | — | — |
+| 32 | `benchmarks/text/PathJoin` | Queued | 0 | — | — |
+| 33 | `benchmarks/text/PathNormalize` | Queued | 0 | — | — |
+| 34 | `benchmarks/text/TextConcatCopy` | Queued | 0 | — | — |
+| 35 | `benchmarks/collections/DictionaryUpdate` | Queued | 0 | — | — |
+| 36 | `benchmarks/io/FileBufferedReadWrite` | Queued | 0 | — | — |
+| 37 | `benchmarks/micro/AbstractionGenericWrapper` | Queued | 0 | — | — |
+| 38 | `benchmarks/micro/AbstractionLawWrapper` | Queued | 0 | — | — |
+| 39 | `benchmarks/micro/AggregatePhiFieldForwarding` | Queued | 0 | — | — |
+| 40 | `benchmarks/micro/Calls` | Queued | 0 | — | — |
+| 41 | `benchmarks/micro/DeadStackFieldStore` | Queued | 0 | — | — |
+| 42 | `benchmarks/micro/NullBranchPruning` | Queued | 0 | — | — |
+| 43 | `benchmarks/micro/StackFieldBranchForwarding` | Queued | 0 | — | — |
+| 44 | `benchmarks/micro/TextLiteralLengthPruning` | Queued | 0 | — | — |
+| 45 | `benchmarks/runtime/RuntimeBufferDynamic` | Queued | 0 | — | — |
+| 46 | `benchmarks/runtime/RuntimeBufferFixed` | Queued | 0 | — | — |
+| 47 | `benchmarks/text/AsciiToUnicodeConversion` | Queued | 0 | — | — |
+| 48 | `benchmarks/text/AsciiToUnicodeWideningKernel` | Queued | 0 | — | — |
+| 49 | `benchmarks/text/PathFacts` | Queued | 0 | — | — |
+| 50 | `benchmarks/text/PathQueries` | Queued | 0 | — | — |
+| 51 | `benchmarks/text/TextParsing` | Queued | 0 | — | — |
+| 52 | `benchmarks/micro/ExplicitArithmeticRangePruning` | Queued | 0 | — | — |
 
 ### Agent coordination (October 27, 2026)
 
@@ -411,6 +474,67 @@ Reproducible scripts, exact binaries/hashes, raw samples, compiler/CPU metadata,
 ## PathNormalize investigation (October 29, 2026)
 
 **Fresh code check:** the current Stark executable eliminates both normalizations, all 5,000 iterations, payload writes and checksum work. Its `main` retains only the initial fallible 64-byte allocation, failure result and cleanup. Clang reduces C to `return 0`; Rust also eliminates normalization/payload/allocation work. Therefore the historical 1.0263 × C ratio is not a current normalization optimization target. The remaining allocator issue is already documented under PathRepeatedSmallOps/PathJoin; do not reintroduce scan/copy work or discard allocation failure merely to match C. Fresh saved IR and disassembly are under ignored `benchmarks/codegen/path-normalize-investigation-20261029/`.
+
+## DictionaryInsert sequential investigation (October 31, 2026)
+
+**Status: complete on goal turn 2.** The final production load-limit proof, outlined fallback, combined storage and aligned-layout correction are validated. Stark averages **0.9863 × C / 0.6167 × Rust** over 1,000 randomized balanced rounds. It beats both directly; the tie exception was not used. The goal continues with DictionaryRemove. Nothing was committed. The turn-1 evidence below remains historical; the authoritative final result is in the turn-2 acceptance paragraph.
+
+**Work comparison and IR:** the unchanged benchmark inserts 8,192 integer key/value pairs after reserving 16,384 slots, checks the count and last value, and verifies the checksum. C uses a fixed-capacity identity-hashed table with calloc/malloc/free; Stark retains its general Dictionary and growth/error behavior; Rust uses randomized standard HashMap. Fresh initial/optimized/post-ThinLTO LLVM and native disassembly were retained for each. Baseline Stark averaged 661.9 µs = **1.0625 × C**, C 622.9 µs and Rust 991.7 µs over 1,000 balanced rounds. The hot Set path originally performed the existing-key search, then repeated probing through Robin Hood insertion even when the home bucket was empty.
+
+**Production proof implemented:** after hashing, a zero home-state proves the key is absent. Preserve that home/index fact through the existing authoritative capacity planner. If storage did not grow, write the key/value/state directly, then commit count/capacity as before. A successful growth explicitly invalidates the old home proof and uses the existing insertion worker with the new mask/storage. Nonempty/tombstone homes and collisions retain the original search and Robin Hood displacement. Do not reuse an arbitrary first empty slot after collisions: that would bypass displacement policy. Existing-key updates still return before planning growth; allocation/error paths and generic moves/drops are preserved. No key values, benchmark names or counts select this path.
+
+**Validation:** **11 focused Release checks passed**, covering native source/source-free package consumers and existing dictionary scalar/custom/text/owned behavior, collisions, deletion, sparse storage, allocation overflow and growth. Added cases fill capacity 64 to its half-load boundary, update an existing key without growth/count change, then insert key 127: its empty old home is 63 and new home after growth is 127, detecting a stale-home proof. Owned custom keys exercise direct insertion and growth, retain payload lookup, and sum exactly 623 dropped IDs across repeated Clear and scope exit. Existing nested owned-value checks still sum exactly 10. `System.Collections` and the affected Stark port source checks pass; production optimized LLVM verifies and all native checksum/output checks pass. The repository-wide audit covered helper/planner consumers, Dictionary/HashSet methods, source/package and port tests, expected IR/call shapes, capacity/error contracts, docs and benchmarks. No full release workflow ran.
+
+**Actual production comparison, 1,000 samples per executable:**
+
+| Variant | Mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 620.6 | **1.000** |
+| Stark, before | 655.4 | **1.056** |
+| Stark, production empty-home path | 646.4 | **1.042** |
+| Rust | 1002.0 | **1.614** |
+
+Production / before = **0.9862**, a **1.4%** lower mean; production / Rust = **0.6451**. All 4,000 measured processes succeeded with no excluded samples and fixed hashes, one warmup then randomized balanced CPU-0-pinned rounds. Startup is included; stdout used the null device and stderr separate truncated regular files. Builds/tests finished before timing; exclusivity was not confirmed. Shared-host cooling/temperature and scheduling effects remain. Later diagnostic windows are recorded separately, not substituted for production.
+
+**Controls and next work:**
+
+- The first `-I` control did not replace the active SDK's reserved System module; its executable hash was identical to baseline. It is not a performance result. An isolated SDK with relative `developmentSourceRoots` then selected the copied source, confirmed by emitted source provenance and changed binary.
+- Empty-home SDK control: **1.0321 × C**, matched baseline **1.0610 × C**. Its native disassembly is identical to production; differing timing windows do not imply missing native work.
+- Outlining only FindInsertionIndex: **1.0347 × C**, matched baseline **1.0574 × C**. Not adopted; original inlining is retained.
+- Moving the empty-home success return before the growth branch: **1.0402 × C**, matched original **1.0671 × C**, versus current empty-home production **1.0417 × C**. No meaningful additional benefit; not adopted.
+- Shared-planner no-growth control: prove `length <= floor(capacity/2)` and `additional <= floor(capacity/2)-length` before additions/overflow/doubling work. This keeps one growth policy, proves the sum representable, and retains all original zero-request/large/overflow paths. Native hot planning shrinks to a shift/compare fast path. It measured **1.0328 × C**, matched original **1.0626 × C** and empty-home **1.0377 × C**. Still diagnostic; it changes the shared Dictionary/HashSet planner and needs their focused validation if adopted.
+- Full cold-worker control: keep the inline empty-home path small and forward the already computed hash to a noinline SetAfterHome worker containing the original existing-key/collision/growth logic. Combined with the planner control it measured **1.0226 × C**, matched original **1.0594 × C**, empty-home **1.0313 × C**, planner-only **1.0317 × C**. It passes the benchmark/LLVM checks but has not been promoted or package/ownership-tested. Consider a direct home-hit update edge as well, to avoid an extra cold call for ordinary updates. Preserve explicit header facts across any cold split and validate generic ownership/retargeting.
+
+A separate 50-round wait4 diagnostic found mean minor faults C 82.64, current Stark 80.74, original Stark 80.56 and Rust 121.74, all without major faults. This does not support blaming the residual gap on more page faults. Its coarse user/system CPU samples do not isolate individual operations. Native code still shows length/capacity overflow and growth checks and header reloads in Stark's insertion loop that C's fixed-capacity table does not need. A further fact direction is preserving the private count/capacity bounds through Set and loop backedges; trace and prove all field producers/consumers rather than assume no growth.
+
+**Turn-1 evidence and handoff (superseded by turn 2):** ignored `benchmarks/codegen/sequential-goal-20261031/DictionaryInsert/` retains baseline/C/Rust/production and control binaries, SDK/source snapshots, initial/optimized/ThinLTO IR, disassembly, source/compiler hashes, all raw 1,000-round JSON windows, test/check logs, `production-validation.json`, and the resource diagnostic. **`production-interleaved-1000.json`** is the authoritative production result. `cold-set-interleaved-1000.json` is the latest six-way diagnostic. Current production edits are only the empty-home Set path in `Collections.stark` and behavioral additions to `SystemDictionaryLookupOptimizationTests.cs`; the shared planner and SetAfterHome changes remain in ignored control sources. Continue this benchmark on the next goal turn; the larger goal remains active.
+
+### Goal turn 2: load-limit proof and combined Dictionary storage
+
+The private `Length`/`StorageCapacity <= 2 ** 62` control retained LLVM range metadata and removed a maximum-length guard, but still measured **1.0193 × C**. General x86 prefix-padding controls (0/3/5 bytes) did not improve on the same cold-worker input. Neither is adopted. Inspecting optimized IR also showed existing header-versus-payload noalias scopes; adding more alias promises was not warranted.
+
+A simpler insertion proof is now implemented: `length < capacity / 2` implies nonzero capacity, representable `length + 1`, and no required growth under the existing half-load policy. If the home state is empty, move the key/value, mark it occupied, and commit the count/header facts directly. Other inputs forward their computed hash into `SetAfterHome`, retaining the original update, Robin Hood, growth, failure and drop behavior. The shared growth planner and private field bounds remain unchanged. This diagnostic measured **1.0153 × C** in one matched 1,000-round window; it was not sufficient alone.
+
+The larger opportunity was three independent Dictionary storage allocations and frees. Production now plans one allocation containing control bytes, aligned keys, and aligned values. The shared finite layout helper checks both padding and extent additions before allocation; per-element multiplication checks remain. Alignment uses target `alignof(K)`, `alignof(V)` and the control-word alignment. Fresh state bytes are initialized; empty payload slots remain uninitialized. Occupied entries move into the new disjoint bounded regions before the old allocation is freed. The insertion worker explicitly contracts disjoint **ranges**, and the caller's scoped assertion is justified by the checked consecutive layout; it does not claim distinct backing allocations. Source-free packages must preserve the new single allocation field and these bounds/contracts.
+
+In the 1,000-round diagnostic, C averaged **610.2377 µs (1.000)**, Rust **990.5214 µs (1.6232)**, the previous production **635.7225 µs (1.0418)**, direct-fit only **625.2254 µs (1.0246)** and combined allocation **604.4654 µs (0.9905)**. A copyable-only destructor-clear bypass measured **605.3803 µs (0.9920)**, showing no additional gain; it is not adopted. Explicit Clear and destructor element cleanup remain unchanged. These are controls, not final production acceptance.
+
+New arbitrary over-aligned key/value tests exposed a pre-existing compiler bug, reproduced with the original Dictionary: `[StructLayout(C), Align(128)]` reported a 128-byte semantic size while LLVM emitted a natural 16-byte aggregate, so indexed storage used the wrong stride. `LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout` now includes declared alignment, routing type definitions, field extraction/insertion, globals, copy helpers and field addresses through the existing target-layout implementation. Initial LLVM now includes the required tail padding. The corrected native fixture passes; focused Release and source-free-package validation is in progress. The regression also checks stronger payload alignment through growth, mutable value projections, aggregate-size overflow before allocation, unchanged contents after failure, collisions, boundary relocation and exact-once owned drops.
+
+Artifacts: `benchmarks/codegen/sequential-goal-20261031/DictionaryInsert/turn2/` contains every SDK/source control, source/compiler provenance, initial/optimized/post-LTO LLVM, native disassembly, raw 1,000-round JSON windows, the before/fixed alignment reproductions and audits. `packed-interleaved-1000.json` is the six-way diagnostic; final production acceptance is recorded below. This remains goal turn 2, with no C-tie exception and no commits.
+
+**Final turn-2 production acceptance:** all **16 distinct focused Release checks passed** (11 Dictionary/collection checks and 5 LLVM/layout/C ABI checks), followed by the added two source/source-free package replacement cases. Native checks cover arbitrary scalar/custom/text keys, wraparound/collisions/deletion, half-load updates without growth, home relocation after growth, over-aligned payload regions/projections, total-size overflow without allocation or state loss, exact-once incoming/stored key/value destruction, repeated Clear and reuse. AArch64 Linux and Windows x64 initial LLVM verify; those targets were cross-compiled, not executed. Linux first/optimized/post-LTO LLVM verify, and native outputs/checksums pass. Source and Stark-port checks pass; obsolete per-allocation and inline-worker shape assertions were removed while behavioral/key-contract coverage remains. Shared layout consumers, field indices, global initializers, copy helpers, target/package metadata and collection storage/cleanup references were audited. No full release workflow ran.
+
+| Final variant | Mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 613.5 | **1.000** |
+| Rust | 981.1 | **1.599** |
+| Stark before this investigation | 652.5 | **1.064** |
+| Stark previous empty-home production | 640.3 | **1.044** |
+| Stark final production | 605.1 | **0.986** |
+
+Final Stark / Rust = **0.6167**, / original = **0.9273**, / previous production = **0.9450**. All 5,000 measured processes succeeded, with fixed hashes and no excluded samples. CPU 0, one warmup per executable, balanced randomized rounds, direct launches including startup, null stdout and separate regular stderr match earlier measurement controls. All builds/tests finished first; exclusive host access was not confirmed and shared-host/thermal variation remains. Authoritative evidence: **`turn2/final-interleaved-1000.json`**, `final-ir/`, `final-optimized.ll`, `final.asm`, `production-source-hashes.json`, source snapshots, Release/cross-target logs and both stale-assumption audits. The live insertion loop, allocation, output validation and cleanup remain. Native Dictionary header size is now 80 bytes rather than 144; the main body is 949 bytes rather than the prior 3,641, while the outlined generic workers retain cold functionality. The larger GrowStorage body still has opportunities for specialization, but those are optional future work and do not keep this passing benchmark open.
+
 
 ## DictionaryLookup investigation (October 29, 2026)
 

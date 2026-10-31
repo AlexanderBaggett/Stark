@@ -455,7 +455,6 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.Contains("internal rawmutptr<K> Keys;", source, StringComparison.Ordinal);
         Assert.Contains("internal rawmutptr<V> Values;", source, StringComparison.Ordinal);
         Assert.Contains("internal rawmutptr<u8[0 2]> States;", source, StringComparison.Ordinal);
-        Assert.Contains("internal System.Memory.Allocation KeysAllocation;", source, StringComparison.Ordinal);
         Assert.DoesNotContain("public rawptr", source, StringComparison.Ordinal);
         Assert.DoesNotContain("public rawmutptr", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryValueSlot", source, StringComparison.Ordinal);

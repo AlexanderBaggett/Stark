@@ -329,6 +329,34 @@ internal inline finite System.Memory.MemoryStatus ComputeHashStorageGrowthCapaci
     return ComputeContiguousGrowthCapacity(length, currentCapacity, targetAdditional, 8, nextCapacity);
 }
 
+internal inline finite System.Memory.MemoryStatus ComputeAlignedStorageRegion(
+    u64[0 2 ** 63 - 1] offset,
+    u64[0 2 ** 63 - 1] byteLength,
+    u64[1 2 ** 63 - 1] alignment,
+    out u64[0 2 ** 63 - 1] start,
+    out u64[0 2 ** 63 - 1] end)
+{
+    start = 0;
+    end = 0;
+    stack u64[0 2 ** 63 - 1] remainder = (u64[0 2 ** 63 - 1])(offset % alignment);
+    stack mut u64[0 2 ** 63 - 1] padding = 0;
+    if (remainder > 0)
+    {
+        padding = (u64[0 2 ** 63 - 1])(alignment - remainder);
+    }
+    if (padding > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - offset)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+    start = (u64[0 2 ** 63 - 1])(offset + padding);
+    if (byteLength > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - start)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+    end = (u64[0 2 ** 63 - 1])(start + byteLength);
+    return System.Memory.MemoryStatus.Ok;
+}
+
 internal inline finite law i64[min max] DictionaryStateOneBytes()
 {
     return 72340172838076673;
@@ -967,15 +995,14 @@ public enum DictionaryRemoveResult<T>
 // borrows from occupied values. A dynamic enum-slot rewrite currently moves
 // generic payloads during lookup/removal instead of projecting stable mutable
 // borrows, so this internal boundary stays until sparse-slot borrows are a
-// first-class language/storage feature.
+// first-class language/storage feature. One allocation owns three checked,
+// aligned, nonoverlapping regions; only occupied payload slots are initialized.
 public struct Dictionary<K, V>
 {
     internal rawmutptr<K> Keys;
     internal rawmutptr<V> Values;
     internal rawmutptr<u8[0 2]> States;
-    internal System.Memory.Allocation KeysAllocation;
-    internal System.Memory.Allocation ValuesAllocation;
-    internal System.Memory.Allocation StatesAllocation;
+    internal System.Memory.Allocation StorageAllocation;
     internal u64[0 2 ** 63 - 1] Length;
     internal u64[0 2 ** 63 - 1] StorageCapacity;
     internal System.Memory.Allocator Allocator;
@@ -986,25 +1013,11 @@ public struct Dictionary<K, V>
         self.Keys = null;
         self.Values = null;
         self.States = null;
-        self.KeysAllocation = new System.Memory.Allocation()
+        self.StorageAllocation = new System.Memory.Allocation()
         {
             Pointer = null,
             ByteLength = 0,
-            Alignment = alignof(K),
-            Allocator = self.Allocator
-        };
-        self.ValuesAllocation = new System.Memory.Allocation()
-        {
-            Pointer = null,
-            ByteLength = 0,
-            Alignment = alignof(V),
-            Allocator = self.Allocator
-        };
-        self.StatesAllocation = new System.Memory.Allocation()
-        {
-            Pointer = null,
-            ByteLength = 0,
-            Alignment = alignof(i64[min max]),
+            Alignment = 1,
             Allocator = self.Allocator
         };
         self.Length = 0;
@@ -1017,25 +1030,11 @@ public struct Dictionary<K, V>
         self.Keys = null;
         self.Values = null;
         self.States = null;
-        self.KeysAllocation = new System.Memory.Allocation()
+        self.StorageAllocation = new System.Memory.Allocation()
         {
             Pointer = null,
             ByteLength = 0,
-            Alignment = alignof(K),
-            Allocator = allocator
-        };
-        self.ValuesAllocation = new System.Memory.Allocation()
-        {
-            Pointer = null,
-            ByteLength = 0,
-            Alignment = alignof(V),
-            Allocator = allocator
-        };
-        self.StatesAllocation = new System.Memory.Allocation()
-        {
-            Pointer = null,
-            ByteLength = 0,
-            Alignment = alignof(i64[min max]),
+            Alignment = 1,
             Allocator = allocator
         };
         self.Length = 0;
@@ -1045,19 +1044,9 @@ public struct Dictionary<K, V>
     mut drop
     {
         self.Clear();
-        if (self.KeysAllocation.Pointer != null)
+        if (self.StorageAllocation.Pointer != null)
         {
-            System.Memory.Free(self.KeysAllocation);
-        }
-
-        if (self.ValuesAllocation.Pointer != null)
-        {
-            System.Memory.Free(self.ValuesAllocation);
-        }
-
-        if (self.StatesAllocation.Pointer != null)
-        {
-            System.Memory.Free(self.StatesAllocation);
+            System.Memory.Free(self.StorageAllocation);
         }
 
         self.Keys = null;
@@ -1117,11 +1106,13 @@ public struct Dictionary<K, V>
 
     internal unsafe static inline fn void InsertEntryIntoStorage(
         u64[0 2 ** 63 - 1] capacity,
-        rawmutptr<K> keys,
-        rawmutptr<V> values,
-        rawmutptr<u8[0 2]> states,
+        rawmutptr<K>[capacity] keys,
+        rawmutptr<V>[capacity] values,
+        rawmutptr<u8[0 2]>[capacity] states,
         K key,
         V value)
+        where overlap(keys, values, states)
+        where disjoint(keys[0, capacity], values[0, capacity], states[0, capacity])
     {
         stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(capacity - 1);
         stack mut K pendingKey = key;
@@ -1661,65 +1652,69 @@ public struct Dictionary<K, V>
             stack u64[0 2 ** 63 - 1] keysByteLength = (u64[0 2 ** 63 - 1])(nextCapacity * keySize);
             stack u64[0 2 ** 63 - 1] valuesByteLength = (u64[0 2 ** 63 - 1])(nextCapacity * valueSize);
             stack u64[0 2 ** 63 - 1] statesByteLength = (u64[0 2 ** 63 - 1])(nextCapacity * stateSize);
-            stack System.Memory.Allocation nextKeysAllocation = System.Memory.Allocate(self.Allocator, keysByteLength, alignof(K));
-            if (nextKeysAllocation.Pointer == null)
+            stack mut u64[0 2 ** 63 - 1] keysOffset = 0;
+            stack mut u64[0 2 ** 63 - 1] keysEnd = 0;
+            stack System.Memory.MemoryStatus keysLayout = ComputeAlignedStorageRegion(
+                statesByteLength, keysByteLength, (u64[1 2 ** 63 - 1])alignof(K), keysOffset, keysEnd);
+            switch (keysLayout)
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return keysLayout;
+                case System.Memory.MemoryStatus.Ok:
+            }
+            stack mut u64[0 2 ** 63 - 1] valuesOffset = 0;
+            stack mut u64[0 2 ** 63 - 1] totalByteLength = 0;
+            stack System.Memory.MemoryStatus valuesLayout = ComputeAlignedStorageRegion(
+                keysEnd, valuesByteLength, (u64[1 2 ** 63 - 1])alignof(V), valuesOffset, totalByteLength);
+            switch (valuesLayout)
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return valuesLayout;
+                case System.Memory.MemoryStatus.Ok:
+            }
+            stack mut u64[1 2 ** 63 - 1] storageAlignment = alignof(i64[min max]);
+            if (alignof(K) > storageAlignment)
+            {
+                storageAlignment = alignof(K);
+            }
+            if (alignof(V) > storageAlignment)
+            {
+                storageAlignment = alignof(V);
+            }
+            stack System.Memory.Allocation nextAllocation = System.Memory.Allocate(self.Allocator, totalByteLength, storageAlignment);
+            if (nextAllocation.Pointer == null)
             {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
             }
-
-            stack System.Memory.Allocation nextValuesAllocation = System.Memory.Allocate(self.Allocator, valuesByteLength, alignof(V));
-            if (nextValuesAllocation.Pointer == null)
-            {
-                System.Memory.Free(nextKeysAllocation);
-                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
-            }
-
-            stack System.Memory.Allocation nextStatesAllocation =
-                System.Memory.Allocate(self.Allocator, statesByteLength, alignof(i64[min max]));
-            if (nextStatesAllocation.Pointer == null)
-            {
-                System.Memory.Free(nextValuesAllocation);
-                System.Memory.Free(nextKeysAllocation);
-                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
-            }
-
-            stack rawmutptr<K> nextKeys = (rawmutptr<K>)nextKeysAllocation.Pointer;
-            stack rawmutptr<V> nextValues = (rawmutptr<V>)nextValuesAllocation.Pointer;
-            stack rawmutptr<u8[0 2]> nextStates = (rawmutptr<u8[0 2]>)nextStatesAllocation.Pointer;
+            stack rawmutptr<K> nextKeys = (rawmutptr<K>)(&nextAllocation.Pointer[keysOffset]);
+            stack rawmutptr<V> nextValues = (rawmutptr<V>)(&nextAllocation.Pointer[valuesOffset]);
+            stack rawmutptr<u8[0 2]> nextStates = (rawmutptr<u8[0 2]>)nextAllocation.Pointer;
 
             self.InitializeStates(nextCapacity, nextStates);
 
-            stack mut u64[0 2 ** 63 - 1] oldIndex = 0;
-            while willexit (oldIndex < self.StorageCapacity)
+            // The checked layout places these full regions consecutively.
+            assume disjoint(nextKeys[0, nextCapacity], nextValues[0, nextCapacity], nextStates[0, nextCapacity])
             {
-                if (*(&self.States[oldIndex]) == 1)
+                stack mut u64[0 2 ** 63 - 1] oldIndex = 0;
+                while willexit (oldIndex < self.StorageCapacity)
                 {
-                    stack K movedKey = *(&self.Keys[oldIndex]);
-                    stack V movedValue = *(&self.Values[oldIndex]);
-                    Dictionary<K, V>.InsertEntryIntoStorage(nextCapacity, nextKeys, nextValues, nextStates, movedKey, movedValue);
+                    if (*(&self.States[oldIndex]) == 1)
+                    {
+                        stack K movedKey = *(&self.Keys[oldIndex]);
+                        stack V movedValue = *(&self.Values[oldIndex]);
+                        Dictionary<K, V>.InsertEntryIntoStorage(nextCapacity, nextKeys, nextValues, nextStates, movedKey, movedValue);
+                    }
+
+                    oldIndex += 1;
                 }
-
-                oldIndex += 1;
             }
 
-            if (self.KeysAllocation.Pointer != null)
+            if (self.StorageAllocation.Pointer != null)
             {
-                System.Memory.Free(self.KeysAllocation);
+                System.Memory.Free(self.StorageAllocation);
             }
 
-            if (self.ValuesAllocation.Pointer != null)
-            {
-                System.Memory.Free(self.ValuesAllocation);
-            }
-
-            if (self.StatesAllocation.Pointer != null)
-            {
-                System.Memory.Free(self.StatesAllocation);
-            }
-
-            self.KeysAllocation = nextKeysAllocation;
-            self.ValuesAllocation = nextValuesAllocation;
-            self.StatesAllocation = nextStatesAllocation;
+            self.StorageAllocation = nextAllocation;
             self.Keys = nextKeys;
             self.Values = nextValues;
             self.States = nextStates;
@@ -1732,6 +1727,37 @@ public struct Dictionary<K, V>
     {
         unsafe
         {
+            stack u64[0 2 ** 63 - 1] length = self.Length;
+            stack u64[0 2 ** 63 - 1] capacity = self.StorageCapacity;
+            // This proves capacity is nonzero and one entry fits without
+            // overflow or growth. The empty home then proves absence.
+            if (length < capacity / 2)
+            {
+                stack u64[0 max] keyHash = DictionaryKey.Hash(key);
+                stack u64[0 2 ** 63 - 1] home = (u64[0 2 ** 63 - 1])(keyHash & (u64[0 max])(capacity - 1));
+                if (*(&self.States[home]) == 0)
+                {
+                    *(&self.Keys[home]) = key;
+                    *(&self.Values[home]) = value;
+                    *(&self.States[home]) = 1;
+                    self.Length = (u64[0 2 ** 63 - 1])(length + 1);
+                    self.StorageCapacity = capacity;
+                    return System.Memory.MemoryStatus.Ok;
+                }
+                return self.SetAfterHome(key, value, keyHash);
+            }
+            if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+            return self.SetAfterHome(key, value, DictionaryKey.Hash(key));
+        }
+    }
+
+    internal noinline fn System.Memory.MemoryStatus SetAfterHome(mut borrow Dictionary<K, V> self, K key, V value, u64[0 max] keyHash)
+    {
+        unsafe
+        {
             // Keep header facts independent of sparse payload writes.
             stack u64[0 2 ** 63 - 1] length = self.Length;
             stack mut u64[0 2 ** 63 - 1] capacity = self.StorageCapacity;
@@ -1740,7 +1766,6 @@ public struct Dictionary<K, V>
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack u64[0 max] keyHash = DictionaryKey.Hash(key);
             stack mut bool foundExisting = false;
             if (capacity > 0)
             {

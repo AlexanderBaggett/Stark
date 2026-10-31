@@ -337,7 +337,6 @@ internal fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsC
     if (!System.Testing.Contains(symbolHashBody, "load i32")
         || !System.Testing.Contains(symbolEqualsBody, "icmp eq i32")
         || !System.Testing.Contains(setBody, "load i32")
-        || !System.Testing.Contains(setBody, "Dictionary_FindInsertionIndex__Symbol__u32")
         || !System.Testing.Contains(tryGetBody, "icmp eq i32")
         || !System.Testing.Contains(findInsertionIndexBody, "icmp eq i32")
         || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Hash")

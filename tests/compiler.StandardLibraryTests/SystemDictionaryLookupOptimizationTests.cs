@@ -17,10 +17,28 @@ public sealed class SystemDictionaryLookupOptimizationTests : StandardLibraryTes
             static finite law u64[0 max] Hash(borrow CollisionKey key) { return 63; }
             static finite law bool Equals(borrow CollisionKey a, borrow CollisionKey b) where overlap(a,b) { return a.Value == b.Value; }
         }
+        [StructLayout(C)]
+        [Align(64)]
+        struct AlignedKey {
+            u32[0 max] Id;
+            static finite law u64[0 max] Hash(borrow AlignedKey key) { return (u64[0 max])key.Id; }
+            static finite law bool Equals(borrow AlignedKey a, borrow AlignedKey b) where overlap(a,b) { return a.Id == b.Id; }
+        }
+        [StructLayout(C)]
+        [Align(128)]
+        struct AlignedValue { u64[0 max] Marker; u8[0 max] Tag; }
         static mut u32[0 max] Dropped = 0;
         struct PlainValue { u32[0 max] Value; i8[min max] Tag; }
         struct Resource { u32[0 max] Id; mut drop { Dropped += self.Id; } }
         struct Envelope { Resource Owned; }
+        static mut u32[0 max] DroppedKeys = 0;
+        struct OwnedKey {
+            u32[0 max] Id;
+            bool Tracked;
+            static finite law u64[0 max] Hash(borrow OwnedKey key) { return (u64[0 max])key.Id; }
+            static finite law bool Equals(borrow OwnedKey a, borrow OwnedKey b) where overlap(a,b) { return a.Id == b.Id; }
+            mut drop { if (self.Tracked) { DroppedKeys += self.Id; } }
+        }
         noinline finite law bool Same(borrow u32[0 max] a, borrow u32[0 max] b) where overlap(a,b) {
             stack borrow u32[0 max] saved = a;
             return DictionaryKey.Equals(saved,b);
@@ -104,6 +122,84 @@ public sealed class SystemDictionaryLookupOptimizationTests : StandardLibraryTes
                 if (Dropped!=10) { return 34; }
             }
             if (Dropped!=10) { return 35; }
+            // A no-growth empty home can be used directly. Updating an existing
+            // key at half capacity must not grow or increment the entry count.
+            stack mut Dictionary<u32[0 max],u32[0 max]> boundary = new();
+            if (!Ok(boundary.Reserve(32)) || boundary.Capacity()!=64) { return 36; }
+            for willexit(stack mut u8[0 32] i=0; i<32; i+=1) {
+                if (!Ok(boundary.Set((u32[0 max])i,(u32[0 max])i+10))) { return 37; }
+            }
+            if (!Ok(boundary.Set(7,707)) || boundary.Count()!=32 || boundary.Capacity()!=64) { return 38; }
+            // 127 has empty old home 63, but home 127 after growth. Retaining
+            // the pre-growth empty-home index would make this lookup fail.
+            if (!Ok(boundary.Set(127,999)) || boundary.Count()!=33 || boundary.Capacity()!=128) { return 39; }
+            stack u32[0 max] resizedKey = 127;
+            if (!boundary.TryGet(resizedKey,found) || found!=999) { return 40; }
+            for willexit(stack mut u8[0 32] i=0; i<32; i+=1) {
+                stack u32[0 max] key=(u32[0 max])i;
+                stack u32[0 max] expected=(u32[0 max])i+10;
+                if (i==7) { if (!boundary.TryGet(key,found) || found!=707) { return 41; } }
+                else if (!boundary.TryGet(key,found) || found!=expected) { return 42; }
+            }
+            {
+                stack mut Dictionary<OwnedKey,u32[0 max]> ownedKeys = new();
+                if (!Ok(ownedKeys.Reserve(32))) { return 43; }
+                for willexit(stack mut u8[0 32] i=0; i<32; i+=1) {
+                    if (!Ok(ownedKeys.Set(new OwnedKey(){Id=(u32[0 max])i,Tracked=true},(u32[0 max])i+1))) { return 44; }
+                }
+                if (!Ok(ownedKeys.Set(new OwnedKey(){Id=127,Tracked=true},128))) { return 45; }
+                stack OwnedKey probe = new OwnedKey(){Id=127,Tracked=false};
+                if (!ownedKeys.TryGet(probe,found) || found!=128 || DroppedKeys!=0) { return 46; }
+                ownedKeys.Clear();
+                if (DroppedKeys!=623 || ownedKeys.Count()!=0) { return 47; }
+                ownedKeys.Clear();
+            }
+            if (DroppedKeys!=623) { return 48; }
+            // States need only eight-byte alignment; each payload region must
+            // independently preserve its stronger alignment through growth.
+            stack mut Dictionary<AlignedKey,AlignedValue> aligned = new();
+            if (!Ok(aligned.Reserve(4))) { return 49; }
+            for willexit(stack mut u8[0 13] i=0; i<13; i+=1) {
+                if (!Ok(aligned.Set(new AlignedKey(){Id=(u32[0 max])i},
+                    new AlignedValue(){Marker=(u64[0 max])i+100,Tag=i}))) { return 50; }
+            }
+            for willexit(stack mut u8[0 13] i=0; i<13; i+=1) {
+                stack AlignedKey probe = new AlignedKey(){Id=(u32[0 max])i};
+                stack mut AlignedValue result = new AlignedValue(){Marker=0,Tag=0};
+                if (!aligned.TryGet(probe,result) || result.Marker!=(u64[0 max])i+100 || result.Tag!=i
+                    || !aligned.ContainsIndex((u64[0 2 ** 63 - 1])i)) { return 51; }
+                stack rawmutptr<AlignedValue> address = &aligned.GetMutAtIndex((u64[0 2 ** 63 - 1])i);
+                if ((u64[0 max])address % 128 != 0) { return 52; }
+                aligned.GetMutAtIndex((u64[0 2 ** 63 - 1])i) = new AlignedValue(){Marker=500,Tag=19};
+                if (!aligned.TryGet(probe,result) || result.Marker!=500 || result.Tag!=19) { return 53; }
+            }
+            aligned.Clear();
+            if (aligned.Count()!=0 || !Ok(aligned.Set(new AlignedKey(){Id=7},new AlignedValue(){Marker=91,Tag=2}))) { return 54; }
+            // Each individual region fits, but their aligned sum does not.
+            // Reject before allocation and retain the existing table contents.
+            stack mut Dictionary<u8[0 max],u8[0 max]> combinedOverflow = new();
+            if (!Ok(combinedOverflow.Set(31,47))) { return 55; }
+            stack u64[0 2 ** 63 - 1] smallCapacity = combinedOverflow.Capacity();
+            stack MemoryStatus failedLayout = combinedOverflow.Reserve((u64[0 2 ** 63 - 1])(2 ** 61));
+            switch(failedLayout) {
+                case MemoryStatus.Ok: return 56;
+                case MemoryStatus.Err(var error): if (error!=MemoryError.TooLarge) { return 57; }
+            }
+            stack u8[0 max] smallKey = 31;
+            stack mut u8[0 max] smallValue = 0;
+            if (combinedOverflow.Capacity()!=smallCapacity || combinedOverflow.Count()!=1
+                || !combinedOverflow.TryGet(smallKey,smallValue) || smallValue!=47
+                || !Ok(combinedOverflow.Set(11,29))) { return 58; }
+            // Updating through the outlined collision path drops the incoming
+            // equal key and old value, while retaining the stored key/new value.
+            {
+                stack mut Dictionary<OwnedKey,Envelope> replacement = new();
+                if (!Ok(replacement.Reserve(4))
+                    || !Ok(replacement.Set(new OwnedKey(){Id=9,Tracked=true},new Envelope(){Owned=new Resource(){Id=5}}))
+                    || !Ok(replacement.Set(new OwnedKey(){Id=9,Tracked=true},new Envelope(){Owned=new Resource(){Id=7}}))) { return 59; }
+                if (Dropped!=15 || DroppedKeys!=632 || replacement.Count()!=1) { return 60; }
+            }
+            if (Dropped!=22 || DroppedKeys!=641) { return 61; }
             return 0;
         }
         """;

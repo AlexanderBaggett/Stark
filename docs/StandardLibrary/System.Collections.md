@@ -234,7 +234,12 @@ surface area should use the canonical `Eq`, `Hash`, and `Ord` names.
 
 ## `Dictionary<K, V>`
 
-`Dictionary<K, V>` is an owned hash table.
+`Dictionary<K, V>` is an owned hash table. Its control bytes, keys and values
+occupy distinct, aligned regions in one owned allocation. Layout planning checks
+each size, alignment padding and total byte length before allocating. Growth
+initializes control bytes and moves occupied entries before releasing the old
+allocation; empty key/value slots remain uninitialized. Failed layout planning
+leaves existing entries and capacity intact.
 
 ```stark
 public struct Dictionary<K, V>

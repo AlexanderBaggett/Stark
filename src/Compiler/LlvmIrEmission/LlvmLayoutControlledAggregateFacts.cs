@@ -12,7 +12,8 @@ internal static class LlvmLayoutControlledAggregateFacts
     public static bool RequiresPhysicalLayout(NamedTypeSymbol namedType)
     {
         return namedType.Layout?.Kind == StructLayoutKind.Explicit
-            || namedType.Layout?.PackBytes is not null;
+            || namedType.Layout?.PackBytes is not null
+            || namedType.Layout?.AlignBytes is not null;
     }
 
     public static bool TryBuildPhysicalElements(
