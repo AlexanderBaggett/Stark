@@ -1120,6 +1120,23 @@ A separate 100-sample interleaved run of the original three produced Stark 813.9
 3. **Preserve facts while separating header effects, payload liveness and allocator effects.** Carry successful-reserve capacity, allocation identity, literal and disjointness facts through the proven join paths and across compiler phases; remap them through rewrites and invalidate only affected regions. Use those facts to specialize lengths/status and delete payload writes only when no alias or escaped view can observe them. `Clear` already optimizes to a header reset. Small constant-copy exposure can independently enable loop elimination, but remaining final stores still require a payload-lifetime proof. Retain the initial reserve's failure branch and real cleanup.
 4. **Make a separate matched runtime-input benchmark** if the goal is to compare actual path throughput. Vary inputs at runtime and consume the joined bytes on each iteration in all three languages, keeping comparable buffer, allocation and error work. Keep the present literal benchmark as an optimizer test; the current checksum permits the C and Rust path operations to disappear.
 
+## MemoryCopyFill sequential completion (October 31, 2026)
+
+**Status: completed on goal turn 1.** The unchanged current source-built executable already beats C and canonical Rust; no further compiler/library patch was needed.
+
+| Variant | Mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 1370.6 | **1.000** |
+| Stark | 1346.0 | **0.982** |
+| Rust | 1657.2 | **1.209** |
+
+Stark / Rust = **0.8122**. Exactly 1,000 randomized balanced interleaved samples per binary after one warmup, CPU 0 affinity, startup included. All 3,000 measured runs passed checksum 93,749,676 with fixed hashes and no excluded samples. Stdout was the null device and stderr separately truncated regular files. No builds/tests from this chat overlapped timing; exclusive access was not confirmed.
+
+Fresh Stark/C/Rust IR and final disassembly were compared. Stark folds constant source copies/fill sums, retains the 10,000-iteration checksum workload and 32-element remainder/setup loop, and lowers the overlapping 16-byte/64-byte moves to vector loads/stores. It keeps the dynamic move buffers' allocation/failure/cleanup paths. C also retains remainder/setup and moved-payload checksum work, with different source allocation choices; Rust uses Vec storage. This is not a claim of identical allocation algorithms. All three saved optimized LLVM modules verify and all native output/self-checks pass. No source semantics or benchmark inputs were changed.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/MemoryCopyFill/`, including binaries, initial/post-LTO LLVM, C/Rust LLVM, disassembly, source/compiler hash fixture and `interleaved-1000.json`.
+
+
 ## ArenaAllocator sequential completion (October 31, 2026)
 
 **Status: completed on goal turn 1.** The current source-built production executable beats both C and canonical Rust. No new source change was required: the existing cached-slab implementation and production x86 backend policy are present. The separately documented huge-allocation overflow edge remains deferred at the user's earlier direction; this performance completion does not claim to repair it.
