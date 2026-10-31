@@ -1120,6 +1120,23 @@ A separate 100-sample interleaved run of the original three produced Stark 813.9
 3. **Preserve facts while separating header effects, payload liveness and allocator effects.** Carry successful-reserve capacity, allocation identity, literal and disjointness facts through the proven join paths and across compiler phases; remap them through rewrites and invalidate only affected regions. Use those facts to specialize lengths/status and delete payload writes only when no alias or escaped view can observe them. `Clear` already optimizes to a header reset. Small constant-copy exposure can independently enable loop elimination, but remaining final stores still require a payload-lifetime proof. Retain the initial reserve's failure branch and real cleanup.
 4. **Make a separate matched runtime-input benchmark** if the goal is to compare actual path throughput. Vary inputs at runtime and consume the joined bytes on each iteration in all three languages, keeping comparable buffer, allocation and error work. Keep the present literal benchmark as an optimizer test; the current checksum permits the C and Rust path operations to disappear.
 
+## ArenaAllocator sequential completion (October 31, 2026)
+
+**Status: completed on goal turn 1.** The current source-built production executable beats both C and canonical Rust. No new source change was required: the existing cached-slab implementation and production x86 backend policy are present. The separately documented huge-allocation overflow edge remains deferred at the user's earlier direction; this performance completion does not claim to repair it.
+
+| Variant | Mean µs | Mean / C |
+| --- | ---: | ---: |
+| C | 1923.7 | **1.000** |
+| Stark | 1838.9 | **0.956** |
+| Rust | 2141.2 | **1.113** |
+
+Stark / Rust = **0.8588**. Exactly 1,000 balanced randomized interleaved samples per executable, after one warmup, pinned to CPU 0. All 3,000 measured processes passed the existing seven-round checksum self-test and live process-ID-seeded workload, with fixed executable hashes and no excluded samples. Startup is included. Stdout went to the null device and stderr to separately truncated regular files. No builds/tests from this chat overlapped timing; shared-host/thermal effects and unconfirmed exclusivity remain.
+
+Initial and post-ThinLTO LLVM plus native disassembly were compared against fresh C/Rust IR. Stark retains arena allocation/growth and cleanup, backed by the TLS 4,096-byte bucket; C retains one malloc/free per round and its bump loop; Rust retains its two Vec allocations and payload loop. These allocation strategies differ, so the ratio is not a compiler-quality comparison. All three saved optimized LLVM modules verify, and fresh native warmups/checks succeed. Previously validated allocator alignment/fallible/nested-frame behavior is unchanged. No additional compiler tests were needed for this verification-only closure.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/ArenaAllocator/` contains actual binaries, initial/ThinLTO IR, C/Rust IR, disassembly, source/compiler hashes and `interleaved-1000.json`. The historical full-suite figures below are preserved.
+
+
 ## ArenaAllocator rerun after slab caching (October 27, 2026)
 
 The arena allocator now subtracts its block link from the largest runtime cache bucket when choosing its minimum slab payload. Both infallible and fallible allocations use the same size selection. The runtime checks passed for repeated and nested frames, fallible growth, allocations around and beyond the slab boundary, alignment up to 4096 bytes, data preservation, and empty-frame overflow. Three directly affected compiler emission checks also passed.
