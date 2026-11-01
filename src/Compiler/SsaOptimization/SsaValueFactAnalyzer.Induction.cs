@@ -7,7 +7,8 @@ internal sealed partial class SsaValueFactAnalyzer
     private static IReadOnlySet<string> RefineInductiveNonNegativeFacts(
         SsaFunction function,
         Dictionary<string, SsaValueFacts> values,
-        ISet<int> reachableBlocks)
+        ISet<int> reachableBlocks,
+        IReadOnlyDictionary<string, SsaFunction> integerBodies)
     {
         var candidates = function.Blocks.Where(b => reachableBlocks.Contains(b.Id))
             .SelectMany(b => b.Phis)
@@ -25,14 +26,14 @@ internal sealed partial class SsaValueFactAnalyzer
             .ToDictionary(p => p.ResultName, p => p.Incomings.Where(i => reachableBlocks.Contains(i.PredecessorBlockId))
                 .Select(i => i.Value).ToArray(), StringComparer.Ordinal);
         var definitions = instructions.ToDictionary(i => i.ResultName, i => i.Value, StringComparer.Ordinal);
-        var unconditional = new NonNegativeProof(values, definitions, phis);
+        var unconditional = new NonNegativeProof(values, definitions, phis, integerBodies: integerBodies);
         foreach (var phi in candidates)
         {
             var incoming = phi.Incomings.Where(i => reachableBlocks.Contains(i.PredecessorBlockId)).ToArray();
             // A reachable SSA cycle needs an independently proved entry, and
             // every incoming value must preserve the hypothesis. Merge phis
             // must prove all their edges without another cyclic hypothesis.
-            var induction = new NonNegativeProof(values, definitions, phis, phi.ResultName);
+            var induction = new NonNegativeProof(values, definitions, phis, phi.ResultName, integerBodies);
             if (!incoming.Any(i => unconditional.Proves(i.Value))
                 || !incoming.All(i => induction.Proves(i.Value))) continue;
             values[phi.ResultName] = ApplyNonNegativeProof(values[phi.ResultName]);
@@ -78,7 +79,8 @@ internal sealed partial class SsaValueFactAnalyzer
         IReadOnlyDictionary<string, SsaValueFacts> values,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlyDictionary<string, SsaValue[]> phis,
-        string? hypothesis = null)
+        string? hypothesis = null,
+        IReadOnlyDictionary<string, SsaFunction>? integerBodies = null)
     {
         private readonly HashSet<string> _activeValues = new(StringComparer.Ordinal);
         private readonly HashSet<(SsaValue, SsaValue)> _activeOrders = [];
@@ -116,6 +118,10 @@ internal sealed partial class SsaValueFactAnalyzer
                     SsaUseRValue use => ProvesCore(use.Value),
                     SsaConvertRValue convert when IsLossless(convert) => ProvesCore(convert.Operand),
                     SsaSelectRValue select => ProvesCore(select.WhenTrue) && ProvesCore(select.WhenFalse),
+                    SsaCallRValue call => TryAnalyzeSimpleIntegerCall(reference.Name, call, values, integerBodies,
+                        out var returned, ProvesCore)
+                        && returned.IntegerRangeKind == SsaFactLatticeKind.Known
+                        && returned.IntegerRange is { Min.Sign: >= 0 },
                     SsaBinaryRValue binary when Fits(binary) => binary.Operator switch
                     {
                         SsaBinaryOperator.Add or SsaBinaryOperator.Multiply => ProvesCore(binary.Left) && ProvesCore(binary.Right),

@@ -167,6 +167,13 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    known bits retain the other fact fields, survive the storage-range transfer,
    and are recovered after later rewrites. Existing LLVM consumers can then
    select unsigned arithmetic without changing source types or package schemas.
+   Available straight-line integer bodies also produce contextual scalar return
+   facts without inlining or strengthening a callee's general signature. Scalar
+   transfers check argument conversions and arithmetic bounds; opaque calls,
+   recursion and memory-dependent bodies remain conservative. These call facts
+   participate in induction proofs under the same argument hypotheses. Integer
+   cast ranges account for truncated bit patterns and signedness changes rather
+   than intersecting away values that wrap into a negative or unsigned range.
 30. `dynamic-storage-ssa`
    Optimizes dynamic storage operations using SSA value and region facts.
    This pass removes provably no-op reserves, folds provably successful `TryReserve`/`TryReserveCapacity` calls, removes frees for storage proven to have no backing allocation, and preserves dynamic-storage facts across calls when semantic parameter summaries prove the argument is neither written nor captured. Read-only observation alone does not invalidate those facts. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.

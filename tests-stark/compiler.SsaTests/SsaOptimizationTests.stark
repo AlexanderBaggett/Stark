@@ -1820,18 +1820,18 @@ fn u8[0 max] Run(u8[250 max] left, u8[10 20] right)
     return Succeeds(compiled);
 }
 
-// Ported from SsaOptimizationTests.ValueFactsClampIntegerConversionsToTargetRange.
-internal fn bool ValueFactsClampIntegerConversionsToTargetRangeImpl()
+// Ported from SsaOptimizationTests.ValueFactsIncludeWrappedValuesWhenIntegerConversionsTruncate.
+internal fn bool ValueFactsIncludeWrappedValuesWhenIntegerConversionsTruncateImpl()
 {
     // PORT-NOTE: original hand-builds an SsaIrModule that converts a value of
-    // i16[240 260] to a u8[0 255] target, asserting the analyzer clamps the
-    // converted IntegerRange to the overlap with the target range [240, 255].
+    // i16[240 260] to a u8[0 255] target. Truncation produces 240..255 and
+    // 0..4, so its single IntegerRange interval must include [0, 255].
     // There is no embedded Stark source; a plausible equivalent that casts a
     // narrow ranged-int to a smaller target is reconstructed here. The structured
     // IntegerRange fact is not reachable through the text bridge, so this is
     // reduced to a successful raw-SSA compile.
     stack mut SsaCompile compiled = CompileSsa(
-        "ssaopt-p2-clamp-conversion-to-target-range",
+        "ssaopt-p2-truncating-conversion-range",
         raw"""
 module Demo
 

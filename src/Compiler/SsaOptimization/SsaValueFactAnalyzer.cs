@@ -18,15 +18,17 @@ internal sealed partial class SsaValueFactAnalyzer
 
     public SsaValueFactModel Analyze(SsaIrModule module)
     {
+        var integerBodies = CollectSimpleIntegerBodies(module);
         var functions = module.Functions
             .Where(static function => function.HasBody && function.SupportsDirectCodeGeneration)
-            .Select(function => AnalyzeFunction(module.ModuleName, function))
+            .Select(function => AnalyzeFunction(module.ModuleName, function, integerBodies))
             .ToDictionary(static function => function.FunctionName, StringComparer.Ordinal);
 
         return new SsaValueFactModel(module.ModuleName, functions);
     }
 
-    private SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function)
+    private SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function,
+        IReadOnlyDictionary<string, SsaFunction> integerBodies)
     {
         var values = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         var reachableBlockIds = FindReachableBlockIds(function);
@@ -56,11 +58,11 @@ internal sealed partial class SsaValueFactAnalyzer
             }
         }
 
-        RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects);
-        var nonNegativeValues = RefineInductiveNonNegativeFacts(function, values, reachableBlockIds);
+        RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, integerBodies);
+        var nonNegativeValues = RefineInductiveNonNegativeFacts(function, values, reachableBlockIds, integerBodies);
         if (nonNegativeValues.Count != 0)
         {
-            RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, nonNegativeValues);
+            RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, integerBodies, nonNegativeValues);
         }
         var blockEntryFacts = AnalyzeBlockEntryFacts(function, values, reachableBlockIds);
         var blockExitFacts = AnalyzeBlockExitFacts(function, values, blockEntryFacts, reachableBlockIds);
@@ -769,6 +771,7 @@ internal sealed partial class SsaValueFactAnalyzer
         Dictionary<string, SsaValueFacts> values,
         ISet<int> reachableBlockIds,
         IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects,
+        IReadOnlyDictionary<string, SsaFunction> integerBodies,
         IReadOnlySet<string>? nonNegativeValues = null)
     {
         for (var round = 0; round < 8; round++)
@@ -810,7 +813,8 @@ internal sealed partial class SsaValueFactAnalyzer
                     values,
                     moduleName,
                     function,
-                    reachableBlockIds);
+                    reachableBlockIds,
+                    integerBodies);
                 if (nonNegativeValues?.Contains(valueInstruction.ResultName) == true)
                 {
                     analyzed = ApplyNonNegativeProof(analyzed);
@@ -855,7 +859,8 @@ internal sealed partial class SsaValueFactAnalyzer
         IReadOnlyDictionary<string, SsaValueFacts> knownValues,
         string moduleName,
         SsaFunction function,
-        ISet<int> reachableBlockIds)
+        ISet<int> reachableBlockIds,
+        IReadOnlyDictionary<string, SsaFunction>? integerBodies = null)
     {
         return value switch
         {
@@ -866,7 +871,7 @@ internal sealed partial class SsaValueFactAnalyzer
             SsaConvertRValue convert => AnalyzeConvert(valueName, convert, knownValues),
             SsaExtractFieldRValue extractField => AnalyzeExtractField(valueName, extractField, knownValues),
             SsaInsertFieldRValue insertField => AnalyzeInsertField(valueName, insertField, knownValues),
-            SsaCallRValue call => AnalyzeCall(valueName, call, knownValues, moduleName),
+            SsaCallRValue call => AnalyzeCall(valueName, call, knownValues, moduleName, integerBodies),
             SsaAddressOfLocalRValue addressOfLocal => CreateAddressFacts(valueName, addressOfLocal.Type, addressOfLocal.PointeeType),
             SsaAddressOfParameterRValue addressOfParameter => CreateAddressFacts(valueName, addressOfParameter.Type, addressOfParameter.PointeeType),
             SsaFieldAddressRValue fieldAddress => AnalyzeDerivedPointerAddress(valueName, fieldAddress.Type, fieldAddress.Address, knownValues),
@@ -1454,18 +1459,17 @@ internal sealed partial class SsaValueFactAnalyzer
     {
         if (sourceType.Kind == StarkTypeKind.Integer
             && targetType.Kind == StarkTypeKind.Integer
-            && sourceType.BitWidth == targetType.BitWidth
-            && sourceType.IsUnsigned != targetType.IsUnsigned
+            && (sourceType.BitWidth > targetType.BitWidth || sourceType.IsUnsigned != targetType.IsUnsigned)
             && targetType.BitWidth is int bitWidth
             && bitWidth > 0)
         {
-            return TranslateSameWidthIntegerReinterpretRange(targetType, sourceRange, targetRange, bitWidth);
+            return TranslateIntegerBitsRange(targetType, sourceRange, targetRange, bitWidth);
         }
 
         return ClampRange(sourceRange, targetRange);
     }
 
-    private static SsaIntegerRangeFact TranslateSameWidthIntegerReinterpretRange(
+    private static SsaIntegerRangeFact TranslateIntegerBitsRange(
         StarkTypeSymbol targetType,
         SsaIntegerRangeFact sourceRange,
         SsaIntegerRangeFact targetRange,
@@ -1546,8 +1550,12 @@ internal sealed partial class SsaValueFactAnalyzer
         string valueName,
         SsaCallRValue call,
         IReadOnlyDictionary<string, SsaValueFacts> knownValues,
-        string moduleName)
+        string moduleName,
+        IReadOnlyDictionary<string, SsaFunction>? integerBodies)
     {
+        if (TryAnalyzeSimpleIntegerCall(valueName, call, knownValues, integerBodies, out var integerFacts))
+            return integerFacts;
+
         if (call.Type.Kind == StarkTypeKind.Integer
             && call.Arguments.Count == 1
             && TryGetSystemTextLengthFunction(call.FunctionName, moduleName, out var textKind)

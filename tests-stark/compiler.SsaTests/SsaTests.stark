@@ -3027,9 +3027,9 @@ fn bool ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemantics()
 
 [Fact]
 [Collection("ssa-optimization")]
-fn bool ValueFactsClampIntegerConversionsToTargetRange()
+fn bool ValueFactsIncludeWrappedValuesWhenIntegerConversionsTruncate()
 {
-    return ValueFactsClampIntegerConversionsToTargetRangeImpl();
+    return ValueFactsIncludeWrappedValuesWhenIntegerConversionsTruncateImpl();
 }
 
 [Fact]

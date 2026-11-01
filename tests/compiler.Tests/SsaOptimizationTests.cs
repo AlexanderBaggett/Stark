@@ -4166,7 +4166,7 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
-    public void ValueFactsClampIntegerConversionsToTargetRange()
+    public void ValueFactsIncludeWrappedValuesWhenIntegerConversionsTruncate()
     {
         var sourceType = StarkTypeSymbols.Integer(16, new BigInteger(240), new BigInteger(260));
         var targetType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
@@ -4207,7 +4207,8 @@ public sealed class SsaOptimizationTests
 
         Assert.Equal(SsaFactLatticeKind.Known, convertedFacts.IntegerRangeKind);
         Assert.NotNull(convertedFacts.IntegerRange);
-        Assert.Equal(new BigInteger(240), convertedFacts.IntegerRange!.Min);
+        // 240..260 truncates to 240..255 and 0..4; one interval must cover both.
+        Assert.Equal(BigInteger.Zero, convertedFacts.IntegerRange!.Min);
         Assert.Equal(new BigInteger(255), convertedFacts.IntegerRange.Max);
     }
 
