@@ -5446,7 +5446,7 @@ unsafe fn i32[min max] Score(Token token)
     // PORT-NOTE: the load-tag Assert.Matches(@"load i8, ptr %..., !range !\d+")
     // regex is reduced to its literal `load i8, ptr` + `!range` fragments.
     return Contains(llvm, "%Token = type { i8, i32, i32, i32, i32, i32 }")
-        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)")
+        && Contains(llvm, "call void @llvm.memset.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)")
         && Contains(llvm, "insertvalue %Token zeroinitializer, i8 1, 0")
         && Contains(llvm, "!{i8 0, i8 2}")
         && Contains(llvm, "load i8, ptr")
@@ -10074,8 +10074,8 @@ unsafe fn Result Make(i64[min max] seed)
     return Contains(llvm, "ptr align 8 %slot_inner");
 }
 
-// Ported from LlvmIrEmissionTests.LargeZeroInitializedAggregateStoresUseInlineMemset.
-internal fn bool LargeZeroInitializedAggregateStoresUseInlineMemsetImpl()
+// Ported from LlvmIrEmissionTests.LargeZeroInitializedAggregateStoresUseMemset.
+internal fn bool LargeZeroInitializedAggregateStoresUseMemsetImpl()
 {
     stack mut LlvmCompile c = CompileLlvm(
         "llvm-large-zeroinit-aggregate-memset",
@@ -10101,8 +10101,8 @@ unsafe fn void Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "declare void @llvm.memset.inline.p0.i64")
-        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64")
+        && Contains(llvm, "call void @llvm.memset.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)")
         && DoesNotContain(llvm, "store %Buffer zeroinitializer");
 }
 
@@ -10419,7 +10419,7 @@ unsafe fn Big Make()
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc void @Make(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
-        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)")
+        && Contains(llvm, "call void @llvm.memset.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)")
         && Contains(llvm, "store i64 1, ptr %abi_insert_field_store_")
         && Contains(llvm, "store i64 2, ptr %abi_insert_field_store_")
         && Contains(llvm, "store i64 3, ptr %abi_insert_field_store_")
@@ -10464,7 +10464,7 @@ unsafe fn IOResult<Big> Make()
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc void @Make(ptr noundef noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)")
-        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)")
+        && Contains(llvm, "call void @llvm.memset.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)")
         && Contains(llvm, "getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1")
         && Contains(llvm, "store i64 7, ptr %abi_insert_field_store_")
         && DoesNotContain(llvm, "insertvalue %IOResult_Big_")

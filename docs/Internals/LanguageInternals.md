@@ -544,6 +544,14 @@ Apple arm64, producing corrupt colors or a zero alpha channel. Homogeneous
 floating-point/vector aggregate classification remains a distinct AAPCS64
 path; it must not be coerced through the integer-like rule.
 
+Large aggregate initialization emits ordinary `llvm.memset` zero fills before
+field updates. The backend can combine or remove fills overwritten by the
+completed value, while keeping zeros that a byte-reading consumer observes.
+The intrinsic retains the target layout size and proven destination alignment;
+it does not assert that the storage or allocation is dead. ABI carrier scratch
+storage keeps its separate inline-fill lowering. Native lowering may choose a
+memory-library call for large surviving fills, just as for large copies.
+
 The ABI model can represent one or many physical LLVM values for one Stark
 source parameter. `AbiParameterSymbol.LlvmType` retains the canonical direct
 aggregate carrier, while `LlvmParameterTypes` records a distinct physical

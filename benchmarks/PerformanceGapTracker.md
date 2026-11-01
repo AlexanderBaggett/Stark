@@ -10,13 +10,13 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Current benchmark: LinkedListChurn, goal turn 4.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: LinkedListPopOnly, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 5 of 52 initially open items are complete. LinkedListBuildClear completed on goal turn 2: source-built Stark **0.9437 × C / 0.7077 × Rust**, source-free package **0.9355 × C / 0.7016 × Rust**, exactly 1,000 randomized balanced rounds per executable. Copyable Clear loses its traversal; eligible Linux growth uses `mremap` while preserving failure and alignment fallbacks. Package validation also repaired qualified enum identity, partial compatibility rendering and borrowed argument storage. Earlier accepted queue rows retain their own measurements. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes; performance skill committed as `ead2a13`.
+**Current evidence:** 6 of 52 initially open items are complete. LinkedListChurn completed on goal turn 5: source-built Stark **0.9992 × C / 0.6581 × Rust**, source-free package **1.0015 × C / 0.6596 × Rust**, exactly 1,000 randomized balanced rounds per executable. Ordinary aggregate zero-fill lowering removes the repeated vector clear; fallible allocation, required node stores and cleanup remain. The package result uses the eligible two-decimal C tie allowance. LinkedListBuildClear's new regression is **0.9129 × C / 0.6940 × Rust**. Earlier accepted queue rows retain their own measurements. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes; performance skill committed as `ead2a13`.
 
-**LinkedListChurn coordination (goal turn 4):** All build/test/timing windows are closed. Fresh-allocation wrappers passed correctness checks but failed to reproduce the diagnostic timing gain in final production; those compiler changes are reverted. Only additional native allocator behavior coverage is retained, with all six focused Release checks passing again against the restored compiler. A private SSA-inliner prototype exposed local-storage/call-metadata barriers but fails SSA validation and is not production code. The benchmark remains open; preserve peer sections.
+**LinkedListChurn coordination (goal turn 5):** Complete; all build/test/timing windows are closed. Source/package production meets the requested C/Rust criteria, and BuildClear remains below both baselines. Commit the owned zero-fill change, tests and notes before beginning LinkedListPopOnly. Larger inliner, fresh-allocation wrapper and compact-refill controls are not shipped. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -25,7 +25,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 3 | `benchmarks/collections/DictionaryInsert` | Complete | 2 | 0.9863 | 0.6167 |
 | 4 | `benchmarks/collections/DictionaryRemove` | Complete | 7 | 0.9959 | 0.6232 |
 | 5 | `benchmarks/collections/LinkedListBuildClear` | Complete | 2 | 0.9437 | 0.7077 |
-| 6 | `benchmarks/collections/LinkedListChurn` | In progress | 4 | 1.0073 | 0.6537 |
+| 6 | `benchmarks/collections/LinkedListChurn` | Complete | 5 | 0.9992 | 0.6581 |
 | 7 | `benchmarks/collections/LinkedListPopOnly` | Queued | 0 | — | — |
 | 8 | `benchmarks/collections/LinkedListPush` | Queued | 0 | — | — |
 | 9 | `benchmarks/collections/ListGrowth` | Queued | 0 | — | — |
@@ -630,7 +630,35 @@ Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRem
 
 ## LinkedListChurn sequential investigation (October 31, 2026)
 
-**Status: open, goal turn 4.** Validated source improvements are checkpointed in `3dae1b9` while the benchmark stays open. Pooled turn-3 source is **1.0073 × C / 0.6537 × Rust**; source-free package is **1.0035 × C / 0.6512 × Rust**. The source result does not meet the C criterion. Turn 4 rejected and reverted a fresh-allocation wrapper after final production timing; details follow. Five of 52 items are complete; do not advance to LinkedListPopOnly. The turn-1 evidence below predates the implementation.
+**Status: complete on goal turn 5.** Final source-built Stark is **0.9992 × C / 0.6581 × Rust**; source-free package is **1.0015 × C / 0.6596 × Rust**. Each variant ran 1,000 randomized interleaved rounds. Source is below C in this window; the package result rounds to 1.00 and uses the tie allowance available after three investigation turns. This supports approximate C parity at process scale, not a stable speed advantage. Six of 52 initially open items are complete. Earlier open statuses below describe historical checkpoints; the turn-5 production result supersedes them.
+
+### Goal turn 5: preserve aggregate zero fills until LLVM can combine field stores
+
+The initial compiler emits a full zero fill before constructing a node's value-state enum and two link fields. With `llvm.memset.inline`, a vector zero store survived every append even though later stores established the completed value. Emitting ordinary `llvm.memset` for aggregate initialization lets the existing LLVM pipeline eliminate that clear. Both rebuilt source and source-free executables lose **4,096 dynamic vector stores**. Required tag/value/link stores, the capacity check, fallible initial allocation, status and cleanup remain. C still eliminates allocation and retains a vector checksum reduction; canonical Rust retains allocation/deallocation and process-runtime work. Stark's checksum is already forwarded/folded. No benchmark-specific identity, loop count or checksum is part of the implementation.
+
+The zero-fill producer retains exact target layout size and proven destination alignment, and the completed field stores remain explicit. This changes the intrinsic selection rather than claiming the allocation or payload is dead. Observed zeros stay intact. ABI carrier scratch fills retain their separate inline lowering; large surviving ordinary fills may lower to a memory-library call, as large copies already can. No semantic, package schema, alignment, aliasing or allocator contract is strengthened.
+
+Final production, seed `611053`, one warmup plus **1,000 randomized balanced interleaved rounds per executable**, CPU 0:
+
+| Variant | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| C | 542.887428 | 1.0000 | 0.6586 |
+| Rust | 824.310234 | 1.5184 | 1.0000 |
+| Before, `3dae1b9` source | 548.046104 | 1.0095 | 0.6649 |
+| Stark production source | 542.453221 | **0.9992** | **0.6581** |
+| Stark production source-free package | 543.680014 | **1.0015** | **0.6596** |
+
+Source/before is **0.9898** in this window. Startup is included, stdout is discarded, and stderr uses separate regular files. All measured executions succeeded, executable hashes stayed fixed, and no samples were discarded. Builds/tests/traces from this chat finished before sampling; host exclusivity was unconfirmed. Variation and the diagnostic results below limit attribution of small timing differences. The accepted rows are actual rebuilt production output, not an IR control.
+
+**Validation:** 15 focused Release compiler checks and four native aggregate/C-layout checks pass. The new C fixture reads every explicit byte of 24-byte and 4,096-byte objects after partially initialized construction, dirties all storage, then checks reconstruction with a fresh runtime seed. Existing checks cover large by-value return/call behavior and nested over-aligned enum layout. The obsolete intrinsic assertions and their Stark ports were updated; the modified port implementation module passes `--check`. The repository-wide direct/indirect audit found only the intentionally retained ABI inline fills. Source, newly rebuilt source-free packages and legacy-package list-model checks pass, including arbitrary values, reuse, alignment and exact-once owned drops. Source/package seccomp-injected OOM checks pass. The isolated SDK contains no `.stark` files. All six initial source/package LLVM modules verify; final source/package main has zero memset calls. Builds/tests ran sequentially with one worker and a 2 GiB process-group guard, with observed peak below 1.1 GiB and no guard firing.
+
+LinkedListBuildClear regression, seed `511051`, 1,000 randomized interleaved rounds per executable: C **711.398807 µs / 1.0000**, Rust **935.820729 µs / 1.3155**, Stark **649.453378 µs / 0.9129**. Stark/Rust is **0.6940**; its completed status is preserved.
+
+**Rejected and diagnostic evidence:** the private SSA inliner now passes SSA/LLVM validation and native checksum after also forwarding the parameter-address map through cloned void calls. It exposes the caller but retains the same repeated node writes and is not shipped. Seed `611051` measured it at **1.0041 × C**, versus its matched annotated baseline **1.0038**. A cold allocator-refill unroll control removes about 2.4 KB of executable text but measured **1.0058**, versus production **1.0056** and unchanged replay **1.0102**; replay and production native text are identical. This is not a demonstrated gain. Ordinary-memset control seed `611052` was **1.0039**, unchanged production **1.0039**, and replay **1.0014**, so that diagnostic established removed work rather than a timing improvement. An early peel-count hint left the final work unchanged. None of those controls is used to claim completion, and no global peeling/unroll policy or expanded inliner budget is added.
+
+A final untimed control kept the inline intrinsic and explicitly attached its already-required non-null/full-extent destination facts. The clear and native text size remained unchanged; missing dereferenceability alone is not the demonstrated cause. This control passed native checksum and LLVM verification but is not shipped. The accepted change retains the existing layout/extent facts while giving the ordinary memory optimizer freedom to combine the operation.
+
+Evidence is under ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListChurn/turn5/`: final `production-interleaved-1000.json`, `production-codegen-summary.json`, compiler/package provenance and hashes, initial/post-ThinLTO LLVM, native disassembly, raw diagnostic windows, focused tests and byte/failure fixtures, source-free SDK, port check, BuildClear regression and resource reports. All windows are closed. Next: LinkedListPopOnly, after committing this completed item.
 
 All sources perform 4,096 append/pop-first pairs, checking the returned values through checksum `8386560` and verifying the final list is empty. Fresh source/package Stark and canonical C/Rust binaries return success with empty output. The initial 1,000-round baseline (seed `611031`) was source **1.0234 × C**, package **1.0225 × C**, Rust **1.5097 × C**. The latest unchanged production comparison (seed `611036`, 1,000 rounds per variant) is:
 

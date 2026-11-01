@@ -3542,9 +3542,9 @@ fn bool AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetime()
 
 [Fact]
 [Collection("llvm-ir")]
-fn bool LargeZeroInitializedAggregateStoresUseInlineMemset()
+fn bool LargeZeroInitializedAggregateStoresUseMemset()
 {
-    return LargeZeroInitializedAggregateStoresUseInlineMemsetImpl();
+    return LargeZeroInitializedAggregateStoresUseMemsetImpl();
 }
 
 [Fact]

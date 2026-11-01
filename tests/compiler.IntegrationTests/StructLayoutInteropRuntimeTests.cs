@@ -6,6 +6,52 @@ namespace compiler.IntegrationTests;
 public sealed class StructLayoutInteropRuntimeTests
 {
     [Fact]
+    public async Task AggregateConstructionPreservesObservableZeroBytesAfterReuse()
+    {
+        if (OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)) return;
+        var exitCode = await CompileAndRunWithNativeFixtureAsync(
+            """
+            module AggregateZeroBytes
+            [StructLayout(C)]
+            struct Small { u64[0 max] Head; u8[0 max][16] Bytes; }
+            struct Large { u8[0 max][4096] Bytes; }
+            unsafe ffi(c) fn u64[0 max] next_seed();
+            unsafe ffi(c) fn bool check_and_dirty(rawmutptr<Small> small, rawmutptr<Large> large, u64[0 max] seed);
+            export unsafe fn i32[min max] main()
+            {
+                stack mut u64[0 max] seed = next_seed();
+                stack mut Small small = new Small() { Head = seed };
+                stack mut Large large = new Large();
+                if (!check_and_dirty(&small, &large, seed)) return 1;
+                seed = next_seed();
+                small = new Small() { Head = seed };
+                large = new Large();
+                if (!check_and_dirty(&small, &large, seed)) return 2;
+                return 0;
+            }
+            """,
+            """
+            #include <stdint.h>
+            #include <stdbool.h>
+            #include <string.h>
+            struct Small { uint64_t Head; unsigned char Bytes[16]; };
+            struct Large { unsigned char Bytes[4096]; };
+            uint64_t next_seed(void) { static uint64_t seed = 172; return ++seed; }
+            bool check_and_dirty(struct Small *small, struct Large *large, uint64_t seed) {
+                if (small->Head != seed) return false;
+                for (unsigned i = 0; i < sizeof small->Bytes; ++i)
+                    if (small->Bytes[i] != 0) return false;
+                for (unsigned i = 0; i < sizeof large->Bytes; ++i)
+                    if (large->Bytes[i] != 0) return false;
+                memset(small, 0xa5, sizeof *small);
+                memset(large, 0x5a, sizeof *large);
+                return true;
+            }
+            """, targetInfo);
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task CStructLayoutAttributesMatchNativeCFixturesAtRuntime()
     {
         if (OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))

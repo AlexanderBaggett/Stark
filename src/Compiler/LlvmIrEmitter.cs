@@ -2305,7 +2305,11 @@ internal sealed class LlvmIrEmitter
 
     private bool UsesMemsetIntrinsic()
     {
-        return _enableOptimizedRawPointerLoopIntrinsics
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(UsesLargeZeroInitializedAggregateStore)
+            || _enableOptimizedRawPointerLoopIntrinsics
             && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemsetIntrinsic(
                 function,
                 TryGetConcreteTypeLayout,
@@ -2363,13 +2367,13 @@ internal sealed class LlvmIrEmitter
     {
         return instruction switch
         {
-            SsaStoreLocalInstruction { LocalType: var type, Value: SsaZeroInitializerValue } => ShouldUseInlineAggregateZeroFill(type),
-            SsaStoreIndirectInstruction { ValueType: var type, Value: SsaZeroInitializerValue } => ShouldUseInlineAggregateZeroFill(type),
+            SsaStoreLocalInstruction { LocalType: var type, Value: SsaZeroInitializerValue } => ShouldUseAggregateZeroFill(type),
+            SsaStoreIndirectInstruction { ValueType: var type, Value: SsaZeroInitializerValue } => ShouldUseAggregateZeroFill(type),
             _ => false
         };
     }
 
-    private bool ShouldUseInlineAggregateZeroFill(StarkTypeSymbol valueType)
+    private bool ShouldUseAggregateZeroFill(StarkTypeSymbol valueType)
     {
         var normalizedType = NormalizeAggregateType(valueType);
 

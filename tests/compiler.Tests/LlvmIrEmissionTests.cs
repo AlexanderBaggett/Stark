@@ -5916,7 +5916,7 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("%Token = type { i8, i32, i32, i32, i32, i32 }", llvm);
         // The unit case's all-zero payload (tag 0 included) now materializes as a
         // zeroinitializing memset instead of per-field insertvalues.
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memset.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)", llvm);
         Assert.Contains("insertvalue %Token zeroinitializer, i8 1, 0", llvm);
         Assert.Contains("!{i8 0, i8 2}", llvm);
         Assert.Matches(@"load i8, ptr %[A-Za-z0-9_]+, !range !\d+", llvm);
@@ -11599,7 +11599,7 @@ public sealed partial class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void LargeZeroInitializedAggregateStoresUseInlineMemset()
+    public void LargeZeroInitializedAggregateStoresUseMemset()
     {
         var result = Compile(
             """
@@ -11622,8 +11622,8 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("declare void @llvm.memset.inline.p0.i64", llvm);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)", llvm);
+        Assert.Contains("declare void @llvm.memset.p0.i64", llvm);
+        Assert.Contains("call void @llvm.memset.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)", llvm);
         Assert.DoesNotContain("store %Buffer zeroinitializer", llvm);
     }
 
@@ -11916,7 +11916,7 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)", llvm);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)", llvm);
+        Assert.Contains("call void @llvm.memset.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)", llvm);
         Assert.Contains("store i64 1, ptr %abi_insert_field_store_", llvm);
         Assert.Contains("store i64 2, ptr %abi_insert_field_store_", llvm);
         Assert.Contains("store i64 3, ptr %abi_insert_field_store_", llvm);
@@ -11957,7 +11957,7 @@ public sealed partial class LlvmIrEmissionTests
         var makeBody = ExtractDefinitionBody(llvm, "Make");
 
         Assert.Contains("define fastcc void @Make(ptr noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)", llvm);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)", makeBody);
+        Assert.Contains("call void @llvm.memset.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)", makeBody);
         // The zero tag is covered by the zeroinitializing memset; only the payload
         // projection needs an explicit field address.
         Assert.Contains("getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1", makeBody);
