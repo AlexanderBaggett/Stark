@@ -9,11 +9,51 @@ internal sealed record LlvmPhysicalAggregateElement(
 
 internal static class LlvmLayoutControlledAggregateFacts
 {
-    public static bool RequiresPhysicalLayout(NamedTypeSymbol namedType)
+    public static NamedTypeSymbol WithStorageFields(
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
     {
-        return namedType.Layout?.Kind == StructLayoutKind.Explicit
-            || namedType.Layout?.PackBytes is not null
-            || namedType.Layout?.AlignBytes is not null;
+        return namedType.Kind == DeclarationKind.Enum
+            && enumLayouts.TryGetValue(namedType.Name, out var layout)
+            ? namedType with { OrderedFields = layout.OrderedFields }
+            : namedType;
+    }
+
+    public static bool RequiresPhysicalLayout(
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+    {
+        return RequiresPhysicalLayout(namedType, new HashSet<string>(StringComparer.Ordinal));
+
+        bool RequiresPhysicalLayout(NamedTypeSymbol current, ISet<string> active)
+        {
+            if (current.Layout?.Kind == StructLayoutKind.Explicit
+                || current.Layout?.PackBytes is not null
+                || current.Layout?.AlignBytes is not null)
+            {
+                return true;
+            }
+            if (!active.Add(current.Name)) return false;
+            try
+            {
+                // LLVM named types do not carry a declaration's explicit alignment.
+                // Containing structs and enum payloads must retain that layout too.
+                foreach (var field in WithStorageFields(current, enumLayouts).OrderedFields)
+                {
+                    var type = field.Type;
+                    if (type.BorrowKind != StarkBorrowKind.None) continue;
+                    while (type.Kind == StarkTypeKind.FixedArray && type.ElementType is { } element)
+                        type = element;
+                    if (type.Kind == StarkTypeKind.Named
+                        && LlvmAggregateEmissionSupport.ResolveNamedTypeSymbol(type, namedTypes) is { } nested
+                        && RequiresPhysicalLayout(nested, active))
+                        return true;
+                }
+                return false;
+            }
+            finally { active.Remove(current.Name); }
+        }
     }
 
     public static bool TryBuildPhysicalElements(

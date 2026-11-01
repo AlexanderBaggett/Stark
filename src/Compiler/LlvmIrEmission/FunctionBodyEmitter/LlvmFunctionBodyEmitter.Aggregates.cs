@@ -1459,14 +1459,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var normalizedType = NormalizeAggregateType(aggregateType);
         if (normalizedType.Kind != StarkTypeKind.Named
             || ResolveNamedTypeSymbol(normalizedType) is not { } resolvedNamedType
-            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(resolvedNamedType)
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(resolvedNamedType, _context.TypeModel.NamedTypes, _context.EnumLayouts)
             || TryGetConcreteTypeLayout(normalizedType) is not { } resolvedLayout
             || fieldIndex < 0
-            || fieldIndex >= resolvedNamedType.OrderedFields.Count)
+            || fieldIndex >= LlvmLayoutControlledAggregateFacts.WithStorageFields(resolvedNamedType, _context.EnumLayouts).OrderedFields.Count)
         {
             return false;
         }
 
+        resolvedNamedType = LlvmLayoutControlledAggregateFacts.WithStorageFields(resolvedNamedType, _context.EnumLayouts);
         var resolvedField = resolvedNamedType.OrderedFields[fieldIndex];
         if (!resolvedLayout.TryGetField(resolvedField.Name, out var resolvedFieldLayout))
         {
@@ -2101,7 +2102,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts))
                 {
                     return false;
                 }

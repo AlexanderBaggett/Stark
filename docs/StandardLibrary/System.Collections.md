@@ -180,8 +180,11 @@ public struct RingQueue<T>
 
 ## `LinkedList<T>`
 
-`LinkedList<T>` uses indexed value and link arrays. Indices remain stable while
-the backing arrays grow; the API does not expose raw node pointers.
+`LinkedList<T>` stores values and next/previous indices in one indexed node array.
+Indices remain stable while the backing array grows; the API does not expose raw
+node pointers. Copyable singleton removal resets the initialized prefix and free
+list while retaining capacity. Owned values retain their ordinary removal and
+head-order destruction behavior.
 
 ```stark
 public struct LinkedList<T>
@@ -330,9 +333,9 @@ public struct HashSet<T>
   `AddLast`, `TryRemoveFirst`, `TryRemoveLast`, metadata inspection, `Clear`,
   `ReserveNodes`, and destructor cleanup. `ReserveNodes(count)` is an explicit
   performance knob for workloads that know they will allocate many nodes; it
-  reserves value and link capacity without adding elements or eagerly building
-  a free list. `Clear` retains both capacities for reuse. For copyable elements,
-  it resets the initialized prefixes and list metadata; owned elements are
+  reserves node capacity without adding elements or eagerly building a free
+  list. `Clear` retains capacity for reuse. For copyable elements, it resets
+  the initialized prefix and list metadata; owned elements are
   dropped in head-to-tail order.
 - `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast` now have
   source-level `out T` bodies.

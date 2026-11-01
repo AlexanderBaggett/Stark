@@ -1181,15 +1181,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var normalizedType = NormalizeAggregateType(aggregateType);
         if (normalizedType.Kind != StarkTypeKind.Named
             || ResolveNamedTypeSymbol(normalizedType) is not { } namedType
-            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts)
             || TryGetConcreteTypeLayout(normalizedType) is not { } layout
             || fieldIndex < 0
-            || fieldIndex >= namedType.OrderedFields.Count)
+            || fieldIndex >= LlvmLayoutControlledAggregateFacts.WithStorageFields(namedType, _context.EnumLayouts).OrderedFields.Count)
         {
             return false;
         }
 
-        var fieldName = namedType.OrderedFields[fieldIndex].Name;
+        var fieldName = LlvmLayoutControlledAggregateFacts.WithStorageFields(namedType, _context.EnumLayouts).OrderedFields[fieldIndex].Name;
         if (!layout.TryGetField(fieldName, out var fieldLayout))
         {
             return false;

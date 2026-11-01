@@ -2841,8 +2841,9 @@ internal finite law u64[0 2 ** 63 - 1] LinkedListNoneIndex()
     return (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
 }
 
-internal struct LinkedListLinks
+internal struct LinkedListNode<T>
 {
+    LinkedListValueSlot<T> Value;
     u64[0 2 ** 63 - 1] Next;
     u64[0 2 ** 63 - 1] Previous;
 }
@@ -2855,8 +2856,8 @@ internal enum LinkedListValueSlot<T>
 
 public struct LinkedList<T>
 {
-    internal dynamic LinkedListValueSlot<T> Values;
-    internal dynamic LinkedListLinks Links;
+    // A single initialized prefix keeps value/link indices and capacity identical.
+    internal dynamic LinkedListNode<T> Nodes;
     internal u64[0 2 ** 63 - 1] Head;
     internal u64[0 2 ** 63 - 1] Tail;
     internal u64[0 2 ** 63 - 1] FreeHead;
@@ -2864,8 +2865,7 @@ public struct LinkedList<T>
 
     LinkedList()
     {
-        self.Values = new();
-        self.Links = new();
+        self.Nodes = new();
         self.Head = LinkedListNoneIndex();
         self.Tail = LinkedListNoneIndex();
         self.FreeHead = LinkedListNoneIndex();
@@ -2894,29 +2894,17 @@ public struct LinkedList<T>
             return System.Memory.MemoryStatus.Ok;
         }
 
-        stack u64[0 2 ** 63 - 1] valueByteLength = sizeof(LinkedListValueSlot<T>);
-        stack u64[0 2 ** 63 - 1] linkByteLength = sizeof(LinkedListLinks);
-        if (valueByteLength == 0 || linkByteLength == 0)
+        stack u64[0 2 ** 63 - 1] nodeByteLength = sizeof(LinkedListNode<T>);
+        if (nodeByteLength == 0)
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
-
-        if (count > LinkedListNoneIndex() - self.Values.Length)
+        if (count > LinkedListNoneIndex() - self.Nodes.Length ||
+            count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / nodeByteLength)
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
-
-        if (count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / valueByteLength || count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / linkByteLength)
-        {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
-        }
-
-        if (self.Values.Length != self.Links.Length)
-        {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
-        }
-
-        if (!self.Values.TryReserve(count) || !self.Links.TryReserve(count))
+        if (!self.Nodes.TryReserve(count))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
@@ -2989,6 +2977,28 @@ public struct LinkedList<T>
             return false;
         }
 
+        if (comptime System.Compiler.IsCopyable<T>())
+        {
+            // No drop can observe the discarded free slots. Avoid rebuilding
+            // a free list that Clear would immediately discard.
+            if (self.Length == 1)
+            {
+                unsafe
+                {
+                    stack LinkedListValueSlot<T> only = self.Nodes[self.Head].Value;
+                    switch (only)
+                    {
+                        case LinkedListValueSlot<T>.Occupied(var payload):
+                            value = payload;
+                            self.Clear();
+                            return true;
+                        case LinkedListValueSlot<T>.Free:
+                            return false;
+                    }
+                }
+            }
+        }
+
         stack u64[0 2 ** 63 - 1] index = self.Head;
         stack mut u64[0 2 ** 63 - 1] next = LinkedListNoneIndex();
         if (!self.RemoveNode(index, value, next))
@@ -3020,6 +3030,28 @@ public struct LinkedList<T>
             return false;
         }
 
+        if (comptime System.Compiler.IsCopyable<T>())
+        {
+            // No drop can observe the discarded free slots. Avoid rebuilding
+            // a free list that Clear would immediately discard.
+            if (self.Length == 1)
+            {
+                unsafe
+                {
+                    stack LinkedListValueSlot<T> only = self.Nodes[self.Tail].Value;
+                    switch (only)
+                    {
+                        case LinkedListValueSlot<T>.Occupied(var payload):
+                            value = payload;
+                            self.Clear();
+                            return true;
+                        case LinkedListValueSlot<T>.Free:
+                            return false;
+                    }
+                }
+            }
+        }
+
         stack u64[0 2 ** 63 - 1] index = self.Tail;
         stack mut u64[0 2 ** 63 - 1] previous = LinkedListNoneIndex();
         if (!self.RemoveNodeFromTail(index, value, previous))
@@ -3049,14 +3081,10 @@ public struct LinkedList<T>
         if (comptime System.Compiler.IsCopyable<T>())
         {
             // No element drop can observe traversal order or discarded slots.
-            // Drain the initialized prefixes while retaining backing capacity.
-            while willexit (self.Values.Length > 0)
+            // Drain the initialized prefix while retaining backing capacity.
+            while willexit (self.Nodes.Length > 0)
             {
-                stack LinkedListValueSlot<T> discardedValue = self.Values.MoveLast();
-            }
-            while willexit (self.Links.Length > 0)
-            {
-                stack LinkedListLinks discardedLinks = self.Links.MoveLast();
+                stack LinkedListNode<T> discardedNode = self.Nodes.MoveLast();
             }
             self.Head = LinkedListNoneIndex();
             self.Tail = LinkedListNoneIndex();
@@ -3071,18 +3099,15 @@ public struct LinkedList<T>
             stack mut u64[0 2 ** 63 - 1] next = LinkedListNoneIndex();
             unsafe
             {
-                stack LinkedListValueSlot<T> slot = self.Values[index];
+                stack LinkedListValueSlot<T> slot = self.Nodes[index].Value;
                 switch (slot)
                 {
                     case LinkedListValueSlot<T>.Occupied(var payload):
                         stack T value = payload;
-                        next = self.Links[index].Next;
-                        self.Values[index] = LinkedListValueSlot<T>.Free;
-                        self.Links[index] = new LinkedListLinks()
-                        {
-                            Next = self.FreeHead,
-                            Previous = LinkedListNoneIndex()
-                        };
+                        next = self.Nodes[index].Next;
+                        self.Nodes[index].Value = LinkedListValueSlot<T>.Free;
+                        self.Nodes[index].Next = self.FreeHead;
+                        self.Nodes[index].Previous = LinkedListNoneIndex();
                         self.FreeHead = index;
                     case LinkedListValueSlot<T>.Free:
                         self.Head = LinkedListNoneIndex();
@@ -3107,35 +3132,27 @@ public struct LinkedList<T>
         u64[0 2 ** 63 - 1] previous,
         out u64[0 2 ** 63 - 1] index)
     {
-        if (self.Values.Length != self.Links.Length)
-        {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
-        }
-
         if (self.FreeHead != LinkedListNoneIndex())
         {
             index = self.FreeHead;
-            stack u64[0 2 ** 63 - 1] freeNext = self.Links[index].Next;
+            stack u64[0 2 ** 63 - 1] freeNext = self.Nodes[index].Next;
             unsafe
             {
                 self.FreeHead = freeNext;
-                self.Links[index] = new LinkedListLinks()
-                {
-                    Next = next,
-                    Previous = previous
-                };
-                self.Values[index] = LinkedListValueSlot<T>.Occupied(value);
+                self.Nodes[index].Next = next;
+                self.Nodes[index].Previous = previous;
+                self.Nodes[index].Value = LinkedListValueSlot<T>.Occupied(value);
             }
 
             return System.Memory.MemoryStatus.Ok;
         }
 
-        if (self.Values.Length == LinkedListNoneIndex())
+        if (self.Nodes.Length == LinkedListNoneIndex())
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
-        if (self.Values.Length >= self.Values.Capacity || self.Links.Length >= self.Links.Capacity)
+        if (self.Nodes.Length >= self.Nodes.Capacity)
         {
             stack System.Memory.MemoryStatus reserveStatus = self.ReserveNodes(1);
             switch (reserveStatus)
@@ -3146,10 +3163,10 @@ public struct LinkedList<T>
             }
         }
 
-        index = self.Values.Length;
-        init self.Values[index] = LinkedListValueSlot<T>.Occupied(value);
-        init self.Links[self.Links.Length] = new LinkedListLinks()
+        index = self.Nodes.Length;
+        init self.Nodes[index] = new LinkedListNode<T>()
         {
+            Value = LinkedListValueSlot<T>.Occupied(value),
             Next = next,
             Previous = previous
         };
@@ -3159,32 +3176,29 @@ public struct LinkedList<T>
 
     internal fn bool SetNext(mut borrow LinkedList<T> self, u64[0 2 ** 63 - 1] index, u64[0 2 ** 63 - 1] next)
     {
-        self.Links[index].Next = next;
+        self.Nodes[index].Next = next;
         return true;
     }
 
     internal fn bool SetPrevious(mut borrow LinkedList<T> self, u64[0 2 ** 63 - 1] index, u64[0 2 ** 63 - 1] previous)
     {
-        self.Links[index].Previous = previous;
+        self.Nodes[index].Previous = previous;
         return true;
     }
 
     internal fn bool RemoveNode(mut borrow LinkedList<T> self, u64[0 2 ** 63 - 1] index, out T value, out u64[0 2 ** 63 - 1] next)
     {
-        next = self.Links[index].Next;
+        next = self.Nodes[index].Next;
         unsafe
         {
-            stack LinkedListValueSlot<T> slot = self.Values[index];
+            stack LinkedListValueSlot<T> slot = self.Nodes[index].Value;
             switch (slot)
             {
                 case LinkedListValueSlot<T>.Occupied(var payload):
                     value = payload;
-                    self.Values[index] = LinkedListValueSlot<T>.Free;
-                    self.Links[index] = new LinkedListLinks()
-                    {
-                        Next = self.FreeHead,
-                        Previous = LinkedListNoneIndex()
-                    };
+                    self.Nodes[index].Value = LinkedListValueSlot<T>.Free;
+                    self.Nodes[index].Next = self.FreeHead;
+                    self.Nodes[index].Previous = LinkedListNoneIndex();
                     self.FreeHead = index;
                     return true;
                 case LinkedListValueSlot<T>.Free:
@@ -3195,20 +3209,17 @@ public struct LinkedList<T>
 
     internal fn bool RemoveNodeFromTail(mut borrow LinkedList<T> self, u64[0 2 ** 63 - 1] index, out T value, out u64[0 2 ** 63 - 1] previous)
     {
-        previous = self.Links[index].Previous;
+        previous = self.Nodes[index].Previous;
         unsafe
         {
-            stack LinkedListValueSlot<T> slot = self.Values[index];
+            stack LinkedListValueSlot<T> slot = self.Nodes[index].Value;
             switch (slot)
             {
                 case LinkedListValueSlot<T>.Occupied(var payload):
                     value = payload;
-                    self.Values[index] = LinkedListValueSlot<T>.Free;
-                    self.Links[index] = new LinkedListLinks()
-                    {
-                        Next = self.FreeHead,
-                        Previous = LinkedListNoneIndex()
-                    };
+                    self.Nodes[index].Value = LinkedListValueSlot<T>.Free;
+                    self.Nodes[index].Next = self.FreeHead;
+                    self.Nodes[index].Previous = LinkedListNoneIndex();
                     self.FreeHead = index;
                     return true;
                 case LinkedListValueSlot<T>.Free:

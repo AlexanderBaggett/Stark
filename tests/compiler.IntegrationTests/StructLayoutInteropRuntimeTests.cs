@@ -162,6 +162,70 @@ public sealed class StructLayoutInteropRuntimeTests
         Assert.Equal(0, exitCode);
     }
 
+    [Fact]
+    public async Task NestedAlignedEnumPayloadsMatchNativeOffsetsAndArrayStride()
+    {
+        if (OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)) return;
+        var exitCode = await CompileAndRunWithNativeFixtureAsync(
+            """
+            module NestedLayout
+            [StructLayout(C), Align(64)]
+            struct Payload { u32[0 max] Number; bool Flag; }
+            enum Slot { Free, Occupied(Payload), }
+            struct Wrapper { u8[0 max] Marker; Slot Item; u64[0 max] Tail; }
+            struct GlobalBox { u8[0 max] Marker; Payload Value; u64[0 max] Tail; }
+            static GlobalBox Shared = new GlobalBox()
+            {
+                Marker = 11,
+                Value = new Payload() { Number = 305419896, Flag = true },
+                Tail = 72623859790382856
+            };
+            unsafe ffi(c) fn i32[min max] check_nested(rawptr<u8[0 max]> rows, u64[0 max] stride);
+            unsafe ffi(c) fn i32[min max] check_global(rawptr<u8[0 max]> value, u64[0 max] size);
+            export unsafe fn i32[min max] main()
+            {
+                stack mut Wrapper[2] rows;
+                rows[0] = new Wrapper() { Marker = Shared.Marker, Item = Slot.Occupied(Shared.Value), Tail = Shared.Tail };
+                rows[1] = new Wrapper()
+                {
+                    Marker = 22,
+                    Item = Slot.Occupied(new Payload() { Number = 2271560481, Flag = false }),
+                    Tail = 578437695752307201
+                };
+                stack i32[min max] globalResult = check_global((rawptr<u8[0 max]>)(&Shared), sizeof(GlobalBox));
+                if (globalResult != 0) return globalResult;
+                return check_nested((rawptr<u8[0 max]>)(&rows[0]), sizeof(Wrapper));
+            }
+            """,
+            """
+            #include <stdint.h>
+            #include <stddef.h>
+            #include <stdbool.h>
+            struct __attribute__((aligned(64))) Payload { uint32_t Number; bool Flag; };
+            struct Slot { uint8_t Tag; struct Payload Value; };
+            struct Wrapper { uint8_t Marker; struct Slot Item; uint64_t Tail; };
+            struct GlobalBox { uint8_t Marker; struct Payload Value; uint64_t Tail; };
+            int check_global(const void *address, uint64_t size) {
+                const struct GlobalBox *value = address;
+                if (size != sizeof(struct GlobalBox)) return 7;
+                if (value->Marker != 11 || value->Value.Number != 305419896u || !value->Value.Flag) return 8;
+                if (value->Tail != UINT64_C(72623859790382856)) return 9;
+                return 0;
+            }
+            int check_nested(const void *address, uint64_t stride) {
+                const struct Wrapper *rows = address;
+                if (stride != sizeof(struct Wrapper)) return 1;
+                if (rows[0].Marker != 11 || rows[1].Marker != 22) return 2;
+                if (rows[0].Item.Tag != 1 || rows[1].Item.Tag != 1) return 3;
+                if (rows[0].Item.Value.Number != 305419896u || rows[1].Item.Value.Number != 2271560481u) return 4;
+                if (!rows[0].Item.Value.Flag || rows[1].Item.Value.Flag) return 5;
+                if (rows[0].Tail != UINT64_C(72623859790382856) || rows[1].Tail != UINT64_C(578437695752307201)) return 6;
+                return 0;
+            }
+            """, targetInfo);
+        Assert.Equal(0, exitCode);
+    }
+
     private static async Task<int> CompileAndRunWithNativeFixtureAsync(
         string starkSource,
         string nativeSource,
@@ -191,7 +255,7 @@ public sealed class StructLayoutInteropRuntimeTests
                 stdout,
                 stderr);
 
-            Assert.Equal(0, compileExitCode);
+            Assert.True(compileExitCode == 0, stdout + Environment.NewLine + stderr);
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));

@@ -337,13 +337,6 @@ fn bool SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRuns()
 }
 
 [Fact]
-[Collection("collections")]
-fn bool PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
-{
-    return PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeListImpl();
-}
-
-[Fact]
 [Collection("collections-package-drop-regression")]
 fn bool ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage()
 {

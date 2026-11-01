@@ -958,7 +958,8 @@ internal sealed class LlvmGlobalInitializerPlanner
         NamedTypeSymbol namedType,
         IReadOnlyDictionary<string, string> fieldValues)
     {
-        if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+        namedType = LlvmLayoutControlledAggregateFacts.WithStorageFields(namedType, _context.EnumLayouts);
+        if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts)
             && _context.TryGetConcreteTypeLayout(StarkTypeSymbols.Named(namedType.Name)) is { } layout)
         {
             if (!LlvmLayoutControlledAggregateFacts.TryBuildPhysicalElements(
@@ -983,7 +984,7 @@ internal sealed class LlvmGlobalInitializerPlanner
 
                     return $"[{element.SizeBytes} x i8] zeroinitializer";
                 });
-            return $"{{ {string.Join(", ", physicalInitializers)} }}";
+            return $"<{{ {string.Join(", ", physicalInitializers)} }}>";
         }
 
         var fieldInitializers = namedType.OrderedFields
@@ -995,6 +996,11 @@ internal sealed class LlvmGlobalInitializerPlanner
         EnumLayoutSymbol layout,
         IReadOnlyDictionary<string, string> fieldValues)
     {
+        if (_context.TypeModel.NamedTypes.TryGetValue(layout.EnumName, out var namedType))
+        {
+            return FormatNamedAggregateInitializer(namedType, fieldValues);
+        }
+
         var fieldInitializers = layout.OrderedFields
             .Select(field => $"{_context.MapType(field.Type)} {(fieldValues.TryGetValue(field.Name, out var value) ? value : FormatZeroInitializer(field.Type))}");
         return $"{{ {string.Join(", ", fieldInitializers)} }}";

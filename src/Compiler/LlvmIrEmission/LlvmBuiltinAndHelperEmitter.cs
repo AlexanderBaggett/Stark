@@ -2887,7 +2887,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                         return false;
                     }
 
-                    if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                    if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts))
                     {
                         return false;
                     }
