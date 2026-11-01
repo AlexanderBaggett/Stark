@@ -914,7 +914,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (_parametersByName.ContainsKey(rootName))
                 {
-                    return false;
+                    return target.UsesAddressModel
+                        && target.IsAddressMutable
+                        && target.Type.InitializationKind != StarkInitializationKind.None;
                 }
 
                 return _typeModel.Globals.TryGetValue(rootName, out var global)
@@ -5914,6 +5916,17 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var targetType = ApplyGenericSubstitution(publishedType);
+            // Evaluate the complete literal expression before applying its
+            // destination width/range. An intermediate such as 2 ** 63 may
+            // exceed the final range even though 2 ** 63 - 1 fits it.
+            if (targetType.Kind == StarkTypeKind.Integer
+                && IsImportedLiteralIntegerExpression(expression.Args[0])
+                && TryEvaluateImportedTypedTemplateConversionConstant(expression, out var constant))
+            {
+                var folded = CreateCompileTimeOperand(constant);
+                return expectedType is null ? folded : CoerceOperand(folded, expectedType);
+            }
+
             var operand = LowerImportedTypedTemplateExpressionCore(expression.Args[0], targetType);
             if (operand is null)
             {
@@ -5922,6 +5935,21 @@ internal sealed partial class MidLevelIrLowerer
 
             var converted = CoerceOperand(operand, targetType);
             return expectedType is null ? converted : CoerceOperand(converted, expectedType);
+        }
+
+        private static bool IsImportedLiteralIntegerExpression(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            return expression.Kind switch
+            {
+                ImportedTemplateTypedBodyExpressionKind.Literal => expression.Type?.Kind == StarkTypeKind.Integer,
+                ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type?.Kind == StarkTypeKind.Integer
+                    && expression.Args.Count == 1 && IsImportedLiteralIntegerExpression(expression.Args[0]),
+                ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is "+" or "-"
+                    && expression.Args.Count == 1 && IsImportedLiteralIntegerExpression(expression.Args[0]),
+                ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is "+" or "-" or "*" or "**" or "/" or "%"
+                    && expression.Args.Count == 2 && expression.Args.All(IsImportedLiteralIntegerExpression),
+                _ => false
+            };
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateTryPropagation(
@@ -6388,7 +6416,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6426,7 +6454,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6506,7 +6534,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     var parameterType = functionPointerParameterTypes[index];
                     var argumentExpression = expression.Args[index + 1];
-                    var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                    var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                     if (lowered is null)
                     {
                         return false;
@@ -6591,7 +6619,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var parameterType = parameterTypes[index];
                 var argumentExpression = expression.Args[index + 1];
-                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                 if (lowered is null)
                 {
                     return false;
@@ -6763,7 +6791,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var parameterType = methodParameters[index].Type;
                 var argumentExpression = expression.Args[index];
-                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                 if (lowered is null)
                 {
                     return false;

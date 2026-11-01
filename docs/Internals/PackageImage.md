@@ -379,6 +379,23 @@ expression as a whole instead of emitting partial source; imported lowering
 retains the complete typed graph. Reanalyzed enum bindings take precedence over
 ordinal hints from compatibility source, and a hint must match the authored
 constructor identity, including resolved generic type arguments.
+
+Imported assignments retain the resolved place's address model, mutability and
+initialization qualifiers. A whole `out` or `init` parameter write uses its
+mutable destination storage even when the place has a named root. Ordinary
+parameter bindings remain immutable; mutable-borrow field writes use their
+existing projected-place rules. The consumer does not replace these storage
+facts with a temporary value or require an explicit raw-pointer root.
+Call bookkeeping also retains caller ownership of both `out` and `init`
+destination slots; passing a destination does not consume its final value.
+Direct, member and indirect argument lowering share the storage-preserving
+helper before coercion, so an `out` write targets the original local or indexed
+place rather than a temporary cast to the parameter's qualified value type.
+Integer conversions evaluate complete literal-only arithmetic trees with the
+shared constant evaluator before applying the destination range. This retains
+wide intermediate values without narrowing them prematurely; runtime-dependent
+expressions and calls keep the ordinary lowering path.
+
 Direct calls retain Stage0's parsing optimization: pure type arguments remain
 inferred, while a comptime argument makes the complete explicit generic list
 necessary. Typed bodies render ordered local declarations, empty statements, expression

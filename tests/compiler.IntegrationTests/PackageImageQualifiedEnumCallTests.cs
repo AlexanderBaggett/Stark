@@ -40,6 +40,7 @@ public sealed class PackageImageQualifiedEnumCallTests
                     u64[0 max] Value;
                     finite void Read(borrow Counter self, out u64[0 max] result) { result = self.Value; }
                 }
+                internal finite void WriteWide(out u64[0 max] output) { output = 4294967303; }
                 public fn u64[0 max] RoundTrip<T>(T marker)
                 {
                     stack Counter counter = new Counter() { Value = 4294967303 };
@@ -48,7 +49,26 @@ public sealed class PackageImageQualifiedEnumCallTests
                     stack mut u64[0 max][2] indexed = { 0, 0 };
                     counter.Read(indexed[1]);
                     if (indexed[0] != 0 || indexed[1] != result) { return 0; }
+                    stack mut u64[0 max] direct = 0;
+                    WriteWide(direct);
+                    if (direct != result) { return 0; }
+                    stack fnptr<finite void(out u64[0 max])> writer = WriteWide;
+                    writer(indexed[0]);
+                    if (indexed[0] != result || indexed[1] != result) { return 0; }
                     return result;
+                }
+                public finite void SetOut<T>(T input, out T output) { output = input; }
+                public finite void SetInit<T>(T input, init T output) { output = input; }
+                public fn void UpdateCounter<T>(mut borrow Counter output, u64[0 max] input, T marker) { output.Value = input; }
+                public noinline fn u64[0 max] LiteralBoundary<T>(u64[0 max] input, T marker)
+                {
+                    stack u64[0 max] bound = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
+                    if (input > bound) { return 0; }
+                    return bound;
+                }
+                public noinline fn u64[0 max] ConvertedIncrement<T>(u64[0 2 ** 63 - 1] input, T marker)
+                {
+                    return (u64[0 max])(input + 1);
                 }
                 public enum Item<T> { Empty, Payload(T), }
                 public fn Item<T> Wrap<T>(T value)
@@ -105,6 +125,16 @@ public sealed class PackageImageQualifiedEnumCallTests
                 import Qualified.Cases
                 import Facade
                 module Consumer
+                static mut u32[0 max] DropCount = 0;
+                static mut u32[0 max] DropSum = 0;
+                struct Tracked
+                {
+                    u32[0 max] Number;
+                    mut drop
+                    {
+                        if (self.Number != 0) { DropCount += 1; DropSum += self.Number; }
+                    }
+                }
                 finite law bool Check(Status status, i32[min max] expected)
                 {
                     switch (status)
@@ -142,6 +172,33 @@ public sealed class PackageImageQualifiedEnumCallTests
                     stack u64[0 max] wide = 4294967303;
                     if (!CheckWideItem(Wrap(wide))) { return 8; }
                     if (RoundTrip(marker) != wide) { return 9; }
+                    stack mut u64[0 max] output = 0;
+                    SetOut(wide, output);
+                    if (output != wide) { return 10; }
+                    stack mut u64[0 max][2] destinations = { 1, 2 };
+                    SetInit(wide, destinations[1]);
+                    if (destinations[0] != 1 || destinations[1] != wide) { return 11; }
+                    stack mut Counter counter = new Counter();
+                    UpdateCounter(counter, wide + 3, marker);
+                    if (counter.Value != wide + 3) { return 12; }
+                    {
+                        stack Tracked input = new Tracked() { Number = 17 };
+                        stack mut Tracked transferred = new Tracked() { Number = 0 };
+                        SetOut(input, transferred);
+                        if (transferred.Number != 17 || DropCount != 0) { return 13; }
+                    }
+                    if (DropCount != 1 || DropSum != 17) { return 14; }
+                    {
+                        stack Tracked input = new Tracked() { Number = 23 };
+                        stack mut Tracked transferred = new Tracked() { Number = 0 };
+                        SetInit(input, transferred);
+                        if (transferred.Number != 23 || DropCount != 1) { return 15; }
+                    }
+                    if (DropCount != 2 || DropSum != 40) { return 16; }
+                    if (LiteralBoundary(wide, marker) != (u64[0 max])(2 ** 63 - 1)) { return 17; }
+                    if (LiteralBoundary((u64[0 max])(2 ** 63), marker) != 0) { return 18; }
+                    if (ConvertedIncrement((u64[0 2 ** 63 - 1])wide, marker) != wide + 1) { return 19; }
+                    if (ConvertedIncrement((u64[0 2 ** 63 - 1])(2 ** 63 - 1), marker) != (u64[0 max])(2 ** 63)) { return 20; }
                     return 0;
                 }
                 """);

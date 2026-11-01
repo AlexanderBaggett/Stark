@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is under investigation. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: ListGrowth, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Current benchmark: ListGrowth, goal turn 1.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 8 of 52 initially open items are complete. LinkedListPush completed on goal turn 1 with existing `70365b6` production: source-built Stark **0.9251 × C / 0.7015 × Rust**, source-free package **0.9282 × C / 0.7039 × Rust**, exactly 1,000 randomized balanced rounds per executable. Both beat C and Rust without a tie allowance. No production source change was needed. Earlier accepted rows retain their own measurements. All build/test/timing windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 8 of 52 initially open items are complete. LinkedListPopOnly (`3b4df9d`) and LinkedListPush (`9db7c6e`) passed fresh 1,000-round source/package/C/Rust comparisons on goal turn 1. Current ListGrowth remains open: source **1.0664 × C / 0.7549 × Rust**, package **1.0667 × C / 0.7552 × Rust**. Its source-free lowering/ownership/constant-bound failure chain is repaired and validated, but cold growth still performs ten mmap calls. No C tie allowance is available on its first turn. All build/test/timing/profiling windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**LinkedListPush coordination (goal turn 1):** Complete. Source/package/C/Rust builds, checksums, LLVM inspection/verification and 1,000-round comparison finished. Commit this verification before starting ListGrowth. All windows are closed; no production source changed. Preserve peer sections.
+**ListGrowth coordination (goal turn 1):** All windows are closed. Package/source builds, four package integration checks, seven focused unit checks, injected OOM/drop checks, LLVM verification, 1,000-round comparison and separate syscall tracing are complete. Checkpoint the validated source-free compiler fixes; ListGrowth stays open at 1.0664 × C. Next investigate allocator backing extent and exclusive-slab/cached-block reuse without dropping failure or alias/lifetime proofs. Do not advance to ListIteration. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -28,7 +28,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 6 | `benchmarks/collections/LinkedListChurn` | Complete | 5 | 0.9992 | 0.6581 |
 | 7 | `benchmarks/collections/LinkedListPopOnly` | Complete | 1 | 0.9209 | 0.6947 |
 | 8 | `benchmarks/collections/LinkedListPush` | Complete | 1 | 0.9251 | 0.7015 |
-| 9 | `benchmarks/collections/ListGrowth` | Queued | 0 | — | — |
+| 9 | `benchmarks/collections/ListGrowth` | In progress | 1 | 1.0664 | 0.7549 |
 | 10 | `benchmarks/collections/ListIteration` | Queued | 0 | — | — |
 | 11 | `benchmarks/collections/QueueChurn` | Queued | 0 | — | — |
 | 12 | `benchmarks/collections/QueueGrowth` | Queued | 0 | — | — |
@@ -628,6 +628,57 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## ListGrowth sequential investigation (November 1, 2026)
+
+**Status: open, goal turn 1.** Eight of 52 initially open items remain complete; do not advance to ListIteration. Source-built Stark is **1.0664 × C / 0.7549 × Rust**, source-free package **1.0667 × C / 0.7552 × Rust**. Both beat Rust but miss C, and the three-turn tie allowance is not yet available. The source-free compiler repairs below are a validated checkpoint, not a performance completion.
+
+All sources append 4,096 values, check count/capacity, pop in reverse and verify checksum `8386560`. C uses a realloc-backed array starting at capacity eight; Stark List starts at four; canonical Rust uses Vec. Process measurements include growth, popping and cleanup. C/Rust were freshly compiled with canonical harness flags, using separate Rust native/LLVM invocations. The source-free SDK has no `.stark` fallback and is the existing `70365b6` package chain; the consumer fixes work without rebuilding it.
+
+### Source-free failure chain and preserved facts
+
+The first package build rejected `List.TryPop`'s `value = self.Items.MoveLast()` during MIR lowering. The resolved place already retained its named root, address model, mutability and `out` qualifier; `CanAssignImportedTypedTemplatePlace` rejected all whole parameter roots. It now permits mutable address-model `out`/`init` destinations while retaining ordinary binding immutability and existing projected-borrow rules.
+
+Owned transfer coverage then exposed caller bookkeeping that treated `init` destinations as consumed values, although `out` destinations were already exempt. The shared call-argument move helper now preserves both destination kinds; ordinary value arguments still move normally. Callee out/init exit-drop handling was already correct and remains unchanged. New native cases check transferred values remain live through return and drop exactly once at caller scope exit.
+
+After those fixes, the real package benchmark compiled but trapped. Initial LLVM showed `ComputeContiguousGrowthCapacity` writing a cast temporary while List.Reserve kept the old capacity local. Imported direct calls bypassed the existing storage-preserving argument helper used by member calls. Direct value/statement calls plus function-pointer, closure and dyn-trait argument paths now use that same helper. It retains the original place address and storage identity before argument coercion; no ABI/type/effect facts are discarded or strengthened. The corrected package output matches source executable text exactly.
+
+A related imported literal conversion lowered `2 ** 63 - 1` through the final restricted destination type too early, retaining a runtime power followed by an invalid signed-overflow promise. The complete literal-only integer tree now uses the existing arbitrary-precision constant evaluator before applying the destination range. The predicate excludes runtime values/calls and wrapping/saturating operators, which retain ordinary lowering. The exact bound is now a constant in List.Reserve. The package schema, producers and native dependency contracts do not change.
+
+**Validation:** four focused Release package integration cases and seven focused unit cases pass. Coverage includes typed/compatibility package consumption; scalar and indexed 64-bit outputs; nested direct and function-pointer out calls; mutable-borrow field writes; exact-once owned out/init transfers; literal bounds on either side of bit 63; runtime-dependent conversion fallback; existing packaged powers; MIR/SSA initialization write kinds; and immutable/frozen negative cases. The owned cases use supported initialized-empty destination slots. A separate attempt with never-initialized owned caller slots was rejected by the existing ownership pass before MIR; that caller-flow limitation is not changed or claimed fixed here. No new function kind is weakened: generic setters that fully move their input are `finite`; helpers with an unused unconstrained generic marker remain `fn` because implicit drops may not terminate.
+
+Fresh source and old-source-free-SDK ListGrowth executables return zero with empty output. Native seccomp fixtures deny mmap: both source and package List<Envelope> return OutOfMemory, retain empty count, and drop the consumed owned input exactly once. Ten initial LLVM modules verify across production and failure source/package builds plus C/Rust inspection output. The repository-wide stale-assumption audit covered parameter-place resolution, all argument-lowering consumers, initialization/drop state, tests/ports and package documentation. No full release or unrelated long suite ran. Builds/tests ran sequentially with one worker and a 2 GiB process-group guard; peak observed build RSS stayed below 1.1 GiB and no guard fired.
+
+### Production comparison and surviving work
+
+One warmup plus **1,000 randomized balanced interleaved rounds per executable**, seed `911011`, CPU 0:
+
+| Variant | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| C | 564.301265 | 1.0000 | 0.7079 |
+| Rust | 797.140282 | 1.4126 | 1.0000 |
+| Before-fix source executable | 602.962249 | 1.0685 | 0.7564 |
+| Current source executable | 601.743198 | **1.0664** | **0.7549** |
+| Current source-free package executable | 601.964703 | **1.0667** | **0.7552** |
+
+All 5,000 measured processes succeeded with fixed hashes and no discarded samples. Startup is included; stdout is discarded and stderr uses separate regular files. No builds/tests/traces from this chat overlapped timing; exclusive host access was unconfirmed. Passive cooling and process/scheduling variation remain limitations. **Before/current source executables are byte-identical**, and package `.text` is identical too. The before/current timing difference is not evidence of a source speedup. This patch restores package correctness and parity; it does not close the performance gap.
+
+Source/package optimized main shapes agree: 403 non-debug lines, 18 conditional branch sites, 43 loads, 58 stores and one vector reduction, including cold growth/cleanup. Both retain append writes, a vectorized reverse checksum/pop loop, checked allocation/reallocation, copy fallback and real free. C and Rust also retain allocation and data reads. Rust's checked-out `library/std/src/sys/alloc/unix.rs` delegates eligible reallocations to libc. The remaining evidence points toward cold allocator growth rather than a missing vector checksum or a final absent method body.
+
+Separate **untimed** GDB syscall catchpoints start at C/Stark main and at Rust's benchmark body, then count entry/exit pairs through termination:
+
+| Variant | mmap | mremap | munmap | brk |
+| --- | ---: | ---: | ---: | ---: |
+| C | 0 | 0 | 0 | 2 |
+| Rust benchmark body onward | 0 | 0 | 0 | 0 |
+| Stark source | 10 | 1 | 1 | 0 |
+| Stark package | 10 | 1 | 1 | 0 |
+
+Rust startup precedes its breakpoint and is still included in headline timings; zero body syscalls does not mean zero allocator calls. Stark refills successive small size-class slabs and later uses OS-backed growth. Its reallocator reuses a bucket only while the new request fits that physical bucket, then falls back to allocate/copy/free; the existing OS-backed path uses mremap. Those metadata stores, cache links, mapping calls and page touches are real work that C's heap-backed growth avoids in this run.
+
+**Next concrete opportunity:** investigate reclaiming an existing slab's unused backing extent when the old buffer is the only live allocation and every sibling block is proved free. A mapped slab size alone does not prove exclusive ownership: cached blocks must be detached safely before exposing their bytes as a larger allocation, and target alignment, lock/thread behavior, copy extent, overflow, failure rollback and other live allocations must remain correct. Preserve the actual physical backing class through later allocation/reallocation/free. Check larger cached blocks before another cold mapping where it is safe and beneficial; otherwise promoted small buffers could regress repeated warm workloads by emptying the original size class. Prototype coalescing and cached-size reuse with arbitrary byte/alignment/failure and live-sibling controls, measure cold and warm mixed sizes, then rerun production plus completed allocator/list regressions. This is not implemented; do not add a benchmark-specific reservation, remove fallible growth, or promise allocator `noalias`/removability to force the result.
+
+Ignored evidence is under `benchmarks/codegen/sequential-goal-20261031/ListGrowth/turn1/`: raw `production-interleaved-1000.json`, initial/post-ThinLTO LLVM/disassembly, original failure and trapping artifacts, `native-equivalence.json`, compiler/package provenance and hashes, focused tests and OOM fixtures, GDB commands/logs and `allocation-syscall-counts.json`, and resource reports. All build/test/timing/profiling windows are closed. Nearby completed-item verification counts were corrected to four initial modules (three emitted for source and one for the source-free consumer); all emitted modules had been verified.
+
 ## LinkedListPush sequential investigation (November 1, 2026)
 
 **Status: complete on goal turn 1.** Existing `70365b6` compiler/library production beats canonical C and Rust; no source change or C tie allowance is needed. Eight of 52 initially open items are complete. ListGrowth is next after committing this verification.
@@ -649,7 +700,7 @@ All 4,000 measured processes succeeded with stable hashes and no discarded sampl
 
 A possible optional improvement is to preserve a proved append-only contiguous occupied chain through compilation and version the copyable forward drain for linear traversal. Guarding only head/length is insufficient to prove every link or tag. Any future implementation must handle holes, escape/mutation, intervening calls, observers and early exits conservatively and preserve owned drops and visible state. No such new optimization is required or implemented for this completion.
 
-All six initial Stark source/package LLVM modules plus the separate C/Rust LLVM modules verify, and all four native checksum/output checks pass. No behavior contract changed and no new implementation tests were needed. Builds ran sequentially with one worker, a 512 MiB managed heap and a 2 GiB process-group guard; observed peak stayed below 230 MiB and no guard fired. Ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListPush/turn1/` contains raw `production-interleaved-1000.json`, LLVM, native disassembly, codegen summary, commands/provenance and resource reports. All windows are closed.
+All four initial Stark source/package LLVM modules plus the separate C/Rust LLVM modules verify, and all four native checksum/output checks pass. No behavior contract changed and no new implementation tests were needed. Builds ran sequentially with one worker, a 512 MiB managed heap and a 2 GiB process-group guard; observed peak stayed below 230 MiB and no guard fired. Ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListPush/turn1/` contains raw `production-interleaved-1000.json`, LLVM, native disassembly, codegen summary, commands/provenance and resource reports. All windows are closed.
 
 ## LinkedListPopOnly sequential investigation (November 1, 2026)
 
@@ -672,7 +723,7 @@ All 4,000 measured processes succeeded, hashes stayed fixed, and no samples were
 
 An optional further opportunity is to preserve a proved append-only, fully occupied contiguous-prefix history through calls, then version the copyable reverse drain into a linear traversal. A tail/length equality alone does not prove all previous links or occupied tags. Any such proof must invalidate on holes, mutation or escape, retain visible list state at observers/early exits, and keep arbitrary owned values on their drop-preserving path. This is not implemented and is not needed to close the measured criterion. No global inlining budget, allocator promise or benchmark-specific rule is added.
 
-**Validation and evidence:** all six initial Stark source/package LLVM modules and the separate C/Rust LLVM outputs pass verification. Native checksum/output checks pass for all four executables. No new behavior contract changed, so no new implementation tests were added. Builds ran sequentially with one worker, a 512 MiB managed heap limit and a 2 GiB process-group guard; observed peak was below 310 MiB and no guard fired. Ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListPopOnly/turn1/` retains initial/post-ThinLTO LLVM, disassembly, commands/provenance/package hashes, resource reports, and every sample in `production-interleaved-1000.json`. All windows are closed.
+**Validation and evidence:** all four initial Stark source/package LLVM modules and the separate C/Rust LLVM outputs pass verification. Native checksum/output checks pass for all four executables. No new behavior contract changed, so no new implementation tests were added. Builds ran sequentially with one worker, a 512 MiB managed heap limit and a 2 GiB process-group guard; observed peak was below 310 MiB and no guard fired. Ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListPopOnly/turn1/` retains initial/post-ThinLTO LLVM, disassembly, commands/provenance/package hashes, resource reports, and every sample in `production-interleaved-1000.json`. All windows are closed.
 
 ## LinkedListChurn sequential investigation (October 31, 2026)
 
@@ -696,7 +747,7 @@ Final production, seed `611053`, one warmup plus **1,000 randomized balanced int
 
 Source/before is **0.9898** in this window. Startup is included, stdout is discarded, and stderr uses separate regular files. All measured executions succeeded, executable hashes stayed fixed, and no samples were discarded. Builds/tests/traces from this chat finished before sampling; host exclusivity was unconfirmed. Variation and the diagnostic results below limit attribution of small timing differences. The accepted rows are actual rebuilt production output, not an IR control.
 
-**Validation:** 15 focused Release compiler checks and four native aggregate/C-layout checks pass. The new C fixture reads every explicit byte of 24-byte and 4,096-byte objects after partially initialized construction, dirties all storage, then checks reconstruction with a fresh runtime seed. Existing checks cover large by-value return/call behavior and nested over-aligned enum layout. The obsolete intrinsic assertions and their Stark ports were updated; the modified port implementation module passes `--check`. The repository-wide direct/indirect audit found only the intentionally retained ABI inline fills. Source, newly rebuilt source-free packages and legacy-package list-model checks pass, including arbitrary values, reuse, alignment and exact-once owned drops. Source/package seccomp-injected OOM checks pass. The isolated SDK contains no `.stark` files. All six initial source/package LLVM modules verify; final source/package main has zero memset calls. Builds/tests ran sequentially with one worker and a 2 GiB process-group guard, with observed peak below 1.1 GiB and no guard firing.
+**Validation:** 15 focused Release compiler checks and four native aggregate/C-layout checks pass. The new C fixture reads every explicit byte of 24-byte and 4,096-byte objects after partially initialized construction, dirties all storage, then checks reconstruction with a fresh runtime seed. Existing checks cover large by-value return/call behavior and nested over-aligned enum layout. The obsolete intrinsic assertions and their Stark ports were updated; the modified port implementation module passes `--check`. The repository-wide direct/indirect audit found only the intentionally retained ABI inline fills. Source, newly rebuilt source-free packages and legacy-package list-model checks pass, including arbitrary values, reuse, alignment and exact-once owned drops. Source/package seccomp-injected OOM checks pass. The isolated SDK contains no `.stark` files. All four initial source/package LLVM modules verify; final source/package main has zero memset calls. Builds/tests ran sequentially with one worker and a 2 GiB process-group guard, with observed peak below 1.1 GiB and no guard firing.
 
 LinkedListBuildClear regression, seed `511051`, 1,000 randomized interleaved rounds per executable: C **711.398807 µs / 1.0000**, Rust **935.820729 µs / 1.3155**, Stark **649.453378 µs / 0.9129**. Stark/Rust is **0.6940**; its completed status is preserved.
 

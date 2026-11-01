@@ -23,7 +23,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private void RecordCallArgumentMove(MidLevelIrOperand? operand, StarkTypeSymbol parameterType)
         {
-            if (parameterType.InitializationKind != StarkInitializationKind.Out)
+            if (parameterType.InitializationKind == StarkInitializationKind.None)
             {
                 RecordMoveFromOperand(operand, parameterType);
             }
