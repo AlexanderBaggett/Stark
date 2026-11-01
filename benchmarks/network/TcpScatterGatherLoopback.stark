@@ -74,9 +74,10 @@ export unsafe ffi fn i32[min max] main() {
     stack mut i8[min max][] readFirstView = readFirst;
     stack mut i8[min max][] readSecondView = readSecond;
 
-    stack mut u8[0 63] attempt = 0;
+    stack mut u8[0 64] attempt = 0;
     while willexit (attempt < 64) {
-        stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(attempt);
+        stack u8[0 63] currentAttempt = (u8[0 63])attempt;
+        stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(currentAttempt);
         stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
             System.Net.Tcp.TcpListener.Listen(endpoint);
 
@@ -86,7 +87,7 @@ export unsafe ffi fn i32[min max] main() {
             case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listenerValue):
                 stack mut System.Net.Tcp.TcpListener listener = listenerValue;
                 stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
-                    System.Net.Tcp.TcpClient.Connect(LoopbackEndpoint(attempt));
+                    System.Net.Tcp.TcpClient.Connect(LoopbackEndpoint(currentAttempt));
 
                 switch (connected) {
                     case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var connectError):
