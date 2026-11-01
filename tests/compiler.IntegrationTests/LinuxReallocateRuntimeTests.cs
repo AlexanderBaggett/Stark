@@ -110,6 +110,25 @@ public sealed class LinuxReallocateRuntimeTests
                         if (!grown || (uintptr_t)grown % align) return 6;
                         __stark_runtime_free(grown);
                     }
+                    // Null-old reallocation is fresh allocation, including zero size.
+                    // It ignores old_size and must preserve alignment and disjointness.
+                    for (size_t a = 0; a < sizeof(alignments)/sizeof(*alignments); ++a) {
+                        size_t align = alignments[a];
+                        unsigned char *first = __stark_runtime_try_realloc(NULL, SIZE_MAX, 17, align);
+                        unsigned char *second = __stark_runtime_realloc(NULL, 123, 17, align);
+                        if (!first || !second || first == second || (uintptr_t)first % align || (uintptr_t)second % align) return 20;
+                        memset(first, 31, 17);
+                        memset(second, 47, 17);
+                        for (size_t i = 0; i < 17; ++i) if (first[i] != 31 || second[i] != 47) return 21;
+                        __stark_runtime_free(first);
+                        __stark_runtime_free(second);
+                        first = __stark_runtime_try_realloc(NULL, SIZE_MAX, 0, align);
+                        if (!first || (uintptr_t)first % align) return 22;
+                        __stark_runtime_free(first);
+                    }
+                    if (__stark_runtime_try_realloc(NULL, 0, 32, 24)) return 23;
+                    if (__stark_runtime_try_realloc(NULL, 0, SIZE_MAX, 8)) return 24;
+
                     // A bucket allocation must retain its own reuse/fallback path.
                     unsigned char *p = __stark_runtime_try_alloc(32, 8);
                     if (!p) return 7;

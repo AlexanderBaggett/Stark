@@ -10,13 +10,13 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Current benchmark: LinkedListChurn, goal turn 3.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Current benchmark: LinkedListChurn, goal turn 4.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
 **Current evidence:** 5 of 52 initially open items are complete. LinkedListBuildClear completed on goal turn 2: source-built Stark **0.9437 × C / 0.7077 × Rust**, source-free package **0.9355 × C / 0.7016 × Rust**, exactly 1,000 randomized balanced rounds per executable. Copyable Clear loses its traversal; eligible Linux growth uses `mremap` while preserving failure and alignment fallbacks. Package validation also repaired qualified enum identity, partial compatibility rendering and borrowed argument storage. Earlier accepted queue rows retain their own measurements. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes; performance skill committed as `ead2a13`.
 
-**LinkedListChurn coordination (goal turn 3):** All build/test/timing windows are closed. Validated node co-location, copyable singleton removal and nested physical-layout repairs are ready for a source checkpoint. The benchmark remains open: pooled final production is source **1.0073 × C / 0.6537 × Rust**, source-free package **1.0035 × C / 0.6512 × Rust** (two 1,000-round windows each). Do not choose the favorable individual window to claim completion. Next: compare a minimal late constant-argument specialization control and trace successful reserve/capacity facts. Preserve peer sections.
+**LinkedListChurn coordination (goal turn 4):** All build/test/timing windows are closed. Fresh-allocation wrappers passed correctness checks but failed to reproduce the diagnostic timing gain in final production; those compiler changes are reverted. Only additional native allocator behavior coverage is retained, with all six focused Release checks passing again against the restored compiler. A private SSA-inliner prototype exposed local-storage/call-metadata barriers but fails SSA validation and is not production code. The benchmark remains open; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -25,7 +25,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 3 | `benchmarks/collections/DictionaryInsert` | Complete | 2 | 0.9863 | 0.6167 |
 | 4 | `benchmarks/collections/DictionaryRemove` | Complete | 7 | 0.9959 | 0.6232 |
 | 5 | `benchmarks/collections/LinkedListBuildClear` | Complete | 2 | 0.9437 | 0.7077 |
-| 6 | `benchmarks/collections/LinkedListChurn` | In progress | 3 | 1.0073 | 0.6537 |
+| 6 | `benchmarks/collections/LinkedListChurn` | In progress | 4 | 1.0073 | 0.6537 |
 | 7 | `benchmarks/collections/LinkedListPopOnly` | Queued | 0 | — | — |
 | 8 | `benchmarks/collections/LinkedListPush` | Queued | 0 | — | — |
 | 9 | `benchmarks/collections/ListGrowth` | Queued | 0 | — | — |
@@ -630,7 +630,7 @@ Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRem
 
 ## LinkedListChurn sequential investigation (October 31, 2026)
 
-**Status: open, goal turn 3.** Validated source improvements are checkpointed while the benchmark stays open. Pooled final source is **1.0073 × C / 0.6537 × Rust**; source-free package is **1.0035 × C / 0.6512 × Rust**. The source result does not meet the C criterion. Five of 52 items are complete; do not advance to LinkedListPopOnly. The turn-1 evidence below predates the implementation.
+**Status: open, goal turn 4.** Validated source improvements are checkpointed in `3dae1b9` while the benchmark stays open. Pooled turn-3 source is **1.0073 × C / 0.6537 × Rust**; source-free package is **1.0035 × C / 0.6512 × Rust**. The source result does not meet the C criterion. Turn 4 rejected and reverted a fresh-allocation wrapper after final production timing; details follow. Five of 52 items are complete; do not advance to LinkedListPopOnly. The turn-1 evidence below predates the implementation.
 
 All sources perform 4,096 append/pop-first pairs, checking the returned values through checksum `8386560` and verifying the final list is empty. Fresh source/package Stark and canonical C/Rust binaries return success with empty output. The initial 1,000-round baseline (seed `611031`) was source **1.0234 × C**, package **1.0225 × C**, Rust **1.5097 × C**. The latest unchanged production comparison (seed `611036`, 1,000 rounds per variant) is:
 
@@ -641,6 +641,30 @@ All sources perform 4,096 append/pop-first pairs, checking the returned values t
 | Stark production/source | 555.086689 | **1.0262** |
 
 These are randomized balanced direct-process arithmetic means, CPU 0, one separate warmup per executable, stdout `/dev/null`, separate regular stderr files, no discarded measured samples. Startup is included. Builds/tests/profiling from this chat did not overlap timing; exclusive host access was unconfirmed. Passive cooling and process variation remain limitations. The headline uses the latest complete production window, not the fastest control/window.
+
+### Goal turn 4: allocation specialization rejected; earlier state exposure remains open
+
+Final LLVM retains two constant-96 calls to an internal allocation helper whose size argument still selects multiple backing classes. A minimal late `ipsccp` control specializes that argument; the checked-out LLVM pipeline runs interprocedural constant propagation before inlining, explaining a concrete phase-ordering opportunity. A matched initial-IR replay has the same native text as production. However, reduced allocator IR does not by itself establish a speedup, and the minimal native-pass control lacks its own timed unchanged native replay.
+
+The first randomized 1,000-round control window (seed `611045`, C = 1.0000) measured production **1.0081**, unchanged initial-IR replay **1.0068**, an inline null-old/fresh-allocation split **1.0036**, outlined split **1.0048**, native late-IPSCCP **1.0049**, and native second-O3 **1.0056**; Rust was **1.5385**. All outputs and hashes passed. The apparent fresh-split opportunity was implemented generally for fallible and trapping reallocation, retaining the existing fresh allocator's return facts and the non-null-old fallback. No overall realloc `noalias` promise was added.
+
+The final production window (seed `611046`, **1,000 randomized interleaved rounds per executable**) did not reproduce that gain:
+
+| Variant | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| C | 542.986372 | 1.0000 | 0.6557 |
+| Rust | 828.072482 | 1.5250 | 1.0000 |
+| Unchanged `3dae1b9` source baseline | 545.293408 | **1.0042** | **0.6585** |
+| Rejected fresh-wrapper source | 547.602836 | **1.0085** | **0.6613** |
+| Rejected fresh-wrapper source-free package | 547.088094 | **1.0076** | **0.6607** |
+
+Both windows use one warmup, CPU 0, startup included, null stdout and regular stderr files, with no samples discarded. No builds/tests from this chat overlapped sampling; host exclusivity was unconfirmed. Do not choose the favorable latest baseline window instead of the pooled turn-3 result to close the benchmark. **All wrapper compiler, documentation and implementation-shape test changes are reverted.** The rejected binaries and their SDK remain diagnostic artifacts, not the current compiler/package baseline.
+
+Retained native behavior coverage exercises arbitrary bytes, simultaneous distinct live allocations, alignment, zero size, irrelevant old-size values for null-old reallocation, invalid alignment and overflow. All **six focused Release checks passed again after restoring the original compiler**: five Linux syscall-boundary cross-compilations and the native byte-observing C fixture. The rejected wrapper also passed seven allocator contract checks, source/new-package/legacy-package list behavior, source/package injected OOM and the focused Stark-port check; those checks establish correctness evidence for the rejected experiment, not a shipped optimization. Related completed benchmarks were built but not timed in turn 4, so no new regression timing is claimed.
+
+The next private SSA-inliner control preserves the real production effect and specialization models. It finds three independent barriers: address-taken scalar locals need correct cloning; explicit-inline size eligibility is insufficient alone; and borrow receivers represented by known local names have no explicit address in call metadata. The current consumer rejects that storage fact. Normalized generic receiver types also differ only because equivalent type-argument lists have distinct object identities. A temporary structural comparison and local-storage cloning experiment reaches SSA validation, which rejects an unremapped promoted receiver local (`self`). This is an incomplete proof/metadata-remapping experiment, confined to ignored/private artifacts; no production inliner change or successful new native result is claimed. Preserve call addresses, local identities, type arguments, lifetimes, ownership and effect facts together before broadening eligibility.
+
+Turn-4 evidence is under ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListChurn/turn4/`: both `*-interleaved-1000.json` raw windows, commands/hashes, initial/final LLVM and disassembly, rejected source-free SDK, focused validation logs, prototype diagnostics and process-group memory reports. Runs used one managed worker with a 2 GiB group guard; the final private prototype stopped on an SSA diagnostic, not memory exhaustion. No timing/build window remains active.
 
 ### Goal turn 3: combined storage and physical-layout repair
 
