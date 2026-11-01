@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is under investigation; see the goal queue. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: LinkedListPopOnly, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: LinkedListPush, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 6 of 52 initially open items are complete. LinkedListChurn completed on goal turn 5: source-built Stark **0.9992 × C / 0.6581 × Rust**, source-free package **1.0015 × C / 0.6596 × Rust**, exactly 1,000 randomized balanced rounds per executable. Ordinary aggregate zero-fill lowering removes the repeated vector clear; fallible allocation, required node stores and cleanup remain. The package result uses the eligible two-decimal C tie allowance. LinkedListBuildClear's new regression is **0.9129 × C / 0.6940 × Rust**. Earlier accepted queue rows retain their own measurements. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes; performance skill committed as `ead2a13`.
+**Current evidence:** 7 of 52 initially open items are complete. LinkedListPopOnly completed on goal turn 1 with existing `70365b6` production: source-built Stark **0.9209 × C / 0.6947 × Rust**, source-free package **0.9184 × C / 0.6929 × Rust**, exactly 1,000 randomized balanced rounds per executable. Both beat C and Rust without a tie allowance. No production source change was needed. Earlier accepted rows retain their own measurements. All build/test/timing windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**LinkedListChurn coordination (goal turn 5):** Complete; all build/test/timing windows are closed. Source/package production meets the requested C/Rust criteria, and BuildClear remains below both baselines. Commit the owned zero-fill change, tests and notes before beginning LinkedListPopOnly. Larger inliner, fresh-allocation wrapper and compact-refill controls are not shipped. Preserve peer sections.
+**LinkedListPopOnly coordination (goal turn 1):** Complete. Fresh source/package/C/Rust builds, checksums, LLVM inspection/verification and 1,000-round comparison finished. No source optimization is needed to meet the criterion; commit this verification before beginning LinkedListPush. All windows are closed. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -26,7 +26,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 4 | `benchmarks/collections/DictionaryRemove` | Complete | 7 | 0.9959 | 0.6232 |
 | 5 | `benchmarks/collections/LinkedListBuildClear` | Complete | 2 | 0.9437 | 0.7077 |
 | 6 | `benchmarks/collections/LinkedListChurn` | Complete | 5 | 0.9992 | 0.6581 |
-| 7 | `benchmarks/collections/LinkedListPopOnly` | Queued | 0 | — | — |
+| 7 | `benchmarks/collections/LinkedListPopOnly` | Complete | 1 | 0.9209 | 0.6947 |
 | 8 | `benchmarks/collections/LinkedListPush` | Queued | 0 | — | — |
 | 9 | `benchmarks/collections/ListGrowth` | Queued | 0 | — | — |
 | 10 | `benchmarks/collections/ListIteration` | Queued | 0 | — | — |
@@ -627,6 +627,29 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## LinkedListPopOnly sequential investigation (November 1, 2026)
+
+**Status: complete on goal turn 1.** Existing `70365b6` production already beats both canonical baselines. No compiler, standard-library or benchmark source change was needed, and the C tie allowance was not used. This is the seventh of 52 initially open items; LinkedListPush is next after committing this verification.
+
+All sources build 4,096 values, then pop from the back and check checksum `8386560`. This process-level benchmark includes prebuild and cleanup despite its name. Fresh source/package Stark and canonical C/Rust executables all return zero with empty output. The source-free SDK is the verified `70365b6` package chain from LinkedListChurn turn 5 and contains no `.stark` fallback. Compiler DLL, sources, packages, native executable hashes, tool versions and exact commands are recorded. C uses Clang `-O3 -DNDEBUG -std=c17`; Rust uses `-C opt-level=3 -C debug-assertions=no -C overflow-checks=no`. Canonical Rust native output and its LLVM inspection output are built in separate invocations.
+
+One warmup plus **1,000 randomized balanced interleaved rounds per executable**, seed `711011`, CPU 0:
+
+| Variant | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| C | 724.633048 | 1.0000 | 0.7544 |
+| Rust | 960.541895 | 1.3256 | 1.0000 |
+| Stark source | 667.294906 | **0.9209** | **0.6947** |
+| Stark source-free package | 665.518780 | **0.9184** | **0.6929** |
+
+All 4,000 measured processes succeeded, hashes stayed fixed, and no samples were discarded. Stdout is discarded and each variant uses a separate regular stderr file. Startup is included. No builds/tests/traces from this chat overlapped timing; exclusive host access was unconfirmed. Passive cooling, scheduling and process variation limit attribution, but both Stark rows meet the requested arithmetic-mean criteria.
+
+**Generated work:** C and Rust retain per-node allocation and deallocation. Stark grows its co-located node buffer through the checked allocation/reallocation path, retains its capacity and uses indexed slots. Both source and package `main` have the same optimized shape: 358 non-debug lines, 19 conditional branch sites, 29 loads, 47 stores and no memset calls; these totals include cold growth/cleanup paths, not per-pop work counts. The back-pop loop remains scalar and follows each node's previous index. It reads the value-state tag/payload, updates discarded node/free-list links and clears the previous live node's next link. Singleton removal uses its separate copyable Clear path. The methods are already inlined in final LLVM; a missing final callee body is not the remaining obstacle. The fallible growth status and real cleanup remain, and the checksum is executed over removed values rather than assumed.
+
+An optional further opportunity is to preserve a proved append-only, fully occupied contiguous-prefix history through calls, then version the copyable reverse drain into a linear traversal. A tail/length equality alone does not prove all previous links or occupied tags. Any such proof must invalidate on holes, mutation or escape, retain visible list state at observers/early exits, and keep arbitrary owned values on their drop-preserving path. This is not implemented and is not needed to close the measured criterion. No global inlining budget, allocator promise or benchmark-specific rule is added.
+
+**Validation and evidence:** all six initial Stark source/package LLVM modules and the separate C/Rust LLVM outputs pass verification. Native checksum/output checks pass for all four executables. No new behavior contract changed, so no new implementation tests were added. Builds ran sequentially with one worker, a 512 MiB managed heap limit and a 2 GiB process-group guard; observed peak was below 310 MiB and no guard fired. Ignored `benchmarks/codegen/sequential-goal-20261031/LinkedListPopOnly/turn1/` retains initial/post-ThinLTO LLVM, disassembly, commands/provenance/package hashes, resource reports, and every sample in `production-interleaved-1000.json`. All windows are closed.
 
 ## LinkedListChurn sequential investigation (October 31, 2026)
 
