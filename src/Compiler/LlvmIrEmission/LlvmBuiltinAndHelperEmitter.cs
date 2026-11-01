@@ -5646,6 +5646,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             $"loop:{abiFunction.SymbolName}:ascii-to-unicode-fast",
             selfRef => $"distinct !{{{selfRef}, {mustProgressRef}, {parallelAccessRef}}}");
         var fastLoopMetadataSuffix = $", !llvm.loop {fastLoopRef}";
+        var blockLoopRef = _context.GetSelfReferentialMetadataRef(
+            $"loop:{abiFunction.SymbolName}:ascii-to-unicode-block",
+            selfRef => $"distinct !{{{selfRef}, {mustProgressRef}, {parallelAccessRef}}}");
 
         builder.AppendLine("entry:");
         var sourceValue = MaterializeAggregateBuiltinParameterValue(builder, sourceParameter, "convert_source_view");
@@ -5687,9 +5690,31 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  %convert_fast_source_before_dest = icmp ule ptr %convert_fast_source_end, %convert_data");
         builder.AppendLine("  %convert_fast_dest_before_source = icmp ule ptr %convert_fast_dest_end, %convert_source_data");
         builder.AppendLine("  %convert_fast_disjoint = or i1 %convert_fast_source_before_dest, %convert_fast_dest_before_source");
-        builder.AppendLine("  br i1 %convert_fast_disjoint, label %convert_fast_loop, label %convert_fail");
+        builder.AppendLine("  br i1 %convert_fast_disjoint, label %convert_block_loop, label %convert_fail");
+        // The existing capacity and disjoint-span checks cover every widened store.
+        // Only complete eight-byte blocks are loaded, with no extra alignment promise.
+        // A high bit anywhere in a block retains the original UTF-8/replacement decoder.
+        builder.AppendLine("convert_block_loop:");
+        builder.AppendLine("  %convert_block_index = phi i64 [ 0, %convert_fast_disjoint_nonempty ], [ %convert_block_next, %convert_block_store ]");
+        builder.AppendLine("  %convert_block_remaining = sub i64 %convert_source_length, %convert_block_index");
+        builder.AppendLine("  %convert_block_available = icmp uge i64 %convert_block_remaining, 8");
+        builder.AppendLine("  br i1 %convert_block_available, label %convert_block_load, label %convert_fast_loop");
+        builder.AppendLine("convert_block_load:");
+        builder.AppendLine("  %convert_block_source_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_block_index");
+        builder.AppendLine($"  %convert_block_packed = load i64, ptr %convert_block_source_ptr, align 1{fastLoopAccessGroupSuffix}");
+        // 0x8080808080808080 tests the high bit of each byte on either endianness.
+        builder.AppendLine("  %convert_block_high_bits = and i64 %convert_block_packed, -9187201950435737472");
+        builder.AppendLine("  %convert_block_non_ascii = icmp ne i64 %convert_block_high_bits, 0");
+        builder.AppendLine("  br i1 %convert_block_non_ascii, label %convert_fallback_entry, label %convert_block_store");
+        builder.AppendLine("convert_block_store:");
+        builder.AppendLine("  %convert_block_units = bitcast i64 %convert_block_packed to <8 x i8>");
+        builder.AppendLine("  %convert_block_wide = zext <8 x i8> %convert_block_units to <8 x i32>");
+        builder.AppendLine("  %convert_block_dest_ptr = getelementptr i32, ptr %convert_data, i64 %convert_block_index");
+        builder.AppendLine($"  store <8 x i32> %convert_block_wide, ptr %convert_block_dest_ptr, align 4{fastLoopAccessGroupSuffix}");
+        builder.AppendLine("  %convert_block_next = add i64 %convert_block_index, 8");
+        builder.AppendLine($"  br label %convert_block_loop, !llvm.loop {blockLoopRef}");
         builder.AppendLine("convert_fast_loop:");
-        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_disjoint_check ], [ 0, %convert_fast_disjoint_nonempty ], [ %convert_fast_next, %convert_fast_store ]");
+        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_disjoint_check ], [ %convert_block_index, %convert_block_loop ], [ %convert_fast_next, %convert_fast_store ]");
         builder.AppendLine("  %convert_fast_done = icmp eq i64 %convert_fast_index, %convert_source_length");
         builder.AppendLine("  br i1 %convert_fast_done, label %convert_success_source_length, label %convert_fast_load");
         builder.AppendLine("convert_fast_load:");

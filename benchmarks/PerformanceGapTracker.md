@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback passed on goal turn 1 after the shared retry-range correction; AsciiToUnicodeConversionRuntime is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback passed on goal turn 1 after the shared retry-range correction; AsciiToUnicodeConversionRuntime passed on goal turn 1 with checked block widening; OwnedPathAllocation is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: AsciiToUnicodeConversionRuntime, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: OwnedPathAllocation, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 28 of 52 initially open items are complete. TcpScatterGatherLoopback passes on goal turn 1: corrected canonical source **0.9901 × C / 0.9198 × Rust**. The related TcpLoopbackThroughput correction is revalidated on goal turn 2 at **0.9937 × C / 0.9259 × Rust**. Both have fresh matched 1,000-round C/Rust/Stark comparisons. Current source-free behavior is separately validated; no canonical umbrella-package timing is claimed. All windows are closed; preserve other-agent notes.
+**Current evidence:** 29 of 52 initially open items are complete. AsciiToUnicodeConversionRuntime passes on goal turn 1 after general checked ASCII block widening: **0.7922 × C / 0.5710 × Rust**. The final 1,000-round matched before/C/Rust/production comparison measures 23.1% lower Stark mean than before, with canonical sources unchanged. Current source-free Text package behavior and native lowering on seven targets are validated separately; no canonical umbrella-package timing is claimed. All windows are closed; preserve other-agent notes.
 
-**TcpScatterGatherLoopback coordination (goal turn 1):** Both canonical TCP counters include the exit value 64 while endpoint calls retain guarded [0,63] facts. All 88 final byte/fault/cleanup audits pass, including 64-bind exhaustion, and all 34 final LLVM modules verify. Both fresh 1,000-round windows pass strict C/Rust criteria. Marked complete for the per-item commit; AsciiToUnicodeConversionRuntime has not started. No active build/test/timing window; host exclusivity was unconfirmed.
+**AsciiToUnicodeConversionRuntime coordination (goal turn 1):** Production source and complete five-package Text consumers contain the checked eight-byte path; 18 focused Release tests, 72 runtime-input checks, 24 LLVM verifications, seven-target native lowering and a separate C/package ABI caller pass. The final 1,000-round window is closed at 21:05:14 UTC; both strict C/Rust criteria pass. Marked complete for the per-item commit. OwnedPathAllocation has not started. No active build/test/timing window; host exclusivity was unconfirmed.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -48,7 +48,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 26 | `benchmarks/micro/TailCalls` | Complete | 1 | 0.9697 | 0.7885 |
 | 27 | `benchmarks/network/TcpLoopbackThroughput` | Complete | 2 | 0.9937 | 0.9259 |
 | 28 | `benchmarks/network/TcpScatterGatherLoopback` | Complete | 1 | 0.9901 | 0.9198 |
-| 29 | `benchmarks/text/AsciiToUnicodeConversionRuntime` | Queued | 0 | — | — |
+| 29 | `benchmarks/text/AsciiToUnicodeConversionRuntime` | Complete | 1 | 0.7922 | 0.5710 |
 | 30 | `benchmarks/text/OwnedPathAllocation` | Queued | 0 | — | — |
 | 31 | `benchmarks/text/OwnedTextAllocation` | Queued | 0 | — | — |
 | 32 | `benchmarks/text/PathJoin` | Queued | 0 | — | — |
@@ -628,6 +628,57 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## AsciiToUnicodeConversionRuntime completion (November 1, 2026)
+
+**Status: complete, goal turn 1.** General checked block widening is implemented in the compiler's ASCII-to-Unicode builtin. The unchanged canonical source benchmark now beats C and canonical Rust. No benchmark, C/Rust, standard-library source, public ABI or package schema is changed.
+
+### Establish the same runtime workload
+
+All three programs read **argv[0]**, so different executable paths would change the conversion input. The driver launches each actual binary directly with the identical **31-byte `AsciiToUnicodeConversionRuntime` argv[0]**, selected before implementation; its executable path and hash remain separately recorded. This is a runtime input, not a compiler constant. The saved skill measurement helper is changed only to pass that shared argv[0] via Python's `executable=` argument and record it. No wrapper process or source rewrite is timed.
+
+Each successful canonical program performs **50,000 conversions plus checksum passes**. Its `Unicode` storage is **UTF-32/i32**, not UTF-16. Both C and Stark clear 2,048 buffer bytes once. C/Rust reject high-bit bytes with exit 2; Stark's existing converter instead decodes UTF-8 and replaces invalid input one byte at a time. The matched ASCII input makes the successful work comparable while tests retain that distinct fallback contract. Rust's `std::env::args_os()` also retains owned argument/runtime work; local `library/std/src/sys/args/unix.rs` copies the argument bytes into `OsString`, and emitted code retains allocation/cleanup.
+
+The first unchanged 1,000-round baseline was **1.0241 × C / 0.7478 × Rust**. It remains under `source-baseline/`; the final matched before/after window below is the authoritative implementation comparison.
+
+### Proof and implementation
+
+Before production, the fast converter loaded, checked and widened one byte at a time. The high-bit branch led to the general decoding loop. Actual `opt` analysis of saved before post-LTO IR reports **“Early exit loop with store but no supported condition load”**. The checked-out LLVM vectorization legality implementation has that rejection in `LoopVectorizationLegality.cpp` (`NoConditionLoadForEarlyExitLoop`); local LLVM source revision is `3c3e1eeb0ae7030396f01080b4ce520b181406a8`. This explains the observed scalar loop; merely declaring the whole source ASCII would be an invalid substitute for checking its bytes.
+
+`EmitAsciiToUnicodeConversionBuiltin` now consumes the existing nonnegative length/capacity, sufficient destination capacity and checked disjoint-span facts, then checks **remaining >= 8** before an **align-1 eight-byte load**. A `0x8080808080808080` mask tests every byte's high bit. A zero mask proves the eight loaded units are ASCII; a target-independent vector zero-extension widens them to **eight i32 units**, stored with only the existing **align-4** destination contract. The index advances by eight, and the remaining zero-to-seven bytes use the existing checked scalar tail. A high bit branches to the unchanged UTF-8/replacement decoder from the beginning. All null, length reset, capacity and overlap behavior is preserved. No unconditional ASCII, noalias, full-initialization, stronger alignment or overflow promise is introduced.
+
+The proof is local to each checked block and survives directly into emitted LLVM and package native code; no new serialization fields or inferred cross-call facts are needed. The constant-literal specialization remains separate. The implementation is independent of benchmark names, strings, capacities and iteration counts. The new Stark test wrapper uses **unsafe finite** for the converter; its native test entry uses fn for its general foreign call.
+
+Actual final source and source-free package executables both retain the block path. On this x86-64 target, the native path loads one word, checks the mask and uses SSE2 unpacking plus two vector stores per complete block. At the matched 31-byte input, that is **three eight-byte blocks plus seven scalar units** per conversion, versus 31 scalar units before; both still read 31 input bytes and write 124 output bytes per iteration. The checksum loop remains vectorized in C/Stark; Rust's saved body retains a scalar unrolled checksum. The runtime guard/scalar/decoder work is still present for unsupported blocks. Native `.text` grows from **1,912 to 2,260 bytes**, while the C/Rust `.text` sizes are 628 / 240,003; size is not the speed claim. Both Stark variants and C load libc only; Rust additionally loads libgcc_s and the loader.
+
+### Behavioral, package and target validation
+
+**18 focused Release tests pass:** the existing conversion-emission/literal/dynamic tests plus both source and source-free rows of `AsciiToUnicodeRuntimeTests`. Each native row checks 592 ASCII length/source-offset combinations including NUL, 768 UTF-8/replacement/capacity cases with sequences crossing block boundaries, six null/storage/negative-capacity/overlap cases, and 74 protected-page cases on POSIX. Complete output prefixes and untouched tails are compared with an independent scalar decoder; page-end inputs and destinations catch widened overreads/overwrites, including zero-length spans. An additional **separately optimized non-LTO C caller** passes the same checks against the real converter archive, without relying on caller/callee whole-module optimization.
+
+**72 canonical/package runtime-input checks pass**, including arbitrary ASCII, spaces/punctuation, lengths 1/511/512/513, empty argv[0], multibyte text, invalid bytes and truncated sequences. C/Rust and Stark retain their different non-ASCII results. **24 LLVM modules verify.** The six release targets plus a big-endian **powerpc64 Linux** probe emit verified LLVM and native objects; only Linux x64 was executed. The high-bit mask applies per byte on either endianness; LLVM handles vector lane representation/legalization. These are focused cross-compilation checks, not a full release run.
+
+The normal package producer builds the actual current **System.Text, BitOperations, Collections, Math and Memory** archives/images as a complete source-free five-package closure. The unchanged conversion body in the untimed package fixture omits only the unused System umbrella import; actual optimized package output contains block widening. Full module facts, target information and effects flow through the existing image producer/consumer; no manual package-field pruning or fake umbrella facade is used. The earlier 16-module package served as a before/compatibility check only. An initial new Text-only consumer correctly reported its four missing package dependencies; building those four through the normal producer resolved it. Minimal official-namespace probe setup errors were fixed by placing its source under its SDK's declared child source root. These setup attempts and logs are retained, not claimed as passing results.
+
+Repository-wide stale-assumption searches covered converter identity/call-site/literal machinery, LLVM expectations, SSA/fact consumers, Stark test ports, self-hosted sources, packages, scripts, benchmarks and docs. Existing scalar-tail/disjointness assertions remain valid and the affected Release tests pass. No package ABI/effect contract, unrelated release policy or full release workflow changed. All compiler/native builds ran serially under the established **2 GiB process-group guard** and at most 1 GiB managed heap; no guard fired.
+
+### Final matched 1,000-round comparison
+
+One warmup, then **1,000 randomized interleaved direct processes each**, CPU **0**, seed **911135**, identical runtime argv[0], arithmetic means, C = **1.0000**:
+
+| Executable | Mean µs | / C |
+| --- | ---: | ---: |
+| C | 1588.721914 | **1.0000** |
+| Rust | 2204.232605 | **1.3874** |
+| Stark before | 1635.657780 | **1.0295** |
+| Stark production | 1258.609136 | **0.7922** |
+
+Stark production is **0.5710 × Rust** and **0.7695 × before** (**23.1% lower mean** than before in the same window). All **4,000 executions** succeed with stable hashes; both strict criteria pass without a tie allowance. The window is closed (**21:05:07–21:05:14 UTC**). CVs are 4.85–5.49%; startup, passive cooling, thermal capping and unconfirmed shared-host exclusivity remain included. No builds/tests/tracing from this agent overlapped the final window. No canonical umbrella-package performance ratio is claimed.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/AsciiToUnicodeConversionRuntime/turn1/`. `source-baseline/` preserves the initial source/C/Rust binaries, LLVM, remarks and first 1,000 rounds. `production/` contains the authoritative final 1,000-round JSON, compiler/source/executable/package hashes and commands, native/LLVM validation, focused test logs, separate C ABI caller, complete current Text package, untimed source-free fixture and seven-target native objects. Final compiler SHA-256: **`4b5c9d5d89d65b410bf31d8376c1de466e8642c3b557a80eeebbefa665bd8be2`**.
+
+A future payload-range/initialized-prefix summary could carry the converter's bounded nonnegative code units to downstream checksum readers; the current reader retains its signed-load reduction. That optional proof does not keep this accepted benchmark open.
+
+**Next: OwnedPathAllocation.**
+
 ## TcpScatterGatherLoopback completion (November 1, 2026)
 
 **Status: complete, goal turn 1.** Both final canonical TCP source benchmarks beat C and canonical Rust after repairing their shared retry-counter contract. The correction adds the intended exhausted-retry exit; it removes no transfer work. Compiler, standard-library and C/Rust sources are unchanged.
@@ -679,7 +730,7 @@ Before correction, the first scatter window was **0.9893 × C** (Rust **1.0762 �
 
 Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/TcpScatterGatherLoopback/turn1/`. `source-baseline/` and the earlier scalar TCP artifacts preserve before sources, binaries and 65th-bind reproductions; `retry-range-check/` records the isolated proof. Final `production/` holds the scatter 1,000-round data, provenance, verified LLVM, native output and 44 audits; its `regression-TcpLoopbackThroughput/` holds the scalar comparison and other 44 audits. Final compiler SHA-256: `8b654b8fb52a3e4298281c6b7f2a8050dd22ec3caea72eb096347b8e6965af55`. All compiler jobs ran serially under the established **2 GiB process-group guard** and at most 1 GiB managed heap; no guard fired in this investigation.
 
-**Next: AsciiToUnicodeConversionRuntime.**
+**Next at this completion: AsciiToUnicodeConversionRuntime (now completed above).**
 
 ## TcpLoopbackThroughput completion (November 1, 2026)
 
