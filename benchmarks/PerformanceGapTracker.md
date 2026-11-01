@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1; Arithmetic is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: StackGrowth, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: Arithmetic, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 12 of 52 initially open items are complete. QueueGrowth passed on goal turn 1: source **0.9643 × C / 0.6979 × Rust**, source-free package **0.9659 × C / 0.6991 × Rust**. General head-zero backing reallocation removes ten mmap calls while preserving payload/ownership and the wrapped fallback. Fresh QueueChurn/QueueDequeue regressions also beat C and Rust; Churn's source/code-size tradeoff is documented below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 13 of 52 initially open items are complete. StackGrowth passed on goal turn 1: source **0.9877 × C / 0.7051 × Rust**, source-free package **0.9856 × C / 0.7036 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**QueueGrowth coordination (goal turn 1):** Production, source/fresh-package owned FIFO/drop checks, two focused Release tests, 21 LLVM-module verifications, syscall/failure checks and all 1,000-round production/regression comparisons are complete. Marked complete for the per-item source/test/docs commit. StackGrowth is next and has not started. No active window; preserve peer sections.
+**StackGrowth coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. Arithmetic is next and has not started. No active window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -32,7 +32,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 10 | `benchmarks/collections/ListIteration` | Complete | 1 | 0.9916 | 0.7044 |
 | 11 | `benchmarks/collections/QueueChurn` | Complete | 1 | 0.9176 | 0.7417 |
 | 12 | `benchmarks/collections/QueueGrowth` | Complete | 1 | 0.9643 | 0.6979 |
-| 13 | `benchmarks/collections/StackGrowth` | Queued | 0 | — | — |
+| 13 | `benchmarks/collections/StackGrowth` | Complete | 1 | 0.9877 | 0.7051 |
 | 14 | `benchmarks/micro/Arithmetic` | Queued | 0 | — | — |
 | 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
 | 16 | `benchmarks/micro/Branching` | Queued | 0 | — | — |
@@ -627,6 +627,33 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## StackGrowth completion (November 1, 2026)
+
+**Status: completed, goal turn 1.**
+
+Current production source and source-free package both beat C and canonical Rust on the first turn, without a C tie allowance or a new implementation patch. This is a fresh verification of the committed allocator and fact-preserving codegen, not a claimed new optimization.
+
+All implementations push 4,096 integers, check the count, pop all values and observe checksum 8,386,560. C starts at eight elements, Stark/Rust at four. C and Rust use signed i32 while Stark uses unsigned u32, so widening signedness differs. Stark's final drain keeps real reverse payload loads and vectorizes to two 64-bit accumulators, processing eight elements per back edge. C's inspection IR and actual Rust benchmark body retain scalar unrolled drains. The bounds/empty checks are removed from Stark's proven pop loop; explicit fallible growth, payload writes/reads, checksum and cleanup remain.
+
+Source/package `.text` is identical: **7,616 bytes**, SHA-256 `d3bbdef6472ed5763fbe9a23fceee422431384af087078cd9dadf3077392a63d`. Their optimized mains have 1,171/1,172 lines, 112 conditional branches, 123 loads, 65 stores and one vector reduction, including cold allocator paths. Six initial LLVM modules verify, including the C/Rust inspection modules. Initial/post-LTO IR, actual native disassembly and dependencies are retained. The fresh three-module SDK from QueueGrowth contains zero `.stark` fallback files and its package/compiler/source identities are recorded; both consumer forms pass the normal count/checksum checks.
+
+One warmup, **1,000 balanced randomized interleaved rounds per executable**, seed `911080`, CPU 0, arithmetic means:
+
+| Executable | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| c | 573.486583 | 1.0000 | 0.7139 |
+| rust | 803.328828 | 1.4008 | 1.0000 |
+| stark-source | 566.443812 | 0.9877 | 0.7051 |
+| stark-package | 565.203195 | 0.9856 | 0.7036 |
+
+All 4,000 measured processes succeed, with stable executable hashes and no excluded samples. Startup is included; stdout goes to null and stderr to separate regular files. CVs are approximately 9–10%, host exclusivity is unconfirmed, and passive cooling/scheduling remain limitations. No builds, tests or traces from this chat overlap timing. C flags remain `-O3 -DNDEBUG -std=c17`; Rust flags remain `-C opt-level=3 -C debug-assertions=no -C overflow-checks=no`, with native/inspection IR emitted separately.
+
+Separate GDB traces show Stark source/package **1 mmap + 1 munmap**, no mremap/brk. C records two brk calls and Rust records no allocator syscalls in the benchmark body after startup; this does not imply zero Rust allocations. Injecting mmap ENOMEM after actual entry makes **both Stark executables exit 1**, preserving Stack/List's fallible reserve path. No production source/configuration changed, so no unrelated test suite or full release ran. Builds were sequential under the process-group memory guard and all succeeded without a guard stop.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/StackGrowth/turn1/` retains `initial-interleaved-1000.json`, hashes/provenance/commands, initial/post-LTO LLVM, native disassembly, source/package build logs/resources, allocation counts and failure-injection logs.
+
+**Next: Arithmetic.**
 
 ## QueueGrowth head-zero reallocation completion (November 1, 2026)
 
