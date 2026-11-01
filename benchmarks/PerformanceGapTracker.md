@@ -10,13 +10,13 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: Arithmetic, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Current benchmark: Arithmetic, goal turn 1.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 13 of 52 initially open items are complete. StackGrowth passed on goal turn 1: source **0.9877 × C / 0.7051 × Rust**, source-free package **0.9856 × C / 0.7036 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 13 of 52 initially open items are complete. Arithmetic remains open on goal turn 1: unchanged source **1.0048 × C / 0.8897 × Rust** across all 3,000 production samples from three 1,000-round windows; package **1.0046 × C** in its 1,000-round window. The nonnegative-64 diagnostic is **0.8693 × C**, but no production proof/patch exists yet. A width-only control was slower and is rejected. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**StackGrowth coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. Arithmetic is next and has not started. No active window; preserve peer sections.
+**Arithmetic coordination (goal turn 1):** Source/package/C/Rust builds, the source-free Process dependency chain, 15 initial LLVM verifications, exact 97-seed native checks, two 1,000-round control windows and the actual-facts probe are complete. Next implement a checked inductive nonnegativity proof; do not advance to BranchSelectPredication or count multiple controls as extra goal turns. No production sources changed; all windows are closed. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -33,7 +33,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 11 | `benchmarks/collections/QueueChurn` | Complete | 1 | 0.9176 | 0.7417 |
 | 12 | `benchmarks/collections/QueueGrowth` | Complete | 1 | 0.9643 | 0.6979 |
 | 13 | `benchmarks/collections/StackGrowth` | Complete | 1 | 0.9877 | 0.7051 |
-| 14 | `benchmarks/micro/Arithmetic` | Queued | 0 | — | — |
+| 14 | `benchmarks/micro/Arithmetic` | In progress | 1 | 1.0048 | 0.8897 |
 | 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
 | 16 | `benchmarks/micro/Branching` | Queued | 0 | — | — |
 | 17 | `benchmarks/micro/FactDrivenBranchPruning` | Queued | 0 | — | — |
@@ -627,6 +627,78 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## Arithmetic sign-fact investigation (November 1, 2026)
+
+**Status: open, goal turn 1.** StackGrowth is committed complete in `6a44a5a`; 13 of the original 52 items are complete. Arithmetic beats Rust but misses C. The three-turn C tie allowance is **not yet available**; separate experiments/windows in this turn do not count as additional goal turns. No compiler or standard-library source changed in this investigation.
+
+### Actual work and production comparison
+
+All implementations run a PID-seeded 200,000-step recurrence with division by 3 and remainders by 11 and 1,000,000,007. PID modulo 97 keeps the loop dynamic. Stark's unsigned CurrentId contract reaches LLVM as a zero-extension/unsigned initial remainder, but loop division/remainders remain signed. Actual C and Stark hot loops execute essentially the same 64-bit constant-division work with different registers/placement. Rust retains the same recurrence plus its normal startup. C flags remain `-O3 -DNDEBUG -std=c17`, Rust flags `-C opt-level=3 -C debug-assertions=no -C overflow-checks=no`; native and inspection IR are emitted separately.
+
+Initial production comparison: one warmup and **1,000 balanced randomized interleaved rounds per executable**, seed `911081`, CPU 0, arithmetic means:
+
+| Executable | Mean µs | C = 1.0000 |
+| --- | ---: | ---: |
+| c | 2225.836784 | 1.0000 |
+| rust | 2508.168822 | 1.1268 |
+| stark-source | 2234.325437 | 1.0038 |
+| stark-package | 2236.064906 | 1.0046 |
+
+Source/package `.text` is identical: 508 bytes, SHA-256 `ad9232b468b7479d02c9bad379c44e733b7b065bcd76599c6007d2053ea5b35a`. Their optimized mains have 28 lines, one conditional backedge, no loads/stores and real register arithmetic. Fifteen initial LLVM modules verify, including C/Rust inspection IR. The source-free SDK uses the previously validated Memory/BitOperations/Collections images plus fresh real Process, C, IO, Path, Text, Math, Runtime.Buffer, LinuxSyscalls, Linux platform and target-specific Platform dispatch packages. The first incomplete-SDK error and completed dependency chain are retained; zero `.stark` fallback files remain. No test-only replacement for Process was used.
+
+### Controls: reject width alone; prove sign before shipping
+
+Matched controls start from the initial root LLVM and reuse unchanged dependency bitcode, the same optimization/link pipeline and production branch-boundary policy. The unchanged replay reproduces production `.text` exactly; full-file equality is not claimed because debug/build identity differs. The signed-32 pair truncates only the bounded input to `/3` and `%11`, performs signed i32 operations and sign-extends the results. It is slower and must not be shipped as an assumed improvement. The unsigned-32 oracle assumes both nonnegativity and 32-bit intermediate bounds. The separate positive-64 oracle changes only the signed loop divisions/remainders to unsigned operations, isolating the sign opportunity without requiring a source-width change. These oracles are **not compiler proofs or production patches**.
+
+Each window below has **1,000 randomized interleaved samples per executable**, not additive speedups:
+
+| Window | Variant | Mean µs | C = 1.0000 |
+| --- | --- | ---: | ---: |
+| First controls, seed 911082 | c | 2220.555570 | 1.0000 |
+| First controls, seed 911082 | rust | 2512.133763 | 1.1313 |
+| First controls, seed 911082 | stark | 2234.383245 | 1.0062 |
+| First controls, seed 911082 | replay | 2232.676145 | 1.0055 |
+| First controls, seed 911082 | signed32-pair | 2273.772494 | 1.0240 |
+| First controls, seed 911082 | unsigned32-oracle | 1796.434334 | 0.8090 |
+| Sign isolation, seed 911083 | c | 2217.496819 | 1.0000 |
+| Sign isolation, seed 911083 | rust | 2505.815410 | 1.1300 |
+| Sign isolation, seed 911083 | stark | 2227.485917 | 1.0045 |
+| Sign isolation, seed 911083 | replay | 2227.420359 | 1.0045 |
+| Sign isolation, seed 911083 | unsigned32-oracle | 1790.942944 | 0.8076 |
+| Sign isolation, seed 911083 | positive64-oracle | 1927.720118 | 0.8693 |
+
+The same unchanged production source/C/Rust hashes occur in all three windows. Pooling **all 3,000 samples per common variant**, without exclusions or selecting a window, gives source **1.0048 × C / 0.8897 × Rust**, Rust **1.1294 × C**. The package has only its initial 1,000 samples and retains its own same-window C baseline. Startup is included, stdout goes to null and stderr to separate regular files. No builds/tests/traces from this chat overlap timing; passive cooling, scheduling, spread and unconfirmed host exclusivity apply. All raw samples and hashes are retained.
+
+### Exact correctness checks and first missing proof
+
+An arbitrary-precision Python reference evaluates all **97 possible seed remainders**, 200,000 steps each. GDB Python breakpoints inject positive PIDs `97 + seed` at the actual native PID call/syscall boundary and observe the actual final loop remainder before the return predicate. C, Rust, source/package Stark, replay, signed-32, unsigned-32 and positive-64 controls all match **every exact final total**, with successful exits. The unsigned controls' post-loop predicate rewrites require observing their live final remainder at the loop fall-through before later instructions clobber it. The largest observed input is 1,000,181,009 and numerator 3,667,149,280. This is exhaustive for this benchmark's seed domain, not a substitute for a general compiler proof. The initial GDB CLI-loop/invalid-oracle flag errors and their corrected checks are preserved.
+
+A read-only probe against the existing Release compiler loads the actual source-free packages, uses the same explicit generic target CPU/layout, and reproduces the actual initial package main exactly after removing incidental metadata IDs. This avoids drawing conclusions from an analyzer missing production inputs. The initial probe with an unspecified CPU correctly failed target compatibility; its log remains. Actual final SSA ranges are:
+
+| Value | Meaning | Known range |
+| --- | --- | --- |
+| `v2` | initial PID remainder | [0, 96] |
+| `v7_phi` | loop-carried total | [-1000000006, 1000000006] |
+| `v8` | total + counter | [-1000000006, 1000200006] |
+| `v13` | value / 3 | [-333333335, 333400002] |
+| `v15` | total + 3×value − value/3 | [-4333400026, 4333933359] |
+| `v18` | numerator after value%11 | [-4333400036, 4333933369] |
+| `v19` | next remainder | [-1000000006, 1000000006] |
+
+`SsaValueFactAnalyzer.RefineFacts` initializes phi facts conservatively and joins every incoming edge; `TryAnalyzeModuloRange` retains a negative lower bound when its numerator might be negative. The initial nonnegative fact is present, but it cannot simply be applied to a cyclic phi without proving every backedge. Ordinary interval subtraction also loses the relationship between `3×value` and `value/3`. This is a missing **inductive relational proof**, not permission to discard the negative path or overwrite a field with an optimistic assumption.
+
+The current emitter already consumes nonnegative facts in `CanUseUnsignedIntegerDivisionSemantics`; it need not be bypassed with invented unsigned promises. LLVM's checked-out `InstCombineMulDivRem.cpp` narrowing rules primarily match explicit sign/zero-extension shapes; reading those rules explains why source/fact representation matters, but the slower signed-32 control rejects narrowing alone as the solution here.
+
+### Implementation handoff
+
+Implement a general checked nonnegativity producer for eligible scalar cyclic phis, reusing existing numeric facts and keeping all other fact fields intact. Propose only a stronger lower bound on a currently sound bounded phi. Establish a nonrecursive/base incoming proof, then prove **every** incoming/backedge under the candidate invariant. Reuse the existing exact range transfer for add/multiply/subtract to reject possible arithmetic overflow and unsupported wrapping; do not infer absence of overflow from the desired conclusion.
+
+For the motivating expression, nonnegative `value`, positive divisor and a nonnegative added term prove `value/divisor <= value <= 3×value <= total + 3×value`. This relational subtraction proof establishes a nonnegative numerator and hence nonnegative next remainder. Match operand identities through valid lossless aliases/conversions; reject unknown/unsafe relations, negative bases/divisors, wrapping/overflow cases, unsupported joins and mutual cyclic assumptions. This should apply to arbitrary eligible arithmetic, not benchmark names, constants, iteration counts or expected results.
+
+After proving the invariant, retain it while recomputing dependent facts, and rerun the authoritative producer at the normal reanalysis sites. Carry it through ABI/LLVM emission and source-free package consumers via the existing fact contract, rather than adding schema fields or replacing complete fact records. Validate positive and negative initial values, all incoming paths, overflow/wrapping and unsupported dynamic fallbacks, plus exact results and source/package native code. Inspect that unsigned operations actually reach production, then measure **fresh production** C/Rust/Stark for 1,000 rounds and affected regressions before closure. The signed-32 control is a retained negative result; the positive-64 control is the clearest measured opportunity.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/Arithmetic/turn1/` retains SDKs, commands/source/compiler/SDK hashes, initial/post-LTO LLVM and native disassembly, the initial and pooled production JSON, controls' raw samples, seed-reference/native observations, `actual-package-main-facts.json`, matching SSA/LLVM probe outputs, logs/resources and errors. Builds used one managed worker and the process-group guard; no RSS guard stopped these builds. All windows are closed. **Next remains Arithmetic, not BranchSelectPredication.**
 
 ## StackGrowth completion (November 1, 2026)
 
