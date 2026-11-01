@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: IndependentSliceAdd, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: MemoryAccess, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 20 of 52 initially open items are complete. IndependentRawPointerRegions passed on goal turn 1: source **0.9967 × C / 0.8585 × Rust**, source-free package **0.9970 × C / 0.8588 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 21 of 52 initially open items are complete. IndependentSliceAdd passed on goal turn 1: source **0.9974 × C / 0.8578 × Rust**, source-free package **0.9978 × C / 0.8581 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**IndependentRawPointerRegions coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. IndependentSliceAdd is next and has not started. No active window; preserve peer sections.
+**IndependentSliceAdd coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. MemoryAccess is next and has not started. No active window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -40,7 +40,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 18 | `benchmarks/micro/FunctionPointerDevirtualization` | Complete | 1 | 0.7640 | 0.7133 |
 | 19 | `benchmarks/micro/GlobalScalarLoadForwarding` | Complete | 1 | 0.9268 | 0.7997 |
 | 20 | `benchmarks/micro/IndependentRawPointerRegions` | Complete | 1 | 0.9967 | 0.8585 |
-| 21 | `benchmarks/micro/IndependentSliceAdd` | Queued | 0 | — | — |
+| 21 | `benchmarks/micro/IndependentSliceAdd` | Complete | 1 | 0.9974 | 0.8578 |
 | 22 | `benchmarks/micro/MemoryAccess` | Queued | 0 | — | — |
 | 23 | `benchmarks/micro/PureCallGlobalForwarding` | Queued | 0 | — | — |
 | 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Queued | 0 | — | — |
@@ -628,6 +628,41 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## IndependentSliceAdd completion (November 1, 2026)
+
+**Status: completed, goal turn 1.**
+
+The unchanged production compiler already passes the requested arithmetic-mean criteria against C and canonical Rust. No compiler, library, benchmark or reference source changed. The small C-relative difference is process-level parity in practice; the C/Stark hot-loop instructions match after removing addresses and boundary padding.
+
+### Executed work and facts
+
+All three compilers remove the 32-element slice-add loop, initial buffers, array loads/stores and helper call. The only remaining work is a PID operation and a checksum loop, unrolled by two. After the two input increments, output[0] and output[31] both equal `iteration + 34`; the checksum contribution is therefore `2 * iteration + 68`. C, Rust and Stark each retain two signed remainders per 100,000 native loop iterations. No dynamic allocation, cleanup, bounds-failure branch or data-memory traffic survives in Stark's observed kernel. The canonical benchmark tests elimination of this fixed-array work, not sustained vector-add bandwidth; no replacement workload or artificial observer was added.
+
+Source/package native `.text` is identical: **460 bytes**, SHA-256 `c7a1583e590f31e1d40ece123b8d2adb0c7f8e7fa41bbaade2fe5c51657e09ed`. A saved normalized comparison confirms that their hot-loop instructions match C's after removing padding/addresses. Stark retains its existing branch-boundary padding and inline PID syscall, while C calls libc and Rust uses its normal runtime wrapper. No new code-placement policy or selected layout was introduced.
+
+A target-matched, source-free package SSA/fact probe emits **byte-identical initial LLVM** to the actual CLI build. PID widening preserves **[0,4294967295]**. Before LLVM inlines/scalarizes the memory operations, the observed output loads still have the full i64 domain; the checksum phi is [-1000000006,4294967295] and its remainder [-1000000006,1000000006]. A concrete future opportunity, shared with IndependentRawPointerRegions, is to expose proven element values through authoritative slice/region/write-effect facts before the existing nonnegative induction consumer. The proof would need to retain dynamic/negative inputs, source arithmetic, aliasing and bounds behavior. More vectorization/copy machinery cannot reduce this final kernel because no slice memory work remains. No unsigned proof or additional speedup is claimed here.
+
+### Validation and measurements
+
+**15 focused Release independent-slice tests pass** against the same compiler DLL used for timing. They cover disjoint contracts, conditional/member-projected memory bodies, access-group/parallel metadata, scalar law calls after validated reads, and rejection of unsupported alias roots, index mutation, unknown memory effects, memory-backed declarations, nested loops and early exits. Tests use `--no-build` after verifying DLL identity. Repository references and related assertions were inspected; no implementation or public contract changed and no old assertion required replacing.
+
+Independent per-iteration Python and closed-form checksum references agree. GDB observes the actual final checksum before the predicate: nine positive/signed-domain PID cases for C and ten each for Rust and the two Stark builds, spanning modulus boundaries, INT32_MAX and **UINT32_MAX for the unsigned-ID APIs**. All **39 exact checksums and exits pass**. C is not assigned an out-of-domain unsigned pid_t value. All **15 emitted/reference LLVM modules** verify; source, compiler, SDK archive/image and executable hashes were rechecked. The source-free SDK consumer really imports packaged `System.Process`, with 13 modules and zero `.stark` fallbacks.
+
+One warmup, then **1,000 randomized interleaved direct processes per executable**, CPU 0, seed 911114; arithmetic means include startup:
+
+| Executable | Mean µs | Mean / C | Mean / Rust |
+| --- | ---: | ---: | ---: |
+| c | 1469.966212 | 1.0000 | 0.8600 |
+| rust | 1709.300574 | 1.1628 | 1.0000 |
+| stark-source | 1466.177595 | 0.9974 | 0.8578 |
+| stark-package | 1466.681031 | 0.9978 | 0.8581 |
+
+All **4,000 measured processes** succeeded with stable executable hashes. Coefficients of variation were **2.26–3.03%**, larger than the small C-relative gap. These are the requested point estimates from the first production window, not a fastest-window selection or a new source optimization. Source/package differences between identical native text do not establish another gain. Builds/tests did not overlap timing from this chat; exclusive host access was unconfirmed. Startup, passive cooling, thermal capping and shared activity limit precision. Serial compiler jobs used the existing 2 GiB process-group RSS guard, peaking at **1.07 GiB**; no guard fired. No full release or unrelated long suite ran.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/IndependentSliceAdd/turn1/`, especially **`interleaved-1000.json`**, `provenance.json`, initial/post-LTO IR, native disassemblies, `initial-codegen-summary.json`, `loop-instruction-comparison.json`, exact-seed references/drivers/observations and `seed-validation.json`. `validation/` retains compact actual SSA/facts and matching initial LLVM; `test-results/` and `independent-slice-tests.log` retain focused validation. All windows are closed; preserve peer edits.
+
+**Next: MemoryAccess.**
+
 ## IndependentRawPointerRegions completion (November 1, 2026)
 
 **Status: completed, goal turn 1.**
@@ -667,7 +702,7 @@ All **4,000 measured executions** succeeded with stable executable hashes. Coeff
 
 Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/IndependentRawPointerRegions/turn1/`, especially **`interleaved-1000.json`**, `provenance.json`, `initial-codegen-summary.json`, initial/post-LTO LLVM and native disassemblies, `loop-instruction-comparison.json`, exact-seed references/drivers/observations and `seed-validation.json`. `validation/` contains compact actual SSA/facts and the byte-identical initial LLVM probe; `test-results/` and the bounded-pointer log/resource report retain focused validation. All timing windows are closed; preserve peer edits.
 
-**Next: IndependentSliceAdd.**
+**Next at completion: IndependentSliceAdd; see its subsequent completed result above.**
 
 ## GlobalScalarLoadForwarding completion (November 1, 2026)
 
