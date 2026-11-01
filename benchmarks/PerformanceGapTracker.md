@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: PureCallGlobalForwarding (not started).** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: ReadonlyOtherLocalFieldStore (not started).** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 22 of 52 initially open items are complete. MemoryAccess passed on goal turn 1 with the general cyclic-array recurrence proof: source **0.8222 × C / 0.5878 × Rust**, source-free package **0.8253 × C / 0.5900 × Rust**. Implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 23 of 52 initially open items are complete. PureCallGlobalForwarding passed on goal turn 1 with general nonnegative integer widening: source **0.9811 × C / 0.8477 × Rust**, source-free package **0.9829 × C / 0.8492 × Rust**. Implementation, code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**MemoryAccess coordination (goal turn 1): complete.** Final production and source-free package builds pass; 55 unit/regression and nine native integration tests, IR checks, signed/PID-boundary checks and unchanged regression code pass. Final 1,000-round window (seed 911121, CPU 0, 16:33:05–16:33:09 UTC) is closed: source **0.8222 × C**, package **0.8253 × C**. All 6,000 measured processes succeed with stable hashes; no builds/tests/tracing from this agent overlap sampling. Host exclusivity was unconfirmed. Preserve peer sections.
+**PureCallGlobalForwarding coordination (goal turn 1): complete.** Final source/package means are **0.9811 / 0.9829 × C**, both ahead of Rust. All 65 focused Release checks, exact-value checks and IR/native validation pass. The final 1,000-round window (seed 911124) and related global-forwarding regression window (seed 911125) are closed; 10,000 measured processes succeed with stable hashes. No builds/tests/tracing from this agent overlap samples; host exclusivity was unconfirmed. ReadonlyOtherLocalFieldStore has not started. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -42,7 +42,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 20 | `benchmarks/micro/IndependentRawPointerRegions` | Complete | 1 | 0.9967 | 0.8585 |
 | 21 | `benchmarks/micro/IndependentSliceAdd` | Complete | 1 | 0.9974 | 0.8578 |
 | 22 | `benchmarks/micro/MemoryAccess` | Complete | 1 | 0.8222 | 0.5878 |
-| 23 | `benchmarks/micro/PureCallGlobalForwarding` | Queued | 0 | — | — |
+| 23 | `benchmarks/micro/PureCallGlobalForwarding` | Complete | 1 | 0.9811 | 0.8477 |
 | 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Queued | 0 | — | — |
 | 25 | `benchmarks/micro/StackFieldLoadForwarding` | Queued | 0 | — | — |
 | 26 | `benchmarks/micro/TailCalls` | Queued | 0 | — | — |
@@ -628,6 +628,52 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## PureCallGlobalForwarding completion (November 1, 2026)
+
+**Status: complete, goal turn 1.** General nonnegative integer widening is implemented and validated. Both source and source-free package production means beat C and canonical Rust. Benchmark, standard-library and C/Rust sources are unchanged.
+
+### Work comparison and the fact consumer
+
+Global forwarding across the pure noinline `Mix` call already works: initial `Accumulate` reuses the value stored into `Counter` for both reads, and LLVM promotes the remaining private global state to a loop phi. C, Rust and Stark all remove the hot global loads/stores. All retain **200,000 `Mix` calls**, counter/checksum arithmetic and the two large signed remainders. Stark's existing checked counter optimization uses a bounded recurrence for `i % 97`; C and Rust still compute that remainder each iteration.
+
+The first unchanged 1,000-round window (seed 911122) measured source **1.0015 × C**, package **1.0013 × C**, Rust **1.1545 × C**. This did not clear the first-turn C criterion. The missing fact was already present: the native remainder phi, its original-width i24 result and its i64 conversion all have authoritative **[0,96]** ranges and a known zero sign bit. `EmitConvert` selected extension solely from the source type, so initial LLVM emitted `trunc i32 to i24; sext i24 to i64`. That became a shift-left/arithmetic-shift-right pair in every native iteration.
+
+The general emitter now consults its existing `CanProveNonNegativeInteger` consumer when widening integers. A signed value proved nonnegative uses `zext`; values that may be negative retain `sext`, and unsigned/high-bit inputs retain their existing unsigned semantics. Source-width truncation remains intact. There is no pointer-width, storage, ABI, package-schema, call-effect or source-arithmetic change, and no benchmark-specific match. Existing authoritative facts are consumed directly; no producer fields are discarded or replaced by a separate incomplete analysis.
+
+The final native loop replaces **400,000 shifts with 200,000 masks** over one benchmark execution. It retains the remaining 24-bit mask, helper calls and arithmetic work. Source and package have byte-identical **572-byte `.text`**, SHA-256 `e8cd7bcb1f142a1f3f8eb9414eac24fa82c798c95a87554586feb24a14357bff`. Both reproduce the validated control's native text. The PID operation and signed entry behavior are preserved; the source's implicit i32 interpretation before `% 31` still permits seed residues [-30,30], and the initial counter interval remains [-29,31]. It is not valid to assume an unsigned checksum merely from the public PID type.
+
+### Controls and validation
+
+The matched unchanged-LLVM replay has byte-identical native text to before. In 1,000 rounds (seed 911123), source/replay measured **1.0018 / 1.0012 × C**, while the positive-widening control measured **0.9817 × C**. Adding checked lossless-truncation flags alone produced unchanged native text; an additional `nneg` flag produced no change beyond ordinary `zext`. Those unused flag changes are not shipped. The local LLVM `InstCombineCasts.cpp` explains nonnegative extension simplification, but the installed compiler's actual IR/native results establish these controls; the source checkout alone is not treated as an execution trace.
+
+**65 focused Release checks pass:** 57 unit/regression checks and eight native integration checks. The new emitter tests cover 8/16/24/32/64-bit sources and widening through 128 bits, positive facts, negative inputs, unsigned high-bit values, negative-to-unsigned casts, same-width reinterpretation, truncation and mixed-sign joins. Existing counter, global-call barriers, saturating arithmetic and wrapped-range checks remain valid. The native C-reference tests now explicitly exercise a noinline masked signed helper through both source and a real package with its source deleted, alongside negative/truncating fallbacks, runtime bounds and narrow-width calls/memory. The additional package test ran after timing with the **same compiler assembly**; timed binaries and source hashes remain unchanged.
+
+The original C/Rust/source/package binaries and the control each match an independent recurrence for **64 exact checksum/counter/PID-boundary cases** (320 pairs). Both final production binaries separately pass all 64 cases (128 pairs). Rust's unsigned PID behavior and C/Stark's signed interpretation are modeled independently. **17 LLVM modules verify.** The source-free target-matched probe produces initial LLVM byte-identical to the actual package CLI and confirms that [0,96] and original source widths survive compilation.
+
+MemoryAccess and the actual FunctionPointerDevirtualization package benchmark retain byte-identical native text to their completed versions. GlobalScalarLoadForwarding changes through the same conversion fact: its final package passes 64 exact value cases, and a separate 1,000-round regression window (seed 911125) measures C **1.0000**, Rust **1.1579**, before package **0.9274**, new package **0.8808 × C** (**0.7607 × Rust**). This is a regression check for the current implementation, not an additional optimization or a replacement of the earlier item's historical measurement.
+
+The repository-wide stale-assumption audit covered conversion consumers, source-width and signedness assumptions, C#/Stark IR assertions, package fixtures, benchmarks, scripts and documentation. Existing saturating `sext` and wrapping expectations remain valid and their focused Release checks pass. The earlier GlobalScalarLoadForwarding widening opportunity is now implemented here. The MemoryAccess regression label is corrected to its actual recorded input, FactDrivenBranchPruning; FunctionPointerDevirtualization is separately verified in this investigation.
+
+### Final production measurement
+
+One warmup and **1,000 randomized interleaved direct processes per executable**, CPU 0, seed **911124**, arithmetic means, C = **1.0000**:
+
+| Variant | Mean µs | / C | / Rust | / corresponding before |
+| --- | ---: | ---: | ---: | ---: |
+| C | 1538.603223 | **1.0000** | — | — |
+| Rust | 1780.855341 | **1.1574** | **1.0000** | — |
+| Stark before, source | 1539.423364 | **1.0005** | — | **1.0000** |
+| Stark before, package | 1541.432922 | **1.0018** | — | **1.0000** |
+| Stark production, source | 1509.551562 | **0.9811** | **0.8477** | **0.9806** |
+| Stark production, source-free package | 1512.347866 | **0.9829** | **0.8492** | **0.9811** |
+
+All **6,000 measured processes** succeed with stable executable hashes. The final window is closed (**17:04:46–17:04:55 UTC**), as is the sequential 4,000-process regression window (**17:04:55–17:05:02 UTC**). Means include startup; final CVs are 2.5–3.5%. Passive cooling, thermal capping and unconfirmed host exclusivity limit fine precision. No builds, tests or tracing from this agent overlap samples. The difference between source/package means with identical native text is not another optimization.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/PureCallGlobalForwarding/turn1/production/`, especially `interleaved-1000.json`, `provenance.json`, `codegen-validation.json`, `facts-validation.json`, `seed-validation.json`, `regressions/`, initial/post-LTO LLVM and native disassembly. The parent retains before binaries, frozen compiler, baseline measurements and `controls/`. Final compiler SHA-256 is `25a56a39e9ea93728b064d0452c383e6f90016cfe8c96a5fe244c880937dc263`; the unchanged source-free SDK has 13 module archives/images and zero source fallbacks. Compiler jobs ran serially under the 2 GiB process-group guard; the final source build peaked at approximately 1.23 GiB, with no guard firing.
+
+**Next: ReadonlyOtherLocalFieldStore.**
+
+
 ## MemoryAccess completion (November 1, 2026)
 
 **Status: complete, goal turn 1.** The accepted affine-cycle diagnostic is implemented as a general compiler proof. Both ordinary source and source-free package builds beat C and canonical Rust in the final 1,000-round window. Benchmark and standard-library sources are unchanged.
@@ -658,7 +704,7 @@ Negative controls are retained under `turn1/controls/`: bounded expression group
 
 The new native test checks **350 exact results** against an independent reference, across source imports and a real noinline native package whose `.stark` source is deleted: signed seed sums, byte-reading results, mutating pointer calls and runtime loop counts. The final benchmark binaries additionally pass **122 exit-predicate checks** spanning every signed residue and **22 physical PID-boundary checks**. The benchmark's exact total is absent from its optimized executable; these are predicate checks, while the arbitrary-input helper tests validate exact sums. Before-production totals for all 61 residues were independently checked during the diagnostic investigation.
 
-**17 LLVM modules verify.** The target-matched facts probe's initial LLVM is byte-identical to the actual packaged CLI output; seed, product and final checksum ranges remain present. Fresh package builds of Arithmetic, FunctionPointerDevirtualization, IndependentRawPointerRegions and IndependentSliceAdd pass and retain byte-identical `.text` to their completed versions, so additional timing runs were unnecessary. Repository-wide direct/indirect stale-assumption searches covered pass/fact consumers, IR expectations, fixtures, benchmarks, scripts, docs and Stark ports; no package schema or existing behavioral expectation required changing.
+**17 LLVM modules verify.** The target-matched facts probe's initial LLVM is byte-identical to the actual packaged CLI output; seed, product and final checksum ranges remain present. Fresh package builds of Arithmetic, FactDrivenBranchPruning, IndependentRawPointerRegions and IndependentSliceAdd pass and retain byte-identical `.text` to their completed versions, so additional timing runs were unnecessary. **Audit correction (PureCallGlobalForwarding investigation):** the earlier folder label said FunctionPointerDevirtualization, but its recorded command compiled FactDrivenBranchPruning. The actual FunctionPointerDevirtualization is separately verified in the later completion entry above. Repository-wide direct/indirect stale-assumption searches covered pass/fact consumers, IR expectations, fixtures, benchmarks, scripts, docs and Stark ports; no package schema or existing behavioral expectation required changing.
 
 Final randomized interleaved arithmetic means, **1,000 successful measured processes per variant**, seed **911121**, CPU **0**, C = **1.0000**:
 
@@ -675,7 +721,7 @@ All **6,000 measured processes** succeed, all executable hashes remain stable, a
 
 Artifacts: ignored `benchmarks/codegen/sequential-goal-20261031/MemoryAccess/turn1/production/`, especially `interleaved-1000.json`, `provenance.json`, `codegen-validation.json`, `facts-validation.json`, `signed-production-validation.json`, `physical-pid-production-validation.json`, initial/post-LTO LLVM and disassembly. Before executables and compiler are preserved in `turn1/`; final Release compiler SHA-256 is `0a9279bab8bf09ff06c2003429a8e46a2185ca55c111a0a21b19e38f5f4edd04`. The unchanged source-free SDK has 13 module archives/images and zero source fallbacks. Every compiler job ran serially under a 2 GiB process-group RSS guard; the final source build peaked at approximately 1.23 GiB, without a guard firing.
 
-**Next: PureCallGlobalForwarding.**
+**Next at this completion: PureCallGlobalForwarding (now completed above).**
 
 
 ## IndependentSliceAdd completion (November 1, 2026)
@@ -766,9 +812,9 @@ All three compilers eliminate the global scalar traffic from the hot loop. Stark
 
 The earlier checked counter optimization already supplies the `i % 97` recurrence: a bounded [0,96] phi, increment in [1,97], and reset at 97. C and Rust still compute this counter remainder in the loop. Stark retains original-width arithmetic values at their boundaries. Its source/package native `.text` is identical: **492 bytes**, SHA-256 `bc902bbc1cb9eb2a30f67e78bf8fff65cba944635d296e6e50395d0cb19d1231`. Final LLVM/native code and both canonical C/Rust IR/native outputs were inspected, including cold exits and the actual PID operation.
 
-Two concrete fact-preservation opportunities remain, neither required to clear this item and neither implemented here:
+Two concrete fact-preservation opportunities were recorded at this completion; the first is now implemented under PureCallGlobalForwarding above:
 
-- **Consume the known sign on integer widening.** Actual SSA facts retain [0,96] through the i24 remainder result and its i64 conversion. `LlvmFunctionBodyEmitter.Instructions.EmitConvert` selects integer extension by the source type, so initial LLVM still has `trunc i32 to i24` then `sext i24 to i64`. LLVM does not recover the recurrence's sign from that shape; native code contains a shift-left/arithmetic-shift-right pair per iteration. A general checked use of the existing nonnegative fact at widening could replace the sign extension with a zero extension. It must retain sign extension whenever negative values are possible and preserve truncation semantics. No speedup percentage is claimed without a matched control and implementation.
+- **Consume the known sign on integer widening (subsequently implemented).** At this completion, SSA retained [0,96] through the i24 remainder and its i64 conversion, but the type-only emitter selected `trunc i32 to i24; sext i24 to i64`, producing two native shifts per iteration. The later PureCallGlobalForwarding change consumes the existing nonnegative range/known-bit proof, retains sign extension whenever negative values are possible and preserves source-width truncation. Its completed entry above contains the matched control, implementation, validation and fresh production/regression measurements.
 - **Expose private scalar state to range analysis earlier.** The compiler facts for the inlined `Counter` load remain the full i64 domain; LLVM only promotes the global to a phi after Stark's fact consumers have run. An earlier promotion would need a proof that its address does not escape and that all reads/writes/calls are accounted for, preserving supported mutation and observation paths. A future unsigned-checksum proof must also establish the entry: the current `CurrentId` u32 value is implicitly reinterpreted to i32 before `% 31`, so the SSA seed interval is [-29,31]. It is invalid to infer a nonnegative entry merely from the public u32 return or to hard-code assumptions about real Linux PID values. The existing sign-sensitive fallback is conservative.
 
 A source-free, target-matched SSA/fact probe produces **byte-identical initial root LLVM** to the real package CLI compilation. Its facts show the remainder bounds above and the unknown global-load domain. An initial isolated probe omitted the SDK's explicit `generic` CPU contract; it was rejected before compilation, corrected, and only the matching successful probe is used as evidence. The source-free SDK has 13 real modules and zero `.stark` fallbacks; unlike FunctionPointerDevirtualization, this benchmark really imports and consumes packaged `System.Process`.

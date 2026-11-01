@@ -311,8 +311,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Integer)
         {
+            // A signed storage type can carry a proved nonnegative value. Keep
+            // that fact at widening; negative-capable values still sign extend.
             var opcode = sourceType.BitWidth < targetType.BitWidth
-                ? (HasUnsignedIntegerSemantics(sourceType) ? "zext" : "sext")
+                ? (HasUnsignedIntegerSemantics(sourceType) || CanProveNonNegativeInteger(convert.Operand) ? "zext" : "sext")
                 : "trunc";
             AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;

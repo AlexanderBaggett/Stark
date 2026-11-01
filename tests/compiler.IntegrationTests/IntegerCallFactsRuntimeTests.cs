@@ -56,6 +56,10 @@ public sealed class IntegerCallFactsRuntimeTests
         {
             return (left * 7 + right) % 65537;
         }
+        public noinline finite law i64[min max] Masked(i32[min max] value)
+        {
+            return (i64[min max])(value & 2147483647);
+        }
         public unsafe noinline finite law i64[min max] Narrow(u16[0 1088] value)
         {
             return (i64[min max])(i8[min max])value;
@@ -79,6 +83,7 @@ public sealed class IntegerCallFactsRuntimeTests
         unsafe ffi finite law i64[min max] Reference(i64[min max] seed, u8[0 64] count);
         unsafe ffi finite law i64[min max] ReferenceByte(u16[0 1088] value, bool sign);
         unsafe ffi finite law u64[0 max] ReferenceUnsigned(u16[0 1088] value);
+        unsafe ffi finite law i64[min max] ReferenceMasked(i32[min max] value);
 
         noinline finite law i64[min max] Reduce(i64[min max] seed, u8[0 64] count)
         {
@@ -104,6 +109,8 @@ public sealed class IntegerCallFactsRuntimeTests
             {
                 stack i64[min max] positive = Seed((u8[0 7])s, false);
                 stack i64[min max] negative = Seed((u8[0 7])s, true);
+                if (Masked((i32[min max])positive) != ReferenceMasked((i32[min max])positive)) { return 6; }
+                if (Masked((i32[min max])negative) != ReferenceMasked((i32[min max])negative)) { return 7; }
                 for willexit (stack mut u8[0 6] c = 0; c < 6; c += 1)
                 {
                     stack u8[0 64] count = Count((u8[0 5])c);
@@ -145,6 +152,9 @@ public sealed class IntegerCallFactsRuntimeTests
         }
         uint64_t ReferenceUnsigned(uint16_t value) {
             uint8_t bits=(uint8_t)value; int8_t low; memcpy(&low,&bits,sizeof(low)); return (uint64_t)low;
+        }
+        int64_t ReferenceMasked(int32_t value) {
+            return (int64_t)((uint32_t)value & UINT32_C(2147483647));
         }
         """;
 }
