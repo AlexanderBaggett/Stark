@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1; Arithmetic is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Current benchmark: Arithmetic, goal turn 1.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: BranchSelectPredication, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 13 of 52 initially open items are complete. Arithmetic remains open on goal turn 1: unchanged source **1.0048 × C / 0.8897 × Rust** across all 3,000 production samples from three 1,000-round windows; package **1.0046 × C** in its 1,000-round window. The nonnegative-64 diagnostic is **0.8693 × C**, but no production proof/patch exists yet. A width-only control was slower and is rejected. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 14 of 52 initially open items are complete. Arithmetic passed on goal turn 2: production source **0.8695 × C / 0.7648 × Rust**, source-free package **0.8693 × C / 0.7646 × Rust**, canonical Rust **1.1369 × C** in 1,000 randomized interleaved rounds per executable. The compiler proves and preserves inductive nonnegativity, enabling unsigned arithmetic without forcing narrower storage. StackGrowth and QueueGrowth source/package regression comparisons also beat C and Rust. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**Arithmetic coordination (goal turn 1):** Source/package/C/Rust builds, the source-free Process dependency chain, 15 initial LLVM verifications, exact 97-seed native checks, two 1,000-round control windows and the actual-facts probe are complete. Next implement a checked inductive nonnegativity proof; do not advance to BranchSelectPredication or count multiple controls as extra goal turns. No production sources changed; all windows are closed. Preserve peer sections.
+**Arithmetic coordination (goal turn 2):** Completed. Source/package builds, 53 focused Release checks, 15 LLVM verifications, all 97 exact seed totals, and Arithmetic/StackGrowth/QueueGrowth 1,000-round comparisons pass. All build/test/timing windows are closed. Commit this item before starting BranchSelectPredication; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -33,7 +33,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 11 | `benchmarks/collections/QueueChurn` | Complete | 1 | 0.9176 | 0.7417 |
 | 12 | `benchmarks/collections/QueueGrowth` | Complete | 1 | 0.9643 | 0.6979 |
 | 13 | `benchmarks/collections/StackGrowth` | Complete | 1 | 0.9877 | 0.7051 |
-| 14 | `benchmarks/micro/Arithmetic` | In progress | 1 | 1.0048 | 0.8897 |
+| 14 | `benchmarks/micro/Arithmetic` | Complete | 2 | 0.8695 | 0.7648 |
 | 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
 | 16 | `benchmarks/micro/Branching` | Queued | 0 | — | — |
 | 17 | `benchmarks/micro/FactDrivenBranchPruning` | Queued | 0 | — | — |
@@ -627,6 +627,43 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## Arithmetic nonnegative-recurrence completion (November 1, 2026)
+
+**Status: completed on actual goal turn 2.** The rebuilt production compiler beats C and canonical Rust from both source and a source-free SDK. The benchmark sources and C/Rust compilers/flags are unchanged. The first-turn controls below remain diagnostic evidence, not the implementation.
+
+### General proof and fact preservation
+
+`SsaValueFactAnalyzer.Induction.cs` proves a bounded integer phi nonnegative only when an independent entry and every reachable incoming transition preserve that property under one phi hypothesis. It follows immutable SSA uses, lossless conversions, selects and all merge edges; unsupported cycles remain conservative. Interval transfers check each arithmetic operation against its actual result type before using a relation. For nonnegative `x` and positive integer `d`/`k`, the order proof can establish `x / d <= x <= k * x`, including intervening nonnegative additions. This proves relational subtraction without treating its operands as unrelated intervals. Possible overflow, wrapping arithmetic, lossy conversions, unknown calls, negative entries/transitions, and nonpositive divisors do not acquire the stronger range.
+
+The proof refines existing range/known-bit records while retaining their other fields. The ordinary refinement pipeline receives the same authoritative direct-call parameter effects as before. Its dynamic-storage transfer also recomputes scalar ranges: that transfer had overwritten the relational lower bound with an interval-only subtraction. The checked sign constraints are now reapplied after that transfer, and eligible relations are recovered after later SSA rewrites even when a phi already retains its nonnegative source range. No new package field/schema, benchmark identity check, forced unsigned type, or width-only rewrite was introduced. The existing LLVM division/remainder consumer uses the preserved facts.
+
+### Generated code and correctness
+
+The actual source and package initial/optimized LLVM each contain **one `udiv i64` and three `urem i64`**, including the seed remainder, with **zero signed division/remainder operations in `main`**. The 200,000-iteration recurrence remains. Native code uses unsigned reciprocal multiplication without the former signed quotient/remainder corrections. Source/package `.text` sections are identical at **604 bytes** (SHA-256 `b40a0560d511ac8f7dd146989430b80da15d653dba129c166421c100ff9caa91`); the old section was 508 bytes, so the measured improvement does not depend on smaller code. Clang and Rust still retain signed arithmetic in this recurrence. Their sources, LLVM/native code and LLVM's division narrowing implementation were inspected in turn 1. The slower signed-width-only control remains rejected; no narrowing was added to the production patch.
+
+**53 focused Release checks passed:** 19 new pipeline cases and 28 existing fact/propagation cases; two native source/source-free-package cases; three existing LLVM consumer cases; and the existing stable-loop-phi range check. The new pipeline cases cover intermediate/reanalyzed/emitted facts, arbitrary eligible formulas, acyclic relations, every branch, negative mutual-cycle entries, signed inputs, opaque results, nonpositive divisors, wrapping, overflow and truncation. Native kernels compare **384 results** against an independent C implementation across runtime-provided seed boundaries, zero/short loops, positive/signed recurrences, wrapping and truncation. The package check deletes the kernel's Stark source before consuming its archive. In addition, GDB checks the **exact final total for all 97 benchmark seed remainders** in each actual production binary against the independent 200,000-step reference; all 194 totals match, with successful exits. Fifteen emitted/reference LLVM modules verify.
+
+The rebuilt Release compiler SHA-256 is `68ccbb789ed763f18c57f7dfbf9912265e48240af1c91a64d6682da3376524db`. The production package consumer uses the unchanged 13-module source-free SDK from turn 1, with zero `.stark` fallback files; the separate native integration check builds a fresh proof-kernel package. A repository-wide stale-assumption audit covered the analyzer/refinement consumers, range/codegen assertions, Stark ports, benchmark sources, package boundaries and documentation. Existing stable-phi and unsigned-emission expectations remain valid. One managed worker and a monitored 2 GiB process-group guard were used; no guard fired. No full release suite ran.
+
+### Final 1,000-round production comparison
+
+One warmup, then **1,000 randomized interleaved processes per executable**, CPU 0, seed 911090, arithmetic means including startup. All 6,000 measured executions succeeded, and executable hashes stayed unchanged.
+
+| Executable | Mean µs | Mean / C | Mean / Rust |
+| --- | ---: | ---: | ---: |
+| C | 2223.302 | **1.0000** | 0.8796 |
+| Canonical Rust | 2527.700 | **1.1369** | 1.0000 |
+| Stark before, source | 2233.821 | 1.0047 | 0.8837 |
+| Stark before, package | 2233.037 | 1.0044 | 0.8834 |
+| Stark production, source | 1933.187 | **0.8695** | **0.7648** |
+| Stark production, package | 1932.788 | **0.8693** | **0.7646** |
+
+Production source/before is **0.8654**, package/before **0.8655**. This implements the previously isolated sign-proof opportunity rather than timing an assumed IR patch. Coefficients of variation are 2.3–3.0%; process startup, passive cooling, thermal capping and possible shared-host activity still limit precision. The tracker requested a quiet window, but exclusive host access was unconfirmed. This chat finished builds, tests and GDB checks before timing.
+
+Separate 1,000-round comparisons against unchanged before/C/Rust binaries checked the two most recent allocation benchmarks. StackGrowth source/package is **0.9814 / 0.9817 × C** (source/before **0.9998**); QueueGrowth source/package is **0.9575 / 0.9560 × C** (source/before **0.9983**). Both consumers beat canonical Rust in each window. These are regression checks, not extra Arithmetic goal turns or claims of a new allocation speedup. All windows are closed.
+
+Ignored evidence is under `benchmarks/codegen/sequential-goal-20261031/Arithmetic/turn2/`: final test logs/TRX/resource reports and, under `final/`, source/package binaries, initial/post-ThinLTO LLVM, codegen verification, native disassembly, compiler/source hashes, exact-seed reference observations, raw `interleaved-1000.json`, and `regression-StackGrowth/` / `regression-QueueGrowth/` binaries and raw samples. Unchanged C/Rust and before binaries/IR plus SDK provenance are retained in `turn1/`. Commit this completed item before beginning BranchSelectPredication; preserve other-agent tracker changes.
 
 ## Arithmetic sign-fact investigation (November 1, 2026)
 

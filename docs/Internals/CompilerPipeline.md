@@ -158,6 +158,15 @@ The current default compilation pipeline is dependency-ordered rather than hard-
 29. `value-facts`
    Computes SSA value facts for later optimization and LLVM emission.
    This pass records integer ranges, known bits, boolean constants, nullability, pointer alignment, length/capacity/initialized-prefix ranges, text literal payloads, bounded raw-pointer regions, dynamic-storage regions, and block-entry/block-exit fact maps. Recomputations after later SSA rewrites use the same semantic direct-call parameter effects, including available package and specialization summaries, so read-only calls do not discard established storage facts. It also publishes a summary log entry so optimization decisions can be inspected.
+   Bounded scalar phis can acquire an inductive nonnegative range when an
+   independent entry and every incoming transition preserve it. Relational
+   subtraction checks reuse exact interval transfers to reject possible
+   overflow; positive division bounds can establish `x / d <= x <= k * x`.
+   Merge edges are checked under one hypothesis, with unsupported cycles,
+   wrapping and lossy conversions left conservative. The resulting ranges and
+   known bits retain the other fact fields, survive the storage-range transfer,
+   and are recovered after later rewrites. Existing LLVM consumers can then
+   select unsigned arithmetic without changing source types or package schemas.
 30. `dynamic-storage-ssa`
    Optimizes dynamic storage operations using SSA value and region facts.
    This pass removes provably no-op reserves, folds provably successful `TryReserve`/`TryReserveCapacity` calls, removes frees for storage proven to have no backing allocation, and preserves dynamic-storage facts across calls when semantic parameter summaries prove the argument is neither written nor captured. Read-only observation alone does not invalidate those facts. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.

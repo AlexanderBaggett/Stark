@@ -5,7 +5,7 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed class SsaValueFactAnalyzer
+internal sealed partial class SsaValueFactAnalyzer
 {
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> _directCallParameterEffects;
 
@@ -57,6 +57,11 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects);
+        var nonNegativeValues = RefineInductiveNonNegativeFacts(function, values, reachableBlockIds);
+        if (nonNegativeValues.Count != 0)
+        {
+            RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, nonNegativeValues);
+        }
         var blockEntryFacts = AnalyzeBlockEntryFacts(function, values, reachableBlockIds);
         var blockExitFacts = AnalyzeBlockExitFacts(function, values, blockEntryFacts, reachableBlockIds);
         return new SsaFunctionFactModel(function.Name, values, blockEntryFacts, blockExitFacts);
@@ -763,7 +768,8 @@ internal sealed class SsaValueFactAnalyzer
         SsaFunction function,
         Dictionary<string, SsaValueFacts> values,
         ISet<int> reachableBlockIds,
-        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects)
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects,
+        IReadOnlySet<string>? nonNegativeValues = null)
     {
         for (var round = 0; round < 8; round++)
         {
@@ -782,6 +788,10 @@ internal sealed class SsaValueFactAnalyzer
                 }
 
                 var joined = JoinFacts(phi.ResultName, phi.Type, incomingFacts);
+                if (nonNegativeValues?.Contains(phi.ResultName) == true)
+                {
+                    joined = ApplyNonNegativeProof(joined);
+                }
                 if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[phi.ResultName], joined))
                 {
                     values[phi.ResultName] = joined;
@@ -801,6 +811,10 @@ internal sealed class SsaValueFactAnalyzer
                     moduleName,
                     function,
                     reachableBlockIds);
+                if (nonNegativeValues?.Contains(valueInstruction.ResultName) == true)
+                {
+                    analyzed = ApplyNonNegativeProof(analyzed);
+                }
                 if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[valueInstruction.ResultName], analyzed))
                 {
                     values[valueInstruction.ResultName] = analyzed;
@@ -811,6 +825,21 @@ internal sealed class SsaValueFactAnalyzer
             if (RefineDynamicStorageLocalFacts(function, values, reachableBlockIds, directCallParameterEffects))
             {
                 changed = true;
+            }
+
+            // The storage transfer also recomputes scalar expressions from
+            // intervals. It must not weaken an independently proved relation.
+            if (nonNegativeValues is not null)
+            {
+                foreach (var name in nonNegativeValues)
+                {
+                    var refined = ApplyNonNegativeProof(values[name]);
+                    if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[name], refined))
+                    {
+                        values[name] = refined;
+                        changed = true;
+                    }
+                }
             }
 
             if (!changed)
