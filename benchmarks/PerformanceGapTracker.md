@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: BranchSelectPredication, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: Branching, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 14 of 52 initially open items are complete. Arithmetic passed on goal turn 2: production source **0.8695 × C / 0.7648 × Rust**, source-free package **0.8693 × C / 0.7646 × Rust**, canonical Rust **1.1369 × C** in 1,000 randomized interleaved rounds per executable. The compiler proves and preserves inductive nonnegativity, enabling unsigned arithmetic without forcing narrower storage. StackGrowth and QueueGrowth source/package regression comparisons also beat C and Rust. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 15 of 52 initially open items are complete. BranchSelectPredication passed on goal turn 1: source **0.9984 × C / 0.9332 × Rust**, source-free package **0.9996 × C / 0.9343 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**Arithmetic coordination (goal turn 2):** Completed. Source/package builds, 53 focused Release checks, 15 LLVM verifications, all 97 exact seed totals, and Arithmetic/StackGrowth/QueueGrowth 1,000-round comparisons pass. All build/test/timing windows are closed. Commit this item before starting BranchSelectPredication; preserve peer sections.
+**BranchSelectPredication coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. Branching is next and has not started. No active window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -34,7 +34,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 12 | `benchmarks/collections/QueueGrowth` | Complete | 1 | 0.9643 | 0.6979 |
 | 13 | `benchmarks/collections/StackGrowth` | Complete | 1 | 0.9877 | 0.7051 |
 | 14 | `benchmarks/micro/Arithmetic` | Complete | 2 | 0.8695 | 0.7648 |
-| 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
+| 15 | `benchmarks/micro/BranchSelectPredication` | Complete | 1 | 0.9984 | 0.9332 |
 | 16 | `benchmarks/micro/Branching` | Queued | 0 | — | — |
 | 17 | `benchmarks/micro/FactDrivenBranchPruning` | Queued | 0 | — | — |
 | 18 | `benchmarks/micro/FunctionPointerDevirtualization` | Queued | 0 | — | — |
@@ -627,6 +627,29 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## BranchSelectPredication completion (November 1, 2026)
+
+**Status: completed, goal turn 1.**
+
+The fresh current compiler already passes the requested arithmetic-mean criteria, so no new compiler, standard-library or benchmark patch was needed. All three implementations retain the 500,000-iteration signed-remainder recurrence and 500,000 calls to the deliberately non-inlined choice function. The choice uses a conditional move. Stark and Rust materialize a Boolean with `test`/`sete`; Clang uses an integer argument and `not`/`and` for the parity predicate. That is a concrete code-shape opportunity, but this run does not establish a performance failure requiring an ABI or predicate-lowering change. The previous sign-proof change is not used to make this genuinely signed recurrence unsigned.
+
+Stark's source and source-free package executable `.text` sections match exactly: 492 bytes, SHA-256 `8e2e5484de65da797a04fdf12030b5d08bc84fa716e1b14c5e011364c037c094`. Initial and post-ThinLTO LLVM plus actual native code were compared with freshly compiled C and Rust. Fifteen emitted/reference LLVM modules verify. Normal exits pass, and an independent Python reference checked the exact final total for eight representative seed values (0, 1, 2, 3, 511, 512, 1022, 1023) across all four actual executables, including signed remainder behavior. All 32 results match; the GDB observer reads the actual loop result, not only its final status.
+
+One warmup and **1,000 randomized interleaved samples per executable**, CPU 0, seed 911101, arithmetic means including process startup:
+
+| Executable | Mean µs | Mean / C | Mean / Rust |
+| --- | ---: | ---: | ---: |
+| c | 3649.833442 | 1.0000 | 0.9347 |
+| rust | 3904.920474 | 1.0699 | 1.0000 |
+| stark-source | 3644.041377 | 0.9984 | 0.9332 |
+| stark-package | 3648.376890 | 0.9996 | 0.9343 |
+
+Both Stark means are below C and canonical Rust. The 0.04–0.16% C-relative differences are much smaller than the 2.3–2.9% coefficients of variation; this meets the requested observed-mean criterion without establishing a stable advantage. All 4,000 measured processes passed and hashes stayed fixed. Builds and exact-result checks finished before timing; a quiet window was requested in the tracker, but exclusive host access was unconfirmed. Passive cooling, thermal capping and possible shared activity remain limitations. No additional timing window was selected or averaged into this result.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/BranchSelectPredication/turn1/`, containing source/compiler/tool/SDK provenance, binaries, initial/post-ThinLTO and C/Rust LLVM, native disassembly, codegen verification, exact-seed reference/observations, memory reports and raw `interleaved-1000.json`. The 13-module SDK from Arithmetic turn 1 contains zero Stark source fallback files. Source builds used one managed worker under the 2 GiB process-group memory guard; no guard fired. This change only updates the owned tracker entry; other-agent changes are excluded.
+
+**Next: Branching.**
 
 ## Arithmetic nonnegative-recurrence completion (November 1, 2026)
 
