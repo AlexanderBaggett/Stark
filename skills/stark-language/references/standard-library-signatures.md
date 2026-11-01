@@ -639,7 +639,7 @@ public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAs
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right) where overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third, ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) where overlap(left, right);
+public inline fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) where overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third, const ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryStatus TryNormalizeSeparators(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
