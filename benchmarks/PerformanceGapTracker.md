@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Current benchmark: FactDrivenBranchPruning, goal turn 1.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: FunctionPointerDevirtualization, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 16 of 52 initially open items are complete. BranchSelectPredication and Branching each passed on goal turn 1 and were committed separately. FactDrivenBranchPruning remains open on actual goal turn 1: unchanged source **1.0246 × C / 0.9627 × Rust** across all 3,000 production samples from three 1,000-round windows; package **1.0247 × C** in its 1,000-round window. A native-width counter-use control partly closes the gap; a C-shaped IR diagnostic reaches **0.9990 × C**, but neither is a production implementation. Multiple control windows do not count as extra goal turns. All windows are closed; preserve peer sections.
+**Current evidence:** 17 of 52 initially open items are complete. FactDrivenBranchPruning passed on actual goal turn 2: production source **0.9868 × C / 0.9267 × Rust**, source-free package **0.9867 × C / 0.9266 × Rust**, canonical Rust **1.0649 × C**, in 1,000 randomized interleaved rounds per executable. Checked native-width arithmetic and bounded modulo inductions preserve source boundaries and remove four counter remainders. DictionaryLookup passes its matched before/after regression; its machine code is unchanged. All windows are closed; preserve peer sections.
 
-**FactDrivenBranchPruning coordination (goal turn 1):** Source/package/C/Rust builds, 15 LLVM verifications, exact native seed checks, three 1,000-round production/control comparisons and an actual-input SSA fact probe are complete. The item stays open. Next implement checked native-width counter arithmetic with source-width boundaries, then isolate the remaining C-shaped code difference and validate production. No active build/test/timing window; preserve peer sections.
+**FactDrivenBranchPruning coordination (goal turn 2):** Completed. All 26 focused Release checks, 15 LLVM verifications, nine exact production seed totals per consumer, actual fact preservation, final 1,000-round comparison and DictionaryLookup regression pass. Commit this item before starting FunctionPointerDevirtualization. No active build/test/timing window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -36,7 +36,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 14 | `benchmarks/micro/Arithmetic` | Complete | 2 | 0.8695 | 0.7648 |
 | 15 | `benchmarks/micro/BranchSelectPredication` | Complete | 1 | 0.9984 | 0.9332 |
 | 16 | `benchmarks/micro/Branching` | Complete | 1 | 0.9928 | 0.8580 |
-| 17 | `benchmarks/micro/FactDrivenBranchPruning` | In progress | 1 | 1.0246 | 0.9627 |
+| 17 | `benchmarks/micro/FactDrivenBranchPruning` | Complete | 2 | 0.9868 | 0.9267 |
 | 18 | `benchmarks/micro/FunctionPointerDevirtualization` | Queued | 0 | — | — |
 | 19 | `benchmarks/micro/GlobalScalarLoadForwarding` | Queued | 0 | — | — |
 | 20 | `benchmarks/micro/IndependentRawPointerRegions` | Queued | 0 | — | — |
@@ -628,7 +628,53 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## FactDrivenBranchPruning completion (November 1, 2026)
+
+**Status: completed on actual goal turn 2.** The ordinary rebuilt compiler beats C and canonical Rust from source and a source-free SDK. No benchmark, C or Rust source was changed. The goal-turn-1 investigation below is historical and superseded by this implementation; the later control windows are not extra goal turns.
+
+### Checked native arithmetic and modulo induction
+
+`SsaLoopCounterWidening` retains its existing private unit-step induction proof: a zero entry, one checked increment per backedge, a constant guarded limit below the signed 24-bit boundary, and a declared source range that contains the limit. It now follows immutable copies and integer conversions only when every alias can represent the entire proved counter range. Positive literal division/remainder operands and result bounds are checked against their original physical/source types before native computation. Source-width conversions remain at result uses, calls, memory and returns. Negative/nonconstant/zero divisors, shifted or lossy aliases, wrapping operations and unsupported shapes retain their original arithmetic.
+
+For a constant non-power-of-two divisor `d`, an always-executed `i % d` can use a second induction: initialize `r = 0`; on each backedge, compute `next = r + 1` and select zero when `next == d`. Inductively `r = i % d` and `0 <= r < d`. The increment is bounded by `d`, which fits the native width, so the new update cannot overflow or introduce a failure. Repeated uses of the same divisor share this state. Divisor one folds to zero; a divisor above the complete counter bound can use the counter itself. Conditional uses that need not execute on every backedge keep native remainder instead of adding recurring work. Power-of-two remainders also keep native arithmetic so LLVM can use one mask. No source operation, observable mutation, ownership action or early exit is delayed.
+
+This is a general SSA rule for eligible private inductions and arbitrary checked constants, not a benchmark/function-name, iteration-count or checksum match. No package schema, ABI, storage-layout or public API changed. Existing authoritative post-rewrite fact analysis and direct-call effects remain in use. The new native result and phi types carry their proved bounds while retaining explicit original-width values at boundaries.
+
+### Production facts, code and validation
+
+An actual source-free compilation probe's normalized initial `main` matches production. Its four remainder phis retain **[0,10], [0,2], [0,20], [0,100]** through the consuming pipeline. The final source/package optimized LLVM has **zero counter `urem` operations**; the six signed accumulator remainders remain. LLVM packs the four remainder-state updates into SIMD arithmetic (`psubd`, `pcmpeqd`, `pandn`) instead of performing 800,000 counter remainder computations over the 200,000-iteration loop. The existing small power-of-two mask and small division remain. Actual `main` has 122 instructions and one loop branch; the hot loop has no helper calls or scalar memory loads/stores. C and Rust still retain their counter-remainder arithmetic.
+
+Source/package `.text` is byte-identical and matches the successfully measured induction control: **764 bytes**, SHA-256 `a9c4696189dd3b49c37df2676499e4e1f4ca838a85ffe24f0180c19f623099c5`. The unchanged LLVM replay reproduces the width-only production code. Initial/post-ThinLTO/native code was compared with C and Rust, and 15 emitted/reference LLVM modules verify. LLVM's checked-out induction/strength-reduction and cast/type-change implementations were inspected; no LLVM backend or pass order was changed.
+
+**26 focused Release checks passed:** 24 counter/unit/native/LLVM regressions, plus two new source/source-free-package native cases. Coverage includes arbitrary divisors and aliases, divisor one and a divisor above the loop bound, shared and distinct remainder states, preserved fact bounds, conditional and power-of-two profitability, narrow calls/returns/memory, escaped/mutated counters, early exits, negative divisors, zero divisors, truncation, shifted values and wrapping. The new native kernels compare **60 results** against an independent C reference using volatile-provided seeds including `UINT32_MAX`, zero/short/full loop counts, byte-array observations and signed/truncating/wrapping fallback work. The package kernel source is deleted before archive consumption. Their new Stark functions use the strongest valid finite/law kinds. Initial fixture failures from integer-literal coercion were corrected with explicit 24-bit unsigned operands; the final checks above pass.
+
+In addition, the two actual production binaries each match the independent full benchmark recurrence for **nine exact runtime PID inputs**, including `4294967295`, observed in the native accumulator before the final predicate. All 18 totals and exits pass. The source-free SDK contains 13 unchanged real modules and zero `.stark` fallbacks. The final compiler binary hash is recorded with the source hashes and was rechecked against the binaries' provenance. A repository-wide stale-assumption audit covered the widening pass, refinement/ABI consumers, existing range/codegen tests, Stark ports, benchmark loops and documentation; source-width data contracts remain valid. No full release or unrelated long suite ran.
+
+### Final production measurements
+
+One warmup, then **1,000 randomized interleaved processes per executable**, CPU 0, seed 911107, arithmetic means including process startup:
+
+| Executable | Mean µs | Mean / C | Mean / Rust |
+| --- | ---: | ---: | ---: |
+| c | 5281.279 | 1.0000 | 0.9391 |
+| rust | 5623.855 | 1.0649 | 1.0000 |
+| before-source | 5410.353 | 1.0244 | 0.9620 |
+| before-package | 5410.933 | 1.0245 | 0.9621 |
+| width-only | 5346.194 | 1.0123 | 0.9506 |
+| stark-source | 5211.401 | 0.9868 | 0.9267 |
+| stark-package | 5211.126 | 0.9867 | 0.9266 |
+
+Production source/before is **0.9632**, package/before **0.9631**. The width-only change remains slower than C; the bounded remainder rule is what clears the item. A separate earlier 1,000-round matched diagnostic (seed 911106) measured the same final native instructions at **0.9868 × C**, with unchanged replay matching the partial width-only code. These are separate populations, not added optimization percentages or selected layouts. No hard-coded code-placement or C-body copy is present in production.
+
+A separate **1,000-round DictionaryLookup regression**, seed 911108, rebuilt both the old frozen compiler and the new compiler against identical current source/SDK inputs, plus fresh canonical C/Rust. Source/package are **0.9923 / 0.9704 × C**, with Rust **2.5173 × C**. Each mode's before/after `.text` is identical (source SHA-256 `486f30d68f55e1d9f170f9c89969fddcbf78d1de0bf6307ab446ec73e5794536`, package `26098e66f5b967a8751614b7fd49bd18321e753b7b7c8cd37fad910120863ee1`), confirming that the mask case did not acquire extra work. Timing differences between identical code are not a new performance claim. This is a regression of the existing benchmark, not a matched hashing-algorithm comparison. The frozen old compiler is retained in `final/before-compiler/` with its verified hash.
+
+All 7,000 final measured processes and 6,000 regression processes succeeded with unchanged executable hashes. Main-window coefficients of variation are **0.9–1.3%**; regression process variation is larger. Startup, passive cooling, thermal capping and unconfirmed shared-host activity limit precision; the results are observed arithmetic means, not a cross-machine guarantee. All builds, LLVM/fact inspections and GDB checks finished before their requested quiet timing windows, with no overlapping builds/tests from this chat. Exclusive host access was unconfirmed. Managed builds ran serially under the 2 GiB process-group guard; final focused checks peaked around 1.05 GiB, and no memory guard fired.
+
+Authoritative ignored evidence: `benchmarks/codegen/sequential-goal-20261031/FactDrivenBranchPruning/turn2/final/`, especially **`interleaved-1000.json`** and `regression-DictionaryLookup/interleaved-1000.json`; source/package binaries and initial/post-LTO IR, native disassembly, compiler/source provenance, codegen verification, actual facts/SSA and exact-seed reports. `turn2/test-results/` and build/resource logs retain validation; `turn2/candidate/` retains the real width-only implementation and `turn2/modulo-control/` its matched replay/induction controls and raw 1,000-round results. Turn 1's controls and before/C/Rust binaries remain preserved. All windows are closed. **Next: FunctionPointerDevirtualization, not started.** Commit this completed item before advancing and preserve peer edits.
+
 ## FactDrivenBranchPruning investigation (November 1, 2026)
+
+**Historical goal-turn-1 evidence; superseded by the completed turn-2 implementation above.**
 
 **Status: open, actual goal turn 1.** The production compiler still loses to C. No compiler, stdlib or benchmark source was changed for this investigation. BranchSelectPredication and Branching were cleared and committed separately before this item began. Do not advance to FunctionPointerDevirtualization yet, and do not count the diagnostic windows as separate goal turns.
 

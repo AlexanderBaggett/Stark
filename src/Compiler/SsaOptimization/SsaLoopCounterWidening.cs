@@ -1,7 +1,10 @@
+using System.Numerics;
+
 namespace Stark.Compiler;
 
 // Select native storage for a bounded SSA induction. Source-width values remain
-// explicit conversions, so ABI/layout and every non-control use keep their types.
+// explicit conversions at observable uses. Proven division/remainder users can
+// compute at native width without changing their source-width results.
 internal sealed class SsaLoopCounterWidening
 {
     public SsaIrModule Optimize(SsaIrModule module)
@@ -85,6 +88,112 @@ internal sealed class SsaLoopCounterWidening
             var compareName = Fresh(converted.Name + "_native");
             var counterValue = new SsaValueReference(counterName, wideCounter);
             var nextValue = new SsaValueReference(nextName, wideCounter);
+            var remainderValues = new Dictionary<BigInteger, SsaValueReference>();
+            var remainderPhis = new List<SsaPhi>();
+            var remainderUpdates = new List<SsaInstruction>();
+
+            SsaValue Remainder(BigInteger divisor, StarkTypeSymbol type, SourceLocation? location)
+            {
+                if (divisor == 1) return new SsaIntegerConstant(0, type);
+                if (divisor > limit.Value) return counterValue;
+                if (remainderValues.TryGetValue(divisor, out var existing)) return existing;
+
+                // The primary induction starts at zero and advances once per
+                // backedge. Thus (i + 1) % d is r + 1, resetting at d. These
+                // bounds also prove that the added update cannot overflow.
+                var name = Fresh(counter.Name + "_remainder");
+                var value = new SsaValueReference(name, type);
+                var incrementType = StarkTypeSymbols.Integer(32, 1, divisor, isUnsigned: true);
+                var incrementName = Fresh(name + "_increment");
+                var incrementValue = new SsaValueReference(incrementName, incrementType);
+                var conditionName = Fresh(name + "_end");
+                var nextRemainderName = Fresh(name + "_next");
+                remainderPhis.Add(new SsaPhi(name, name, type,
+                    [new(initial.PredecessorBlockId, new SsaIntegerConstant(0, type)),
+                     new(back.PredecessorBlockId, new SsaValueReference(nextRemainderName, type))], location));
+                remainderUpdates.Add(new SsaValueInstruction(incrementName, new SsaBinaryRValue(
+                    SsaBinaryOperator.Add, value, new SsaIntegerConstant(1, wideCounter), incrementType,
+                    "remainder induction increment"), location));
+                remainderUpdates.Add(new SsaValueInstruction(conditionName, new SsaBinaryRValue(
+                    SsaBinaryOperator.Equal, incrementValue, new SsaIntegerConstant(divisor, incrementType),
+                    StarkTypeSymbols.Bool, "remainder induction boundary"), location));
+                remainderUpdates.Add(new SsaValueInstruction(nextRemainderName, new SsaSelectRValue(
+                    new SsaValueReference(conditionName, StarkTypeSymbols.Bool), new SsaIntegerConstant(0, type),
+                    incrementValue, type, "bounded remainder induction"), location));
+                remainderValues.Add(divisor, value);
+                return value;
+            }
+
+            bool IsCounterAlias(SsaValue value)
+            {
+                var visited = new HashSet<string>(StringComparer.Ordinal);
+                while (value is SsaValueReference reference && visited.Add(reference.Name)
+                    && StarkTypeSymbols.TryGetEffectiveIntegerBounds(value.Type, out var min, out var max)
+                    && min <= 0 && max >= limit.Value)
+                {
+                    if (reference.Name == counter.Name) return true;
+                    if (!definitions.TryGetValue(reference.Name, out var definition)) return false;
+                    switch (definition.Instruction.Value)
+                    {
+                        case SsaUseRValue use: value = use.Value; break;
+                        case SsaConvertRValue convert: value = convert.Operand; break;
+                        default: return false;
+                    }
+                }
+                return false;
+            }
+
+            bool TryWidenArithmetic(SsaValueInstruction instruction, int blockId, List<SsaInstruction> instructions)
+            {
+                if (instruction.Value is not SsaBinaryRValue
+                    { Operator: SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo,
+                      Type.Kind: StarkTypeKind.Integer, Type.BitWidth: 24,
+                      Left.Type.Kind: StarkTypeKind.Integer, Left.Type.BitWidth: 24,
+                      Right: SsaIntegerConstant { Type.Kind: StarkTypeKind.Integer, Type.BitWidth: 24 } divisor } arithmetic
+                    || divisor.Value <= 0
+                    || !StarkTypeSymbols.IntegerValueFitsEffectiveRange(divisor.Value, divisor.Type)
+                    || !StarkTypeSymbols.IntegerValueFitsEffectiveRange(divisor.Value,
+                        StarkTypeSymbols.Integer(24, isUnsigned: arithmetic.Type.IsUnsigned))
+                    || !IsCounterAlias(arithmetic.Left)
+                    || !StarkTypeSymbols.TryGetEffectiveIntegerBounds(arithmetic.Type, out var min, out var max))
+                    return false;
+                var resultMax = arithmetic.Operator == SsaBinaryOperator.Divide
+                    ? limit.Value / divisor.Value : BigInteger.Min(limit.Value, divisor.Value - 1);
+                if (min > 0 || resultMax > max) return false;
+
+                // The checked induction is nonnegative and fits both source
+                // interpretations. A positive divisor gives the same value at
+                // either width; retain the original result at every boundary.
+                var nativeType = StarkTypeSymbols.Integer(32, 0, resultMax, isUnsigned: true);
+                var nativeName = Fresh(instruction.ResultName + "_native");
+                // Do not add per-iteration state for conditional uses or a
+                // power-of-two remainder that can already use one native mask.
+                var alwaysExecuted = blockId == header.Id
+                    || !CanReach(header.Terminator.Targets[0], back.PredecessorBlockId, blockId, blocks);
+                var simpleRemainder = divisor.Value == 1 || divisor.Value > limit.Value;
+                var useInduction = alwaysExecuted && (divisor.Value & (divisor.Value - 1)) != 0;
+                SsaRValue native = arithmetic.Operator == SsaBinaryOperator.Modulo && (simpleRemainder || useInduction)
+                    ? new SsaUseRValue(Remainder(divisor.Value, nativeType, instruction.Location))
+                    : arithmetic with
+                    {
+                        Left = counterValue,
+                        Right = new SsaIntegerConstant(divisor.Value, StarkTypeSymbols.Integer(32, isUnsigned: true)),
+                        Type = nativeType
+                    };
+                instructions.Add(instruction with { ResultName = nativeName, Value = native });
+                instructions.Add(instruction with { Value = new SsaConvertRValue(
+                    new SsaValueReference(nativeName, nativeType), arithmetic.Type, "source-width arithmetic result") });
+                return true;
+            }
+
+            var arithmeticReplacements = new Dictionary<string, List<SsaInstruction>>(StringComparer.Ordinal);
+            foreach (var definition in definitions.Values)
+            {
+                var replacement = new List<SsaInstruction>();
+                if (TryWidenArithmetic(definition.Instruction, definition.Block, replacement))
+                    arithmeticReplacements.Add(definition.Instruction.ResultName, replacement);
+            }
+
             var newPhi = phi with { ResultName = counterName, Type = wideCounter, Incomings =
             [new(initial.PredecessorBlockId, new SsaIntegerConstant(0, wideCounter)), new(back.PredecessorBlockId, nextValue)] };
             result = function with { Blocks = function.Blocks.Select(block =>
@@ -109,9 +218,14 @@ internal sealed class SsaLoopCounterWidening
                         instructions.Add(updateDefinition.Instruction with
                         { Value = new SsaConvertRValue(nextValue, increment.Type, "source-width increment value") });
                     }
+                    else if (instruction is SsaValueInstruction value
+                        && arithmeticReplacements.TryGetValue(value.ResultName, out var replacement))
+                        instructions.AddRange(replacement);
                     else instructions.Add(instruction);
                 }
-                return block with { Phis = block.Phis.Select(candidate => ReferenceEquals(candidate, phi) ? newPhi : candidate).ToArray(),
+                if (block.Id == back.PredecessorBlockId) instructions.AddRange(remainderUpdates);
+                return block with { Phis = (block.Id == header.Id ? remainderPhis : [])
+                        .Concat(block.Phis.Select(candidate => ReferenceEquals(candidate, phi) ? newPhi : candidate)).ToArray(),
                     Instructions = instructions.ToArray() };
             }).ToArray() };
             return true;

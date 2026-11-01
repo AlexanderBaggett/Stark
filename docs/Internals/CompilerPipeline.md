@@ -203,6 +203,17 @@ The current default compilation pipeline is dependency-ordered rather than hard-
 41. `arithmetic-fold-ssa`
    Folds repeated integer arithmetic before ABI and LLVM lowering.
    This pass recognizes conservative linear add/subtract chains and product chains in SSA after inlining, scalar replacement, and branch shaping have exposed them. It rewrites repeated identical integer values to multiply or exponent forms when the wrapping/range contract proves the replacement valid, leaves saturating arithmetic and unsafe reassociation source-shaped, then reruns SSA cleanup, constant propagation, and value-fact analysis. At `O0` and `Og`, it republishes the existing optimized SSA unchanged.
+   Checked private induction widening also retains native-width values for
+   division/remainder uses through lossless aliases. Nonnegative induction
+   bounds, positive literal divisors and result bounds prove equivalence;
+   explicit source-width conversions preserve calls, memory and return values.
+   Equal constant remainder uses share a bounded induction initialized to zero,
+   incremented on each backedge and reset at the divisor. Its arithmetic cannot
+   overflow; no source operation or observable update is delayed. Conditional
+   uses that do not dominate a backedge retain division/remainder instead of
+   introducing work on every iteration. Power-of-two remainders retain the
+   native mask form instead of carrying extra state.
+   Lossy aliases, shifted values and unsupported arithmetic remain unchanged.
 42. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
