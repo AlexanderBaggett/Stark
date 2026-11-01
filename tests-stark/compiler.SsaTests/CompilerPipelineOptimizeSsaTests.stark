@@ -391,8 +391,10 @@ internal fn bool ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTermsImpl()
         raw"""
 module Demo
 
-fn i32[min max] Run(i32[min max] x, i32[min max] y)
+finite law i32[min max] Run(i16[min max] smallX, i16[min max] smallY)
 {
+    stack i32[min max] x = (i32[min max])smallX;
+    stack i32[min max] y = (i32[min max])smallY;
     return x + x + y + y + y + 4;
 }
 """,

@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: StackFieldLoadForwarding (not started).** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: TailCalls, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 24 of 52 initially open items are complete. ReadonlyOtherLocalFieldStore passed on goal turn 1 with the unchanged production compiler: source **0.9967 × C / 0.8931 × Rust**, source-free package **0.9958 × C / 0.8923 × Rust**. Work/fact evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 25 of 52 initially open items are complete. StackFieldLoadForwarding passed on goal turn 1: source **0.9413 × C / 0.8649 × Rust**, source-free package **0.9416 × C / 0.8651 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**ReadonlyOtherLocalFieldStore coordination (goal turn 1): complete.** The first 1,000-round window (seed 911126, CPU 0) passes: source **0.9967 × C**, package **0.9958 × C**, both faster than Rust. All 4,000 measured processes succeed with stable hashes; 15 focused Release checks, 256 exact checksum checks and LLVM/fact validation pass. No source implementation change was needed. The window is closed; no builds/tests/tracing from this agent overlapped it, and host exclusivity was unconfirmed. StackFieldLoadForwarding has not started. Preserve peer sections.
+**StackFieldLoadForwarding coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. TailCalls is next and has not started. No active window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -44,7 +44,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 22 | `benchmarks/micro/MemoryAccess` | Complete | 1 | 0.8222 | 0.5878 |
 | 23 | `benchmarks/micro/PureCallGlobalForwarding` | Complete | 1 | 0.9811 | 0.8477 |
 | 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Complete | 1 | 0.9967 | 0.8931 |
-| 25 | `benchmarks/micro/StackFieldLoadForwarding` | Queued | 0 | — | — |
+| 25 | `benchmarks/micro/StackFieldLoadForwarding` | Complete | 1 | 0.9413 | 0.8649 |
 | 26 | `benchmarks/micro/TailCalls` | Queued | 0 | — | — |
 | 27 | `benchmarks/network/TcpLoopbackThroughput` | Queued | 0 | — | — |
 | 28 | `benchmarks/network/TcpScatterGatherLoopback` | Queued | 0 | — | — |
@@ -628,6 +628,61 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## StackFieldLoadForwarding completion (November 1, 2026)
+
+**Status: completed, goal turn 1.**
+
+The field-forwarding workload already optimizes away, and the initial unchanged production comparison passes. The IR audit nevertheless reproduced an ordinary-integer reassociation miscompile for valid cancellation inputs. The general intermediate-overflow proof is now repaired and the rebuilt production benchmark is measured again. Benchmark, standard-library and C/Rust sources are unchanged.
+
+### Executed work and preserved facts
+
+C, Rust and Stark all eliminate the `Pair` object, its field loads/stores and the `Accumulate` call. All final executables retain 200,000 arithmetic recurrence updates; no new memory optimization speedup is claimed. Stark's actual final loop retains two unsigned remainders and a logical right shift per update, while C/Rust retain signed operations. Actual first-emission LLVM, optimized/post-LTO LLVM and executable disassembly were compared, including the exit predicate.
+
+The target-matched source-free facts probe emits initial LLVM byte-identical to the actual package CLI. It retains unsigned PID and counter/source-width facts. The direct PID range is **[0,4294967295]** and the widened counter/salt retains **[0,200000]**. Stark's final total phi remains conservative at **[-1000000006,4294967295]**, with full-i64 XOR/checksum intervals; it does not itself prove this entire recurrence nonnegative. The first emitted main still has two signed remainders and an arithmetic shift.
+
+A same-flags prelink trace identifies **IPSCCPPass** as the first pass replacing the signed remainders/right shift with unsigned operations. The traced prelink main is byte-identical to the actual CLI's prelink main. Later ThinLTO preserves those operations. This distinguishes Stark's retained input/source-width facts from the later LLVM proof that consumes the exposed scalar expression.
+
+C's pre-LLVM frontend output still calls `Accumulate` and sign-extends its signed PID/counter. Rust's pre-LLVM-pass output already inlines the helper, zero-extends its unsigned PID, and retains signed/wrapping arithmetic and iterator operations. The checked-out Rust `rustc_codegen_ssa/src/mir/rvalue.rs` chooses integer cast extension from source signedness. LLVM's `SCCPSolver.cpp` only substitutes signed operations when its inferred ranges justify unsigned ones. These source readings complement the pass trace; they are not evidence that the checked-out source revision is the installed compiler. The timing difference is not isolated to one instruction or flag.
+
+### Repaired arithmetic proof boundary
+
+Previously the folder could rewrite `(seed + value) + value` into `seed + (2 * value)` and mark the new multiply `nsw`. For `seed = INT64_MIN`, `value = INT64_MAX`, both original additions fit and the result is `INT64_MAX - 1`; the new multiply overflows. A volatile native input reproduces an actual wrong exit: **before 1, after 0**. A safe final sum does not prove every new partial product or prefix safe.
+
+The folder now checks every newly emitted intermediate before accepting ordinary-integer reassociation. Arbitrary-precision interval arithmetic proves its additions, subtractions and products fit the original physical signed/unsigned storage width. The final mathematical result inherits the original expression's defined-execution contract; newly introduced intermediates do not. An unproved candidate retains the original expression. Wrapping arithmetic keeps its existing rules, and whole-expression repeated-add folding remains available. Rejected candidates restore temporary names/counters.
+
+Static range resolution preserves bounds through value-preserving integer conversions and derives computed arithmetic ranges rather than mistaking inherited operand type annotations for result contracts. Shared expression ranges are memoized. Unknown operations use conservative physical bounds. This also covers a computed operand whose actual range exceeds its operand annotation and a reordered overflowing prefix even when the grouped coefficient itself fits. Parameter/return types, pointer widths, package schema and ownership/effects are unchanged; the ordinary module/function metadata remains intact.
+
+The existing multi-coefficient optimization fixture used unbounded operands and required an unsafe regrouping. Its C# and Stark port now use i16 inputs widened to i32, where both grouped products and prefixes are provably safe. Separate arbitrary-input fallback and exact-result tests cover the unsafe domains.
+
+### Validation
+
+**87 focused Release tests pass:** 55 unit/regression, 25 pipeline and seven native tests. The unit cases exhaust every defined signed-byte `(seed,value)` cancellation input, preserve safe whole-expression/wrapping folds, and cover direct/computed lossless conversions and prefix/cancellation failures. Native cases exercise volatile i64 boundary inputs, computed operands, safe folds and source imports versus a real noinline package whose `.stark` source is deleted. Both affected Stark-port fixture requests pass against the final host inspection protocol with their actual optimized-SSA assertions.
+
+**256 exact native checksum and exit checks** match an independent recurrence: 64 zero/boundary/seeded arbitrary PID inputs per C, Rust, source Stark and package Stark executable. The observer reads the actual loop-carried checksum before the exit's recomputation. Injected high-bit inputs preserve C's signed PID interpretation and Stark/Rust's unsigned interpretation separately. These checks validate exact totals, not just normal success exits.
+
+**20 emitted/reference/optimized LLVM modules verify.** Final source/package have byte-identical **524-byte `.text`**, SHA-256 `042b292c68105037f9d0de603d40f42a477af646d63d63dc3ce3b062add789f7`. Their layout differs from before, so the final executables were measured again. Fresh Arithmetic, MemoryAccess and PureCallGlobalForwarding builds retain byte-identical text. MemoryAccess therefore preserves the accepted general cyclic-array proof and its previously measured 0.8253 × C package result. GlobalScalarLoadForwarding differs from its older historical artifact, but a frozen pre-fix compiler rebuild produces byte-identical text to this change; that difference predates the fix. All regression executables succeed.
+
+Repository-wide stale-assumption searches cover optimizer/fact consumers, LLVM assertions, arithmetic fixtures, Stark ports, self-hosting sources, benchmarks, scripts and documentation. The unsafe fixture is updated in both ports; no other supported contract required changing. No full release run or unrelated long suite ran.
+
+### Fresh production comparison
+
+One warmup, then **1,000 randomized interleaved direct processes per executable**, CPU 0, seed **911128**, arithmetic means, C = **1.0000**:
+
+| Variant | Mean µs | / C | / Rust |
+| --- | ---: | ---: | ---: |
+| c | 2392.167081 | 1.0000 | 0.9188 |
+| rust | 2603.661995 | 1.0884 | 1.0000 |
+| stark-source | 2251.818954 | 0.9413 | 0.8649 |
+| stark-package | 2252.523269 | 0.9416 | 0.8651 |
+
+The same window includes the preserved pre-fix executables: source **2252.982558 µs / 0.9418 × C**, package **2252.038962 µs / 0.9414 × C**. Final source/before is **0.9995** and package/before **1.0002**: the correctness repair has no material timing cost in this window. This is not an additional optimization speedup claim.
+
+All six variants succeed in all 6,000 measured executions with stable hashes. Means include startup; passive cooling, thermal capping and unconfirmed shared-host exclusivity limit fine precision. No builds, tests or tracing from this agent overlap sampling. Source/package timing differences are not attributed to separate optimizations when native text matches. The quiet window is closed (**18:48:02–18:48:16 UTC**); CVs are **1.05–1.46%**. Both production modes pass the strict first-turn C/Rust mean criteria without the tie allowance.
+
+Ignored artifacts: `benchmarks/codegen/sequential-goal-20261031/StackFieldLoadForwarding/turn1/` preserves the before compiler/executables, frontend and optimized C/Rust IR, and original pass trace. `production/` records the final build configs, provenance, source/package LLVM/native output, exact-output reports, final pass trace, regression controls and `interleaved-1000.json`. Final Release compiler SHA-256: `3706f34181b8de7acdc80ac2e7e058bdd286f7f4b193cf248a07cf0fd2b477ef`. The unchanged SDK has 13 real archive/image pairs and zero source fallback. Compiler jobs ran serially under the existing **2 GiB process-group RSS guard**, peaking at approximately **1.24 GiB**, without a guard firing.
+
+**Next: TailCalls.**
+
 ## ReadonlyOtherLocalFieldStore completion (November 1, 2026)
 
 **Status: complete, goal turn 1.** The unchanged current production compiler beats C and canonical Rust in the first fresh 1,000-round window. No compiler, standard-library, benchmark or C/Rust source was changed for this item; this investigation claims no new optimization speedup.
@@ -664,7 +719,7 @@ All **4,000 measured executions** succeed with stable executable hashes. Both mo
 
 Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/ReadonlyOtherLocalFieldStore/turn1/`, especially `interleaved-1000.json`, `provenance.json`, `initial-codegen-summary.json`, `seed-validation.json`, initial/post-LTO LLVM, disassembly, `validation/` and focused test/resource reports. The actual Release compiler SHA-256 is `25a56a39e9ea93728b064d0452c383e6f90016cfe8c96a5fe244c880937dc263`. Compiler jobs ran serially under the existing 2 GiB process-group guard, peaking at approximately **1.07 GiB**, without a guard firing.
 
-**Next: StackFieldLoadForwarding.**
+**Next at this completion: StackFieldLoadForwarding (now completed above).**
 
 
 ## PureCallGlobalForwarding completion (November 1, 2026)
