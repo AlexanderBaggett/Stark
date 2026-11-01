@@ -121,9 +121,11 @@ direct syscall-backed virtual-memory allocation on supported syscall
 architectures. Windows targets use OS heap APIs rather than the CRT allocator.
 Small and medium allocations are cached in simple size-class free lists so
 collection growth and heap locals do not need an operating-system allocation for
-every reuse. When a size-class bucket is empty, the runtime allocates one
-slab/page-sized region, returns the first block, and pushes the remaining blocks
-onto the bucket free list. Very large allocations and allocations requiring
+every reuse. When a size-class bucket is empty, the runtime can reuse a larger
+cached block from a class produced by slab expansion, retaining its physical
+size class in the header. If no
+cached block fits, it allocates one slab/page-sized region, returns the first
+block, and pushes the remaining blocks onto the bucket free list. Very large allocations and allocations requiring
 alignment above the current bucket guarantee stay on the OS-backed path. The
 public `System.Memory` surface should stay stable as the backend continues to
 grow.
@@ -138,8 +140,12 @@ lower peak retention.
 
 `Reallocate` may reuse a small or medium bucket allocation in place when the new
 requested byte length still fits the recorded bucket size and the requested
-alignment is no stronger than the bucket alignment. If those facts are not
-proven, the runtime keeps the conservative allocate-copy-free fallback.
+alignment is no stronger than the bucket alignment. A first block may also
+grow into its slab when the recorded extent and complete bounded free chain
+prove all siblings are free. The runtime detaches those cached siblings before
+exposing their bytes, then records the larger physical bucket for later
+growth/free. Unproven extents, live siblings and changed free chains retain the
+conservative allocate-copy-free fallback.
 Because in-place reallocation can return the original pointer, realloc lowering
 must not expose fresh-allocation-only LLVM facts such as a blanket `noalias`
 result.

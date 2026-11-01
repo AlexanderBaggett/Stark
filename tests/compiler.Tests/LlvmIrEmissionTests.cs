@@ -9708,7 +9708,6 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("%realloc_bucket_size = load i64, ptr %realloc_bucket_size_slot, align 8", llvm);
         Assert.Contains("%realloc_bucket_size_fits = icmp ule i64 %new_size, %realloc_bucket_size", llvm);
         Assert.Contains("%realloc_bucket_alignment_fits = icmp ule i64 %realloc_effective_alignment, 16", llvm);
-        Assert.Contains("br i1 %realloc_bucket_can_reuse, label %reuse_old, label %fallback", llvm);
         Assert.Contains("reuse_old:", llvm);
         Assert.Contains("ret ptr %old_ptr", llvm);
         Assert.Contains("fallback:", llvm);

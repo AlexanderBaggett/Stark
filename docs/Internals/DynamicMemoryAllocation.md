@@ -220,8 +220,9 @@ The Linux implementation starts with syscall-backed virtual-memory allocation.
 The Windows implementation starts with OS heap APIs rather than the CRT
 allocator. A small size-class free-list layer sits above those OS primitives for
 small and medium allocations, while very large allocations stay on the OS-backed
-path. Empty size-class buckets refill from one slab/page-sized OS allocation at
-a time and split that slab into many same-size blocks. The public Stark API
+path. An empty size class can check larger cached blocks in classes produced
+by slab expansion, retaining their physical size class in the header. If none is available, it refills from one
+slab/page-sized OS allocation and splits it into many same-size blocks. The public Stark API
 should not expose those choices.
 
 Current implementation note: the compiler-backed allocator now routes heap
@@ -230,12 +231,14 @@ helpers over-allocate for target-aware alignment, keep header metadata needed
 for sized free, reuse fixed buckets when the requested size and alignment fit
 the bucket contract, and avoid explicit `malloc`, `realloc`, and `free` lowering
 in Stark-owned runtime code. `Reallocate` reuses an existing bucket block in
-place only when the new layout still fits that bucket; otherwise it falls back
-to allocate-copy-free. Bucket-backed frees retain the slab memory on the bucket
+place when the new layout fits its physical bucket. A first block can also
+claim the unused slab extent when its recorded base/length and complete bounded
+free chain prove every sibling is free. Only after this proof succeeds are the
+siblings detached and the physical bucket enlarged. A live sibling, changed
+chain, alignment mismatch or unproven extent keeps allocate-copy-free. Bucket-backed frees retain the slab memory on the bucket
 free list for process-lifetime reuse; large and over-aligned allocations still
-return to the OS-backed free path immediately. Per-thread caches are
-deliberately deferred until `System.Threading` owns enough runtime policy to
-make them safe and measurable.
+return to the OS-backed free path immediately. The bucket lists are thread-local; a slab with siblings in another thread
+cannot satisfy the complete-chain proof.
 The first executable benchmark convention lives in `benchmarks/allocator` and
 keeps allocator smoke measurements short enough for normal development runs.
 

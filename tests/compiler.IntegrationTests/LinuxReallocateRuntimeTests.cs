@@ -37,6 +37,11 @@ public sealed class LinuxReallocateRuntimeTests
             Assert.True(extracted.ExitCode == 0, extracted.Output);
             var compile = await RunAsync(clang, ["--target=" + target, "-O3", "-c", helper, "-o", Path.Combine(directory.FullName, "heap.o")]);
             Assert.True(compile.ExitCode == 0, compile.Output);
+            var bucket = Path.Combine(directory.FullName, "bucket.bc");
+            extracted = await RunAsync(extract, ["--func=__stark_runtime_try_expand_bucket", llvm, "-o", bucket]);
+            Assert.True(extracted.ExitCode == 0, extracted.Output);
+            compile = await RunAsync(clang, ["--target=" + target, "-O3", "-c", bucket, "-o", Path.Combine(directory.FullName, "bucket.o")]);
+            Assert.True(compile.ExitCode == 0, compile.Output);
         }
         finally { directory.Delete(recursive: true); }
     }
@@ -184,6 +189,160 @@ public sealed class LinuxReallocateRuntimeTests
             Assert.True(link.ExitCode == 0, link.Output);
             var run = await RunAsync(output, []);
             Assert.True(run.ExitCode == 0, $"Exit {run.ExitCode}: {run.Output}");
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task CachedSlabGrowthPreservesLiveSiblingsBytesAlignmentAndFailure()
+    {
+        if (!OperatingSystem.IsLinux() || !NativeToolchain.TryDetectDefaultTargetInfo(out var target)) return;
+        var clang = NativeToolchain.Resolve().Clang.Path;
+        if (clang is null) return;
+        var directory = Directory.CreateTempSubdirectory("stark-bucket-growth-");
+        try
+        {
+            var llvm = await EmitAsync(directory.FullName, target.Triple);
+            await File.AppendAllTextAsync(llvm, """
+
+                @llvm.used = appending global [4 x ptr] [ptr @__stark_runtime_try_alloc, ptr @__stark_runtime_try_realloc, ptr @__stark_runtime_realloc, ptr @__stark_runtime_free], section "llvm.metadata"
+                """);
+            var c = Path.Combine(directory.FullName, "check.c");
+            await File.WriteAllTextAsync(c, """
+                #include <stdint.h>
+                #include <stddef.h>
+                #include <stdlib.h>
+                #include <string.h>
+                #include <pthread.h>
+                #include <sys/resource.h>
+                extern void *__stark_runtime_try_alloc(size_t, size_t);
+                extern void *__stark_runtime_try_realloc(void *, size_t, size_t, size_t);
+                extern void *__stark_runtime_realloc(void *, size_t, size_t, size_t);
+                extern void __stark_runtime_free(void *);
+                static int bytes(const unsigned char *p, size_t n, unsigned char value) {
+                    if (!p) return 0;
+                    for (size_t i=0; i<n; ++i) if (p[i]!=value) return 0;
+                    return 1;
+                }
+                static void *free_on_thread(void *p) { __stark_runtime_free(p); return NULL; }
+                int main(int argc, char **argv) {
+                    if (argc!=2) return 1;
+                    int mode=atoi(argv[1]);
+                    if (mode>=9) {
+                        size_t original=(size_t)16<<(mode-9);
+                        size_t expanded=original==2048?4096:2048;
+                        unsigned char *p=__stark_runtime_try_alloc(original,16);
+                        if (!p) return 23;
+                        memset(p,71,original);
+                        unsigned char *grown=__stark_runtime_try_realloc(p,original,expanded,16);
+                        if (grown!=p || !bytes(grown,original,71) || (uintptr_t)grown%16) return 24;
+                        memset(grown,93,expanded);
+                        void *peer=__stark_runtime_try_alloc(original,16);
+                        if (!peer) return 25;
+                        memset(peer,47,original);
+                        if (!bytes(grown,expanded,93)) return 26;
+                        __stark_runtime_free(peer); __stark_runtime_free(grown); return 0;
+                    }
+                    if (mode==1) {
+                        // An empty exact bin may borrow a larger cached block;
+                        // its later growth must remember the physical capacity.
+                        unsigned char *p=__stark_runtime_try_alloc(2048,8);
+                        if (!p) return 2;
+                        __stark_runtime_free(p);
+                        unsigned char *small=__stark_runtime_try_alloc(16,8);
+                        if (small!=p) return 3;
+                        memset(small,71,16);
+                        p=__stark_runtime_try_realloc(small,16,2048,8);
+                        if (p!=small || !bytes(p,16,71)) return 4;
+                        memset(p,93,2048);
+                        unsigned char *peer=__stark_runtime_try_alloc(2048,8);
+                        if (!peer || peer==p) return 5;
+                        memset(peer,47,2048);
+                        if (!bytes(p,2048,93)) return 6;
+                        __stark_runtime_free(peer); __stark_runtime_free(p);
+                        return 0;
+                    }
+                    unsigned char *p=__stark_runtime_try_alloc(16,8);
+                    if (!p) return 7;
+                    memset(p,31,16);
+                    unsigned char *peer=NULL;
+                    if (mode==2 || mode==3 || mode==8) {
+                        peer=__stark_runtime_try_alloc(16,8);
+                        if (!peer) return 8;
+                        memset(peer,47,16);
+                    }
+                    if (mode==8) {
+                        // A sibling cached by another thread is absent from
+                        // this thread's proof, so it cannot be reclaimed here.
+                        pthread_t worker;
+                        if (pthread_create(&worker,NULL,free_on_thread,peer) || pthread_join(worker,NULL)) return 27;
+                        peer=NULL;
+                    }
+                    if (mode==4) {
+                        // Every sibling is free, but their order no longer
+                        // establishes the conservative untouched-chain proof.
+                        void *a=__stark_runtime_try_alloc(16,8);
+                        void *b=__stark_runtime_try_alloc(16,8);
+                        if (!a || !b) return 9;
+                        __stark_runtime_free(a); __stark_runtime_free(b);
+                    }
+                    struct rlimit saved, denied;
+                    if (mode==3 || mode==7) {
+                        if (getrlimit(RLIMIT_AS,&saved)) return 10;
+                        denied=saved; denied.rlim_cur=1;
+                        if (setrlimit(RLIMIT_AS,&denied)) return 11;
+                    }
+                    size_t align=mode==5?64:8;
+                    size_t size=mode==3?8192:2048;
+                    unsigned char *grown=mode==6
+                        ?__stark_runtime_realloc(p,16,size,align)
+                        :__stark_runtime_try_realloc(p,16,size,align);
+                    if ((mode==3 || mode==7) && setrlimit(RLIMIT_AS,&saved)) return 12;
+                    if (mode==3) {
+                        if (grown || !bytes(p,16,31) || !bytes(peer,16,47)) return 13;
+                        __stark_runtime_free(peer); __stark_runtime_free(p); return 0;
+                    }
+                    if (!bytes(grown,16,31) || (uintptr_t)grown%align) return 14;
+                    if ((mode==0 || mode==6 || mode==7) && grown!=p) return 15;
+                    if ((mode==2 || mode==4 || mode==8) && grown==p) return 16;
+                    memset(grown,93,size);
+                    if (peer && !bytes(peer,16,47)) return 17;
+                    // Exercise the full promoted payload while allocating many
+                    // siblings, then repeatedly free/reuse both physical bins.
+                    void *others[256];
+                    for (size_t i=0;i<256;++i) {
+                        others[i]=__stark_runtime_try_alloc(16,8);
+                        if (!others[i]) return 18;
+                        memset(others[i],(unsigned char)i,16);
+                        if (!bytes(grown,size,93)) return 19;
+                    }
+                    for (size_t i=0;i<256;++i) {
+                        if (!bytes(others[i],16,(unsigned char)i)) return 20;
+                        __stark_runtime_free(others[i]);
+                    }
+                    if (peer) __stark_runtime_free(peer);
+                    __stark_runtime_free(grown);
+                    for (size_t i=0;i<200;++i) {
+                        p=__stark_runtime_try_alloc(16,8);
+                        if (!p) return 21;
+                        memset(p,71,16);
+                        grown=__stark_runtime_try_realloc(p,16,2048,8);
+                        if (!bytes(grown,16,71)) return 22;
+                        memset(grown,93,2048);
+                        __stark_runtime_free(grown);
+                    }
+                    return 0;
+                }
+                """);
+            var output = Path.Combine(directory.FullName, "check");
+            var link = await RunAsync(clang, ["-O3", "-pthread", llvm, c, "-o", output]);
+            Assert.True(link.ExitCode == 0, link.Output);
+            // Each proof boundary starts with fresh thread-local allocator state.
+            for (var mode = 0; mode <= 16; mode++)
+            {
+                var run = await RunAsync(output, [mode.ToString()]);
+                Assert.True(run.ExitCode == 0, $"Mode {mode}, exit {run.ExitCode}: {run.Output}");
+            }
         }
         finally { directory.Delete(recursive: true); }
     }

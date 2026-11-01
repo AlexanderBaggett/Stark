@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is under investigation. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is under investigation. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Current benchmark: ListGrowth, goal turn 1.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Current benchmark: ListGrowth, goal turn 2.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 8 of 52 initially open items are complete. LinkedListPopOnly (`3b4df9d`) and LinkedListPush (`9db7c6e`) passed fresh 1,000-round source/package/C/Rust comparisons on goal turn 1. Current ListGrowth remains open: source **1.0664 × C / 0.7549 × Rust**, package **1.0667 × C / 0.7552 × Rust**. Its source-free lowering/ownership/constant-bound failure chain is repaired and validated, but cold growth still performs ten mmap calls. No C tie allowance is available on its first turn. All build/test/timing/profiling windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 8 of 52 initially open items are complete. ListGrowth remains open on goal turn 2: source **1.0204 × C / 0.7279 × Rust**, source-free package **1.0153 × C / 0.7243 × Rust**. The validated allocator checkpoint reduces its mmap calls from ten to three without removing allocation failure or payload work. Completed-item source regressions still meet their criteria; close package means and their measurement limits are recorded below. All build/test/timing/profiling windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**ListGrowth coordination (goal turn 1):** All windows are closed. Package/source builds, four package integration checks, seven focused unit checks, injected OOM/drop checks, LLVM verification, 1,000-round comparison and separate syscall tracing are complete. Checkpoint the validated source-free compiler fixes; ListGrowth stays open at 1.0664 × C. Next investigate allocator backing extent and exclusive-slab/cached-block reuse without dropping failure or alias/lifetime proofs. Do not advance to ListIteration. Preserve peer sections.
+**ListGrowth coordination (goal turn 2):** All windows are closed. The bounded whole-slab free-chain proof, target-derived cache lookup, byte/alignment/failure/thread tests, source-free packages, LLVM verification and production/regression measurements are validated. Commit this checkpoint; ListGrowth is not complete. Next consume the preserved slab base/extent/physical-class tuple for OS-backed growth after expansion, retaining rollback and alignment proofs. Do not advance to ListIteration. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -28,7 +28,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 6 | `benchmarks/collections/LinkedListChurn` | Complete | 5 | 0.9992 | 0.6581 |
 | 7 | `benchmarks/collections/LinkedListPopOnly` | Complete | 1 | 0.9209 | 0.6947 |
 | 8 | `benchmarks/collections/LinkedListPush` | Complete | 1 | 0.9251 | 0.7015 |
-| 9 | `benchmarks/collections/ListGrowth` | In progress | 1 | 1.0664 | 0.7549 |
+| 9 | `benchmarks/collections/ListGrowth` | In progress | 2 | 1.0204 | 0.7279 |
 | 10 | `benchmarks/collections/ListIteration` | Queued | 0 | — | — |
 | 11 | `benchmarks/collections/QueueChurn` | Queued | 0 | — | — |
 | 12 | `benchmarks/collections/QueueGrowth` | Queued | 0 | — | — |
@@ -627,6 +627,68 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## ListGrowth slab-reuse investigation (November 1, 2026)
+
+**Status: open, goal turn 2.** The source/package correctness checkpoint is `c347de6`. This turn implements general slab expansion and reuse of cached expansion classes. ListGrowth still misses C, so it is not closed and ListIteration has not started. The three-turn C tie allowance is not yet available.
+
+### Preserve backing extent and physical capacity
+
+The allocator already records each block's OS base, requested slab extent and physical bucket. The new bounded proof permits a first block to claim its unused slab bytes only if its base/extent match the target-derived refill layout and **every sibling appears, in the original reverse refill order, in the current thread's free chain, with a null tail**. It checks the whole chain before writing anything. A live sibling, a sibling freed into another thread, a changed chain, stronger alignment or an unproven extent retains the existing allocation/copy/free fallback.
+
+After the proof succeeds, it detaches all siblings and records the largest existing physical bucket guaranteed to fit the slab after header/alignment padding. Base and actual slab extent remain intact. Subsequent growth/free use that physical capacity, independently of the caller's logical requested size. No public allocation/header/package schema changes, fresh-allocation-only promises, assumed page size, removed failure edges or benchmark-specific reservation are introduced. Source and package collection capacities and all payload writes/checksum reads remain real.
+
+When an exact bin is empty, allocation can reuse a cached larger block from the target-derived destination classes produced by expansion; the physical header stays intact. This prevents short repeated growth from stranding expanded blocks in a larger cache. An initial all-larger-bin search added cold lookup work for fixed-size objects; the final search considers only expansion destination classes, computed by the same layout function as the proof. No additional allocator state or header fields are added. Cached allocations retain their normal process-lifetime retention policy.
+
+### Controls and generated work
+
+Initial-IR controls, each with 1,000 randomized interleaved rounds and their own unchanged replay, isolated the opportunity. In the first window, unchanged production was **1.0600 × C**, replay **1.0636**, free-chain coalescing **1.0159**, and coalescing plus all-larger cache search **1.0184**. In a second window, replay was **1.0592**, coalescing **1.0118**, and conversion to OS-backed ownership plus usable-extent reuse **1.0078**. A third window's lazy-header/cache and lazy-header/OS controls were **1.0181** and **1.0107**, against replay **1.0646**. These are separate diagnostic windows, not additive gains or production results. Lazy slab state and OS conversion are not shipped.
+
+The first all-larger production candidate was **1.0234 × C** source / **1.0201 × C** package in its initial window. A noinline-proof control was **1.0224**, which did not establish a benefit; no noinline policy is shipped. The unchanged initial-IR replay reproduced that production executable byte-for-byte. All candidates and negative results are retained.
+
+Final source/package `.text` is identical (9,888 bytes). Their optimized mains have 1,227/1,228 lines, 138 conditional branch sites, 161 loads, 60 stores and one vector reduction, including cold proof/growth/cleanup blocks. The proof is substantially inlined; this is a code-size cost, not a reduced instruction-count claim. Ten initial LLVM modules verify across production/failure source/package plus unchanged C/Rust inspection modules. C still uses realloc/free; Rust's checked-out allocator implementation still delegates eligible growth to libc. Neither reference source/tool/flags was changed.
+
+Separate untimed GDB tracing of the actual final executables confirms **3 mmap + 1 mremap + 1 munmap** for both Stark builds, down from **10 + 1 + 1**. The earlier unchanged C trace had two brk calls and no mapping calls; Rust's benchmark body had no allocator syscalls after its runtime startup. Zero body syscalls does not mean zero allocator calls, and headline measurements include startup for all languages.
+
+### Final production comparison
+
+One warmup and **1,000 randomized balanced interleaved rounds per executable**, seed `911034`, CPU 0, arithmetic means:
+
+| Variant | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| C | 584.434002 | 1.0000 | 0.7133 |
+| Rust | 819.326730 | 1.4019 | 1.0000 |
+| Before checkpoint | 624.269511 | 1.0682 | 0.7619 |
+| All-larger production candidate | 595.397950 | 1.0188 | 0.7267 |
+| Final source | 596.371064 | 1.0204 | 0.7279 |
+| Final source-free package | 593.400690 | 1.0153 | 0.7243 |
+
+The final source mean is 4.47% below the unchanged before executable in this window. All 6,000 measured processes succeeded with fixed hashes and no discarded samples. No builds/tests/traces from this chat overlapped timing. Startup, stdout-to-null, separate stderr files, passive cooling, scheduling and unconfirmed host exclusivity apply. Source/package text equality does not make their small timing difference an instruction-work difference.
+
+### Validation and completed-item regressions
+
+Fourteen focused Release checks passed: nine allocator/arena integration cases (including five Linux helper cross-targets) and five allocation contract/emission cases. The new byte-observing native case runs **17 fresh-process scenarios**, covering every expandable physical class, complete-payload writes, live/reordered/cross-thread siblings, reuse after free, stronger alignment, fallible and infallible growth, denied OS allocation, failure rollback, successful cached expansion while OS allocation is denied, and 200 repeated growth/reuse cycles. Existing large/over-aligned/moving OS reallocation and failure tests still pass. Source/package List<Envelope> seccomp-OOM fixtures preserve empty count and exactly-once input drops.
+
+Three fresh SDK libraries and package images were built with zero `.stark` fallback files. Their ListGrowth/failure consumers pass. The affected Stark emission-test port passes `--check`; this is a syntax/type check, not execution of all ported assertions. Repository-wide stale-assumption searches removed the superseded exact reuse-to-fallback edge checks from C#/Stark tests, preserved existing contract assertions, and updated allocator docs. No full release or unrelated long suite ran. All builds/tests used one managed worker with a 2 GiB process-group guard; no guard fired and measured build peaks remained below 1.1 GiB.
+
+Affected completed workloads were rebuilt and measured. The source results still meet their existing criteria. High spread and near-cutoff package means prompted a second 1,000-round batch for DictionaryInsert, DictionaryRemove and Churn; the table pools **all 2,000 samples** for each unchanged common variant, without excluding the first batch or selecting the better result. Other rows have 1,000 samples per executable. Every measured source/package variant beats canonical Rust.
+
+| Benchmark | Samples / variant | Before / C | Source / C | Package / C | Rust / C |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ArenaAllocator | 1000 | 0.9588 | 0.9510 | — | 1.1071 |
+| DictionaryInsert | 2000 | 0.9882 | 0.9939 | 1.0019 | 1.5899 |
+| DictionaryRemove | 2000 | 0.9972 | 0.9997 | 0.9997 | 1.5900 |
+| LinkedListBuildClear | 1000 | 0.9498 | 0.8880 | 0.8991 | 1.3230 |
+| LinkedListChurn | 2000 | 1.0018 | 0.9990 | 1.0059 | 1.5153 |
+| LinkedListPopOnly | 1000 | 0.9168 | 0.9035 | 0.9054 | 1.3281 |
+| LinkedListPush | 1000 | 0.9158 | 0.8978 | 0.8986 | 1.3044 |
+
+The package point estimates of **1.0019 × C** for DictionaryInsert and **1.0059 × C** for Churn do not establish new package C wins; keep them visible. Churn source and package have identical main instructions at identical addresses, and the complete package `.text` equals the source `.text` except for one source-only trailing `int3` padding byte; both depend only on libc and have identical TLS size. Thus their measured difference does not demonstrate additional package loop/allocation work. This checkpoint does not relabel those estimates as passing or change the previously accepted completion counts. Arena's earlier accepted executable was source-built; its regression also uses source. A package attempt using the deliberately three-module SDK failed because System.Process was absent, so no Arena package success is claimed.
+
+**Next work:** the successful proof establishes exclusive slab ownership, and the preserved `(base, slab extent, physical class)` tuple still distinguishes expanded blocks from ordinary refills where their target-derived extents differ. Consume that fact at later growth instead of losing it at the rounded bucket boundary: safely promote an exclusively owned expanded block to OS-backed reallocation, with old/new byte offsets, alignment, overflow, failure rollback and later free proved. Prefer deriving eligibility from the complete existing producer tuple; do not add tags/fields or infer ownership from mapped page size without necessity. The OS conversion diagnostic suggests an opportunity but did not itself beat C. Also keep the cold proof's code size and close package regression estimates under observation. Do not advance to ListIteration or close ListGrowth on these results.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/ListGrowth/turn2/` retains all initial-IR controls, unchanged replays, first production/regression candidates and raw samples. **`turn2/final/` is authoritative for the committed bounded-search implementation**: `production-interleaved-1000.json`, `production-codegen-summary.json`, compiler/SDK hashes and provenance, source/package/OOM executables, initial/post-LTO LLVM, disassembly, native test TRX/logs/resources, syscall logs/counts, and each `regression-*/interleaved-1000.json` plus the three `pooled-2000.json` files. All windows are closed.
+
 
 ## ListGrowth sequential investigation (November 1, 2026)
 
