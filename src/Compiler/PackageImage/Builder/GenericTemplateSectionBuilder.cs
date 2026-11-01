@@ -506,19 +506,9 @@ internal static partial class PackageImageBuilder
             .Where(item => enumConstructorsByLocation.ContainsKey(
                 BuildTemplateEnumConstructorLookupKey(item.enumConstructor.Start.Line, item.enumConstructor.Start.Column + 1)))
             .ToDictionary(static item => item.enumConstructor, static item => item.ordinal);
-        var enumCallsByLocation = (enumCalls ?? [])
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var syntacticEnumCallReferences = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes);
-        var enumCallOrdinals = syntacticEnumCallReferences.Count > 0
-            ? syntacticEnumCallReferences
-                .Select((reference, ordinal) => (reference.Context, ordinal))
-                .ToDictionary(static item => item.Context, static item => item.ordinal)
-            : CollectTemplateDirectCallArgumentLists(functionBody)
-                .Select((argumentList, ordinal) => (argumentList, ordinal))
-                .Where(item => enumCallsByLocation.ContainsKey(
-                    TemplateDirectCallFacts.BuildLookupKey(item.argumentList.Start.Line, item.argumentList.Start.Column + 1)))
-                .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var enumCallOrdinals = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes, enumCalls)
+            .Select((reference, ordinal) => (reference.Context, ordinal))
+            .ToDictionary(static item => item.Context, static item => item.ordinal);
         var enumValuesByLocation = (enumValues ?? [])
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
@@ -3957,8 +3947,7 @@ internal static partial class PackageImageBuilder
                     && postfixParts[index + 1].argumentList() is { } chainedDirectArgumentList)
                 {
                     var enumCallOrdinal = -1;
-                    var hasChainedEnumCall = publishedExpression.Kind == "name"
-                        && enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out enumCallOrdinal);
+                    var hasChainedEnumCall = enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out enumCallOrdinal);
                     var directCallOrdinal = -1;
                     var hasChainedDirectCall = !dynamicStorageOperationOrdinals.ContainsKey(chainedDirectArgumentList)
                         && directCallOrdinals.TryGetValue(chainedDirectArgumentList, out directCallOrdinal);
@@ -5150,36 +5139,11 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyList<EnumCallTypingRecord>? enumCalls)
     {
-        var syntacticReferences = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes);
-        if (syntacticReferences.Count > 0)
-        {
-            return syntacticReferences
-                .Select((reference, ordinal) => new StarkPackageTemplateEnumCallManifest(
+        var published = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes, enumCalls)
+            .Select((reference, ordinal) => new StarkPackageTemplateEnumCallManifest(
                     ordinal,
                     BuildPublishedAbiTypeReference(reference.EnumType, module),
                     reference.VariantName))
-                .ToArray();
-        }
-
-        if (enumCalls is not { Count: > 0 })
-        {
-            return null;
-        }
-
-        var enumCallsByLocation = enumCalls
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var published = CollectTemplateDirectCallArgumentLists(functionBody)
-            .Select((argumentList, ordinal) => enumCallsByLocation.TryGetValue(
-                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
-                    out var record)
-                ? new StarkPackageTemplateEnumCallManifest(
-                    ordinal,
-                    BuildPublishedAbiTypeReference(record.EnumType, module),
-                    record.VariantName)
-                : null)
-            .Where(static enumCall => enumCall is not null)
-            .Cast<StarkPackageTemplateEnumCallManifest>()
             .ToArray();
 
         return published.Length == 0 ? null : published;
@@ -6966,18 +6930,24 @@ internal static partial class PackageImageBuilder
 
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
-        if (primaryExpression is null || postfixParts.Length != 1)
+        if (primaryExpression is null || postfixParts.Length == 0)
         {
             return false;
         }
 
-        var variantPart = postfixParts[0];
+        var variantPart = postfixParts[^1];
         var enumTypeName = primaryExpression.Identifier()?.GetText()
             ?? primaryExpression.qualifiedName()?.GetText();
         var variantName = variantPart.Identifier()?.GetText();
         if (enumTypeName is null || variantName is null)
         {
             return false;
+        }
+
+        foreach (var qualifier in postfixParts.Take(postfixParts.Length - 1))
+        {
+            if (qualifier.Identifier() is not { } identifier) return false;
+            enumTypeName += "." + identifier.GetText();
         }
 
         if (!TryResolvePublishedTemplateEnumType(module, namedTypes, enumTypeName, out var enumType))
@@ -7002,25 +6972,36 @@ internal static partial class PackageImageBuilder
     private static IReadOnlyList<PublishedTemplateEnumCallReference> CollectPublishedTemplateEnumCallReferences(
         LoadedModuleDocument module,
         ParserRuleContext node,
-        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyList<EnumCallTypingRecord>? enumCalls)
     {
-        var references = new List<PublishedTemplateEnumCallReference>();
-        Collect(node, references);
-        return references;
+        var callsByLocation = (enumCalls ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var references = new Dictionary<StarkParser.ArgumentListContext, PublishedTemplateEnumCallReference>();
+        Collect(node);
+        return references.Values.OrderBy(static reference => reference.Context.Start.TokenIndex).ToArray();
 
-        void Collect(
-            Antlr4.Runtime.Tree.IParseTree current,
-            List<PublishedTemplateEnumCallReference> accumulator)
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
         {
             if (current is StarkParser.PostfixExpressionContext postfixExpression
                 && TryResolvePublishedTemplateEnumCallReference(module, postfixExpression, namedTypes, out var reference))
             {
-                accumulator.Add(reference);
+                references.TryAdd(reference.Context, reference);
+            }
+
+            // Retain typed calls even when their namespace-qualified syntax
+            // differs from the simple enum references used in generic bodies.
+            if (current is StarkParser.ArgumentListContext arguments
+                && callsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(arguments.Start.Line, arguments.Start.Column + 1), out var call))
+            {
+                references[arguments] = new PublishedTemplateEnumCallReference(arguments, call.EnumType, call.VariantName);
             }
 
             for (var index = 0; index < current.ChildCount; index++)
             {
-                Collect(current.GetChild(index), accumulator);
+                Collect(current.GetChild(index));
             }
         }
     }
@@ -7035,19 +7016,25 @@ internal static partial class PackageImageBuilder
 
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
-        if (primaryExpression is null || postfixParts.Length != 2)
+        if (primaryExpression is null || postfixParts.Length < 2)
         {
             return false;
         }
 
-        var variantPart = postfixParts[0];
-        var argumentList = postfixParts[1].argumentList();
+        var variantPart = postfixParts[^2];
+        var argumentList = postfixParts[^1].argumentList();
         var enumTypeName = primaryExpression.Identifier()?.GetText()
             ?? primaryExpression.qualifiedName()?.GetText();
         var variantName = variantPart.Identifier()?.GetText();
         if (enumTypeName is null || variantName is null || argumentList is null)
         {
             return false;
+        }
+
+        foreach (var qualifier in postfixParts.Take(postfixParts.Length - 2))
+        {
+            if (qualifier.Identifier() is not { } identifier) return false;
+            enumTypeName += "." + identifier.GetText();
         }
 
         if (!TryResolvePublishedTemplateEnumType(module, namedTypes, enumTypeName, out var enumType))

@@ -4,6 +4,10 @@ namespace Stark.Compiler;
 
 internal static partial class PackageImageLoader
 {
+    private sealed class UnrenderableTemplateExpressionException : Exception
+    {
+    }
+
     public static bool TryBuildModuleSource(ResolvedPackageModule module, out string sourceText)
     {
         if (module.Module is null)
@@ -1303,7 +1307,9 @@ internal static partial class PackageImageLoader
             .ToDictionary(static item => item.Ordinal);
 
         var builder = new StringBuilder();
-        if (!TryRenderImportedTypedTemplateBody(
+        try
+        {
+            if (!TryRenderImportedTypedTemplateBody(
                 builder,
                 typedBody,
                 objectCreationsByOrdinal,
@@ -1315,7 +1321,15 @@ internal static partial class PackageImageLoader
                 directCallsByOrdinal,
                 fieldAccessesByOrdinal,
                 memberCallsByOrdinal))
+            {
+                return false;
+            }
+        }
+        catch (UnrenderableTemplateExpressionException)
         {
+            // A missing nested expression must reject the entire compatibility
+            // body, not leave punctuation that looks like a rendered expression.
+            // The complete typed body remains available to imported lowering.
             return false;
         }
 
@@ -2453,7 +2467,7 @@ internal static partial class PackageImageLoader
             memberCallsByOrdinal,
             out var text)
             ? text
-            : string.Empty;
+            : throw new UnrenderableTemplateExpressionException();
     }
 
     private static string RenderObjectCreation(

@@ -6,15 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert and DictionaryRemove have completed their fresh C/Rust comparisons. LinkedListBuildClear is next; see the goal queue. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (October 31, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is next; see the goal queue. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: LinkedListBuildClear.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: LinkedListChurn, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 4 of 52 initially open items are complete. DictionaryRemove completed on goal turn 7: source-built Stark **0.9959 × C / 0.6232 × Rust**, source-free package **0.9950 × C / 0.6226 × Rust**, exactly 1,000 randomized balanced rounds per executable. The mean is below C, but this small difference is within process-level variation; the result also meets the eligible two-decimal C tie. Both builds eliminate all 4,096 value stores while retaining allocation/failure and cleanup. Fresh 1,000-round affected-library comparisons remain ahead of C/Rust: DictionaryInsert **0.9951 / 0.6233** and DictionaryLookup **0.9542 / 0.3831**. Queue rows for earlier items retain their original acceptance measurements. Validation ran sequentially after a reported memory incident; the oversized aggregate fixture is replaced with scalar runtime allocation. Source-free dictionary packages and consumers pass within the diagnostic memory budget; umbrella SDK packaging exceeded its guard and is not claimed as passed. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes and the uncommitted skill.
+**Current evidence:** 5 of 52 initially open items are complete. LinkedListBuildClear completed on goal turn 2: source-built Stark **0.9437 × C / 0.7077 × Rust**, source-free package **0.9355 × C / 0.7016 × Rust**, exactly 1,000 randomized balanced rounds per executable. Copyable Clear loses its traversal; eligible Linux growth uses `mremap` while preserving failure and alignment fallbacks. Package validation also repaired qualified enum identity, partial compatibility rendering and borrowed argument storage. Earlier accepted queue rows retain their own measurements. No build/test/timing window is active. Host exclusivity was unconfirmed. Preserve other-agent notes and the uncommitted performance skill.
+
+**LinkedListBuildClear coordination:** Validation and the final 1,000-round window are finished. Source and source-free builds meet the C and Rust criteria. Only this item's implementation, regression tests, related documentation and owned tracker changes belong in its completion commit. LinkedListChurn is next; it has not started. Preserve peer tracker edits and the uncommitted skill.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -22,7 +24,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 2 | `benchmarks/allocator/MemoryCopyFill` | Complete | 1 | 0.9821 | 0.8122 |
 | 3 | `benchmarks/collections/DictionaryInsert` | Complete | 2 | 0.9863 | 0.6167 |
 | 4 | `benchmarks/collections/DictionaryRemove` | Complete | 7 | 0.9959 | 0.6232 |
-| 5 | `benchmarks/collections/LinkedListBuildClear` | Queued | 0 | — | — |
+| 5 | `benchmarks/collections/LinkedListBuildClear` | Complete | 2 | 0.9437 | 0.7077 |
 | 6 | `benchmarks/collections/LinkedListChurn` | Queued | 0 | — | — |
 | 7 | `benchmarks/collections/LinkedListPopOnly` | Queued | 0 | — | — |
 | 8 | `benchmarks/collections/LinkedListPush` | Queued | 0 | — | — |
@@ -625,6 +627,46 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## LinkedListBuildClear sequential investigation (October 31, 2026)
+
+**Status: complete on goal turn 2.** Source-built Stark is **0.9437 × C / 0.7077 × Rust**; source-free packaged Stark is **0.9355 × C / 0.7016 × Rust**. Both beat C and canonical Rust without using the tie allowance. The timing window is closed. LinkedListChurn is next.
+
+### Final production comparison
+
+Exactly **1,000 randomized interleaved rounds per variant**, seed `511035`, CPU 0, one excluded warmup per variant. Arithmetic means include native process startup; stdout goes to `/dev/null`, with separate regular stderr files. No sample was discarded. No build, test or profiling job from this chat overlapped timing. Shared-host exclusivity was unconfirmed, and the machine's passive cooling/temperature cap and process-level variation still apply.
+
+| Variant | Mean µs | Ratio, C = 1.0000 |
+| --- | ---: | ---: |
+| C | 718.405851 | 1.0000 |
+| Canonical Rust | 957.929408 | 1.3334 |
+| Stark before this item | 742.468350 | 1.0335 |
+| Stark production, source SDK | 677.948019 | **0.9437** |
+| Stark production, source-free SDK | 672.099227 | **0.9355** |
+
+Stark/source is **0.9131 × before** in this same window. The source-free SDK contains the complete relevant Collections, Memory and BitOperations package chain with no Stark sources. Rebuilding those packages with the final compiler reproduced every package byte; the measured consumer inputs remain unchanged.
+
+### Work, generated code and preserved facts
+
+C and Rust build 4,096 separately allocated nodes and free them individually. C's optimized IR removes unused value/previous stores, but keeps the malloc/free traversal. Rust's canonical `std::collections::LinkedList<i32>` retains per-node allocation and cleanup plus its process runtime. Stark already uses geometrically grown indexed value/link arrays; this investigation does not change that representation or replace any canonical benchmark.
+
+- **Copyable Clear:** use the shared recursive `System.Compiler.IsCopyable<T>()` proof to discard initialized value/link prefixes and reset list metadata, retaining both capacities. LLVM folds the unused moves and removes the traversal. Both final source/package optimized modules have no Clear helper definition. Owned/nested-owned values keep the original head-to-tail drop path. `Clear` remains `fn` because arbitrary generic destructors need not return.
+- **Linux growth:** Windows/macOS already had an OS reallocation fast path, while Linux allocated a replacement, copied bytes and freed the old mapping. Linux now uses `mremap(MREMAP_MAYMOVE)` only for non-bucket, base-aligned headers with pointer-sized-or-smaller effective alignment. Carry the recorded **mapping extent**, rather than logical payload length, to the syscall. Check size arithmetic/target widths, update moved headers, and keep the old mapping live on failure before the existing fallback. Cached or over-aligned allocations retain their original paths. No `noalias`/nonnull return promise is introduced. The final optimized modules each contain the reallocation syscall; userspace copying remains on fallback paths.
+- **Package fact production:** retain semantic enum calls together with resolved qualified syntax in one ordered table. Qualified unit variants remain enum values. Do not convert a namespace-qualified constructor into an unbound member call or discard the typed calls merely because some simple syntax references exist.
+- **Package consumption:** compatibility-source ordinals are hints, not constructor identity. Type checking checks the authored constructor and resolved generic arguments; MIR's shared runtime/CTFE lookup checks the actual enum layout identity and variant. Reanalyzed bound identities take precedence. Incomplete nested compatibility rendering rejects the whole reconstructed body while preserving the complete typed graph.
+- **Borrow storage:** imported member calls retain the evaluated address of local, field/indexed or dereferenced arguments through the shared call builder. Coercing a scalar to an `out`-qualified value or borrowing an extracted array value had created temporary copies: list node indices remained zero and an indexed output was unchanged. Snapshot the original place/value once and carry its address; do not manufacture replacement storage. Native source-free tests observe both scalar and indexed outputs and a payload above 32 bits.
+
+Initial baseline (1,000 rounds, seed `511031`) was **1.0447 × C / 0.7846 × Rust**. Copyable-clear controls reached about **1.024 × C**. An outlined append fast path regressed against clear alone and is **rejected**. A matched LLVM `mremap` diagnostic reached **0.9451 × C** versus **1.0199 × C** for its unchanged replay (seed `511034`); that was a diagnostic, not the final production result above. Existing bucket slab refill was inspected and retained rather than duplicated.
+
+### Validation and boundaries
+
+Final focused Release checks pass: **8 allocator/package tests** (native contents/alignment, growth/shrink/zero, bucket and over-aligned fallback, overflow/kernel rejection with original bytes intact, nonfallible growth, forced OS mapping movement where supported, five Linux OS-helper object targets, typed and compatibility source-free bodies); **6 package-fact tests**; **9 native package wrapper/pattern tests**; **3 focused library tests**. Earlier **20 allocator/dynamic reserve/32-bit size/Windows regression checks** also passed. Source and strict source-free list fixtures verify arbitrary structs, partial removal, repeated Clear/reuse, reserved capacity, and nested owned drop order **2134**. Existing broad list parity fixtures pass in both modes. The source-free dictionary byte/alignment/ownership regression passes too.
+
+Fresh C, Rust, source Stark and package Stark binaries return success with empty output. Their LLVM and actual executable disassemblies are retained. Linux syscall helpers compile for x86_64, aarch64, riscv64, i686 and arm; these are cross-object checks, not native execution on all targets. Whole-module RISC-V object compilation exposed an existing unsupported trap calling convention, so the new OS boundary was verified independently. No full release run or umbrella SDK build was used.
+
+After the reported memory incident, every build/test ran sequentially with one managed worker and a 2 GiB process-group guard. Small package builds remained under 162 MiB; the final dictionary consumer peaked around 620 MiB, and managed compiler rebuilds around 1.1 GiB. No guard was exceeded in this item. Direct/indirect stale-assumption searches covered allocator helpers/ABI, enum publication and consumers, borrowed argument storage, LLVM assertions, ported tests, package fixtures and list documentation; the obsolete syscall-count assertion and current node-storage documentation were corrected. Historical roadmap notes remain labeled as initial behavior.
+
+Evidence: `benchmarks/codegen/sequential-goal-20261031/LinkedListBuildClear/turn2/production-interleaved-1000.json`, `final-provenance.json`, `final-codegen-summary.json`, `final-package-rebuild.json`, emitted/optimized source/package LLVM, native disassemblies, test TRX/logs and resource reports. Earlier controls are under `turn1/`. These ignored local artifacts are not guaranteed in another checkout.
 
 ## DictionaryLookup investigation (October 29, 2026)
 

@@ -7395,6 +7395,19 @@ internal sealed partial class MidLevelIrLowerer
         {
             value = null;
 
+            // Reanalysis of a compatibility body has already bound this exact
+            // call site. Prefer that typed identity to a published ordinal from
+            // a differently enumerated body.
+            if (TryResolveBoundEnumCall(arguments, out var boundEnumCall))
+            {
+                var boundType = ApplyGenericSubstitution(boundEnumCall.EnumType);
+                return TryLowerEnumConstructorCall(
+                    $"{boundType.DisplayName}.{boundEnumCall.VariantName}",
+                    arguments,
+                    arguments.GetText(),
+                    out value);
+            }
+
             if (!TryResolvePublishedEnumCallSummary(arguments, out var publishedEnumCall))
             {
                 return false;
@@ -12722,7 +12735,13 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (_importedEnumCallOrdinals is { } enumCallOrdinals
                 && enumCallOrdinals.TryGetValue(arguments, out var enumCallOrdinal)
-                && _importedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedSummary))
+                && _importedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedSummary)
+                && arguments.Parent?.Parent is StarkParser.PostfixExpressionContext expression
+                && PublishedEnumCaseMatches(
+                    expression.primaryExpression(),
+                    expression.postfixPart().TakeWhile(part => part.argumentList() != arguments),
+                    publishedSummary.EnumType,
+                    publishedSummary.VariantName))
             {
                 summary = publishedSummary;
                 return true;
@@ -12738,7 +12757,8 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (_importedEnumValueOrdinals is { } enumValueOrdinals
                 && enumValueOrdinals.TryGetValue(expression, out var enumValueOrdinal)
-                && _importedTemplateEnumValues.TryGetValue(enumValueOrdinal, out var publishedSummary))
+                && _importedTemplateEnumValues.TryGetValue(enumValueOrdinal, out var publishedSummary)
+                && PublishedEnumCaseMatches(expression, [], publishedSummary.EnumType, publishedSummary.VariantName))
             {
                 summary = publishedSummary;
                 return true;
@@ -12746,6 +12766,28 @@ internal sealed partial class MidLevelIrLowerer
 
             summary = null!;
             return false;
+        }
+
+        private bool PublishedEnumCaseMatches(
+            StarkParser.PrimaryExpressionContext expression,
+            IEnumerable<StarkParser.PostfixPartContext> qualifiers,
+            StarkTypeSymbol publishedType,
+            string publishedVariant)
+        {
+            var name = expression.GetText();
+            if (expression.genericEnumCaseReference() is { } genericCase
+                && !TryBuildGenericEnumCaseName(genericCase, out name))
+            {
+                return false;
+            }
+
+            foreach (var qualifier in qualifiers) name += qualifier.GetText();
+            // Both runtime lowering and CTFE consult these hints. Raw source
+            // ordinals alone cannot identify a constructor or a unit variant.
+            return TryResolveEnumCaseReference(name, out _, out var authoredLayout, out var authoredVariant)
+                && TryGetEnumLayout(ApplyGenericSubstitution(publishedType), out var publishedLayout)
+                && string.Equals(authoredLayout.EnumName, publishedLayout.EnumName, StringComparison.Ordinal)
+                && string.Equals(authoredVariant.Name, publishedVariant, StringComparison.Ordinal);
         }
 
         private bool TryResolvePublishedEnumPatternSummary(

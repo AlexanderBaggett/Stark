@@ -1845,7 +1845,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private bool CanUseOsReallocateFastPath()
     {
-        return IsWindowsTarget() || IsMacOSTarget();
+        return IsWindowsTarget() || IsMacOSTarget()
+            || IsLinuxTarget() && TryGetLinuxAllocatorSyscallSpec(out _);
     }
 
     private void EmitRuntimeOsReallocateFastPath(
@@ -1873,7 +1874,19 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br i1 %os_size_overflow, label %fallback, label %call_os_reallocate");
         builder.AppendLine();
         builder.AppendLine("call_os_reallocate:");
-        builder.AppendLine($"  %os_realloc_base = call noundef ptr @{OsReallocateHelperName}(ptr %realloc_base, {AllocatorSizeType} noundef %os_total)");
+        if (IsLinuxTarget())
+        {
+            // mremap needs the original mapping extent, not the caller's
+            // logical payload size. Only non-bucket, base-aligned headers
+            // reach this path, and failure leaves that mapping unchanged.
+            builder.AppendLine($"  %os_old_length_slot = getelementptr i8, ptr %realloc_header, i64 {pointerSizeBytes}");
+            builder.AppendLine($"  %os_old_total = load {AllocatorSizeType}, ptr %os_old_length_slot, align {pointerSizeBytes}");
+            builder.AppendLine($"  %os_realloc_base = call noundef ptr @{OsReallocateHelperName}(ptr %realloc_base, {AllocatorSizeType} noundef %os_old_total, {AllocatorSizeType} noundef %os_total)");
+        }
+        else
+        {
+            builder.AppendLine($"  %os_realloc_base = call noundef ptr @{OsReallocateHelperName}(ptr %realloc_base, {AllocatorSizeType} noundef %os_total)");
+        }
         builder.AppendLine("  %os_realloc_failed = icmp eq ptr %os_realloc_base, null");
         builder.AppendLine($"  br i1 %os_realloc_failed, label %fallback, label %os_reallocated, !prof {allocationFailureProfile}");
         builder.AppendLine();
@@ -1976,6 +1989,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitOsReallocateHelperDefinition(StringBuilder builder)
     {
+        if (IsLinuxTarget() && TryGetLinuxAllocatorSyscallSpec(out var syscallSpec))
+        {
+            EmitLinuxOsReallocateHelperDefinition(builder, syscallSpec);
+            return;
+        }
+
         if (IsWindowsTarget())
         {
             builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
@@ -2061,6 +2080,49 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             "0");
         builder.AppendLine($"  %is_error = icmp uge {syscallSpec.ValueType} %mmap_result, -4095");
         builder.AppendLine($"  %base = inttoptr {syscallSpec.ValueType} %mmap_result to ptr");
+        builder.AppendLine("  %result = select i1 %is_error, ptr null, ptr %base");
+        builder.AppendLine("  ret ptr %result");
+        builder.AppendLine("}");
+    }
+
+    private void EmitLinuxOsReallocateHelperDefinition(StringBuilder builder, LinuxAllocatorSyscallSpec syscallSpec)
+    {
+        builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(2) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %ptr_int = ptrtoint ptr %ptr to {syscallSpec.ValueType}");
+        string oldSize;
+        string size;
+        if (syscallSpec.ValueBitWidth == 64)
+        {
+            oldSize = MaterializeAllocatorSizeAsI64(builder, "%old_size", "old_size64");
+            size = MaterializeAllocatorSizeAsI64(builder, "%size", "size64");
+        }
+        else if (AllocatorSizeType == "i32")
+        {
+            oldSize = "%old_size";
+            size = "%size";
+        }
+        else
+        {
+            builder.AppendLine($"  %old_size_too_large = icmp ugt {AllocatorSizeType} %old_size, 4294967295");
+            builder.AppendLine($"  %size_too_large = icmp ugt {AllocatorSizeType} %size, 4294967295");
+            builder.AppendLine("  %size_out_of_range = or i1 %old_size_too_large, %size_too_large");
+            builder.AppendLine("  br i1 %size_out_of_range, label %too_large, label %syscall");
+            builder.AppendLine("too_large:");
+            builder.AppendLine("  ret ptr null");
+            builder.AppendLine("syscall:");
+            builder.AppendLine($"  %old_size32 = trunc {AllocatorSizeType} %old_size to i32");
+            builder.AppendLine($"  %size32 = trunc {AllocatorSizeType} %size to i32");
+            oldSize = "%old_size32";
+            size = "%size32";
+        }
+
+        // MREMAP_MAYMOVE permits growth without copying the old payload in
+        // userspace. No alias/nonnull return promise is added to reallocation.
+        EmitLinuxSyscall6(builder, "%mremap_result", syscallSpec, syscallSpec.MremapNumber,
+            "%ptr_int", oldSize, size, "1", "0", "0");
+        builder.AppendLine($"  %is_error = icmp uge {syscallSpec.ValueType} %mremap_result, -4095");
+        builder.AppendLine($"  %base = inttoptr {syscallSpec.ValueType} %mremap_result to ptr");
         builder.AppendLine("  %result = select i1 %is_error, ptr null, ptr %base");
         builder.AppendLine("  ret ptr %result");
         builder.AppendLine("}");
@@ -2180,30 +2242,35 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             StarkAsmArchitecture.X86_64 => new LinuxAllocatorSyscallSpec(
                 MmapNumber: 9,
                 MunmapNumber: 11,
+                MremapNumber: 25,
                 ValueBitWidth: 64,
                 Template: "syscall",
                 Constraints: "={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"),
             StarkAsmArchitecture.AArch64 => new LinuxAllocatorSyscallSpec(
                 MmapNumber: 222,
                 MunmapNumber: 215,
+                MremapNumber: 216,
                 ValueBitWidth: 64,
                 Template: "svc #0",
                 Constraints: "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}"),
             StarkAsmArchitecture.RiscV64 => new LinuxAllocatorSyscallSpec(
                 MmapNumber: 222,
                 MunmapNumber: 215,
+                MremapNumber: 216,
                 ValueBitWidth: 64,
                 Template: "ecall",
                 Constraints: "={a0},{a7},0,{a1},{a2},{a3},{a4},{a5},~{memory}"),
             StarkAsmArchitecture.X86 => new LinuxAllocatorSyscallSpec(
                 MmapNumber: 192,
                 MunmapNumber: 91,
+                MremapNumber: 163,
                 ValueBitWidth: 32,
                 Template: "int $$0x80",
                 Constraints: "={eax},0,{ebx},{ecx},{edx},{esi},{edi},{ebp},~{memory},~{dirflag},~{fpsr},~{flags}"),
             StarkAsmArchitecture.Arm32 => new LinuxAllocatorSyscallSpec(
                 MmapNumber: 192,
                 MunmapNumber: 91,
+                MremapNumber: 163,
                 ValueBitWidth: 32,
                 Template: "svc #0",
                 Constraints: "={r0},{r7},0,{r1},{r2},{r3},{r4},{r5},~{memory}"),
@@ -6660,6 +6727,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private readonly record struct LinuxAllocatorSyscallSpec(
         long MmapNumber,
         long MunmapNumber,
+        long MremapNumber,
         int ValueBitWidth,
         string? Template,
         string? Constraints)

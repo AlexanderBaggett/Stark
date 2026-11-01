@@ -12208,12 +12208,26 @@ internal sealed class TypeChecker
             || expression.postfixPart()[0].argumentList() is not { } firstArgumentList
             || _currentImportedTemplateEnumCallOrdinals is not { } enumCallOrdinals
             || !enumCallOrdinals.TryGetValue(firstArgumentList, out var enumCallOrdinal)
-            || !_currentImportedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedEnumCall))
+            || !_currentImportedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedEnumCall)
+            || !IsPublishedCallNameCompatible(
+                expression.primaryExpression().GetText(),
+                $"{publishedEnumCall.EnumType.DisplayName}.{publishedEnumCall.VariantName}"))
         {
+            // Compatibility source can enumerate qualified calls differently
+            // from the typed body. An ordinal alone cannot bind another enum's
+            // constructor; leave ordinary typed resolution to bind this syntax.
             return false;
         }
 
         var enumTypeSymbol = EnsureMonomorphizedType(publishedEnumCall.EnumType, Location(expression.primaryExpression()));
+        if (expression.primaryExpression().genericEnumCaseReference() is { } authoredCase
+            && TryResolveEnumCaseReference(authoredCase, out _, out var authoredType, out var authoredVariant)
+            && (!string.Equals(authoredType.NamedType, enumTypeSymbol.NamedType, StringComparison.Ordinal)
+                || !string.Equals(authoredVariant.Name, publishedEnumCall.VariantName, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
         var enumType = ResolveNamedTypeSymbol(enumTypeSymbol);
         if (enumType is null
             || !enumType.TryGetVariant(publishedEnumCall.VariantName, out var variant, out _))

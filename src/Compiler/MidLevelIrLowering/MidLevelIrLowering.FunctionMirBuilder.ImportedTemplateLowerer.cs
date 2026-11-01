@@ -6870,7 +6870,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6933,7 +6933,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6950,6 +6950,36 @@ internal sealed partial class MidLevelIrLowerer
                 text: RenderImportedTypedTemplateExpressionCore(expression),
                 out call,
                 loweredExplicitArguments: loweredArguments);
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateCallArgument(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol? parameterType)
+        {
+            // Keep the argument's value/storage identity until the shared call
+            // builder forms a borrow. An integer cast to an out-qualified type
+            // would otherwise pass a temporary instead of the original local.
+            if (parameterType is not null && RequiresIndirectArgument(parameterType)
+                && TryResolveImportedTypedTemplateAssignmentTarget(expression, out var place))
+            {
+                var address = ResolveIndirectArgumentAddress(parameterType, place);
+                var value = ReadPlace(place);
+                if (address is not null)
+                {
+                    var evaluatedAddress = EmitRequiredTemporary(new MidLevelIrUseRValue(address), "argument_address");
+                    var evaluatedValue = EmitRequiredTemporary(new MidLevelIrUseRValue(value), "argument_value");
+                    if (evaluatedValue is not MidLevelIrLocalOperand local)
+                    {
+                        throw LoweringInvariantViolation(null, "Borrow argument snapshot did not produce a local value.");
+                    }
+                    _loadedAddressesByTempName[local.Name] = evaluatedAddress;
+                    return evaluatedValue;
+                }
+
+                return value;
+            }
+
+            return LowerImportedTypedTemplateExpressionCore(expression, parameterType);
         }
 
         private bool TryBuildImportedTypedTemplateDynamicStorageOperation(

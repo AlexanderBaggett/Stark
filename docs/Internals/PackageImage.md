@@ -370,10 +370,18 @@ its qualified source name, supports nested name/literal arguments, and uses an
 object-creation row's exact authored `ExpressionText` when the expression has
 no reconstructed arguments. It also reconstructs enum constructor/call/value
 expressions, synthesized named-type constructor/initializer and arena
-allocations, and generic/comptime direct and member calls. Direct calls retain
-Stage0's parsing optimization: pure type arguments remain inferred, while a
-comptime argument makes the complete explicit generic list necessary. Typed
-bodies render ordered local declarations, empty statements, expression
+allocations, and generic/comptime direct and member calls. Enum expressions retain
+their typed identities across qualified namespace paths: publication
+joins typed call facts with generic syntax references in one source-ordered
+ordinal table. Qualified unit variants also remain enum values rather than
+namespace field accesses. Compatibility rendering rejects an incomplete nested
+expression as a whole instead of emitting partial source; imported lowering
+retains the complete typed graph. Reanalyzed enum bindings take precedence over
+ordinal hints from compatibility source, and a hint must match the authored
+constructor identity, including resolved generic type arguments.
+Direct calls retain Stage0's parsing optimization: pure type arguments remain
+inferred, while a comptime argument makes the complete explicit generic list
+necessary. Typed bodies render ordered local declarations, empty statements, expression
 statements, assignments, breaks, continues, and returns into one reused owned
 scratch buffer. Local declarations preserve their storage class, mutability,
 structured named type, and initializer. Object-initializer expressions retain

@@ -3046,6 +3046,25 @@ public struct LinkedList<T>
 
     fn void Clear(mut borrow LinkedList<T> self)
     {
+        if (comptime System.Compiler.IsCopyable<T>())
+        {
+            // No element drop can observe traversal order or discarded slots.
+            // Drain the initialized prefixes while retaining backing capacity.
+            while willexit (self.Values.Length > 0)
+            {
+                stack LinkedListValueSlot<T> discardedValue = self.Values.MoveLast();
+            }
+            while willexit (self.Links.Length > 0)
+            {
+                stack LinkedListLinks discardedLinks = self.Links.MoveLast();
+            }
+            self.Head = LinkedListNoneIndex();
+            self.Tail = LinkedListNoneIndex();
+            self.FreeHead = LinkedListNoneIndex();
+            self.Length = 0;
+            return;
+        }
+
         while willexit (self.Head != LinkedListNoneIndex())
         {
             stack u64[0 2 ** 63 - 1] index = self.Head;

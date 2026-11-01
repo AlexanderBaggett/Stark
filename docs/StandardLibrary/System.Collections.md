@@ -180,8 +180,8 @@ public struct RingQueue<T>
 
 ## `LinkedList<T>`
 
-`LinkedList<T>` provides stable node storage for workloads where contiguous
-movement is undesirable.
+`LinkedList<T>` uses indexed value and link arrays. Indices remain stable while
+the backing arrays grow; the API does not expose raw node pointers.
 
 ```stark
 public struct LinkedList<T>
@@ -330,15 +330,18 @@ public struct HashSet<T>
   `AddLast`, `TryRemoveFirst`, `TryRemoveLast`, metadata inspection, `Clear`,
   `ReserveNodes`, and destructor cleanup. `ReserveNodes(count)` is an explicit
   performance knob for workloads that know they will allocate many nodes; it
-  pre-fills the list allocator's node bucket without adding elements to the list.
+  reserves value and link capacity without adding elements or eagerly building
+  a free list. `Clear` retains both capacities for reuse. For copyable elements,
+  it resets the initialized prefixes and list metadata; owned elements are
+  dropped in head-to-tail order.
 - `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast` now have
   source-level `out T` bodies.
 - `Get`, `GetMut`, and `Peek` now return safe retborrows from addressable
   storage. Queue and ring-queue peeks borrow from sparse slots, and
   `AsSlice`/`AsMutableSlice` lower to slice views over `List<T>` backing
   storage.
-- `LinkedList<T>` now uses one allocation per internal node. Each node stores
-  next/previous links and the element value together.
+- `LinkedList<T>` stores tagged value slots separately from next/previous index
+  links. Removed slots can be reused, and backing storage grows geometrically.
 - `Eq`, `Hash`, `Ord`, and `Format` are present as the canonical generic
   contract names; `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` remain as
   implementation compatibility vocabulary for dictionary/set internals.

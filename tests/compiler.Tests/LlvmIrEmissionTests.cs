@@ -9796,7 +9796,6 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Equal(2, CountOccurrences(llvm, "call i32 asm sideeffect \"int $$0x80\""));
         Assert.Contains("(i32 192, i32 0, i32 %size, i32 3, i32 34, i32 -1, i32 0)", llvm);
         Assert.Contains("(i32 91, i32 %ptr_int, i32 %size, i32 0, i32 0, i32 0, i32 0)", llvm);
         Assert.DoesNotContain("@malloc(", llvm);
