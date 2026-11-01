@@ -62,24 +62,10 @@ internal sealed class SsaLoopCounterWidening
                 || function.Blocks.Count(block => block.Terminator.Targets.Contains(header.Id)) != 2)
                 continue;
 
-            var initialEdges = phi.Incomings.Where(incoming => incoming.Value is SsaIntegerConstant { Value.IsZero: true }).ToArray();
-            if (initialEdges.Length != 1 || initialEdges[0].PredecessorBlockId == header.Id) continue;
-            var initial = initialEdges[0];
-            var back = phi.Incomings.Single(incoming => !ReferenceEquals(incoming, initial));
-            if (back.Value is not SsaValueReference update
-                || !definitions.TryGetValue(update.Name, out var updateDefinition)
-                || updateDefinition.Block == header.Id
-                || !blocks.TryGetValue(back.PredecessorBlockId, out var latch)
-                || !latch.Terminator.Targets.Contains(header.Id)
-                || updateDefinition.Instruction.Value is not SsaBinaryRValue
-                { Operator: SsaBinaryOperator.Add, Left: SsaValueReference updateCounter, Right: SsaIntegerConstant step } increment
-                || updateCounter.Name != counter.Name || step.Value != 1
-                // Every increment must be guarded by counter < limit. Exits may
-                // contain cleanup or nested control flow, but cannot reach it
-                // again without passing through this header's true edge.
-                || !CanReach(header.Terminator.Targets[0], updateDefinition.Block, header.Id, blocks)
-                || CanReach(header.Terminator.Targets[1], updateDefinition.Block, header.Id, blocks))
+            if (!SsaBoundedLoopAnalysis.TryGetUnitStep(function, header, phi, limit.Value, definitions,
+                    out var initial, out var back, out var updateDefinition, out var increment))
                 continue;
+            var update = (SsaValueReference)back.Value;
 
             var wideCounter = StarkTypeSymbols.Integer(32, 0, limit.Value, isUnsigned: true);
             var wideCompare = StarkTypeSymbols.Integer(32, conversion.TargetType.RangeMin, conversion.TargetType.RangeMax);
@@ -169,7 +155,7 @@ internal sealed class SsaLoopCounterWidening
                 // Do not add per-iteration state for conditional uses or a
                 // power-of-two remainder that can already use one native mask.
                 var alwaysExecuted = blockId == header.Id
-                    || !CanReach(header.Terminator.Targets[0], back.PredecessorBlockId, blockId, blocks);
+                    || !SsaBoundedLoopAnalysis.CanReach(header.Terminator.Targets[0], back.PredecessorBlockId, blockId, blocks);
                 var simpleRemainder = divisor.Value == 1 || divisor.Value > limit.Value;
                 var useInduction = alwaysExecuted && (divisor.Value & (divisor.Value - 1)) != 0;
                 SsaRValue native = arithmetic.Operator == SsaBinaryOperator.Modulo && (simpleRemainder || useInduction)
@@ -233,18 +219,4 @@ internal sealed class SsaLoopCounterWidening
         return false;
     }
 
-    private static bool CanReach(int start, int target, int barrier, IReadOnlyDictionary<int, SsaBasicBlock> blocks)
-    {
-        var pending = new Stack<int>();
-        var visited = new HashSet<int>();
-        pending.Push(start);
-        while (pending.TryPop(out var id))
-        {
-            if (id == barrier || !visited.Add(id)) continue;
-            if (id == target) return true;
-            if (blocks.TryGetValue(id, out var block))
-                foreach (var successor in block.Terminator.Targets) pending.Push(successor);
-        }
-        return false;
-    }
 }

@@ -5458,7 +5458,9 @@ public static class DefaultCompilerPipeline
             var propagated = ReferenceEquals(folded, ssa)
                 ? ssa
                 : new SsaConstantPropagator().Optimize(new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded));
-            var widened = new SsaLoopCounterWidening().Optimize(propagated);
+            var reduced = new SsaCyclicArraySumOptimizer().Optimize(propagated,
+                context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts));
+            var widened = new SsaLoopCounterWidening().Optimize(reduced);
             if (ReferenceEquals(widened, ssa))
             {
                 return;

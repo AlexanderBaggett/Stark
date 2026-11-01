@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: MemoryAccess, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: PureCallGlobalForwarding (not started).** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 21 of 52 initially open items are complete. IndependentSliceAdd passed on goal turn 1: source **0.9974 × C / 0.8578 × Rust**, source-free package **0.9978 × C / 0.8581 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 22 of 52 initially open items are complete. MemoryAccess passed on goal turn 1 with the general cyclic-array recurrence proof: source **0.8222 × C / 0.5878 × Rust**, source-free package **0.8253 × C / 0.5900 × Rust**. Implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**IndependentSliceAdd coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. MemoryAccess is next and has not started. No active window; preserve peer sections.
+**MemoryAccess coordination (goal turn 1): complete.** Final production and source-free package builds pass; 55 unit/regression and nine native integration tests, IR checks, signed/PID-boundary checks and unchanged regression code pass. Final 1,000-round window (seed 911121, CPU 0, 16:33:05–16:33:09 UTC) is closed: source **0.8222 × C**, package **0.8253 × C**. All 6,000 measured processes succeed with stable hashes; no builds/tests/tracing from this agent overlap sampling. Host exclusivity was unconfirmed. Preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -41,7 +41,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 19 | `benchmarks/micro/GlobalScalarLoadForwarding` | Complete | 1 | 0.9268 | 0.7997 |
 | 20 | `benchmarks/micro/IndependentRawPointerRegions` | Complete | 1 | 0.9967 | 0.8585 |
 | 21 | `benchmarks/micro/IndependentSliceAdd` | Complete | 1 | 0.9974 | 0.8578 |
-| 22 | `benchmarks/micro/MemoryAccess` | Queued | 0 | — | — |
+| 22 | `benchmarks/micro/MemoryAccess` | Complete | 1 | 0.8222 | 0.5878 |
 | 23 | `benchmarks/micro/PureCallGlobalForwarding` | Queued | 0 | — | — |
 | 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Queued | 0 | — | — |
 | 25 | `benchmarks/micro/StackFieldLoadForwarding` | Queued | 0 | — | — |
@@ -628,6 +628,56 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## MemoryAccess completion (November 1, 2026)
+
+**Status: complete, goal turn 1.** The accepted affine-cycle diagnostic is implemented as a general compiler proof. Both ordinary source and source-free package builds beat C and canonical Rust in the final 1,000-round window. Benchmark and standard-library sources are unchanged.
+
+### General proof and preserved facts
+
+`SsaCyclicArraySumOptimizer` recognizes a zero-entry, unit-step, constant-bounded loop over a private fixed integer stack array. The index must be a proved nonnegative counter remainder, a non-repeating counter within the array, or constant zero. Initial cells and checksum must be known constants. Each visit updates one cell by one loop-invariant integer seed and optionally its index, then adds that updated cell to the checksum. Partial cycles and arbitrary initial values are supported; the 256-cell limit bounds compiler work. Unsupported shapes keep their original code.
+
+For iteration count `N`, period `P`, and cell `j`, the compiler derives `k[j] = N/P + (j < N%P ? 1 : 0)` and sums `k[j]*initial[j] + (seed + indexCount*j)*k[j]*(k[j]+1)/2`. It computes coefficients with arbitrary-precision integers and proves every original cell-update intermediate, every possible checksum prefix, and each emitted multiply/add fits the original types. A fitting final sum alone is insufficient. The exit counter retains its original type and value `N`; no pointer width, array stride, public type or ABI changes.
+
+The facts already exist in the typed initializer, control flow, immutable SSA values and authoritative integer-range model. The missing relation is between successive visits to each array cell: ordinary scalar facts leave the indirect loads at the full integer range. The new consumer derives that relation before late induction widening and address lowering. Immutable seed copies/conversions can be moved from the body without changing their source types or conversion semantics. Counter/index conversions must preserve their entire proved domain. The existing counter widener shares the unit-step/control-flow proof through `SsaBoundedLoopAnalysis`.
+
+Only unobserved, unescaped integer stack storage qualifies. Array/byte reads after the loop, address escapes, unsupported calls/effects, additional stores, conditional/early exits, dynamic bounds, wrapping/saturating updates, lossy index aliases and unavailable overflow proofs retain the original path. Fallible allocations and ownership/drop behavior are not removed. Existing module/function metadata is copied intact, and post-rewrite reanalysis retains the pipeline's authoritative source/package call effects.
+
+For this workload, all 16 cells are visited 12,500 times, giving `checksum = 9377450000 + 1250100000*seed`. The actual seed range is **[-30, 30]**, not just nonnegative: the existing mixed-literal promotion interprets the `u32` PID as `i32` before `% 31`. That behavior is preserved, including high-bit PID values. The final checksum range is **[-28125550000, 46880450000]**; the observable result is `seed < -7`. The compiler does not replace the program with an unconditional success return.
+
+### Actual LLVM/native work and rejected controls
+
+Before the change, C, Rust and Stark retain 100,000 two-way-unrolled native iterations: **200,000 cell loads, 200,000 cell stores and 200,000 checksum updates**, plus array initialization. C folds a load into its arithmetic more effectively; Stark's early index/seed grouping is undone by a second ThinLTO reassociation after loop rotation. Actual pre-link/LTO traces and the checked-out LLVM Reassociate, ValueTracking and LoopRotation sources establish that sequence. Reading source alone was not used to identify the installed pass behavior.
+
+The final source and package LLVM retain the side-effecting PID operation, signed `i32` remainder and checksum predicate, with **zero array loads, stores, allocas or loop branches**. LLVM removes the now-unused initializer and reduces the proved affine result to the signed predicate. Both executables have identical **364-byte `.text`**, SHA-256 `a2d05d9b3189bd5491e4e2f06a1d6bc85fceeb6ab2ebd5e9183f909fd5a0aca0`, down from 588 bytes. C and Rust still execute their memory loops. No benchmark names, iteration counts, seeds or checksum constants are matched in production.
+
+Negative controls are retained under `turn1/controls/`: bounded expression grouping/cast bypasses produce unchanged native code; phi reordering obtains C-like load folding but regresses; period-16 unrolling adds register pressure/spills; outlining PID also regresses. A function-string alignment option is ignored, while actual 32/64-byte loop-alignment metadata does not close the gap. None of those policies is shipped. The accepted affine oracle's **0.8253 × C** result remains separately labeled diagnostic evidence.
+
+### Validation and final production measurement
+
+**55 focused Release unit/regression tests and nine native integration tests pass.** Coverage includes arbitrary periods/initial cells/partial cycles, 8/16/24/32/64-bit counters, both counter signednesses, signed and unsigned elements, authoritative ranges, invariant source-width conversions and observed exit counters. Negative cases cover array/byte readers, escapes, mutation, extra state, early exits, dynamic bounds, wrapping/saturation, narrowing, heap storage, unknown initializers, cell overflow and checksum-prefix overflow even when the mathematical final result fits.
+
+The new native test checks **350 exact results** against an independent reference, across source imports and a real noinline native package whose `.stark` source is deleted: signed seed sums, byte-reading results, mutating pointer calls and runtime loop counts. The final benchmark binaries additionally pass **122 exit-predicate checks** spanning every signed residue and **22 physical PID-boundary checks**. The benchmark's exact total is absent from its optimized executable; these are predicate checks, while the arbitrary-input helper tests validate exact sums. Before-production totals for all 61 residues were independently checked during the diagnostic investigation.
+
+**17 LLVM modules verify.** The target-matched facts probe's initial LLVM is byte-identical to the actual packaged CLI output; seed, product and final checksum ranges remain present. Fresh package builds of Arithmetic, FunctionPointerDevirtualization, IndependentRawPointerRegions and IndependentSliceAdd pass and retain byte-identical `.text` to their completed versions, so additional timing runs were unnecessary. Repository-wide direct/indirect stale-assumption searches covered pass/fact consumers, IR expectations, fixtures, benchmarks, scripts, docs and Stark ports; no package schema or existing behavioral expectation required changing.
+
+Final randomized interleaved arithmetic means, **1,000 successful measured processes per variant**, seed **911121**, CPU **0**, C = **1.0000**:
+
+| Variant | Mean µs | / C | / Rust | / corresponding before |
+| --- | ---: | ---: | ---: | ---: |
+| C | 660.258203 | **1.0000** | — | — |
+| Rust | 923.656379 | **1.3989** | **1.0000** | — |
+| Stark before, source | 662.831678 | **1.0039** | — | **1.0000** |
+| Stark before, package | 664.300632 | **1.0061** | — | **1.0000** |
+| Stark production, source | 542.884146 | **0.8222** | **0.5878** | **0.8190** |
+| Stark production, source-free package | 544.921814 | **0.8253** | **0.5900** | **0.8203** |
+
+All **6,000 measured processes** succeed, all executable hashes remain stable, and the quiet window is closed (**16:33:05–16:33:09 UTC**). These direct-process means include startup. CVs are 7.5–9.1%; passive cooling, the temperature cap and unconfirmed shared-host exclusivity limit fine-grained inference. No builds, tests or tracing from this agent overlap sampling. This is an approximately 18% reduction relative to before, rather than a claim that the fourth decimal is stable.
+
+Artifacts: ignored `benchmarks/codegen/sequential-goal-20261031/MemoryAccess/turn1/production/`, especially `interleaved-1000.json`, `provenance.json`, `codegen-validation.json`, `facts-validation.json`, `signed-production-validation.json`, `physical-pid-production-validation.json`, initial/post-LTO LLVM and disassembly. Before executables and compiler are preserved in `turn1/`; final Release compiler SHA-256 is `0a9279bab8bf09ff06c2003429a8e46a2185ca55c111a0a21b19e38f5f4edd04`. The unchanged source-free SDK has 13 module archives/images and zero source fallbacks. Every compiler job ran serially under a 2 GiB process-group RSS guard; the final source build peaked at approximately 1.23 GiB, without a guard firing.
+
+**Next: PureCallGlobalForwarding.**
+
+
 ## IndependentSliceAdd completion (November 1, 2026)
 
 **Status: completed, goal turn 1.**
@@ -661,7 +711,7 @@ All **4,000 measured processes** succeeded with stable executable hashes. Coeffi
 
 Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/IndependentSliceAdd/turn1/`, especially **`interleaved-1000.json`**, `provenance.json`, initial/post-LTO IR, native disassemblies, `initial-codegen-summary.json`, `loop-instruction-comparison.json`, exact-seed references/drivers/observations and `seed-validation.json`. `validation/` retains compact actual SSA/facts and matching initial LLVM; `test-results/` and `independent-slice-tests.log` retain focused validation. All windows are closed; preserve peer edits.
 
-**Next: MemoryAccess.**
+**Next at this completion: MemoryAccess (now completed above).**
 
 ## IndependentRawPointerRegions completion (November 1, 2026)
 
