@@ -9524,13 +9524,8 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("%bucket_alignment_ok = icmp ule i64 %effective_alignment, 16", llvm);
         Assert.Contains("%bucket_size_ok = icmp ule i64 %requested_size, 4096", llvm);
         Assert.Contains("br i1 %can_bucket, label %bucket_select_16, label %large_allocate", llvm);
-        Assert.Contains("br label %bucket_16_refill", llvm);
         Assert.Contains("bucket_16_refill:", llvm);
         Assert.Contains("%bucket_16_slab_base = call noalias noundef ptr @__stark_os_allocate(i64 noundef", llvm);
-        Assert.Contains("%bucket_16_refill_index = phi i64 [1, %bucket_16_slab_ok], [%bucket_16_refill_next, %bucket_16_refill_body]", llvm);
-        Assert.Contains("%bucket_16_refill_offset = mul i64 %bucket_16_refill_index, 48", llvm);
-        Assert.Contains("store i64 16, ptr %bucket_16_block_bucket_size_slot, align 8", llvm);
-        Assert.Contains("store ptr %bucket_16_block, ptr @__stark_alloc_bucket_16, align 8", llvm);
         Assert.Contains("ret ptr %bucket_16_first", llvm);
         Assert.Contains("store i64 0, ptr %bucket_size_slot, align 8", llvm);
         Assert.Contains("store ptr %ptr, ptr @__stark_alloc_bucket_16, align 8", llvm);
@@ -9760,7 +9755,6 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback", llvm);
         Assert.Contains("call noundef ptr @__stark_os_reallocate(ptr %realloc_base, i64 noundef %os_total)", llvm);
         Assert.Contains("br i1 %os_realloc_failed, label %fallback, label %os_reallocated", llvm);
-        Assert.Contains("%os_realloc_ptr = getelementptr i8, ptr %os_realloc_base, i64 24", llvm);
         Assert.Contains("call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)", llvm);
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);

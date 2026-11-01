@@ -220,10 +220,13 @@ The Linux implementation starts with syscall-backed virtual-memory allocation.
 The Windows implementation starts with OS heap APIs rather than the CRT
 allocator. A small size-class free-list layer sits above those OS primitives for
 small and medium allocations, while very large allocations stay on the OS-backed
-path. An empty size class can check larger cached blocks in classes produced
-by slab expansion, retaining their physical size class in the header. If none is available, it refills from one
-slab/page-sized OS allocation and splits it into many same-size blocks. The public Stark API
-should not expose those choices.
+path. Cached blocks in the same class take priority. An empty free list can
+consume its unused tail, then check larger cached expansion classes before
+requesting another OS slab. The target quantum is 64 KiB in a wide address
+space and remains 4 KiB on 32-bit targets. Only consumed block headers are
+initialized; unused slots stay behind a thread-local cursor/count. Tail state
+is specific to the refill quantum so SDK and consumer helpers cannot decode a
+different layout. The public Stark API should not expose these choices.
 
 Current implementation note: the compiler-backed allocator now routes heap
 locals and `System.Memory` allocation through Stark-owned runtime helpers. The
@@ -232,13 +235,27 @@ for sized free, reuse fixed buckets when the requested size and alignment fit
 the bucket contract, and avoid explicit `malloc`, `realloc`, and `free` lowering
 in Stark-owned runtime code. `Reallocate` reuses an existing bucket block in
 place when the new layout fits its physical bucket. A first block can also
-claim the unused slab extent when its recorded base/length and complete bounded
-free chain prove every sibling is free. Only after this proof succeeds are the
+claim the unused slab extent when its recorded base/length and either the
+untouched tail or a complete bounded free chain prove every sibling is unused. Only after this proof succeeds are the
 siblings detached and the physical bucket enlarged. A live sibling, changed
 chain, alignment mismatch or unproven extent keeps allocate-copy-free. Bucket-backed frees retain the slab memory on the bucket
 free list for process-lifetime reuse; large and over-aligned allocations still
 return to the OS-backed free path immediately. The bucket lists are thread-local; a slab with siblings in another thread
-cannot satisfy the complete-chain proof.
+cannot satisfy the complete-chain proof. A live tail recovers its OS base
+from the first header, which remains allocator metadata through ordinary
+free/cache operations. Claiming that tail clears its cursor/count before the
+first header can change ownership or move, while preserving other cached
+blocks. Claiming an older slab must preserve the current unrelated tail.
+An expanded block retains its original base and extent. A target-derived
+physical-class/extent tuple that cannot come from an ordinary refill proves
+exclusive ownership through later cache free/pop. For pointer-aligned layouts,
+this permits OS-backed growth beyond the cached class. Existing unused extent
+can be exposed without another OS call. Later logical growth within an
+OS-backed allocation also retains that actual extent; shrinking keeps the
+existing OS resize path. Payload relocation and header updates
+happen only after successful growth (or proven extent reuse); rejected growth
+keeps the original owner valid. Ordinary slabs with live or cached siblings
+keep their existing conservative fallback.
 The first executable benchmark convention lives in `benchmarks/allocator` and
 keeps allocator smoke measurements short enough for normal development runs.
 
