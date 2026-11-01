@@ -149,6 +149,12 @@ The first implementation can share the same contiguous backing strategy as
 storage. Dequeue and peek are O(1): the implementation keeps head/length
 metadata and moves only the occupied slot being removed.
 
+Growth can reallocate the backing storage when the head is zero, preserving
+the occupied prefix without a separate slot-move loop. A nonzero head retains
+the split-copy path that restores logical FIFO order. This applies to both
+`Queue<T>` and `RingQueue<T>`, including owned elements, and retains their
+existing allocation-failure behavior.
+
 ```stark
 public struct Queue<T>
 {

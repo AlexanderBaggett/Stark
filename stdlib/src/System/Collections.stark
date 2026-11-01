@@ -646,6 +646,23 @@ internal struct SparseSlots<T>
         stack u64[0 2 ** 63 - 1] oldHead = *head;
         stack rawmutptr<T> oldItems = self.Items;
         stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])(nextCapacity * elementSize);
+        if (oldHead == 0)
+        {
+            // The occupied slots already form a prefix. Preserve that layout
+            // through growth instead of allocating and moving each live slot.
+            stack System.Memory.Allocation grownAllocation =
+                System.Memory.Reallocate(self.Allocation, byteLength, alignof(T));
+            if (grownAllocation.Pointer == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            }
+
+            self.Allocation = grownAllocation;
+            self.Items = (rawmutptr<T>)grownAllocation.Pointer;
+            self.StorageCapacity = nextCapacity;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
         stack System.Memory.Allocation nextAllocation = System.Memory.Allocate(self.Allocator, byteLength, alignof(T));
         if (nextAllocation.Pointer == null)
         {

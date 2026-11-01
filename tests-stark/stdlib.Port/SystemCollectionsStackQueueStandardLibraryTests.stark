@@ -480,6 +480,19 @@ internal fn bool SourceStdLibPromotedQueueMatchesStableQueueExecutableRunsImpl()
                 {
                     return 25;
                 }
+                if (!Ok(growingDrops.Reserve(2048)) || growingDrops.Count() != 5
+                    || growingDrops.Peek().Value != 1 || DropCounter != 25)
+                {
+                    return 40;
+                }
+                for willexit (stack mut u8[0 5] i = 0; i < 5; i += 1)
+                {
+                    stack mut Resource value = new Resource() { Value = 0 };
+                    if (!growingDrops.TryDequeue(value) || value.Value != (i32[min max])(i + 1))
+                    {
+                        return 41;
+                    }
+                }
                 growingDrops.Clear();
                 if (DropCounter != 40)
                 {
@@ -718,6 +731,11 @@ internal fn bool SourceStdLibPromotedRingQueueCandidateExecutableRunsImpl()
                     return 9;
                 }
 
+                if (!Ok(ringDrops.Reserve(2048)) || ringDrops.Count() != 2
+                    || ringDrops.Peek().Value != 1 || DropCounter != 0)
+                {
+                    return 13;
+                }
                 ringDrops.Clear();
                 if (DropCounter != 3)
                 {

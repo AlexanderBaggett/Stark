@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration and QueueChurn passed on their first turns; QueueGrowth is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth is next. Previously accepted DictionaryLookup/x86 placement work remains complete. No build/test/timing window is active.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: QueueGrowth, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: StackGrowth, goal turn 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 11 of 52 initially open items are complete. QueueChurn passed on goal turn 1: source **0.9176 × C / 0.7417 × Rust**, source-free package **0.9996 × C / 0.8080 × Rust**. The package C margin is very small; source/package enqueue code differs as documented below. Existing production already meets the criteria; no new runtime/compiler patch was needed. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 12 of 52 initially open items are complete. QueueGrowth passed on goal turn 1: source **0.9643 × C / 0.6979 × Rust**, source-free package **0.9659 × C / 0.6991 × Rust**. General head-zero backing reallocation removes ten mmap calls while preserving payload/ownership and the wrapped fallback. Fresh QueueChurn/QueueDequeue regressions also beat C and Rust; Churn's source/code-size tradeoff is documented below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**QueueChurn coordination (goal turn 1):** Fresh builds, six LLVM verifications, 1,000-round comparisons, native inspection and separate syscall/failure checks are complete. Marked complete for the per-item commit. QueueGrowth is next and has not started. No active window; preserve peer sections.
+**QueueGrowth coordination (goal turn 1):** Production, source/fresh-package owned FIFO/drop checks, two focused Release tests, 21 LLVM-module verifications, syscall/failure checks and all 1,000-round production/regression comparisons are complete. Marked complete for the per-item source/test/docs commit. StackGrowth is next and has not started. No active window; preserve peer sections.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -31,7 +31,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 9 | `benchmarks/collections/ListGrowth` | Complete | 3 | 0.9892 | 0.6997 |
 | 10 | `benchmarks/collections/ListIteration` | Complete | 1 | 0.9916 | 0.7044 |
 | 11 | `benchmarks/collections/QueueChurn` | Complete | 1 | 0.9176 | 0.7417 |
-| 12 | `benchmarks/collections/QueueGrowth` | Queued | 0 | — | — |
+| 12 | `benchmarks/collections/QueueGrowth` | Complete | 1 | 0.9643 | 0.6979 |
 | 13 | `benchmarks/collections/StackGrowth` | Queued | 0 | — | — |
 | 14 | `benchmarks/micro/Arithmetic` | Queued | 0 | — | — |
 | 15 | `benchmarks/micro/BranchSelectPredication` | Queued | 0 | — | — |
@@ -627,6 +627,60 @@ This is **not implemented as a compiler optimization**. The control is specific 
 The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloadSpecializer.cs`**. It currently discovers owned dynamic scalar payloads and rejects byte reads; it does not yet prove raw Dictionary value regions or propagate scalar reads feeding only dead stores. Simply treating every raw pointer field as owned would be unsound: it can alias externally observable memory, and Dictionary keys/values/states share an allocation. Reuse shared ownership, region/disjointness, copyability and call-effect facts, or produce the missing facts at their real source; unknown cases must stay conservative. LLVM/Clang source inspection also confirmed that source-level range/type information and function boundary attributes must be checked after actual inlining rather than assumed to survive.
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
+
+## QueueGrowth head-zero reallocation completion (November 1, 2026)
+
+**Status: completed, goal turn 1.** Source and fresh source-free package beat C and canonical Rust. No C tie allowance is used. This completes item 12; commit before starting StackGrowth.
+
+### Preserve the live prefix through growth
+
+The initial 1,000-round comparison was source **1.0356 × C**, package **1.0369 × C**, Rust **1.3641 × C**. The existing guarded drain already vectorized, so missing checksum vectorization was not the remaining gap. `SparseSlots.ReserveRing` still allocated a new backing block and split-moved its live elements on every growth, even when its head was zero.
+
+The new general guard consumes the exact `oldHead == 0` layout fact: occupied elements already form a prefix at the same offsets, so use the existing **`System.Memory.Reallocate`** contract. Preserve the complete Allocation record (pointer, old logical byte length, alignment and allocator), checked new capacity/byte length and `alignof(T)` through the operation, then replace the backing owner/pointer/capacity only after success. No live element is separately moved/dropped by the collection. Backing-byte relocation does not initialize spare slots or create drop obligations. This works for arbitrary eligible scalar and owned elements; no copyability shortcut, new header field, stronger alias promise, benchmark condition or capacity reservation is introduced.
+
+A nonzero head retains the existing split-move allocate/free path and FIFO restoration. Existing size/layout checks and too-large status remain. Both Allocate and Reallocate are the documented **infallible** low-level operations, so mapping exhaustion still reaches the OOM trap; this is not converted to List's fallible status behavior. `unsafe inline fn` remains the valid kind because the method calls those `fn` allocation operations.
+
+The checked-out Rust source (`16d1ffac1`) supports the same underlying opportunity: `VecDeque::grow` calls `RawVec::grow_one`, and `RawVecInner::finish_grow` delegates an existing allocation to `Allocator::grow`; `handle_capacity_increase` handles ring layout afterward. C's canonical benchmark always mallocs a new block, copies and frees. The reference sources and flags are unchanged. Their algorithms are comparison evidence, not a reason to erase Stark's ownership/failure contracts.
+
+### Generated production work
+
+Separate GDB traces of **both actual before executables** show **11 mmap + 2 munmap**, no mremap/brk. Both new source/package executables use **1 mmap + 1 munmap**, no mremap/brk: the allocator can retain and expose its proved backing extent. C records two brk calls; Rust's body records no allocator syscalls after runtime startup, which does not mean zero allocations.
+
+The guarded checksum reduction remains vectorized with a conservative fallback, and real payload writes/reads remain. New source/package optimized mains have 1,280/1,237 lines, 114/115 conditional branch sites, 130/126 loads and 65 stores; total `.text` is 7,360/7,200 bytes. The previous source/package sizes were 4,704 bytes and 77 branch sites, so cold allocator inlining increases code size even while OS/copy work falls. Neither native instruction equality nor uniform instruction-count reduction is claimed. Initial/post-LTO LLVM, disassembly and hashes are retained.
+
+### Final production comparison
+
+One warmup and **1,000 balanced randomized interleaved rounds per executable**, seed `911073`, CPU 0, arithmetic means:
+
+| Executable | Mean µs | C = 1.0000 | Relative to Rust |
+| --- | ---: | ---: | ---: |
+| c | 577.646453 | 1.0000 | 0.7238 |
+| rust | 798.119532 | 1.3817 | 1.0000 |
+| before-source | 601.190320 | 1.0408 | 0.7533 |
+| before-package | 602.768426 | 1.0435 | 0.7552 |
+| stark-source | 557.027615 | 0.9643 | 0.6979 |
+| stark-package | 557.967638 | 0.9659 | 0.6991 |
+
+All 6,000 measured processes succeeded, hashes remained fixed and no samples were excluded. Before/after variants share this same window; the separate initial ratios above are not mixed into it. Startup is included, stdout goes to null and stderr to separate regular files. Host exclusivity was unconfirmed; passive cooling, scheduling and timing spread remain limitations. No builds, tests or tracing from this chat overlapped timing. Canonical flags remain C `-O3 -DNDEBUG -std=c17`, Rust `-C opt-level=3 -C debug-assertions=no -C overflow-checks=no`; native and reference inspection IR were emitted separately.
+
+### Validation and affected completed benchmarks
+
+The strengthened Queue and RingQueue owned-value programs pass **from source and fresh source-free packages**. They verify a large reserve with only five/two live values, unchanged count/front, every dequeued payload value, no premature drops and exact final drop counts; existing wrapped growth, TooLarge rollback, clear/reuse, scoped cleanup and failed-pop cases remain in the same executable programs. The updated C# and Stark-port raw test programs match, and those exact programs were compiled/run with the Release host compiler. This is execution of the changed test payloads, not a claim that the full port wrapper runner or umbrella SDK suite ran.
+
+Two focused Release lowering tests pass (`StdLibSourcePromotedCollectionReservesUseSparseSlotStorage`, `PromotedQueueTryDequeueUsesSparseSlotRingPath`). **21 LLVM modules verify** across production, owned cases and queue regressions; reference C/Rust inspection IR also verifies. Mapping ENOMEM injected after actual benchmark entry reaches `__stark_oom_trap` in both new executables, retaining infallible allocation behavior. The fresh SDK rebuilds Collections and reuses unchanged validated Memory/BitOperations archives/images, with zero `.stark` fallback files. Compiler/source/SDK hashes and module-resolution provenance are saved. The Release test build regenerated the compiler DLL with a different hash; a final rebuild using that DLL reproduces **both complete measured native executables byte-for-byte**, as recorded in `current-compiler-replay.json`. Thus the current compiler also reproduces the timed production code.
+
+Repository-wide stale-assumption searches covered SparseSlots/ReserveRing consumers, copy/growth assertions, raw allocation contracts, benchmarks and C#/Stark tests. The internal initialized-slot documentation now distinguishes reallocated backing bytes from initialized elements; public collection docs describe the guarded path. No public/package schema changed. Builds/tests ran sequentially with the process-group memory guard; the focused Release build/test peak was about 1.16 GB and no guard stopped. No full release or unrelated suite ran.
+
+Both affected completed queue workloads were rebuilt and independently measured for **1,000 rounds per executable**, with unchanged hashes and no discarded samples:
+
+| Benchmark | Before source / C | Before package / C | New source / C | New package / C | Rust / C |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QueueChurn | 0.9160 | 0.9966 | 0.9473 | 0.9657 | 1.2257 |
+| QueueDequeue | — | 0.9904 | 0.8498 | 0.8434 | 1.1603 |
+
+The QueueChurn source mean rises versus its same-window before executable despite fewer allocation calls; its optimized main now calls Queue.Reserve on each enqueue (two static loop sites), whereas before that fast path was inlined. Package enqueue calls remain out of line (33 static sites from unrolling), and its mean improves. This is a visible inlining/code-size tradeoff, not evidence that every workload became faster. Both new source/package variants still beat C and Rust. A future general split of the small reserve fast path from cold growth is a concrete opportunity; no blanket inline/noinline policy is added here. QueueDequeue's before control is freshly built against the previous source-free SDK, not an invented before-source result.
+
+Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/QueueGrowth/turn1/` retains the initial comparison. **`turn1/candidate/` is the final production implementation**: `interleaved-1000.json` and regression JSON raw samples/hashes, source/package SDK and provenance, exact owned test programs/executables, Release TRX/logs/resource reports, LLVM/optimized IR/disassembly/codegen summaries, and before/after syscall/failure checks. All windows are closed. **Next: StackGrowth.**
 
 ## QueueChurn completion (November 1, 2026)
 

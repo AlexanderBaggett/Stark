@@ -297,9 +297,12 @@ Sparse data structures use explicit source facts for initialized slots. When the
 
 The standard library's `System.Collections.SparseSlots<T>` is the current
 internal sparse initialized-slot view for ring-shaped collections. It owns the
-allocation, moves only the caller-declared live ring range during growth, and
-exposes direct slot move/borrow helpers so `Queue<T>` and `RingQueue<T>` avoid
-per-slot enum tags in their hot paths.
+allocation and preserves the caller-declared live ring range during growth.
+A zero head permits backing reallocation with the live prefix unchanged;
+otherwise split moves restore FIFO order. Unoccupied backing bytes do not
+become initialized elements or acquire drop obligations. Direct slot move/borrow
+helpers let `Queue<T>` and `RingQueue<T>` avoid per-slot enum tags in their hot
+paths.
 
 ### 2.5 Standard Library Promotion Status
 
