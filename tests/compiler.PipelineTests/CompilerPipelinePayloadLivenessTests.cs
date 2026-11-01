@@ -4,6 +4,164 @@ namespace compiler.PipelineTests;
 
 public sealed class CompilerPipelinePayloadLivenessTests
 {
+    [Theory]
+    [InlineData(false, "u32[7 max]", "return values.Length;", true)]
+    [InlineData(true, "u32[7 max]", "return values.Length;", true)]
+    [InlineData(false, "i16[min -7]", "return values.Length;", true)]
+    [InlineData(true, "i16[min -7]", "return values.Length;", true)]
+    [InlineData(false, "bool", "return values.Length;", true)]
+    [InlineData(true, "bool", "return values.Length;", true)]
+    [InlineData(false, "bool", "return values[1] ? (u64[0 max])3 : (u64[0 max])5;", false)]
+    [InlineData(true, "bool", "return values[1] ? (u64[0 max])3 : (u64[0 max])5;", false)]
+    [InlineData(false, "f64", "return values.Length;", true)]
+    [InlineData(true, "f64", "return values.Length;", true)]
+    [InlineData(false, "u32[7 max]", "if (values[1] != input) { return 3; } return values.Length;", false)]
+    [InlineData(true, "u32[7 max]", "if (values[1] != input) { return 3; } return values.Length;", false)]
+    [InlineData(false, "u32[7 max]", "Save(values[1]); return values.Length;", false)]
+    [InlineData(true, "u32[7 max]", "Save(values[1]); return values.Length;", false)]
+    [InlineData(false, "u32[7 max]", "stack u32[7 max] copied = values[1]; callback(copied); return values.Length;", false)]
+    [InlineData(true, "u32[7 max]", "stack u32[7 max] copied = values[1]; callback(copied); return values.Length;", false)]
+    [InlineData(false, "u32[7 max]", "*other = values[1]; return values.Length;", false)]
+    [InlineData(true, "u32[7 max]", "*other = values[1]; return values.Length;", false)]
+    [InlineData(false, "u8[0 1]", "stack u8[0 1][] outside = slice(other, 2); return outside[values[1]];", false)]
+    [InlineData(true, "u8[0 1]", "stack u8[0 1][] outside = slice(other, 2); return outside[values[1]];", false)]
+    [InlineData(false, "u32[7 max]", "init values[0] = choose ? values[1] : input; return values.Length;", true)]
+    [InlineData(true, "u32[7 max]", "init values[0] = choose ? values[1] : input; return values.Length;", true)]
+    public void ScalarCopiesAreDeadOnlyWhenAllUsesStayInUnobservedPayload(bool packaged, string elementType, string observe, bool expected)
+    {
+        var directory = Directory.CreateTempSubdirectory("stark-payload-copy-");
+        try
+        {
+            var librarySource = $$"""
+                module PayloadCopies
+                public noinline unsafe finite void Copy<T>(borrow T tag, mut borrow dynamic {{elementType}} values)
+                {
+                    init values[1] = values[0];
+                }
+                """;
+            var libraryPath = Path.Combine(directory.FullName, "PayloadCopies.stark");
+            if (packaged)
+            {
+                var library = DefaultCompilerPipeline.Create().Run(new CompilationInput(librarySource, libraryPath));
+                Assert.True(library.Succeeded, string.Join(Environment.NewLine, library.Diagnostics));
+                var manifest = PackageImageBuilder.Create(library, Path.Combine(directory.FullName, "libPayloadCopies.a"));
+                File.WriteAllText(Path.Combine(directory.FullName, "libPayloadCopies.starkpkg.json"), manifest.ToJson());
+            }
+            else File.WriteAllText(libraryPath, librarySource);
+            var consumer = DefaultCompilerPipeline.Create().Run(new CompilationInput($$"""
+                import PayloadCopies
+                module Demo
+                unsafe ffi fn void Save({{elementType}} value);
+                export unsafe fn u64[0 max] Probe({{elementType}} input, bool choose, rawmutptr<{{elementType}}> other,
+                    fnptr<fn void(borrow {{elementType}})> callback)
+                {
+                    stack bool tag = true;
+                    stack mut dynamic {{elementType}} values = new(2);
+                    init values[0] = input;
+                    Copy(tag, values);
+                """ + observe + "\n}", Path.Combine(directory.FullName, "Demo.stark")), new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(directory.FullName), StopAfterPassId: "arithmetic-fold-ssa"));
+            Assert.True(consumer.Succeeded, string.Join(Environment.NewLine, consumer.Diagnostics));
+            var original = consumer.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var plan = new SsaDeadPayloadSpecializer(consumer.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel),
+                consumer.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr).Functions
+                    .ToDictionary(static function => function.Name, static function => function.Effects, StringComparer.Ordinal),
+                consumer.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts))
+                .Optimize(original, new HashSet<string>(StringComparer.Ordinal) { "Probe" });
+            Assert.Equal(expected, plan.ReplacesPayloadReads);
+            Assert.Equal(expected, !ReferenceEquals(original, plan.Module));
+            if (expected)
+            {
+                var copy = Assert.Single(plan.Module.Functions, function =>
+                    plan.Origins.TryGetValue(function.Name, out var origin) && origin.Contains("Copy", StringComparison.Ordinal));
+                var originalCopy = Assert.Single(original.Functions, function => function.Name == plan.Origins[copy.Name]);
+                var element = originalCopy.Parameters[1].Type.ElementType;
+                Assert.DoesNotContain(copy.Blocks.SelectMany(block => block.Instructions), instruction =>
+                    instruction is SsaValueInstruction { Value: SsaLoadIndirectRValue load } && load.Type == element);
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false, "return (u64[0 max])owner.Buffer.Length + (u64[0 max])owner.Marker;", true)]
+    [InlineData(true, "return (u64[0 max])owner.Buffer.Length + (u64[0 max])owner.Marker;", true)]
+    [InlineData(false, "owner.Buffer = new(16); Fill(tag, owner); return owner.Buffer.Length;", true)]
+    [InlineData(false, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; owner.Buffer = replacement; return owner.Buffer.Length;", true)]
+    [InlineData(true, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; owner.Buffer = replacement; return owner.Buffer.Length;", true)]
+    [InlineData(false, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; owner.Buffer = replacement; return owner.Buffer[0];", false)]
+    [InlineData(true, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; owner.Buffer = replacement; return owner.Buffer[0];", false)]
+    [InlineData(true, "owner.Buffer = new(16); Fill(tag, owner); return owner.Buffer.Length;", true)]
+    [InlineData(false, "return owner.Buffer[0];", false)]
+    [InlineData(true, "return owner.Buffer[0];", false)]
+    [InlineData(false, "Expose(&owner.Buffer[0]); return owner.Marker;", false)]
+    [InlineData(true, "Expose(&owner.Buffer[0]); return owner.Marker;", false)]
+    [InlineData(false, "owner.Buffer = incoming; Fill(tag, owner); return owner.Buffer.Length;", false)]
+    [InlineData(true, "owner.Buffer = incoming; Fill(tag, owner); return owner.Buffer.Length;", false)]
+    [InlineData(false, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; Expose(&replacement[0]); owner.Buffer = replacement; return owner.Buffer.Length;", false)]
+    [InlineData(true, "stack mut dynamic u8[0 max] replacement = new(); if (!replacement.TryReserveCapacity(16)) return 9; init replacement[0] = 42; Expose(&replacement[0]); owner.Buffer = replacement; return owner.Buffer.Length;", false)]
+    public void AggregateHeaderUpdatesPreserveOnlyOwnedUnobservedPayload(bool packaged, string observe, bool expected)
+    {
+        var directory = Directory.CreateTempSubdirectory("stark-payload-header-");
+        try
+        {
+            const string librarySource = """
+                module PayloadOwners
+                public struct Owner
+                {
+                    dynamic u8[0 max] Buffer;
+                    u32[0 max] Marker;
+                    Owner()
+                    {
+                        self.Buffer = new();
+                        self.Marker = 17;
+                    }
+                }
+                public inline unsafe finite void Fill<T>(borrow T tag, mut borrow Owner owner)
+                {
+                    init owner.Buffer[0] = 42;
+                }
+                """;
+            var libraryPath = Path.Combine(directory.FullName, "PayloadOwners.stark");
+            if (packaged)
+            {
+                var library = DefaultCompilerPipeline.Create().Run(new CompilationInput(librarySource, libraryPath));
+                Assert.True(library.Succeeded, string.Join(Environment.NewLine, library.Diagnostics));
+                var manifest = PackageImageBuilder.Create(library, Path.Combine(directory.FullName, "libPayloadOwners.a"));
+                File.WriteAllText(Path.Combine(directory.FullName, "libPayloadOwners.starkpkg.json"), manifest.ToJson());
+            }
+            else File.WriteAllText(libraryPath, librarySource);
+            var consumer = DefaultCompilerPipeline.Create().Run(new CompilationInput("""
+                import PayloadOwners
+                module Demo
+                unsafe ffi fn void Expose(rawptr<u8[0 max]> data);
+                export unsafe fn u64[0 max] Probe(dynamic u8[0 max] incoming)
+                {
+                    stack mut Owner owner = new();
+                    stack bool tag = true;
+                    owner.Buffer = new(8);
+                    Fill(tag, owner);
+                    owner.Marker = 29;
+                """ + observe + "\n}", Path.Combine(directory.FullName, "Demo.stark")), new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(directory.FullName), StopAfterPassId: "arithmetic-fold-ssa"));
+            Assert.True(consumer.Succeeded, string.Join(Environment.NewLine, consumer.Diagnostics));
+            var original = consumer.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var plan = new SsaDeadPayloadSpecializer(consumer.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel),
+                consumer.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects).Functions,
+                consumer.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts))
+                .Optimize(original, new HashSet<string>(StringComparer.Ordinal) { "Probe" });
+            Assert.Equal(expected, !ReferenceEquals(original, plan.Module));
+            if (expected)
+            {
+                var instructions = plan.Module.Functions.Where(f => f.Name == "Probe" || plan.Origins.ContainsKey(f.Name))
+                    .SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).ToArray();
+                Assert.DoesNotContain(instructions, i => i is SsaStoreIndirectInstruction { ValueType.BitWidth: 8 });
+                Assert.Contains(instructions, i => i is SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue });
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Fact]
     public void PackagedTypedDynamicAccessPreservesItsStorageOrigin()
     {

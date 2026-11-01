@@ -9,11 +9,11 @@ internal fn bool StdLibSourcePromotedCollectionReservesUseSparseSlotStorageImpl(
 {
     // PORT-NOTE: the C# test stops after `emit-llvm` and extracts individual
     // function bodies (RingQueue.Reserve, SparseSlots.ReserveRing,
-    // Dictionary.Reserve) to assert per-body Contains/DoesNotContain. The
+    // Dictionary.GrowStorage) to assert per-body Contains/DoesNotContain. The
     // compile-only bridge exposes only whole-module LLVM text, so the
     // function-scoped DoesNotContain checks (QueueSlot, %slot_addedSlots,
-    // dynamic_try_reserve, llvm.memmove, DictionaryValueSlot,
-    // %slot_nextValueSlots) cannot be faithfully reproduced; reduced to a
+    // dynamic_try_reserve for RingQueue, llvm.memmove for SparseSlots)
+    // cannot be faithfully reproduced; reduced to a
     // successful compile plus whole-text presence of the sparse-slot reserve
     // path and the Allocate/Free runtime calls.
     stack mut ProgramCompile c = CompileProgram("stdlib-promoted-collection-reserve-sparse", raw"""

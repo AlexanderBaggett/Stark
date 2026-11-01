@@ -21,6 +21,12 @@ public sealed class SystemIOPathPayloadLivenessTests : StandardLibraryTestSuite
             var executable = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
             await File.WriteAllTextAsync(observer, """
                 #include <stdint.h>
+                uint32_t payload_input(void)
+                {
+                    static volatile uint32_t next = 37;
+                    next = (next * 17 + 3) & 127;
+                    return next + 7;
+                }
                 int32_t inspect_payload(const signed char *data, uint64_t length)
                 {
                     const char expected[] = "alpha/beta/gamma.txt";
@@ -45,6 +51,90 @@ public sealed class SystemIOPathPayloadLivenessTests : StandardLibraryTestSuite
                     }
                 }
                 unsafe ffi fn i32[min max] inspect_payload(rawptr<i8[min max]> data, u64[0 max] length);
+                unsafe ffi fn u32[7 max] payload_input();
+
+                noinline unsafe finite void CopyPositive(mut borrow dynamic u32[7 max] values) { init values[1] = values[0]; }
+                noinline unsafe finite void CopyNegative(mut borrow dynamic i16[min -7] values) { init values[1] = values[0]; }
+                noinline unsafe finite void CopyBoolean(mut borrow dynamic bool values) { init values[1] = values[0]; }
+                noinline unsafe finite void CopyFloat(mut borrow dynamic f64 values) { init values[1] = values[0]; }
+                noinline unsafe fn u64[0 max] ScalarCopiesNoRead()
+                {
+                    stack u32[7 max] input = payload_input();
+                    stack mut dynamic u32[7 max] positive = new(2);
+                    stack mut dynamic i16[min -7] negative = new(2);
+                    stack mut dynamic bool flags = new(2);
+                    stack mut dynamic f64 floats = new(2);
+                    init positive[0] = input;
+                    init negative[0] = -19;
+                    init flags[0] = true;
+                    init floats[0] = (f64)input;
+                    CopyPositive(positive);
+                    CopyNegative(negative);
+                    CopyBoolean(flags);
+                    CopyFloat(floats);
+                    return (u64[0 max])positive.Length + (u64[0 max])negative.Length
+                        + (u64[0 max])flags.Length + (u64[0 max])floats.Length;
+                }
+                noinline unsafe fn bool ScalarCopiesRead(bool observe)
+                {
+                    stack u32[7 max] input = payload_input();
+                    stack mut dynamic u32[7 max] values = new(2);
+                    init values[0] = input;
+                    CopyPositive(values);
+                    if (observe) { return values[1] == input; }
+                    return values.Length == 2;
+                }
+                noinline unsafe fn bool ScalarCopiesThenUnusedMoves()
+                {
+                    stack mut dynamic u32[7 max] values = new(2);
+                    init values[0] = payload_input();
+                    CopyPositive(values);
+                    while willexit (values.Length > 0) { stack u32[7 max] unused = values.MoveLast(); }
+                    return values.Length == 0;
+                }
+                noinline unsafe fn u32[7 max] ScalarCopyToExternal(rawmutptr<u32[7 max]> output)
+                {
+                    stack u32[7 max] input = payload_input();
+                    stack mut dynamic u32[7 max] values = new(2);
+                    init values[0] = input;
+                    CopyPositive(values);
+                    *output = values[1];
+                    return input;
+                }
+
+                struct HeaderOwner
+                {
+                    dynamic u8[0 max] Bytes;
+                    u32[0 max] Marker;
+                    HeaderOwner() { self.Bytes = new(); self.Marker = 17; }
+                }
+                inline unsafe finite void FillHeaderOwner<T>(borrow T tag, mut borrow HeaderOwner owner)
+                {
+                    init owner.Bytes[0] = 37;
+                }
+                noinline unsafe fn u64[0 max] ReplaceHeaderOnly()
+                {
+                    stack mut HeaderOwner owner = new();
+                    stack bool tag = true;
+                    owner.Bytes = new(8);
+                    FillHeaderOwner(tag, owner);
+                    owner.Marker = 29;
+                    owner.Bytes = new(16);
+                    FillHeaderOwner(tag, owner);
+                    return (u64[0 max])owner.Bytes.Length + (u64[0 max])owner.Marker;
+                }
+                noinline unsafe fn bool ReplaceAndRead(bool observe)
+                {
+                    stack mut HeaderOwner owner = new();
+                    stack bool tag = true;
+                    owner.Bytes = new(8);
+                    FillHeaderOwner(tag, owner);
+                    owner.Marker = 29;
+                    if (observe && owner.Bytes[0] != 37) { return false; }
+                    owner.Bytes = new(16);
+                    FillHeaderOwner(tag, owner);
+                    return owner.Bytes[0] == 37 && owner.Bytes.Length == 1 && owner.Marker == 29;
+                }
 
                 noinline unsafe fn bool BytesAreCorrect(mut borrow OwnedAscii output)
                 {
@@ -123,6 +213,11 @@ public sealed class SystemIOPathPayloadLivenessTests : StandardLibraryTestSuite
                     if (!IndirectReader(BytesAreCorrect)) { return 5; }
                     if (!GrowAndRead()) { return 6; }
                     if (!OverlappingView()) { return 7; }
+                    if (ReplaceHeaderOnly() != 30 || !ReplaceAndRead(true) || !ReplaceAndRead(false)) { return 8; }
+                    if (ScalarCopiesNoRead() != 8 || !ScalarCopiesRead(true) || !ScalarCopiesRead(false)) { return 9; }
+                    stack mut u32[7 max] written = 7;
+                    stack u32[7 max] expected = ScalarCopyToExternal(&written);
+                    if (expected != written || !ScalarCopiesThenUnusedMoves()) { return 10; }
                     return 0;
                 }
                 """);

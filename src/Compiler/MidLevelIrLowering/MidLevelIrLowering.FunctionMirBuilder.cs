@@ -314,6 +314,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IDisposable _logScope;
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, MidLevelIrOperand> _loadedAddressesByTempName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DynamicInitSliceProvenance> _dynamicInitSliceProvenanceByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DynamicStorageAllocationKind> _dynamicStorageAllocationKindByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
@@ -9188,7 +9189,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = ResolveIndirectArgumentAddress(parameterType, arguments.argument(index).expression());
+                var indirectArgumentAddress = ResolveIndirectArgumentAddress(parameterType, arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered) ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
@@ -9426,7 +9427,7 @@ internal sealed partial class MidLevelIrLowerer
                 loweredArguments.Add(argument);
                 var indirectArgumentAddress = ResolveIndirectArgumentAddress(
                     parameterType,
-                    arguments.argument(index).expression());
+                    arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
@@ -9515,7 +9516,7 @@ internal sealed partial class MidLevelIrLowerer
                 loweredArguments.Add(argument);
                 var indirectArgumentAddress = ResolveIndirectArgumentAddress(
                     parameterType,
-                    arguments.argument(index).expression());
+                    arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
@@ -10422,9 +10423,10 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = syntaxArguments is not null && index < syntaxArguments.argument().Length
-                    ? ResolveIndirectArgumentAddress(parameterType, syntaxArguments.argument(index).expression())
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, sourceArgument)
+                    ?? (syntaxArguments is not null && index < syntaxArguments.argument().Length
+                        ? ResolveIndirectArgumentAddress(parameterType, syntaxArguments.argument(index).expression())
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, sourceArgument)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
@@ -13662,6 +13664,24 @@ internal sealed partial class MidLevelIrLowerer
                 return operand;
             }
 
+            // A value supplied to a borrowed parameter retains its value type.
+            // The call's indirect address/local carries the borrow separately.
+            // In particular, an integer value is not a pointer-typed integer cast.
+            if (StarkTypeSymbols.IsPointerBackedBorrowType(targetType)
+                && !StarkTypeSymbols.IsPointerBackedBorrowType(operand.Type)
+                && CanUseOperandAsIndirectArgumentSource(targetType, operand.Type))
+            {
+                targetType = StarkTypeSymbols.BorrowReturnValueType(targetType);
+                if (operand.Type == targetType) return operand;
+            }
+
+            if (IsPointerBackedBorrowRuntimePointerCoercion(operand.Type, targetType))
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "ptrcast");
+            }
+
             if (targetType.Kind == StarkTypeKind.DynTrait
                 && BuildDynTraitCoercion(operand, targetType) is { } dynValue)
             {
@@ -13718,13 +13738,6 @@ internal sealed partial class MidLevelIrLowerer
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     targetType.Kind == StarkTypeKind.RawPointer ? "ptrcast" : "intcast");
-            }
-
-            if (IsPointerBackedBorrowRuntimePointerCoercion(operand.Type, targetType))
-            {
-                return EmitTemporary(
-                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
-                    "ptrcast");
             }
 
             if (operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
@@ -14482,6 +14495,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? EmitTemporary(MidLevelIrRValue value, string hint)
         {
+            if (value is MidLevelIrLoadIndirectRValue load)
+            {
+                // Later arguments can change a pointer local/global. A borrow of the
+                // loaded place must use the address evaluated at this load.
+                value = load with { Address = EmitRequiredTemporary(new MidLevelIrUseRValue(load.Address), "load_address") };
+            }
             var name = AllocateTemporaryName(hint);
             RegisterLocal(
                 name,
@@ -14491,6 +14510,10 @@ internal sealed partial class MidLevelIrLowerer
                 isConstant: false,
                 hasConstProvenance: RValueHasConstProvenance(value));
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
+            if (value is MidLevelIrLoadIndirectRValue indirectLoad)
+            {
+                _loadedAddressesByTempName[name] = indirectLoad.Address;
+            }
             if (value is MidLevelIrDynamicStorageAllocationRValue dynamicAllocation)
             {
                 _dynamicStorageAllocationKindByLocal[name] = dynamicAllocation.AllocationKind;
@@ -15451,8 +15474,13 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? ResolveIndirectArgumentAddress(
             StarkTypeSymbol parameterType,
-            StarkParser.ExpressionContext expression)
+            StarkParser.ExpressionContext expression,
+            MidLevelIrOperand? evaluatedArgument = null)
         {
+            if (ResolveEvaluatedIndirectArgumentAddress(parameterType, evaluatedArgument) is { } address)
+            {
+                return address;
+            }
             if (!RequiresIndirectArgument(parameterType)
                 || parameterType.Kind == StarkTypeKind.Closure
                 || !TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
@@ -15463,6 +15491,16 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return ResolveIndirectArgumentAddress(parameterType, target);
+        }
+
+        private MidLevelIrOperand? ResolveEvaluatedIndirectArgumentAddress(
+            StarkTypeSymbol parameterType,
+            MidLevelIrOperand? argument)
+        {
+            return argument is MidLevelIrLocalOperand local
+                && CanUseOperandAsIndirectArgumentSource(parameterType, argument.Type)
+                && _loadedAddressesByTempName.TryGetValue(local.Name, out var address)
+                    ? address : null;
         }
 
         private static bool MayEvaluateNestedExpressionForAddress(StarkParser.UnaryExpressionContext expression)

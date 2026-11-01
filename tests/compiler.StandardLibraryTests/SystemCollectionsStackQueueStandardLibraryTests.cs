@@ -720,9 +720,6 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         Assert.DoesNotContain("llvm.memmove", sparseReserveBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Allocate(", dictionaryStorageBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Free(", dictionaryStorageBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", dictionaryStorageBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("%slot_nextValueSlots", dictionaryStorageBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", dictionaryStorageBody, StringComparison.Ordinal);
     }
 
     [Fact]

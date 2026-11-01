@@ -234,12 +234,21 @@ surface area should use the canonical `Eq`, `Hash`, and `Ord` names.
 
 ## `Dictionary<K, V>`
 
-`Dictionary<K, V>` is an owned hash table. Its control bytes, keys and values
-occupy distinct, aligned regions in one owned allocation. Layout planning checks
-each size, alignment padding and total byte length before allocating. Growth
-initializes control bytes and moves occupied entries before releasing the old
-allocation; empty key/value slots remain uninitialized. Failed layout planning
-leaves existing entries and capacity intact.
+`Dictionary<K, V>` is an owned hash table. Control bytes and keys occupy checked,
+aligned subregions of one allocation; values have an independently owned dynamic
+backing allocation. Its dynamic initialized length stays zero: the control bytes
+record the sparse live slots, and the dictionary moves/drops only those values.
+Layout planning retains each size, alignment padding and combined byte-length
+check before allocating either region. Together with power-of-two growth, this
+proves successful capacity is at most `2**61`, which private helpers preserve.
+Growth initializes control bytes and moves occupied entries before releasing old
+storage; empty key/value slots remain uninitialized. Failed layout planning
+leaves existing entries and capacity intact. Value backing uses fallible reserve;
+on failure, provisional key/control storage is released before returning
+`OutOfMemory`. Removal keeps a direct home-hit path
+separate from collision search, preserves the capacity while compacting a probe
+cluster, and shifts owned entries without dropping them. `Clear()` on an empty
+table performs no storage reset or element cleanup.
 
 ```stark
 public struct Dictionary<K, V>
@@ -264,8 +273,8 @@ generic collection use sites.
 
 ## `HashSet<T>`
 
-`HashSet<T>` is an owned open-addressed set using the same key-contract and
-storage strategy as `Dictionary<K, V>`.
+`HashSet<T>` is an owned open-addressed set using the same key contract and
+probing policy as `Dictionary<K, V>`.
 
 ```stark
 public struct HashSet<T>

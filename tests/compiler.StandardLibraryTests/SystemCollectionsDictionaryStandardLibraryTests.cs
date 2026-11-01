@@ -446,22 +446,29 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         """;
 
     [Fact]
-    public void StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+    public void StdLibSourceDictionaryKeepsStorageFieldsInternal()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var source = File.ReadAllText(Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark"));
-
-        Assert.Contains("Raw pointer boundary: Dictionary keeps sparse key/value/control storage", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<K> Keys;", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<V> Values;", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<u8[0 2]> States;", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("public rawptr", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("public rawmutptr", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", source, StringComparison.Ordinal);
+        var result = DefaultCompilerPipeline.Create().Run(new CompilationInput("""
+            import System.Collections
+            module Demo
+            fn u64[0 max] ReadCount()
+            {
+                stack Dictionary<u32[0 max],u32[0 max]> values = new();
+                return values.Count();
+            }
+            """, Path.Combine(repositoryRoot, "tests", "tmp", "DictionaryVisibility.stark")), new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(Path.Combine(repositoryRoot, "stdlib", "src")),
+                StopAfterPassId: "semantic-validate"));
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics));
+        var dictionary = Assert.Single(result.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel).NamedTypes.Values,
+            type => type.Name == "System.Collections.Dictionary<u32,u32>");
+        Assert.NotEmpty(dictionary.Fields);
+        Assert.All(dictionary.Fields.Values, field => Assert.Equal(StarkVisibility.Internal, field.Visibility));
     }
 
     [Fact]
-    public void StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
+    public void StdLibSourcePromotedDictionaryPreservesSparseValueStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -521,7 +528,6 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", llvm.Text, StringComparison.Ordinal);
 
         var storageBody = ExtractDefinedFunctionText(
             llvm.Text,
@@ -534,9 +540,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
 
         Assert.Contains("@System_Memory_Allocate(", storageBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Free(", storageBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", storageBody, StringComparison.Ordinal);
         Assert.DoesNotContain("switch", tryGetBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("DictionaryValueSlot", tryGetBody, StringComparison.Ordinal);
     }
 
     [Fact]

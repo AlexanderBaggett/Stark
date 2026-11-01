@@ -209,6 +209,28 @@ internal sealed class LlvmIrEmitter
                 _allFunctionSignatures = signatures;
                 _allFunctionEffects = effects;
                 _allAbiFunctions = abis;
+                if (payloadPlan.ReplacesPayloadReads)
+                {
+                    var parameterEffects = _semanticValidation is not null && _specializationCodegenStrategy is not null
+                        ? SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                            _semanticValidation, _loadedModules, _specializationCodegenStrategy)
+                            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal)
+                        : new Dictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>>(StringComparer.Ordinal);
+                    foreach (var (clone, origin) in payloadPlan.Origins)
+                        if (parameterEffects.TryGetValue(origin, out var originEffects))
+                            parameterEffects[clone] = originEffects;
+                    var originalFunctions = _ssaFunctionsByName;
+                    var rewritten = ssa.Functions.Where(function =>
+                        !ReferenceEquals(function, originalFunctions.GetValueOrDefault(function.Name))).ToArray();
+                    var facts = _ssaValueFacts?.Functions.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal)
+                        ?? new Dictionary<string, SsaFunctionFactModel>(StringComparer.Ordinal);
+                    // Scalar placeholders invalidate load/copy facts. Keep all
+                    // unaffected functions and the authoritative call effects.
+                    foreach (var (name, functionFacts) in new SsaValueFactAnalyzer(parameterEffects)
+                        .Analyze(new SsaIrModule(ssa.ModuleName, rewritten, ssa.AddressTakenFunctionRecords)).Functions)
+                        facts[name] = functionFacts;
+                    _ssaValueFacts = new SsaValueFactModel(ssa.ModuleName, facts);
+                }
                 _ssaFunctionsByName.Clear();
                 foreach (var function in ssa.Functions)
                 {
@@ -599,7 +621,7 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine($"; private dead-payload specialization of {origin}");
             // Keep the source identity for typed records, value facts and debug
             // locations, just as imported law clones do. Only the ABI symbol is
-            // private; scalar values and CFG identities have not changed.
+            // private. Replaced scalar reads have separately recomputed facts.
             EmitFunctionDefinition(builder, internalize: true, availableExternally: false,
                 _allFunctionSignatures[origin], _allAbiFunctions[clone], _allFunctionEffects[origin],
                 GetFunctionMemoryEffects(origin, hasBody: true), _ssaFunctionsByName[clone] with { Name = origin },
@@ -2389,6 +2411,9 @@ internal sealed class LlvmIrEmitter
         var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         var valueFacts = TryGetSsaValueFacts(ssaFunction);
+        if (_deadPayloadOrigins.ContainsKey(abiFunction.Name)
+            && _ssaValueFacts?.Functions.GetValueOrDefault(abiFunction.Name) is { } privateFacts)
+            valueFacts = privateFacts;
         functionBuilder.AppendLine(AppendFunctionDebugScope(
             BuildDefinitionSignatureCore(
                 internalize,

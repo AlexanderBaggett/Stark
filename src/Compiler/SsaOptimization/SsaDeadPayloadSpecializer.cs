@@ -8,16 +8,17 @@ namespace Stark.Compiler;
 internal sealed class SsaDeadPayloadSpecializer
 {
     internal sealed record Plan(SsaIrModule Module, IReadOnlyDictionary<string, string> Origins,
-        IReadOnlyDictionary<string, IReadOnlySet<string>> PayloadParameters);
-    private enum RegionKind { Header, Pointer, View }
+        IReadOnlyDictionary<string, IReadOnlySet<string>> PayloadParameters, bool ReplacesPayloadReads);
+    private enum RegionKind { Header, Pointer, View, Data }
     private sealed record Region(RegionKind Kind, string Path = "", int AddressDepth = 0);
     private sealed class Proof
     {
         public required SsaFunction Function { get; init; }
         public required IReadOnlySet<string> PayloadParameters { get; init; }
         public HashSet<SsaInstruction> DeadStores { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<SsaInstruction> DeadLoads { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<SsaInstruction, Proof> Calls { get; } = new(ReferenceEqualityComparer.Instance);
-        public bool Changes => DeadStores.Count != 0 || Calls.Values.Any(static proof => proof.Changes);
+        public bool Changes => DeadStores.Count != 0 || DeadLoads.Count != 0 || Calls.Values.Any(static proof => proof.Changes);
     }
 
     private readonly TypeCheckModel _types;
@@ -29,6 +30,7 @@ internal sealed class SsaDeadPayloadSpecializer
     private readonly List<SsaFunction> _clones = [];
     private readonly Dictionary<string, IReadOnlySet<string>> _payloadParameters = new(StringComparer.Ordinal);
     private readonly HashSet<string> _names = new(StringComparer.Ordinal);
+    private bool _replacesPayloadReads;
 
     public SsaDeadPayloadSpecializer(TypeCheckModel types, IReadOnlyDictionary<string, FunctionEffectProfile> effects,
         SsaValueFactModel? facts = null, int pointerBits = 64)
@@ -45,6 +47,7 @@ internal sealed class SsaDeadPayloadSpecializer
         _clones.Clear();
         _payloadParameters.Clear();
         _names.Clear();
+        _replacesPayloadReads = false;
         _functions = module.Functions.GroupBy(static f => f.Name).ToDictionary(static g => g.Key, static g => g.First(), StringComparer.Ordinal);
         _names.UnionWith(_functions.Keys);
         var changed = false;
@@ -78,7 +81,7 @@ internal sealed class SsaDeadPayloadSpecializer
         functions.AddRange(_clones);
         return new Plan(changed ? new SsaIrModule(module.ModuleName, functions, module.AddressTakenFunctionRecords) : module,
             new Dictionary<string, string>(_origins, StringComparer.Ordinal),
-            new Dictionary<string, IReadOnlySet<string>>(_payloadParameters, StringComparer.Ordinal));
+            new Dictionary<string, IReadOnlySet<string>>(_payloadParameters, StringComparer.Ordinal), _replacesPayloadReads);
     }
 
     private IEnumerable<string> PayloadPaths(StarkTypeSymbol type, HashSet<string> visited)
@@ -121,6 +124,29 @@ internal sealed class SsaDeadPayloadSpecializer
         var locals = new Dictionary<string, Region>(StringComparer.Ordinal);
         if (owner is not null) locals[owner] = ownerRegion!;
         var instructions = function.Blocks.SelectMany(static b => b.Instructions).ToArray();
+        var definitions = instructions.OfType<SsaValueInstruction>()
+            .ToDictionary(static value => value.ResultName, StringComparer.Ordinal);
+        // Constructors and header snapshots are often chains of insertfield,
+        // not a single zero initializer. Follow only the selected owner field:
+        // changing another field does not give away its backing allocation.
+        bool IsFresh(SsaValue value, string path, HashSet<string>? seen = null)
+        {
+            if (value is SsaZeroInitializerValue) return true;
+            if (value is not SsaValueReference reference
+                || !(seen ??= new(StringComparer.Ordinal)).Add(reference.Name)) return false;
+            return definitions.GetValueOrDefault(reference.Name)?.Value switch
+            {
+                SsaUseRValue use => IsFresh(use.Value, path, seen),
+                SsaDynamicStorageAllocationRValue allocation => path.Length == 0
+                    && allocation.AllocationKind == DynamicStorageAllocationKind.Runtime
+                    && allocation.Type.ElementType is { } element && IsScalar(element),
+                SsaInsertFieldRValue insert when path.Length != 0 =>
+                    path.Split('.', 2) is var split && split[0] == insert.FieldName
+                        ? IsFresh(insert.Value, split.Length == 2 ? split[1] : "", seen)
+                        : IsFresh(insert.Target, path, seen),
+                _ => false
+            };
+        }
         var localStorage = instructions.OfType<SsaAllocateLocalInstruction>()
             .ToDictionary(static local => local.LocalName, static local => local.StorageClass, StringComparer.Ordinal);
         // Arena suballocations need a separate bounded-region proof. This pass
@@ -142,7 +168,16 @@ internal sealed class SsaDeadPayloadSpecializer
             if (block.Terminator.Condition is { } condition) Use(condition);
         }
         void Use(SsaValue value) { if (value is SsaValueReference reference) used.Add(reference.Name); }
-        Region? Value(SsaValue value) => value is SsaValueReference reference ? values.GetValueOrDefault(reference.Name) : null;
+        Region? Value(SsaValue value) => value switch
+        {
+            SsaValueReference reference => values.GetValueOrDefault(reference.Name),
+            // Empty owned storage can grow fallibly before it replaces the
+            // selected header. Track that owner too, so every read/escape of
+            // its reserved payload must satisfy this same liveness proof.
+            SsaZeroInitializerValue { Type.Kind: StarkTypeKind.Dynamic, Type.ElementType: { } element }
+                when IsScalar(element) => new Region(RegionKind.Header),
+            _ => null
+        };
         static Region? Address(Region? region) => region is null ? null : region with { AddressDepth = region.AddressDepth + 1 };
         Region? Project(Region? region, string field, int fieldIndex, bool address)
         {
@@ -158,7 +193,7 @@ internal sealed class SsaDeadPayloadSpecializer
                 else if (fieldIndex == 0) result = new Region(RegionKind.Pointer);
             }
             else if (region.Kind == RegionKind.View && fieldIndex == 0) result = new Region(RegionKind.Pointer);
-            else if (region.Kind == RegionKind.Pointer) throw new NotSupportedException("Reinterpreted payload field");
+            else if (region.Kind is RegionKind.Pointer or RegionKind.Data) throw new NotSupportedException("Reinterpreted payload field");
             return address ? Address(result) : result;
         }
         bool invalid = false;
@@ -168,6 +203,7 @@ internal sealed class SsaDeadPayloadSpecializer
             if (address.AddressDepth > 0)
             {
                 var result = address with { AddressDepth = address.AddressDepth - 1 };
+                if (result.Kind == RegionKind.Data && !IsScalar(type)) invalid = true;
                 // Reinterpreting header/pointer slots as integers can expose a
                 // backing address without a pointer-typed SSA value.
                 if (result.Kind == RegionKind.Header && type.Kind is not (StarkTypeKind.Named or StarkTypeKind.Dynamic)
@@ -176,7 +212,14 @@ internal sealed class SsaDeadPayloadSpecializer
                     invalid = true;
                 return result;
             }
-            if (address.Kind == RegionKind.Pointer && observed) invalid = true;
+            // A scalar copy can feed only another dead payload destination.
+            // Keep its dependency until all uses (including callees) are checked.
+            if (address.Kind == RegionKind.Pointer)
+            {
+                if (!IsScalar(type)) { invalid = true; return null; }
+                return new Region(RegionKind.Data);
+            }
+            if (address.Kind == RegionKind.Data) invalid = true;
             if (address.Kind == RegionKind.Header)
             {
                 if (type.Kind is StarkTypeKind.Named or StarkTypeKind.Dynamic) return address;
@@ -217,6 +260,24 @@ internal sealed class SsaDeadPayloadSpecializer
             {
                 case SsaUseRValue use: return Value(use.Value);
                 case SsaLoadLocalRValue local: return locals.GetValueOrDefault(local.LocalName);
+                case SsaInsertFieldRValue insert:
+                    var aggregate = Value(insert.Target);
+                    var inserted = Value(insert.Value);
+                    if (aggregate is { Kind: RegionKind.Header, AddressDepth: 0, Path.Length: > 0 })
+                    {
+                        var split = aggregate.Path.Split('.', 2);
+                        if (split[0] == insert.FieldName)
+                        {
+                            var path = split.Length == 2 ? split[1] : "";
+                            if (inserted != new Region(RegionKind.Header, path) && !IsFresh(insert.Value, path)) invalid = true;
+                        }
+                        else if (inserted is not null) invalid = true;
+                        return aggregate;
+                    }
+                    if (inserted is { Kind: RegionKind.Header, AddressDepth: 0 } && aggregate is null)
+                        return inserted with { Path = insert.FieldName + (inserted.Path.Length == 0 ? "" : "." + inserted.Path) };
+                    if (aggregate is not null || inserted is not null) invalid = true;
+                    return null;
                 case SsaAddressOfLocalRValue local: return Address(locals.GetValueOrDefault(local.LocalName));
                 case SsaAddressOfParameterRValue parameter: return Address(parameters.GetValueOrDefault("arg_" + parameter.ParameterName));
                 case SsaExtractFieldRValue field: return Project(Value(field.Target), field.FieldName, field.FieldIndex, false);
@@ -249,8 +310,11 @@ internal sealed class SsaDeadPayloadSpecializer
                     return Element(Value(slice.TextValue), slice.Start,
                         stride: Math.Max(1, (slice.Type.ElementType?.BitWidth + 7 ?? 8) / 8)) is null ? null : new Region(RegionKind.View);
                 case SsaLoadSliceElementRValue load:
-                    if (Value(load.Slice) is not null && observed) invalid = true;
-                    return null;
+                    if (Value(load.Index) is not null) invalid = true;
+                    if (Value(load.Slice) is null) return null;
+                    if (Element(Value(load.Slice), load.Index, stride: Math.Max(1, (load.Slice.Type.ElementType?.BitWidth + 7 ?? 8) / 8)) is null
+                        || !IsScalar(load.Type)) invalid = true;
+                    return new Region(RegionKind.Data);
                 case SsaExtractIndexRValue index:
                     var target = Value(index.Target);
                     if (target?.Kind == RegionKind.View) return index.ElementIndex == 0 ? new Region(RegionKind.Pointer) : null;
@@ -258,11 +322,13 @@ internal sealed class SsaDeadPayloadSpecializer
                     return null;
                 case SsaConvertRValue convert:
                     var converted = Value(convert.Operand);
+                    if (converted is { Kind: RegionKind.Data } && convert.Type != convert.Operand.Type) invalid = true;
                     if (converted is not null && (convert.Type.Kind != convert.Operand.Type.Kind
                         || convert.Type.NamedType != convert.Operand.Type.NamedType
                         || convert.Type.ElementType != convert.Operand.Type.ElementType)) invalid = true;
                     return converted;
                 case SsaSelectRValue select:
+                    if (Value(select.Condition) is not null) invalid = true;
                     var left = Value(select.WhenTrue); var right = Value(select.WhenFalse);
                     if (left is not null || right is not null) return left ?? right;
                     return null;
@@ -280,7 +346,10 @@ internal sealed class SsaDeadPayloadSpecializer
                             || binary.Right.Type.Kind is not (StarkTypeKind.RawPointer or StarkTypeKind.Null)) invalid = true;
                     }
                     return null;
-                case SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaHeapStorageFreeRValue
+                case SsaDynamicStorageAllocationRValue allocation:
+                    return allocation.Type.ElementType is { } allocatedElement && IsScalar(allocatedElement)
+                        ? new Region(RegionKind.Header) : null;
+                case SsaDynamicStorageFreeRValue or SsaHeapStorageFreeRValue
                     or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue:
                     return null;
                 case SsaCallRValue or SsaIndirectCallRValue: return null;
@@ -316,13 +385,19 @@ internal sealed class SsaDeadPayloadSpecializer
         foreach (var block in function.Blocks)
         {
             foreach (var phi in block.Phis)
-                if (values.TryGetValue(phi.ResultName, out var region) && phi.Incomings.Any(i => Value(i.Value) != region)) return null;
+                if (values.TryGetValue(phi.ResultName, out var region) && region.Kind != RegionKind.Data && phi.Incomings.Any(i => Value(i.Value) != region)) return null;
             if (block.Terminator.Kind is SsaTerminatorKind.TailCall) return null;
             if (block.Terminator.Value is { } result && Value(result) is not null) return null;
             if (block.Terminator.Condition is { } condition && Value(condition) is not null) return null;
         }
         foreach (var instruction in instructions)
         {
+            // Scalar payload dependencies may be copied, but must not vanish
+            // through an address, slice length/index, or any unmodelled use.
+            if (Operands(instruction).Any(value => Value(value)?.Kind == RegionKind.Data)
+                && instruction is not (SsaStoreLocalInstruction or SsaStoreIndirectInstruction or SsaCallInstruction
+                    or SsaValueInstruction { Value: SsaUseRValue or SsaConvertRValue or SsaSelectRValue
+                        or SsaLoadIndirectRValue or SsaCallRValue })) return null;
             var storage = instruction switch
             {
                 SsaValueInstruction { Value: SsaDynamicStorageFreeRValue free } => (Value(free.Storage), 0),
@@ -335,19 +410,26 @@ internal sealed class SsaDeadPayloadSpecializer
             };
             if (storage.Item1 is { } header && (header.Kind != RegionKind.Header || header.Path.Length != 0 || header.AddressDepth != storage.Item2)) return null;
             if (instruction is SsaValueInstruction { Value: SsaSelectRValue select }
+                && Value(select.WhenTrue)?.Kind != RegionKind.Data && Value(select.WhenFalse)?.Kind != RegionKind.Data
                 && Value(select.WhenTrue) != Value(select.WhenFalse)) return null;
             if (instruction is SsaStoreLocalInstruction store)
             {
                 if (Value(store.Value) is not null && localStorage.GetValueOrDefault(store.LocalName) != "stack") return null;
-                if (store.LocalName == owner)
-                {
-                    if (store.Value is not SsaZeroInitializerValue && !(store.Value is SsaValueReference r && instructions.OfType<SsaValueInstruction>().Any(v => v.ResultName == r.Name && v.Value is SsaDynamicStorageAllocationRValue))) return null;
-                }
-                else if (locals.TryGetValue(store.LocalName, out var region) && Value(store.Value) != region) return null;
+                if (locals.TryGetValue(store.LocalName, out var region) && region.Kind != RegionKind.Data
+                    && Value(store.Value) != region
+                    && !(region is { Kind: RegionKind.Header, AddressDepth: 0 } && IsFresh(store.Value, region.Path))) return null;
             }
             else if (instruction is SsaStoreIndirectInstruction indirect)
             {
-                if (Value(indirect.Value) is not null) return null;
+                if (Value(indirect.Address) is { Kind: RegionKind.Header, AddressDepth: > 0 } headerDestination)
+                {
+                    if (Value(indirect.Value) != headerDestination with { AddressDepth = headerDestination.AddressDepth - 1 }
+                        && !(headerDestination.AddressDepth == 1 && indirect.ValueType.Kind is (StarkTypeKind.Named or StarkTypeKind.Dynamic)
+                            && IsFresh(indirect.Value, headerDestination.Path))) return null;
+                    continue;
+                }
+                if (Value(indirect.Value) is { } source && source.Kind != RegionKind.Data) return null;
+                if (Value(indirect.Value) is { Kind: RegionKind.Data } && Value(indirect.Address) is null) return null;
                 if (Value(indirect.Address) is { } destination)
                 {
                     if (destination is not { Kind: RegionKind.Pointer, AddressDepth: 0 } || !IsScalar(indirect.ValueType)) return null;
@@ -360,6 +442,11 @@ internal sealed class SsaDeadPayloadSpecializer
                 else if (Value(copy.DestinationAddress) is not null || Value(copy.SourceAddress) is not null) return null;
             }
             else if (instruction is SsaStoreGlobalInstruction global && Value(global.Value) is not null) return null;
+            if (instruction is SsaValueInstruction { Value: SsaLoadIndirectRValue load }
+                && Value(load.Address) is { Kind: RegionKind.Pointer, AddressDepth: 0 }
+                || instruction is SsaValueInstruction { Value: SsaLoadSliceElementRValue sliceLoad }
+                && Value(sliceLoad.Slice) is { Kind: RegionKind.View, AddressDepth: 0 })
+                proof.DeadLoads.Add(instruction);
             var call = instruction switch { SsaValueInstruction { Value: SsaCallRValue c } => c as ISsaDirectCallOperation, SsaCallInstruction c => c, _ => null };
             if (call is not null)
             {
@@ -396,8 +483,17 @@ internal sealed class SsaDeadPayloadSpecializer
                 if (child is null) return null;
                 proof.Calls[instruction] = child;
             }
-            else if (instruction is SsaValueInstruction { Value: SsaIndirectCallRValue } or SsaIndirectCallInstruction
-                     && Operands(instruction).Any(v => Value(v) is not null)) return null;
+            else
+            {
+                var indirect = instruction switch
+                {
+                    SsaValueInstruction { Value: SsaIndirectCallRValue operation } => operation as ISsaIndirectCallOperation,
+                    SsaIndirectCallInstruction operation => operation,
+                    _ => null
+                };
+                if (indirect is not null && (Operands(instruction).Any(value => Value(value) is not null)
+                    || indirect.IndirectArgumentLocalNames?.Any(name => name is not null && locals.ContainsKey(name)) == true)) return null;
+            }
         }
         return proof;
     }
@@ -405,6 +501,7 @@ internal sealed class SsaDeadPayloadSpecializer
 
     private SsaFunction Rewrite(Proof proof, string name)
     {
+        _replacesPayloadReads |= proof.DeadLoads.Count != 0;
         string Clone(Proof child)
         {
             var cloneName = "__stark_dead_payload_" + _clones.Count;
@@ -424,6 +521,21 @@ internal sealed class SsaDeadPayloadSpecializer
             {
                 Instructions = block.Instructions.Where(i => !proof.DeadStores.Contains(i)).Select(instruction =>
                 {
+                    if (proof.DeadLoads.Contains(instruction) && instruction is SsaValueInstruction load)
+                    {
+                        // Removing the writes while leaving their loads would
+                        // expose uninitialized bounded scalars to LLVM. These
+                        // copy-only values are unobservable; use an inhabitant
+                        // of their declared type and recompute affected facts.
+                        var type = load.Value.Type;
+                        SsaValue constant = type.Kind switch
+                        {
+                            StarkTypeKind.Bool => new SsaBoolConstant(false),
+                            StarkTypeKind.Float => new SsaFloatConstant("0.0", type),
+                            _ => new SsaIntegerConstant(type.RangeMin > 0 ? type.RangeMin.Value : type.RangeMax < 0 ? type.RangeMax.Value : BigInteger.Zero, type)
+                        };
+                        return load with { Value = new SsaUseRValue(constant) };
+                    }
                     if (!proof.Calls.TryGetValue(instruction, out var child) || !child.Changes) return instruction;
                     var target = Clone(child);
                     return instruction switch

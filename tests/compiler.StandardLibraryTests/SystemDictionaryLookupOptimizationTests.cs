@@ -200,9 +200,135 @@ public sealed class SystemDictionaryLookupOptimizationTests : StandardLibraryTes
                 if (Dropped!=15 || DroppedKeys!=632 || replacement.Count()!=1) { return 60; }
             }
             if (Dropped!=22 || DroppedKeys!=641) { return 61; }
+            // A key borrowed from the value region observes those bytes during
+            // hashing/comparison, including removal through an allowed overlap.
+            {
+                stack mut Dictionary<u32[0 max],u32[0 max]> valueKey = new();
+                if (!Ok(valueKey.Reserve(4)) || !Ok(valueKey.Set(3,99)) || !Ok(valueKey.Set(99,123))) { return 68; }
+                stack rawptr<u32[0 max]> key = &valueKey.GetAtIndex(3);
+                if (!valueKey.ContainsKey(*key) || !valueKey.Remove(*key) || valueKey.Count()!=1) { return 68; }
+            }
+            // A wrapped cluster exercises both home-hit and collision removal,
+            // shifting owned keys/values without premature or duplicate drops.
+            {
+                stack mut Dictionary<OwnedKey,Envelope> deletion = new();
+                if (!Ok(deletion.Reserve(4))
+                    || !Ok(deletion.Set(new OwnedKey(){Id=7,Tracked=true},new Envelope(){Owned=new Resource(){Id=11}}))
+                    || !Ok(deletion.Set(new OwnedKey(){Id=15,Tracked=true},new Envelope(){Owned=new Resource(){Id=13}}))
+                    || !Ok(deletion.Set(new OwnedKey(){Id=23,Tracked=true},new Envelope(){Owned=new Resource(){Id=17}}))) { return 62; }
+                {
+                    stack rawptr<Envelope> view = &deletion.GetAtIndex(0);
+                    if ((*view).Owned.Id!=13) { return 67; }
+                }
+                deletion.GetMutAtIndex(0).Owned.Id = 13;
+                if (Dropped!=22 || DroppedKeys!=641) { return 67; }
+                stack OwnedKey first = new OwnedKey(){Id=7,Tracked=false};
+                stack OwnedKey middle = new OwnedKey(){Id=15,Tracked=false};
+                stack OwnedKey last = new OwnedKey(){Id=23,Tracked=false};
+                if (!deletion.Remove(first) || Dropped!=33 || DroppedKeys!=648 || deletion.Count()!=2
+                    || !deletion.ContainsKey(middle) || !deletion.ContainsKey(last)) { return 63; }
+                if (!deletion.Remove(last) || Dropped!=50 || DroppedKeys!=671 || deletion.Count()!=1
+                    || deletion.ContainsKey(last) || !deletion.ContainsKey(middle)) { return 64; }
+                deletion.Clear();
+                deletion.Clear();
+                if (Dropped!=63 || DroppedKeys!=686 || deletion.Count()!=0 || deletion.ContainsKey(middle)) { return 65; }
+            }
+            if (Dropped!=63 || DroppedKeys!=686) { return 66; }
             return 0;
         }
         """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedValueBackingReservePreservesExistingEntries(bool packaged)
+    {
+        if (!OperatingSystem.IsLinux() || !NativeToolchain.TryDetectDefaultTargetInfo(out var target)) return;
+        var root = packaged ? await SharedStdlibPackage.GetDirectoryAsync()
+            : Path.Combine(FindRepositoryRoot(), "stdlib", "src");
+        var directory = Directory.CreateTempSubdirectory("stark-dictionary-value-oom-");
+        try
+        {
+            var source = Path.Combine(directory.FullName, "App.stark");
+            var observer = Path.Combine(directory.FullName, "limit.c");
+            var binary = Path.Combine(directory.FullName, "app");
+            await File.WriteAllTextAsync(observer, """
+                #include <stdio.h>
+                #include <stdint.h>
+                #include <unistd.h>
+                #include <sys/resource.h>
+                static struct rlimit original;
+                int32_t LimitMemory(void) {
+                    unsigned long pages = 0;
+                    FILE *file = fopen("/proc/self/statm", "r");
+                    if (!file) return 1;
+                    int read = fscanf(file, "%lu", &pages);
+                    fclose(file);
+                    if (read != 1 || getrlimit(RLIMIT_AS, &original)) return 2;
+                    struct rlimit limit = original;
+                    limit.rlim_cur = (rlim_t)pages * sysconf(_SC_PAGESIZE) + 4 * 1024 * 1024;
+                    return setrlimit(RLIMIT_AS, &limit);
+                }
+                int32_t RestoreMemory(void) { return setrlimit(RLIMIT_AS, &original); }
+                """);
+            await File.WriteAllTextAsync(source, """
+                import System.Collections
+                import System.Memory
+                module ValueBackingFailure
+                finite law bool Ok(MemoryStatus status) {
+                    switch (status) {
+                        case MemoryStatus.Ok: return true;
+                        case MemoryStatus.Err(var error): return false;
+                    }
+                }
+                unsafe ffi fn i32[min max] LimitMemory();
+                unsafe ffi fn i32[min max] RestoreMemory();
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut Dictionary<u8[0 max], u64[0 max]> table = new();
+                    stack u8[0 max] key = 7;
+                    stack mut u64[0 max] found = 0;
+                    if (!Ok(table.Set(key, 99))) return 9;
+                    if (LimitMemory() != 0) return 1;
+                    // Keys/control need about 2 MiB; values need 8 MiB.
+                    // Keep the element types scalar so this is a runtime
+                    // allocation-failure test, not a huge aggregate compilation.
+                    // Repeating under the same limit also requires provisional
+                    // key/control storage to have been released after failure.
+                    for willexit (stack mut u8[0 2] attempt = 0; attempt < 2; attempt += 1) {
+                        stack MemoryStatus status = table.Reserve(524287);
+                        switch (status) {
+                            case MemoryStatus.Ok: return 3;
+                            case MemoryStatus.Err(var error): if (error != MemoryError.OutOfMemory) return 4;
+                        }
+                        if (table.Capacity() != 8 || table.Count() != 1
+                            || !table.TryGet(key, found) || found != 99) return 5;
+                    }
+                    if (RestoreMemory() != 0) return 2;
+                    if (!Ok(table.Reserve(524287))) return 6;
+                    if (table.Capacity() != 1048576 || table.Count() != 1
+                        || !table.TryGet(key, found) || found != 99) return 7;
+                    if (!Ok(table.Set(key, 101)) || !table.TryGet(key, found) || found != 101) return 8;
+                    return 0;
+                }
+                """);
+            var output = new StringWriter();
+            var errors = new StringWriter();
+            var code = await CompilerCli.RunAsync([source, "--emit-exe", "--target", target.Triple,
+                "-I", root, "--native-source", observer, "-o", binary], new StringReader(""), output, errors);
+            Assert.True(code == 0, output + "\n" + errors);
+            using var process = Process.Start(new ProcessStartInfo(binary) {
+                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
+            });
+            Assert.NotNull(process);
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal("", await stdout);
+            Assert.Equal("", await stderr);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
 
     [Theory]
     [InlineData(false)]

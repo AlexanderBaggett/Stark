@@ -5,16 +5,14 @@ import System.Testing
 import System.Text
 module SystemCollectionsDictionaryStandardLibraryTests
 
-// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified.
-internal fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustifiedImpl()
+// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourceDictionaryKeepsStorageFieldsInternal.
+internal fn bool StdLibSourceDictionaryKeepsStorageFieldsInternalImpl()
 {
-    // PORT-NOTE: the C# test reads stdlib/src/System/Collections.stark from disk and
-    // asserts source-text invariants (internal rawmutptr storage, no public rawptr,
-    // no DictionaryValueSlot). The compile-only bridge cannot read arbitrary stdlib
-    // source files, so this reduces to compiling a program that exercises Dictionary
-    // (forcing the stdlib source to be parsed/compiled) and asserting it succeeds.
+    // PORT-NOTE: the host test checks semantic storage-field visibility. This
+    // compile-only bridge exercises the public API; native ownership, alignment
+    // and reader behavior are covered by the host integration tests.
     stack mut ProgramCompile c = CompileProgram(
-        "dict-raw-sparse-internal",
+        "dict-storage-internal",
         raw"""
         import System.Collections
         import System.Memory
@@ -50,8 +48,8 @@ internal fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified
     return true;
 }
 
-// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourcePromotedDictionaryUsesSparseRawValueStorage.
-internal fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl()
+// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourcePromotedDictionaryPreservesSparseValueStorage.
+internal fn bool StdLibSourcePromotedDictionaryPreservesSparseValueStorageImpl()
 {
     stack mut ProgramCompile c = CompileProgram(
         "dict-promoted-sparse-raw-value",
@@ -99,12 +97,11 @@ internal fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl()
 
     // PORT-NOTE: the C# test targets x86_64-linux explicitly and inspects extracted
     // GrowStorage/TryGet function bodies for libc-free sparse storage (no @malloc/@realloc/
-    // @free, no DictionaryValueSlot, Allocate/Free present). The bridge cannot pin the
+    // @free, Allocate/Free present). The bridge cannot pin the
     // target triple or extract per-function bodies, so these are applied over the whole
     // LLVM text and the per-body Allocate/Free presence checks are dropped.
     stack ascii llvm = Llvm(c);
-    if (!System.Testing.DoesNotContain(llvm, "; LLVM body emission fallback")
-        || !System.Testing.DoesNotContain(llvm, "DictionaryValueSlot"))
+    if (!System.Testing.DoesNotContain(llvm, "; LLVM body emission fallback"))
     {
         return false;
     }

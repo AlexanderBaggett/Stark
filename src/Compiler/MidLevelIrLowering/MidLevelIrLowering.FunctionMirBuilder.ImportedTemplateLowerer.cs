@@ -6519,9 +6519,10 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     functionPointerArguments.Add(argument);
-                    var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                        : null;
+                    var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                        ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                            ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                            : null);
                     functionPointerIndirectLocals.Add(indirectArgumentAddress is null
                         ? ResolveIndirectArgumentLocal(parameterType, lowered)
                             ?? ResolveIndirectArgumentLocal(parameterType, argument)
@@ -6603,9 +6604,10 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                    ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
@@ -6774,9 +6776,10 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                    ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)

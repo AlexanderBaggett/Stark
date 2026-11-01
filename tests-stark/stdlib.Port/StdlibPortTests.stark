@@ -142,16 +142,16 @@ fn bool SystemCStringHelpersWorkAtRuntime()
 
 [Fact]
 [Collection("collections-dictionary")]
-fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+fn bool StdLibSourceDictionaryKeepsStorageFieldsInternal()
 {
-    return StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustifiedImpl();
+    return StdLibSourceDictionaryKeepsStorageFieldsInternalImpl();
 }
 
 [Fact]
 [Collection("collections-dictionary")]
-fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
+fn bool StdLibSourcePromotedDictionaryPreservesSparseValueStorage()
 {
-    return StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl();
+    return StdLibSourcePromotedDictionaryPreservesSparseValueStorageImpl();
 }
 
 [Fact]

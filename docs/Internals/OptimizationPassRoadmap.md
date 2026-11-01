@@ -437,6 +437,22 @@ preserving header updates, statuses, allocation and destruction. The proof uses
 existing value/range facts and retains source identities for clone metadata.
 Structured storage origins survive MIR/SSA rewrites and common-subexpression
 matching; arbitrary raw offsets and explicit raw slices decline this proof.
+Aggregate constructor/header updates retain the selected owned dynamic field
+through unrelated field insertions. Replacement is accepted only from a proven
+fresh runtime allocation, zero initialization, or an already tracked owner;
+incoming unproven storage and payload observers still decline specialization.
+Scalar payload reads may also disappear when their complete use chain consists
+only of copies into dead payload destinations. Returns, conditions, indexing,
+external stores/calls and unsupported conversions decline that proof. Removed
+loads become valid inhabitants of their scalar types, and changed functions and
+private clones have value facts recomputed with the shared source/package call
+effects; stale range or known-bit promises cannot survive placeholder insertion.
+Empty owned buffers grown by fallible reserve participate in the same read/escape
+proof before header replacement; allocating constructors are not required.
+Borrowed scalar call arguments retain their evaluated place address separately
+from the scalar value, including imported typed templates and indirect calls.
+A later argument cannot retarget an earlier pointer dereference or cause its
+side-effectful pointer producer to run again.
 Binary reachability keeps possible const-helper replacement bodies using the
 same retarget map as specialization. `PathRepeatedSmallOps` eliminates its
 25,000 repeated payload writes. Restoring the complete nine-field literal
