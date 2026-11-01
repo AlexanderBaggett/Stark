@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: TcpLoopbackThroughput, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: TcpScatterGatherLoopback, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 26 of 52 initially open items are complete. TailCalls passed on goal turn 1: source **0.9697 × C / 0.7885 × Rust**, source-free package **0.9688 × C / 0.7877 × Rust**. The implementation/code-work evidence and validation are recorded below. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
+**Current evidence:** 27 of 52 initially open items are complete. TcpLoopbackThroughput passed on goal turn 1: canonical source **0.9929 × C / 0.9233 × Rust**. The unchanged source/C/Rust benchmark has 1,000 runs each. Current source-free TCP package correctness is separately validated; no canonical umbrella-package timing is claimed. All windows are closed; host exclusivity was unconfirmed. Preserve other-agent notes.
 
-**TailCalls coordination (goal turn 1):** The source/package/C/Rust builds, LLVM/native inspection, behavior checks and 1,000-round comparison are complete. Marked complete for the per-item commit. TcpLoopbackThroughput is next and has not started. No active window; preserve peer sections.
+**TcpLoopbackThroughput coordination (goal turn 1):** Canonical comparison, LLVM/native inspection and 40 socket byte/failure/cleanup audits are complete. The current focused TCP native package preserves all fields in 16 module records through binary serialization, with real native objects and zero source fallback. Full umbrella SDK resource limits are documented separately. Marked complete for the per-item commit; TcpScatterGatherLoopback has not started. No active build/test/timing window.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -46,7 +46,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 24 | `benchmarks/micro/ReadonlyOtherLocalFieldStore` | Complete | 1 | 0.9967 | 0.8931 |
 | 25 | `benchmarks/micro/StackFieldLoadForwarding` | Complete | 1 | 0.9413 | 0.8649 |
 | 26 | `benchmarks/micro/TailCalls` | Complete | 1 | 0.9697 | 0.7885 |
-| 27 | `benchmarks/network/TcpLoopbackThroughput` | Queued | 0 | — | — |
+| 27 | `benchmarks/network/TcpLoopbackThroughput` | Complete | 1 | 0.9929 | 0.9233 |
 | 28 | `benchmarks/network/TcpScatterGatherLoopback` | Queued | 0 | — | — |
 | 29 | `benchmarks/text/AsciiToUnicodeConversionRuntime` | Queued | 0 | — | — |
 | 30 | `benchmarks/text/OwnedPathAllocation` | Queued | 0 | — | — |
@@ -628,6 +628,57 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## TcpLoopbackThroughput completion (November 1, 2026)
+
+**Status: complete, goal turn 1.** The unchanged canonical source benchmark beats C and canonical Rust in its first current 1,000-round comparison. No compiler, standard-library, benchmark or reference source is changed, and no new optimization speedup is claimed. Current source-free TCP package behavior is validated separately; a canonical umbrella-package performance result is not claimed.
+
+### Actual work and generated code
+
+The audited normal path transfers **1,048,576 zero bytes**, using **256 sends and 256 receives**, then shuts down and closes the connected endpoints. All implementations keep that work. C and Stark use `write`/`read`; Rust uses `sendto`/`recvfrom`. C uses `accept`, while Stark/Rust use `accept4`. Those are real library/platform choices rather than secretly matched controls. All use a loopback listener, a connecting client and an accepted server; Linux Stark handles are encoded scalar descriptors, with no handle allocation to remove.
+
+C initializes its two 4,096-byte arrays once. Actual Stark post-LTO LLVM retains a **4,104-byte** write-buffer clear once and a **4,112-byte** read-buffer clear on every receive. The audited normal path therefore clears **1,056,776 bytes**, versus C's 8,192 bytes. The read-buffer payload is never subsequently inspected by the benchmark. Initial/default header values still drive the public buffer API, and a generic constructor's zero guarantee remains observable to other callers.
+
+Stark's initial LLVM, post-LTO LLVM and actual executable were inspected alongside fresh C/Rust IR and native code. Canonical Stark has **2,284-byte `.text`**, SHA-256 `2c03faff3140a5757a677f7e44079f5deecfd883cd87a3bee5c70e5b3b90800f`. Main has 232 native instructions, two buffer memset sites and two cold setup helper calls. The many LLVM debug records were excluded when counting executable work. No syscall, fallible connection operation, payload transmission or cleanup was removed.
+
+Concrete future opportunities, neither implemented nor assigned an unmeasured speedup:
+
+- **Elide only proved-unobserved read-storage initialization.** A general fixed-stack payload-liveness proof could retain cursor/header initialization while dropping the 4,096-byte payload clear before reads that do not inspect old payload bytes and whose caller never observes the unwritten tail. Preserve constructor guarantees for byte readers, aliases, escapes and other consumers. Do not delete the write-buffer fill: the transmitted zero bytes are observable and explicitly checked here.
+- **Preserve precise scalar-read/write syscall effects and returned bounds.** The selected asm already retains pointer operands, but its generic `~{memory}` clobber prevents LLVM from using the narrower actual read/write regions and keeps cursor reloads. A trusted, target-correct producer could describe read as destination-write-only and write as source-read-only, retain OS/inaccessible side effects and capture facts through inlining/packages, and carry `0 <= successful_read <= capacity` into buffer advancement. Short/error/EOF cases do not initialize the entire capacity; inventing a full-buffer `initializes` promise or deleting generic memory effects would be invalid. Reuse the authoritative effect/fact model and verify the actual wrapper body and target ABI.
+- **Reduce cold result materialization where ABI visibility allows it.** Listen/Connect return tagged results through 32-byte sret slots, while the caller immediately selects the status/handle. Checked scalar return projection or private ABI promotion could avoid some setup stores without changing public result layout, errors or socket ownership. This is cold work, not evidence of a large throughput gain.
+
+### Exact I/O and failure validation
+
+**Thirty actual-executable syscall audits pass** across canonical C, Rust and Stark: normal operation; a short read; a short write; read and write errors; EOF; bind retry; connect failure; accept failure; and shutdown failure. Every observed successful byte is checked, exact sent/received totals match, and every socket descriptor is closed on every tested exit. Fault injection restores asm input registers at return and retains syscall entry/return pairing, so it does not violate the generated call ABI.
+
+The APIs are not falsely treated as identical under faults. C/Rust `write_all` recover from a short write and finish the MiB transfer; the Stark benchmark deliberately checks its single `Write` result and returns **5** after a short write. Read error and EOF return Stark **6/7** versus C/Rust **5**. All recover from the tested short read and retry a failed bind. Shutdown failure is ignored by the C/Stark benchmark but produces Rust **6**. These existing contracts are preserved.
+
+### Current source-free package validation and resource limits
+
+The canonical unused `import System` requests the entire umbrella SDK. A fresh umbrella build first hit the 512 MiB managed cap; one retry using the established 1 GiB managed cap was stopped by the unchanged 2 GiB process-group guard. Separating LLVM/metadata emission from native compilation succeeded at approximately **1.14 GiB**, but the unrelated **System.FileSystem** object alone subsequently exceeded the same native compiler cap. No further budget increase or altered optimization flag was used, and no full umbrella SDK is claimed to have been built.
+
+The actual TCP/process dependency closure excludes FileSystem. A complete focused current package was assembled from its **16 real native module objects**, using the compiler's captured LLVM inputs and unchanged O3/ThinLTO flags. Its 16 authoritative module records were preserved intact; the standard package identity and binary codecs were used, and a decode comparison confirms **every field survives unchanged**. All 16 LLVM inputs verify. There are zero `.stark` source fallbacks. Placeholder objects from the diagnostic emission stage were never published as a usable SDK; the staging archive is explicitly marked unusable.
+
+An **untimed package-boundary fixture** retains the transfer body and omits only the unused umbrella import. It passes all **ten** corresponding byte/failure/cleanup audits. This fixture is not substituted for the canonical timed benchmark. Its native text is 3,850 bytes, with additional retained public SDK functions and one cold shutdown call rather than complete inlining; no package performance ratio is fabricated from this behavior check. The canonical source still imports System unchanged.
+
+**16 canonical initial/reference/optimized LLVM modules and all 16 package module inputs verify**, plus the package fixture's initial LLVM. Repository-wide stale-assumption searches cover socket/buffer effects, raw-pointer counts, ABI and copy/liveness consumers, LLVM expectations, native/Stark tests, self-hosted sources, scripts and docs. Existing expectations remain valid; no contract, package schema, release policy, full release run or unrelated long suite was changed or run.
+
+### Canonical current measurement
+
+One warmup, then **1,000 randomized interleaved direct processes each**, CPU **0**, seed **911130**, arithmetic means, C = **1.0000**:
+
+| Canonical executable | Mean µs | / C | / Rust |
+| --- | ---: | ---: | ---: |
+| C | 3276.018066 | **1.0000** | — |
+| Rust | 3522.741503 | **1.0753** | **1.0000** |
+| Stark source | 3252.671324 | **0.9929** | **0.9233** |
+
+All **3,000 measured executions** succeed with stable executable hashes. The strict first-turn C/Rust mean criteria pass without a tie allowance. The **0.7%** C-relative lead is small compared with process-level variability (CVs 4.5–5.0%) and is not claimed as a stable advantage on other hosts. Means include startup; passive cooling, thermal capping and unconfirmed shared-host exclusivity limit fine precision. The quiet window is closed (**19:29:25–19:29:35 UTC**), with no builds, tests or tracing from this agent overlapping samples. Later SDK/validation work did not alter the measured binaries.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/TcpLoopbackThroughput/turn1/`, especially canonical `source-baseline/interleaved-1000.json`, provenance, actual LLVM/native output and `socket-audit/`; current `tcp-package-validation/validation.json`, codec round-trip and ten socket audits; and `split-sdk-build/` for captured commands/LLVM and bounded-resource diagnostics. Final compiler SHA-256: `8b654b8fb52a3e4298281c6b7f2a8050dd22ec3caea72eb096347b8e6965af55`. No compiler worker exceeded its configured budget without the guard terminating it.
+
+**Next: TcpScatterGatherLoopback.**
+
+
 ## TailCalls completion (November 1, 2026)
 
 **Status: completed, goal turn 1.**
@@ -675,7 +726,7 @@ All **4,000 measured executions** succeed with unchanged executable hashes. Both
 
 Ignored evidence is under `benchmarks/codegen/sequential-goal-20261031/TailCalls/turn1/`: the first builds/compiler and focused tests; final `current/` contains `interleaved-1000.json`, `provenance.json`, `facts-validation.json`, `seed-validation.json`, `reference-kernel-comparison.json`, actual initial/post-LTO LLVM, native disassembly and SSA/facts. The final Release compiler SHA-256 is `8b654b8fb52a3e4298281c6b7f2a8050dd22ec3caea72eb096347b8e6965af55`. Compiler jobs ran serially under the existing **2 GiB process-group guard**, peaking at approximately **1.26 GiB**, without a guard firing.
 
-**Next: TcpLoopbackThroughput.**
+**Next at this completion: TcpLoopbackThroughput (now completed above).**
 
 ## StackFieldLoadForwarding completion (November 1, 2026)
 
