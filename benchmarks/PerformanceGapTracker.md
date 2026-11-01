@@ -6,17 +6,17 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback passed on goal turn 1 after the shared retry-range correction; AsciiToUnicodeConversionRuntime passed on goal turn 1 with checked block widening; OwnedPathAllocation passed on goal turn 1 with the inline owned const-join wrapper; OwnedTextAllocation is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 1, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback passed on goal turn 1 after the shared retry-range correction; AsciiToUnicodeConversionRuntime passed on goal turn 1 with checked block widening; OwnedPathAllocation passed on goal turn 1 with the inline owned const-join wrapper; OwnedTextAllocation passed on goal turn 1 with unchanged canonical source/package builds; PathJoin is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. Next benchmark: OwnedTextAllocation, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: active. Next benchmark: PathJoin, goal turns 0.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 30 of 52 initially open items are complete. OwnedPathAllocation passes on goal turn 1 with the general inline two-input JoinConst wrapper: canonical source **0.9026 × C / 0.6498 × Rust**, canonical source-free package **0.9020 × C / 0.6494 × Rust**. The matched 1,000-round six-variant comparison measures 11.2% / 11.4% lower means than the respective before builds; benchmark and reference sources are unchanged. All windows are closed; preserve other-agent notes.
+**Current evidence:** 31 of 52 initially open items are complete. OwnedTextAllocation passes on goal turn 1 without a source change: canonical source **0.8807 × C / 0.6449 × Rust**, canonical source-free package **0.8808 × C / 0.6450 × Rust**, in a fresh 1,000-round matched comparison. Actual formatting/allocation differences, lifecycle/failure evidence and general opportunities are recorded below; no new implementation speedup is claimed. All windows are closed; preserve other-agent notes.
 
-**OwnedPathAllocation coordination (goal turn 1):** Both production builds eliminate the owned JoinConst call while retaining all 4,000 allocations/frees, checked payloads and both allocation-failure exits. Three focused Release source/Windows tests, the complete native Path fixture, arbitrary byte/alias/dynamic-input probes in source/package configurations and 38 current LLVM verifications pass. The final 1,000-round window is closed at 21:36:45 UTC; source and package both meet strict C/Rust criteria. Marked complete for the per-item commit. OwnedTextAllocation has not started. No active build/test/timing window; host exclusivity was unconfirmed.
+**OwnedTextAllocation coordination (goal turn 1):** Unchanged source/package/C/Rust builds and 11 LLVM verifications pass. Actual allocation/cleanup and all C/Stark initialized payload checks pass: C 2,000 allocations, each Stark build 6,000, Rust 7,000 plus 1,990 resizes; all freed. Six allocation failures per C/source/package preserve the actual expected exits and exact cleanup. All 22 audits pass. The final 1,000-round window is closed at 21:50:33 UTC; source and package both meet strict C/Rust criteria. Marked complete for the per-item commit. PathJoin has not started. No active build/test/timing window; host exclusivity was unconfirmed.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -50,7 +50,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 | 28 | `benchmarks/network/TcpScatterGatherLoopback` | Complete | 1 | 0.9901 | 0.9198 |
 | 29 | `benchmarks/text/AsciiToUnicodeConversionRuntime` | Complete | 1 | 0.7922 | 0.5710 |
 | 30 | `benchmarks/text/OwnedPathAllocation` | Complete | 1 | 0.9026 | 0.6498 |
-| 31 | `benchmarks/text/OwnedTextAllocation` | Queued | 0 | — | — |
+| 31 | `benchmarks/text/OwnedTextAllocation` | Complete | 1 | 0.8807 | 0.6449 |
 | 32 | `benchmarks/text/PathJoin` | Queued | 0 | — | — |
 | 33 | `benchmarks/text/PathNormalize` | Queued | 0 | — | — |
 | 34 | `benchmarks/text/TextConcatCopy` | Queued | 0 | — | — |
@@ -628,6 +628,66 @@ The relevant existing framework is **`src/Compiler/SsaOptimization/SsaDeadPayloa
 
 Artifacts are under **`benchmarks/codegen/sequential-goal-20261031/DictionaryRemove/turn1/`**: baseline/C/Rust/production/control binaries and LLVM, disassembly, SDK/source snapshots and hashes, focused Release/cross-target/check logs, stale-assumption audit, every raw 1,000-round window, the pooled summary, `control-production-allocated-sections.json`, both wait4 diagnostics, `dead-values-removed-stores.json`, and matched relink commands in `dead-values-builds.json`. No timing window is active. This paragraph records the turn-1 handoff; see goal turn 3 above for the current proof and result.
 
+## OwnedTextAllocation completion (November 1, 2026)
+
+**Status: complete, goal turn 1.** Both current unchanged canonical Stark builds beat C and canonical Rust in the first fresh 1,000-round comparison. **No implementation speedup or source change is claimed.** Compiler, standard library, benchmark and reference sources remain unchanged; this item commits verified completion evidence and concrete remaining opportunities.
+
+### Compare source work and actual executable work
+
+The workload observes owned ASCII and **UTF-32/i32** lengths for integers **0–999**, plus `Score: ` labels, and checks the existing **25560 checksum**. In Stark, the numeric `7` argument to `ConcatAscii`/`ConcatUnicode` is a prefix-length hint, not another formatting operand. Stark formats the value four times per iteration, while C formats it twice and reuses the results in its source program. Rust formats twice, builds labels, and uses temporary UTF-8 strings and `Vec<char>` collections. These are canonical workload differences; no benchmark is rewritten to equalize them.
+
+Actual generated code removes more C work than the source suggests. Fresh optimized C LLVM and native disassembly retain **two allocations per iteration, not five**: the two ASCII buffers passed to live snprintf calls. Unicode conversion/materialization and concatenation allocations/copies disappear; their lengths feed an algebraic checksum update. The normal path still executes **4,000 snprintf calls** (two count queries and two writes per iteration). Only malloc-failure exits **1/2** remain reachable; the source's unused-output allocation-failure exits **3/4** disappear.
+
+Local LLVM sources provide a mechanism consistent with that output: `MemoryBuiltins.cpp::isRemovableAlloc` recognizes C-family allocation routines, and `InstructionCombining.cpp::visitAllocSite` can remove an allocation used only by null tests/free and replace the tests. `InstCombineCalls.cpp` dispatches recognized removable allocators to it. Checked-out LLVM revision: `3c3e1eeb0ae7030396f01080b4ce520b181406a8`. This source inspection supports the explanation; no pass-execution trace identifying the precise removal sequence is claimed. Those contracts must not be copied onto Stark's custom fallible allocator, which maintains TLS bucket/cache state and has explicit checked failure paths. Neither blanket allockind/alloc-family promises nor non-null assumptions are added.
+
+Actual allocation observations, starting at the benchmark entry and excluding process-runtime startup:
+
+| Canonical executable | Successful fresh allocations | Explicit resizes | Non-null frees |
+| --- | ---: | ---: | ---: |
+| C | **2000** | 0 | **2000** |
+| Stark source | **6000** | 0 | **6000** |
+| Stark source-free package | **6000** | 0 | **6000** |
+| Rust | **7000** | **1990** | **7000** |
+
+For Stark, the six per-iteration roles are standalone ASCII/UTF-32 digits, ASCII digits consumed by concat, its label, UTF-32 digits consumed by concat, and its label. Formatting requests use minimum capacity **4 units**: 4 bytes for ASCII, 16 for UTF-32. Labels request **8/9/10 bytes** or **32/36/40 bytes**. These are logical requests, not physical cache size classes. All **12,000 initialized Stark payloads** and **2,000 C ASCII/NUL payloads** across the normal runs are independently checked at free against their integer/role-derived byte oracle. Rust's allocation/resizing lifetimes and normal checksum are checked; a complete initialized-byte oracle for its internal capacity buffers is not claimed.
+
+### LLVM/native comparison and preserved facts
+
+Current Stark formatting factories already inline into main. The narrow source induction value survives as a nonnegative bounded LLVM induction, eliminating generic negative/minimum-value formatting branches for this caller. The physical private induction uses i64; no public scalar or pointer-width change is made. Main still contains four decimal-length loops, divisor-building loops, signed divide/remainder by a changing decimal divisor, nullable allocation checks, output stores and exact cleanup. The owned `ConcatAscii` and `ConcatUnicode` calls remain out of line through their 40-byte result ABI, obscuring the caller's exact prefix and length relationships. The native backend tests the upper bits and uses a 32-bit unsigned division fast path with a 64-bit signed fallback; the actual 0–999 digit/divisor values fit the fast path. This is arithmetic lowering, not pointer narrowing or a source rewrite. The source and package initial/post-LTO/native outputs were all inspected; **11 LLVM modules verify**.
+
+Stark source/package `.text` are both **11376 bytes**, versus **533 for C / 242339 for Rust**. All C/Stark executables load libc only; Rust also loads libgcc_s and the loader. Larger or smaller text alone is not the performance explanation. Stark retains more checked allocation and output work yet already meets the requested measured criterion, using direct formatting rather than C's snprintf path.
+
+### Native failure, byte and package validation
+
+All four ordinary executions return **0**, with empty stdout/stderr. **22 GDB audits pass:** four normal runs plus six injected allocation failures for each of C/source/package. Observers use exact native entries and persistent return-site probes, track reuse/resizing and reject double/unknown frees or live allocations at exit. They leave the executable files unchanged and run outside timing. An initial C source-level five-allocation assumption was rejected by the audit; native inspection corrected it to the actual two-allocation pattern rather than changing the benchmark.
+
+For either Stark build, forcing allocation calls **1–6** to return null produces exits **1, 2, 3, 3, 4, 4** respectively. Every earlier successful allocation is freed exactly once; all existing initialized bytes match the independent ASCII/UTF-32 oracle. For C, the first six retained malloc failures span three iterations and return **1, 2, 1, 2, 1, 2**, also with complete cleanup. The injection returns a null pointer at an exact function entry before its prologue, preserving the caller's ABI state; no allocator attribute or benchmark code is patched. These are call-boundary fault controls, not claims that every warm cache hit naturally fails. Rust's infallible-allocation failure policy is not substituted for Stark's error results.
+
+The **complete five-module source-free Text SDK** contains the unchanged real Text, BitOperations, Collections, Math and Memory archives/images produced with the same current compiler. All hashes and source provenance are recorded; there is no `.stark` fallback. The **unchanged canonical benchmark itself** is compiled against source and packages, with no import removal or alternate fixture. Effect, target, ownership and type facts flow through the existing producer/consumer unchanged. No package schema, ABI, release policy, compiler/stdlib source or test assertion changes, no unrelated long suite and no full release workflow are involved. Every compiler job is serial under the established **2 GiB process-group guard** and at most 1 GiB managed heap; no guard fired.
+
+### Concrete opportunities beyond this completed result
+
+1. **Expose the consumed owned-result concatenation boundary.** A checked inline or contextual summary for the existing general ConcatAscii/ConcatUnicode wrappers could retain exact prefix contents/length, right length, fresh destination capacity and status through caller specialization. This could remove header/result materialization and redundant capacity/append checks for eligible callers. Preserve actual left length versus its supplied reserve hint, errors/overflow, aliases, moved right ownership and every early-exit drop. It is a candidate, not a measured implementation or reason to remove allocation failure.
+2. **Retain pure decimal-length results and relational bounds.** `DecimalLengthI64` is finite law and the same immutable scalar is used four times. Early expansion leaves four equivalent loops separated by allocation/cleanup. Keeping or recovering that pure-call identity long enough for commoning could avoid repeated work; allocator effects do not mutate the scalar. For this input range, a valid relational summary could also prove a 1–3 digit count, rather than retaining the helper's general 1–20 bound and large unroll scaffolding. Do not hard-code this benchmark's upper bound into the helper.
+3. **Use a general constant-divide formatter or payload-liveness proof.** The existing borrowed TryFormatI64Ascii/Unicode helpers show backward constant-divide-by-10 formatting, whereas owned AppendI64 builds a changing divisor and retains native division. Applying a general formulation must preserve the signed minimum, zero/negative/wide/dynamic values, existing prefixes, reserve/overflow/failure behavior and initialized-prefix contract. Separately, carrying header-versus-payload reads through successful owned results and concat could eliminate genuinely unread writes while retaining all fallible allocations and real byte-reading cases. Neither change is implemented or assigned an unmeasured speedup here.
+
+### Fresh canonical 1,000-round comparison
+
+One warmup, then **1,000 randomized interleaved direct processes per executable**, CPU **0**, seed **911138**, arithmetic means, C = **1.0000**:
+
+| Canonical executable | Mean µs | / C |
+| --- | ---: | ---: |
+| C | 755.149372 | **1.0000** |
+| Rust | 1031.302195 | **1.3657** |
+| Stark, canonical source | 665.079875 | **0.8807** |
+| Stark, canonical source-free package | 665.150865 | **0.8808** |
+
+Source Stark is **0.6449 × Rust**, package Stark **0.6450 × Rust**. All **4,000 measured executions** succeed with stable hashes. Both strict C/Rust criteria pass on the first goal turn; no tie allowance or before/after improvement claim is used. The window is closed (**21:50:29–21:50:33 UTC**). CVs are 8.21–9.09%; process startup, passive cooling, thermal capping and unconfirmed host exclusivity remain included. No builds/tests/traces from this agent overlap timing.
+
+Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/OwnedTextAllocation/turn1/`. `source-baseline/` contains the authoritative four-variant 1,000-round JSON, commands/tool/compiler/source/package provenance, native binaries/disassemblies and initial/post-LTO C/Rust/Stark LLVM. `allocation-audit/` records all actual payload/lifecycle/failure checks, including Rust resizes; `source-free-sdk/` is the exact five-package SDK; `native-code-validation.json` records section/dependency/hash comparisons. Compiler SHA-256: **`4b5c9d5d89d65b410bf31d8376c1de466e8642c3b557a80eeebbefa665bd8be2`**.
+
+**Next: PathJoin.**
+
 ## OwnedPathAllocation completion (November 1, 2026)
 
 **Status: complete, goal turn 1.** The general two-input owned `JoinConst` wrapper is explicitly inline. Both unchanged canonical source and source-free package benchmarks now beat C and canonical Rust. The implementation is one declaration change in `stdlib/src/System/IO/Path.stark`; its public documentation and language-skill signature reference match. The wrapper body, general join, other arities, compiler, benchmark and C/Rust sources are unchanged.
@@ -679,7 +739,7 @@ Ignored evidence: `benchmarks/codegen/sequential-goal-20261031/OwnedPathAllocati
 
 A future conditional literal-payload summary for successful owned-result construction could carry exact joined bytes into `GetFacts` before lowering and precompute its complete nine-field target-correct record, invalidating that knowledge on mutation/escape. Current inline exposure improves performance while retaining scans; it is not claimed to implement that broader proof. That optional opportunity does not keep this accepted item open.
 
-**Next: OwnedTextAllocation.**
+**Next at this completion: OwnedTextAllocation (now completed above).**
 
 ## AsciiToUnicodeConversionRuntime completion (November 1, 2026)
 
