@@ -549,8 +549,20 @@ internal fn bool PackageImageSourceBridgeRenderTypedStatementArray(
 
         stack ascii statementKind = document.TextAt(statementKindNode);
         stack mut bool isBlockStatement = false;
-        if (statementKind == "block")
+        if (statementKind == "block" || statementKind == "unsafe-block" || statementKind == "assume-disjoint")
         {
+            if (statementKind == "unsafe-block" && !PackageImageSourceBridgeAppendConst(sink, "unsafe "))
+            {
+                return false;
+            }
+            if (statementKind == "assume-disjoint"
+                && (!hasExpression
+                    || !PackageImageSourceBridgeAppendConst(sink, "assume ")
+                    || !PackageImageSourceBridgeRenderTypedExpression(document, templateNode, expressionNode, 0, sink)
+                    || !PackageImageSourceBridgeAppendConst(sink, " ")))
+            {
+                return false;
+            }
             stack mut u64[0 2 ** 63 - 1] bodyStatementsNode = 0;
             stack mut u32[0 max] bodyStatementCount = 0;
             if (!LogicalPackageImageJsonOptionalArrayMember(
@@ -1328,6 +1340,18 @@ internal fn bool PackageImageSourceBridgePrepareTemplateBody(
         return false;
     }
 
+    stack mut bool isGeneric = true;
+    stack mut u64[0 2 ** 63 - 1] genericNode = 0;
+    if (match.TemplateNode != 0
+        && document.TryFindMember(match.TemplateNode, "IsGeneric", genericNode)
+        && !LogicalPackageImageJsonOptionalBoolMemberValue(document, match.TemplateNode, "IsGeneric", isGeneric))
+    {
+        return false;
+    }
+    if (!isGeneric)
+    {
+        return true;
+    }
     legacyBodyTextNode = match.LegacyBodyTextNode;
     hasLegacyBodyText = match.HasLegacyBodyText;
     if (!match.HasTypedBody)

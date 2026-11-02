@@ -1760,6 +1760,13 @@ internal fn bool LogicalPackageImageJsonMaterializeFunctionTemplateRow(
         return false;
     }
 
+    stack mut bool isGeneric = true;
+    stack mut u64[0 2 ** 63 - 1] genericNode = 0;
+    if (document.TryFindMember(templateNode, "IsGeneric", genericNode)
+        && !LogicalPackageImageJsonOptionalBoolMemberValue(document, templateNode, "IsGeneric", isGeneric))
+    {
+        return false;
+    }
     stack mut u32[0 max] addedTemplateRow = 0;
     if (!LogicalPackageGenericTemplateFactGraphAddFunctionTemplateRow(
             graph,
@@ -1794,6 +1801,7 @@ internal fn bool LogicalPackageImageJsonMaterializeFunctionTemplateRow(
             functionAddressCount,
             boundOperationCount,
             tryPropagationCount,
+            isGeneric,
             addedTemplateRow))
     {
         return false;

@@ -1085,13 +1085,9 @@ internal sealed partial class MidLevelIrLowerer
                 continue;
             }
 
-            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            foreach (var (qualifiedName, templateSummary) in packageImageFacts.FunctionTemplates)
             {
-                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
-                    module,
-                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
                 if (functions.ContainsKey(qualifiedName)
-                    || !packageImageFacts.FunctionTemplates.TryGetValue(qualifiedName, out var templateSummary)
                     || templateSummary.TypedBody is null)
                 {
                     continue;

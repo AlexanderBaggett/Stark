@@ -165,8 +165,34 @@ internal sealed partial class MidLevelIrLowerer
 
             RecordMoveFromOperand(initializer, declaredType);
             SetRuntimeDropState(name, isActive: true);
+            TryRecordImportedDynamicInitSliceProvenance(name, declaredType, statement.Expression);
             return true;
         }
+
+        private void TryRecordImportedDynamicInitSliceProvenance(
+            string name, StarkTypeSymbol declaredType, ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (declaredType.Kind != StarkTypeKind.Slice
+                || declaredType.InitializationKind != StarkInitializationKind.Init
+                || expression is not { Kind: ImportedTemplateTypedBodyExpressionKind.UnaryOperation, Name: "init", Args.Count: 1 }
+                || expression.Args[0] is not { Kind: ImportedTemplateTypedBodyExpressionKind.IndexAccess, Args.Count: 3 } slice
+                || !IsSimpleImportedInitSliceStart(slice.Args[1])
+                || !TryResolveImportedTypedTemplateAssignmentTarget(slice.Args[0], out var storage)
+                || storage.Type.Kind != StarkTypeKind.Dynamic)
+                return;
+            var address = BuildAddress(storage);
+            var start = LowerImportedTypedTemplateExpressionCore(slice.Args[1], NonNegativeI64Type);
+            if (address is not null && start is not null && start.Type.Kind == StarkTypeKind.Integer)
+                _dynamicInitSliceProvenanceByLocal[name] = new DynamicInitSliceProvenance(
+                    address, storage.Type, CoerceOperand(start, NonNegativeI64Type) ?? start);
+        }
+
+        private static bool IsSimpleImportedInitSliceStart(ImportedTemplateTypedBodyExpressionSummary expression) =>
+            expression.Kind is ImportedTemplateTypedBodyExpressionKind.NameReference
+                or ImportedTemplateTypedBodyExpressionKind.Literal
+                or ImportedTemplateTypedBodyExpressionKind.FieldAccess
+                or ImportedTemplateTypedBodyExpressionKind.IndexAccess
+            && expression.Args.All(IsSimpleImportedInitSliceStart);
 
         private bool TryLowerImportedTypedTemplateFixedTextStorageLocal(
             ImportedTemplateTypedBodyStatementSummary statement,
@@ -2010,6 +2036,52 @@ internal sealed partial class MidLevelIrLowerer
                 && BigInteger.TryParse(literalText, out value);
         }
 
+        private bool TryLowerImportedAssumeDisjoint(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.Expression is not { Kind: ImportedTemplateTypedBodyExpressionKind.DisjointCondition } condition)
+                return false;
+            var roots = condition.Args.Select(TryResolveImportedDisjointRootKey)
+                .Where(static root => root is not null).Cast<string>();
+            var group = CreateScopedNoAliasGroup(roots, AliasProofCarrierKind.UnsafeAssumeDisjoint,
+                _currentStatementLocation ?? _functionLocation, "unsafe-assume-disjoint");
+            if (group is null) return TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true);
+            _activeScopedNoAliasGroups.Push(group);
+            try
+            {
+                return TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true);
+            }
+            finally
+            {
+                _activeScopedNoAliasGroups.Pop();
+            }
+        }
+
+        private string? TryResolveImportedDisjointRootKey(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.IndexAccess
+                && expression.Args.Count == 3
+                && expression.Args[0] is { Kind: ImportedTemplateTypedBodyExpressionKind.NameReference, Name: { } regionName }
+                && _parametersByName.TryGetValue(regionName, out var regionParameter)
+                && regionParameter.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                // Reuse the authoritative literal/parameter range proof, including
+                // the parameter's original integer width and declared interval.
+                if (TryCreateScopedNoAliasParameterRegionRootKey(regionName,
+                        RenderImportedTypedTemplateExpressionCore(expression.Args[1]),
+                        RenderImportedTypedTemplateExpressionCore(expression.Args[2]), out var regionKey))
+                    return regionKey;
+            }
+            while (expression.Args.Count > 0
+                && (expression.Kind is ImportedTemplateTypedBodyExpressionKind.FieldAccess
+                    or ImportedTemplateTypedBodyExpressionKind.IndexAccess
+                    || expression is { Kind: ImportedTemplateTypedBodyExpressionKind.UnaryOperation, Name: "*" }))
+                expression = expression.Args[0];
+            return expression is { Kind: ImportedTemplateTypedBodyExpressionKind.NameReference, Name: { } name }
+                && _parametersByName.ContainsKey(name)
+                    ? CreateScopedNoAliasParameterRootKey(name)
+                    : null;
+        }
+
         private bool TryLowerImportedTypedTemplateIf(ImportedTemplateTypedBodyStatementSummary statement)
         {
             if (statement.ConditionPattern is not null)
@@ -3588,6 +3660,8 @@ internal sealed partial class MidLevelIrLowerer
             switch (statement.Kind)
             {
                 case ImportedTemplateTypedBodyStatementKind.Block:
+                case ImportedTemplateTypedBodyStatementKind.UnsafeBlock:
+                case ImportedTemplateTypedBodyStatementKind.AssumeDisjoint:
                     return TryExecuteImportedTypedTemplateStatementListConstant(
                         statement.Body,
                         createScope: true,
@@ -5996,6 +6070,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var text = RenderImportedTypedTemplateExpressionCore(expression);
+            if (operatorText == "init")
+            {
+                var view = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType);
+                if (view is null) return null;
+                var initType = expectedType ?? StarkTypeSymbols.WithQualifiers(view.Type, initializationKind: StarkInitializationKind.Init);
+                return CoerceOperand(view, initType);
+            }
             if (operatorText == "&")
             {
                 var address = LowerImportedTypedTemplateAddressOfUnary(expression.Args[0]);
@@ -7001,6 +7082,9 @@ internal sealed partial class MidLevelIrLowerer
                         throw LoweringInvariantViolation(null, "Borrow argument snapshot did not produce a local value.");
                     }
                     _loadedAddressesByTempName[local.Name] = evaluatedAddress;
+                    if (place.Path.Count == 0 && place.RootName is { } sourceName
+                        && _dynamicInitSliceProvenanceByLocal.TryGetValue(sourceName, out var provenance))
+                        _dynamicInitSliceProvenanceByLocal[local.Name] = provenance;
                     return evaluatedValue;
                 }
 
@@ -7726,6 +7810,7 @@ internal sealed partial class MidLevelIrLowerer
             return expression.Kind switch
             {
                 ImportedTemplateTypedBodyExpressionKind.NameReference => expression.Name ?? string.Empty,
+                ImportedTemplateTypedBodyExpressionKind.DisjointCondition => $"disjoint({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
                 ImportedTemplateTypedBodyExpressionKind.Literal => expression.LiteralText ?? string.Empty,
                 ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
                     ? "{}"
@@ -7741,7 +7826,7 @@ internal sealed partial class MidLevelIrLowerer
                     : "try",
                 ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is { } unaryOperator
                     && expression.Args.Count == 1
-                    ? $"{unaryOperator}{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}"
+                    ? $"{unaryOperator}{(unaryOperator == "init" ? " " : "")}{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}"
                     : "unary",
                 ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is { } binaryOperator
                     && expression.Args.Count == 2
@@ -7947,7 +8032,10 @@ internal sealed partial class MidLevelIrLowerer
                     switch (statement.Kind)
                     {
                         case ImportedTemplateTypedBodyStatementKind.Block:
+                        case ImportedTemplateTypedBodyStatementKind.UnsafeBlock:
                             return TryLowerBlock(statement);
+                        case ImportedTemplateTypedBodyStatementKind.AssumeDisjoint:
+                            return _builder.TryLowerImportedAssumeDisjoint(statement);
                         case ImportedTemplateTypedBodyStatementKind.Empty:
                             return TryLowerEmpty();
                         case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:

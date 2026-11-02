@@ -432,18 +432,26 @@ lowering consumes every structured typed-body family.
 The `generic-templates` section is package-boundary specialization material,
 not a dump of every generic body in a package.
 
-Publication starts from generic function or method template bodies where all of
+Publication starts from function or method bodies where all of
 the following are true:
 
-- the declaration is published at package boundary visibility (`public` or `export`)
 - the declaration has a real body
-- the typed function signature is generic, including methods that are generic by
-  virtue of their enclosing generic type
+- either it is `public`/`export` and generic (including methods on generic types),
+  or it has explicit `inline` intent with `public`, `export` or `internal` visibility
 
-The compiler then publishes the package-private generic helper closure required
-by those API-visible templates. This lets downstream packages specialize a
-public generic body that calls internal generic helpers without exposing every
-unrelated internal generic body.
+Internal inline bodies support separately packaged modules of the same logical
+package, including SDK modules. Their source visibility stays internal.
+
+Each body retains `IsGeneric`; older generic-only images default it to true.
+Closed bodies lower directly from typed facts. Unsupported closed bodies and
+private helper closures retain their original native wrapper fallback, without
+re-parsing text that lacks private constants or target bindings. Generic legacy
+body-text compatibility is unchanged.
+
+The compiler then publishes the local helper closure required by those bodies,
+including closed helpers. This lets downstream packages inspect and specialize
+a public generic or explicit-inline body without exposing unrelated private
+bodies or changing the source API.
 
 That means:
 
@@ -452,11 +460,13 @@ That means:
   template entries as specialization material
 - methods on `module` or `internal` types stay package-private with their
   containing type
-- non-generic functions and methods do not get generic template entries
+- closed functions and methods publish bodies only with explicit `inline` intent
+  or when required by a published body
 - declarations without bodies do not advertise a published generic template body
 
-The typed-interface `HasGenericTemplateBody` flag remains an API-surface marker.
-It means the declaration itself publishes a package-boundary generic body, not
+The typed-interface `HasGenericTemplateBody` flag remains a declaration marker.
+Its legacy name covers generic and explicit-inline bodies with their original
+visibility. It means the declaration itself publishes an inspectable body, not
 merely that the helper closure carries a package-private template entry for
 downstream specialization.
 
@@ -469,6 +479,11 @@ reconstruct or lower imported code.
 In addition to the structured statement and expression tree, the package image
 preserves optimizer-relevant facts such as:
 
+- initialization views and their dynamic-owner/start provenance, so writes through
+  an imported init slice and full initialization helpers retain owner-length commits
+- structured unsafe blocks and scoped disjoint assumptions, including all region
+  expressions; the consumer retains the scope and reuses the source alias-proof
+  rules without extending a proof outside its body
 - top-level statement count and estimated body cost
 - semantic summaries, including effective kind, memory effects, and called-function sets
 - structural optimization summaries for wrapper-like and terminal-control-flow helpers

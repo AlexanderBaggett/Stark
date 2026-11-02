@@ -168,8 +168,7 @@ internal static partial class PackageImageBuilder
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
-                if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature)
-                    || !functionSignature.IsGeneric)
+                if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature))
                 {
                     return null;
                 }
@@ -299,7 +298,8 @@ internal static partial class PackageImageBuilder
                     FunctionAddresses: BuildPublishedTemplateFunctionAddresses(module, functionPointerPromotions),
                     BoundOperations: BuildPublishedTemplateBoundOperations(module, function.Body, boundOperations),
                     BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode),
-                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations));
+                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations),
+                    IsGeneric: functionSignature.IsGeneric);
             })
             .Where(static template => template is not null)
             .Cast<StarkPackageFunctionTemplateManifest>()
@@ -326,7 +326,7 @@ internal static partial class PackageImageBuilder
 
         foreach (var candidate in candidates)
         {
-            if (GenericTemplatePublicationPolicy.HasPublishedApiVisibility(candidate.Function.Visibility))
+            if (GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(candidate.Function, candidate.Signature))
             {
                 Enqueue(candidate.LookupName);
             }
@@ -348,7 +348,7 @@ internal static partial class PackageImageBuilder
             {
                 foreach (var promotion in functionPointerPromotions)
                 {
-                    EnqueueTemplate(promotion.Signature.TemplateName);
+                    EnqueueTemplate(promotion.Signature.TemplateName ?? promotion.Signature.Name);
                 }
             }
 
@@ -359,10 +359,10 @@ internal static partial class PackageImageBuilder
                     switch (operation)
                     {
                         case BoundDirectCallOperation directCall:
-                            EnqueueTemplate(directCall.Signature.TemplateName);
+                            EnqueueTemplate(directCall.Signature.TemplateName ?? directCall.Signature.Name);
                             break;
                         case BoundMemberCallOperation memberCall:
-                            EnqueueTemplate(memberCall.Signature.TemplateName);
+                            EnqueueTemplate(memberCall.Signature.TemplateName ?? memberCall.Signature.Name);
                             break;
                     }
                 }
@@ -616,7 +616,7 @@ internal static partial class PackageImageBuilder
         for (var index = 0; index < publishedStatements.Count - 1; index++)
         {
             if (!string.Equals(publishedStatements[index].Kind, "local-variable", StringComparison.Ordinal)
-                && !string.Equals(publishedStatements[index].Kind, "block", StringComparison.Ordinal)
+                && !IsScopedTemplateStatement(publishedStatements[index].Kind)
                 && !string.Equals(publishedStatements[index].Kind, "empty", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
@@ -633,11 +633,14 @@ internal static partial class PackageImageBuilder
         return AssignTypedTemplateTryOrdinals(new StarkPackageTypedTemplateBodyManifest(publishedStatements));
     }
 
+    private static bool IsScopedTemplateStatement(string kind) =>
+        kind is "block" or "unsafe-block" or "assume-disjoint";
+
     private static bool CanUsePublishedTypedTemplateImplicitVoidReturnStatement(
         StarkPackageTypedTemplateStatementManifest statement)
     {
         return string.Equals(statement.Kind, "local-variable", StringComparison.Ordinal)
-            || string.Equals(statement.Kind, "block", StringComparison.Ordinal)
+            || IsScopedTemplateStatement(statement.Kind)
             || string.Equals(statement.Kind, "empty", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "expression", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
@@ -705,8 +708,9 @@ internal static partial class PackageImageBuilder
                     Expression = AssignExpression(statement.Expression)!,
                     SwitchCases = AssignSwitchCases(statement.SwitchCases)
                 },
-                "block" => statement with
+                "block" or "unsafe-block" or "assume-disjoint" => statement with
                 {
+                    Expression = AssignExpression(statement.Expression)!,
                     BodyStatements = AssignStatements(statement.BodyStatements)
                 },
                 _ => statement with
@@ -872,7 +876,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
     {
-        if (statement.block() is { } block)
+        if ((statement.block() ?? statement.unsafeStatement()?.block()) is { } block)
         {
             if (!TryBuildPublishedTypedTemplateStatementList(
                     module,
@@ -903,9 +907,72 @@ internal static partial class PackageImageBuilder
             publishedStatements =
             [
                 new StarkPackageTypedTemplateStatementManifest(
-                    Kind: "block",
+                    Kind: statement.unsafeStatement() is null ? "block" : "unsafe-block",
                     BodyStatements: blockStatements)
             ];
+            return true;
+        }
+
+        if ((statement.assumeStatement() ?? statement.unsafeStatement()?.assumeStatement()) is { } assumeStatement)
+        {
+            var regions = new List<StarkPackageTypedTemplateExpressionManifest>();
+            foreach (var region in assumeStatement.disjointRuntimeCondition().expressionList().expression())
+            {
+                if (!TryBuildPublishedTypedTemplateExpression(
+                        module,
+                        region,
+                        namedTypes,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        functionAddressOrdinals,
+                        directCallOrdinals,
+                        dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var publishedRegion))
+                {
+                    publishedStatements = [];
+                    return false;
+                }
+                regions.Add(publishedRegion);
+            }
+            if (!TryBuildPublishedTypedTemplateBranchStatement(
+                    module,
+                    assumeStatement.statement(),
+                    namedTypes,
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    localStorageCapacitiesByLocation,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assumedBody))
+            {
+                publishedStatements = [];
+                return false;
+            }
+            StarkPackageTypedTemplateStatementManifest assumed = new(
+                Kind: "assume-disjoint",
+                Expression: new StarkPackageTypedTemplateExpressionManifest("disjoint-condition", Arguments: regions),
+                BodyStatements: assumedBody);
+            publishedStatements = [statement.unsafeStatement() is null
+                ? assumed
+                : new StarkPackageTypedTemplateStatementManifest("unsafe-block", BodyStatements: [assumed])];
             return true;
         }
 
@@ -1682,7 +1749,7 @@ internal static partial class PackageImageBuilder
             return statement.Expression is not null || returnType.Kind == StarkTypeKind.Void;
         }
 
-        if (string.Equals(statement.Kind, "block", StringComparison.Ordinal))
+        if (IsScopedTemplateStatement(statement.Kind))
         {
             return statement.BodyStatements is { Count: > 0 }
                 && CanUseTypedTemplateStatementListAsTerminal(statement.BodyStatements, returnType);
@@ -4709,7 +4776,7 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*")
+        if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*" or "init")
             || !TryBuildPublishedTypedTemplateUnaryExpression(
                 module,
                 operandExpression,

@@ -1301,6 +1301,15 @@ internal fn bool PackageImageSourceBridgeRenderTypedExpression(
         return PackageImageSourceBridgeAppendConst(sink, " }");
     }
 
+    if (kind == "disjoint-condition")
+    {
+        return argumentCount >= 2
+            && PackageImageSourceBridgeAppendConst(sink, "disjoint(")
+            && PackageImageSourceBridgeRenderTypedExpressionArguments(
+                document, templateNode, argumentsNode, argumentCount, 0, depth, sink)
+            && PackageImageSourceBridgeAppendConst(sink, ")");
+    }
+
     if (kind == "array-initializer")
     {
         return PackageImageSourceBridgeAppendConst(
@@ -1466,6 +1475,8 @@ internal fn bool PackageImageSourceBridgeRenderTypedExpression(
                 : kind == "comptime"
                     ? PackageImageSourceBridgeAppendConst(sink, "comptime (")
                     : PackageImageSourceBridgeAppend(sink, document.TextAt(nameNode)))
+            && (kind != "unary" || document.TextAt(nameNode) != "init"
+                || PackageImageSourceBridgeAppendConst(sink, " "))
             && PackageImageSourceBridgeRenderTypedExpression(
                 document,
                 templateNode,

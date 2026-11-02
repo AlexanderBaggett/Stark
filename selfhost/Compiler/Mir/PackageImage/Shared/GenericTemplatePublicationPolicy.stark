@@ -12,9 +12,11 @@ internal finite law bool GenericTemplateHasPublishedApiVisibility(ascii visibili
 internal finite law bool GenericTemplateShouldPublishTypedBody(
     ascii visibility,
     bool hasBody,
-    bool isGeneric)
+    bool isGeneric,
+    bool isExplicitInline)
 {
-    return GenericTemplateHasPublishedApiVisibility(visibility)
-        && hasBody
-        && isGeneric;
+    return hasBody
+        && ((GenericTemplateHasPublishedApiVisibility(visibility) && isGeneric)
+            || ((GenericTemplateHasPublishedApiVisibility(visibility) || Equals(visibility, "internal"))
+                && isExplicitInline));
 }

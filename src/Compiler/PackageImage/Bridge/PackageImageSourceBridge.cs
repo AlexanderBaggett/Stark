@@ -1249,6 +1249,9 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
+            // Closed inline bodies lower from typed facts. Re-parsing their text
+            // would lose private constants, target bindings and source types.
+            if (!template.IsGeneric) continue;
             if (template.TypedBody is { } typedBody)
             {
                 if (!CanOmitBridgeBodyText(typedBody)
@@ -1426,7 +1429,21 @@ internal static partial class PackageImageLoader
         switch (statement.Kind)
         {
             case ImportedTemplateTypedBodyStatementKind.Block:
+            case ImportedTemplateTypedBodyStatementKind.UnsafeBlock:
+            case ImportedTemplateTypedBodyStatementKind.AssumeDisjoint:
                 AppendIndent(builder, indentLevel);
+                if (statement.Kind == ImportedTemplateTypedBodyStatementKind.UnsafeBlock)
+                    builder.Append("unsafe ");
+                if (statement.Kind == ImportedTemplateTypedBodyStatementKind.AssumeDisjoint)
+                {
+                    if (statement.Expression is null || !TryRenderImportedTypedTemplateExpression(
+                            statement.Expression, objectCreationsByOrdinal, enumConstructorsByOrdinal,
+                            enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal,
+                            fieldAccessesByOrdinal, memberCallsByOrdinal, out var conditionText)) return false;
+                    builder.Append("assume ");
+                    builder.Append(conditionText);
+                    builder.Append(' ');
+                }
                 if (!TryRenderImportedTypedTemplateStatementBlock(
                         builder,
                         statement.Body,
@@ -2254,6 +2271,7 @@ internal static partial class PackageImageLoader
         text = expression.Kind switch
         {
             ImportedTemplateTypedBodyExpressionKind.NameReference => expression.Name ?? string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.DisjointCondition => $"disjoint({string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})",
             ImportedTemplateTypedBodyExpressionKind.Literal => expression.LiteralText ?? string.Empty,
             ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
                 ? "{ }"
@@ -2283,7 +2301,7 @@ internal static partial class PackageImageLoader
                 ? $"try {RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is { } unaryOperator && expression.Args.Count == 1
-                ? $"{unaryOperator}{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                ? $"{unaryOperator}{(unaryOperator == "init" ? " " : "")}{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is { } binaryOperator && expression.Args.Count == 2
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} {binaryOperator} {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"

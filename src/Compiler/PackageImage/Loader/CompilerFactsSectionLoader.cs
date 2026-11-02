@@ -321,6 +321,7 @@ internal static partial class PackageImageLoader
             }
 
             loadedFunctionTemplates[functionTemplate.QualifiedResolvedName] = new ImportedFunctionTemplateSummary(
+                IsGeneric: functionTemplate.IsGeneric,
                 TopLevelStatementCount: functionTemplate.TopLevelStatementCount,
                 EstimatedBodyCost: functionTemplate.EstimatedBodyCost,
                 SemanticSummary: templateSemantics,

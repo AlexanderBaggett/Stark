@@ -4085,6 +4085,13 @@ internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteGenericTemplateFunc
         case JsonStatus.Ok:
     }
 
+    switch (LogicalPackageManifestJsonWriteBoolMember(writer, "IsGeneric", functionRow.IsGeneric))
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
     if (functionRow.HasBodyText)
     {
         stack JsonStatus bodyStatus = LogicalPackageManifestJsonWriteStringMember(

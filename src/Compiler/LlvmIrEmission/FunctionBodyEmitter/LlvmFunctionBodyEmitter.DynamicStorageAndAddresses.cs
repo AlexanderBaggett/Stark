@@ -29,9 +29,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitMakeSliceFromPointer(string result, SsaMakeSliceFromPointerRValue makeSlice)
     {
+        var length = FormatValue(makeSlice.Length);
+        if (MapType(makeSlice.Length.Type) != "i64")
+        {
+            var lengthName = CreateAbiTempName("slice_length");
+            length = $"%{EscapeIdentifier(lengthName)}";
+            EmitConvert(lengthName, length,
+                new SsaConvertRValue(makeSlice.Length, StarkTypeSymbols.Integer(64), "slice length"));
+        }
         var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_p0")}";
         AppendLine($"  {withPointer} = insertvalue {MapType(makeSlice.Type)} zeroinitializer, ptr {FormatValue(makeSlice.Pointer)}, 0");
-        AppendLine($"  {result} = insertvalue {MapType(makeSlice.Type)} {withPointer}, {MapType(makeSlice.Length.Type)} {FormatValue(makeSlice.Length)}, 1");
+        AppendLine($"  {result} = insertvalue {MapType(makeSlice.Type)} {withPointer}, i64 {length}, 1");
     }
 
     private void EmitDynamicStorageAllocation(string result, SsaDynamicStorageAllocationRValue allocation)

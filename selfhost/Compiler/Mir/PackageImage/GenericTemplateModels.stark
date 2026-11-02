@@ -57,6 +57,7 @@ public struct LogicalPackageFunctionTemplateRow
     u32[0 max] BackendOptimizationModeTextRowValue;
     u32[0 max] TopLevelStatementCountValue;
     u32[0 max] EstimatedBodyCostValue;
+    bool IsGenericValue;
     bool HasBodyTextValue;
     bool HasTopLevelStatementCountValue;
     bool HasEstimatedBodyCostValue;
@@ -82,6 +83,7 @@ public struct LogicalPackageFunctionTemplateRow
 
     LogicalPackageFunctionTemplateRow()
     {
+        self.IsGenericValue = true;
         self.ModuleOrdinalValue = 0;
         self.TemplateOrdinalValue = 0;
         self.QualifiedResolvedNameTextRowValue = 0;
@@ -192,6 +194,11 @@ public struct LogicalPackageFunctionTemplateRow
     public inline finite law bool HasSemantics(borrow LogicalPackageFunctionTemplateRow self)
     {
         return self.HasSemanticsValue;
+    }
+
+    public inline finite law bool IsGeneric(borrow LogicalPackageFunctionTemplateRow self)
+    {
+        return self.IsGenericValue;
     }
 
     public inline finite law bool HasTypedBody(borrow LogicalPackageFunctionTemplateRow self)

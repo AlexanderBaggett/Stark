@@ -717,7 +717,8 @@ public static class DefaultCompilerPipeline
 
                 foreach (var (qualifiedName, functionEffects) in packageImageFacts.FunctionEffects)
                 {
-                    if (effects.ContainsKey(qualifiedName))
+                    if (effects.ContainsKey(qualifiedName)
+                        || packageImageFacts.FunctionTemplates.ContainsKey(qualifiedName))
                     {
                         effects[qualifiedName] = functionEffects;
                     }
@@ -1115,7 +1116,7 @@ public static class DefaultCompilerPipeline
                         expanded,
                         pending);
                     ExpandImportedTemplateCallSummaryTriggers(
-                        GetImportedTemplateReachableCallSignatures(importedTemplate),
+                        ImportedTemplateCallFacts.GetReachableCallSignatures(importedTemplate),
                         substitution,
                         valueSubstitution,
                         trigger.Location,
@@ -1578,7 +1579,7 @@ public static class DefaultCompilerPipeline
                 AddExpandedTypeTriggers(concreteTargetType, location, typeModel, seen, expanded);
             }
 
-            foreach (var callSignature in GetImportedTemplateReachableCallSignatures(importedTemplate))
+            foreach (var callSignature in ImportedTemplateCallFacts.GetReachableCallSignatures(importedTemplate))
             {
                 AddTypeTriggersFromCallSignature(
                     callSignature,
@@ -1596,36 +1597,6 @@ public static class DefaultCompilerPipeline
                 typeModel,
                 seen,
                 expanded);
-        }
-
-        private static IReadOnlyList<TypedFunctionSignature> GetImportedTemplateReachableCallSignatures(
-            ImportedFunctionTemplateSummary importedTemplate)
-        {
-            var boundCalls = importedTemplate.BoundOperations
-                .Select(static summary => summary.Operation)
-                .Select(static operation => operation switch
-                {
-                    BoundDirectCallOperation directCall => directCall.Signature,
-                    BoundMemberCallOperation memberCall => memberCall.Signature,
-                    _ => null
-                })
-                .Where(static signature => signature is not null)
-                .Cast<TypedFunctionSignature>()
-                .ToArray();
-            var functionAddressSignatures = importedTemplate.FunctionAddresses
-                .Select(static functionAddress => functionAddress.Signature)
-                .ToArray();
-            if (boundCalls.Length != 0)
-            {
-                return boundCalls
-                    .Concat(functionAddressSignatures)
-                    .ToArray();
-            }
-
-            return importedTemplate.DirectCalls.Select(static call => call.Signature)
-                .Concat(importedTemplate.MemberCalls.Select(static call => call.Signature))
-                .Concat(functionAddressSignatures)
-                .ToArray();
         }
 
         private static void AddTypeTriggersFromImportedTemplateBoundOperations(
@@ -4090,13 +4061,18 @@ public static class DefaultCompilerPipeline
                             return null;
                         }
 
+                        var canLowerBody = function.HasBody;
+                        if (module.PackageImageFacts is { } packageFacts
+                            && packageFacts.FunctionTemplates.TryGetValue(qualifiedName, out var template)
+                            && !template.IsGeneric)
+                            canLowerBody &= ImportedTemplateCallFacts.CanMaterializeClosedBody(qualifiedName, packageFacts);
                         return new HighLevelIrFunction(
                             qualifiedName,
                             types.Functions.TryGetValue(qualifiedName, out var signature)
                                 ? signature
                                 : fallbackSignatures[qualifiedName],
-                            function.HasBody,
-                            DetermineBodyLoweringKind(function),
+                            canLowerBody,
+                            canLowerBody ? DetermineBodyLoweringKind(function) : FunctionBodyLoweringKind.DeclarationOnly,
                             effects.Functions[qualifiedName]);
                     })
                     .Where(static function => function is not null)
@@ -4172,7 +4148,34 @@ public static class DefaultCompilerPipeline
                 types.Functions,
                 fallbackSignatures,
                 types);
+            // Closed helpers carried with published inline bodies are optimization
+            // material, not declarations in the downstream source API.
+            var declaredNames = declaredFunctions.Select(static function => function.Name).ToHashSet(StringComparer.Ordinal);
+            var importedHelpers = loadedModules.ImportedModules
+                .Where(static module => module.PackageImageFacts is not null)
+                .SelectMany(module =>
+                {
+                    var facts = module.PackageImageFacts!;
+                    return facts.FunctionTemplates.Values
+                        .SelectMany(ImportedTemplateCallFacts.GetReachableCallSignatures)
+                        .Where(signature => !signature.IsGeneric
+                            && signature.TemplateName is null
+                            && !declaredNames.Contains(signature.Name)
+                            && facts.FunctionTemplates.TryGetValue(signature.Name, out var template)
+                            && template.TypedBody is not null
+                            && ImportedTemplateCallFacts.CanMaterializeClosedBody(signature.Name, facts)
+                            && effects.Functions.ContainsKey(signature.Name))
+                        .DistinctBy(static signature => signature.Name)
+                        .Select(signature => new HighLevelIrFunction(
+                            signature.Name,
+                            signature,
+                            HasBody: true,
+                            BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                            Effects: effects.Functions[signature.Name],
+                            BodyTemplateName: signature.Name));
+                });
             var functions = declaredFunctions
+                .Concat(importedHelpers)
                 .Concat(lambdaFunctions)
                 .Concat(closureLambdaFunctions)
                 .Concat(closureFunctionAdapterFunctions)

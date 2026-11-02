@@ -1502,7 +1502,7 @@ inline finite law bool IsEmpty(borrow OwnedAscii self);
 finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self);
 finite retborrow mut i8[min max][] AsMutableSlice(mut borrow OwnedAscii self);
 finite ascii View(mut borrow OwnedAscii self);
-fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional);
+inline fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional);
 fn System.Memory.MemoryStatus AppendByte(mut borrow OwnedAscii self, i8[min max] value);
 fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedAscii self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count);
 fn System.Memory.MemoryStatus AppendConstAscii(mut borrow OwnedAscii self, const ascii source);
@@ -1512,7 +1512,7 @@ fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedAscii self, i64[min max]
 fn System.Memory.MemoryStatus AppendU64(mut borrow OwnedAscii self, u64[0 max] value);
 fn System.Memory.MemoryStatus AppendCodePointAsUtf8(mut borrow OwnedAscii self, i32[min max] codePoint);
 fn System.Memory.MemoryStatus AppendUnicodeAsUtf8(mut borrow OwnedAscii self, unicode source);
-fn void Clear(mut borrow OwnedAscii self);
+inline fn void Clear(mut borrow OwnedAscii self);
 fn void Truncate(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] length);
 ```
 

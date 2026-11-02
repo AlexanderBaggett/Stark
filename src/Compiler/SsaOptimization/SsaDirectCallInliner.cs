@@ -215,6 +215,17 @@ internal sealed class SsaDirectCallInliner
 
             foreach (var instruction in block.Instructions)
             {
+                // These proofs name the callee's parameter roots. Keep the body
+                // and its proofs intact for LLVM's scope-aware inliner rather
+                // than copying those roots into a different SSA function.
+                if (instruction is SsaValueInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaStoreIndirectInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaCopyMemoryInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaCallInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaIndirectCallInstruction { ScopedNoAliasGroups.Count: > 0 })
+                {
+                    return false;
+                }
                 var resultIsUsed = instruction is SsaValueInstruction valueInstruction
                     && usedValueNames.Contains(valueInstruction.ResultName);
                 if (!IsInlineSafeInstruction(

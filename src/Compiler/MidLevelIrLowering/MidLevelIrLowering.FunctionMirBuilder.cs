@@ -3292,6 +3292,15 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
+            return CreateScopedNoAliasGroup(rootKeys, proofKind, location, scopePrefix);
+        }
+
+        private ScopedNoAliasGroup? CreateScopedNoAliasGroup(
+            IEnumerable<string> rootKeys,
+            AliasProofCarrierKind proofKind,
+            SourceLocation? location,
+            string scopePrefix)
+        {
             var distinctRootKeys = rootKeys
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -3322,8 +3331,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 rootKey = TryCreateScopedNoAliasParameterRegionRootKey(
                     regionRootName,
-                    regionStart,
-                    regionLength,
+                    regionStart.GetText(),
+                    regionLength.GetText(),
                     out var regionRootKey)
                         ? regionRootKey
                         : CreateScopedNoAliasParameterRootKey(regionRootName);
@@ -16370,8 +16379,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryCreateScopedNoAliasParameterRegionRootKey(
             string parameterName,
-            StarkParser.ExpressionContext startExpression,
-            StarkParser.ExpressionContext lengthExpression,
+            string startExpression,
+            string lengthExpression,
             out string rootKey)
         {
             rootKey = string.Empty;
@@ -16394,11 +16403,10 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private bool TryResolveParameterIntegerRange(
-            StarkParser.ExpressionContext expression,
+            string text,
             out BigInteger min,
             out BigInteger max)
         {
-            var text = expression.GetText();
             if (BigInteger.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
             {
                 min = literal;

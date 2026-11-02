@@ -1401,7 +1401,7 @@ public struct OwnedAscii
         }
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional)
+    inline fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional)
     {
         if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.Bytes.Length)
         {
@@ -2011,7 +2011,7 @@ public struct OwnedAscii
         }
     }
 
-    fn void Clear(mut borrow OwnedAscii self)
+    inline fn void Clear(mut borrow OwnedAscii self)
     {
         while willexit (self.Bytes.Length > 0)
         {

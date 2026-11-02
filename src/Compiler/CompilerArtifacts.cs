@@ -1048,7 +1048,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
     IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null)
+    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null,
+    bool IsGeneric = true)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
@@ -1130,7 +1131,9 @@ public enum ImportedTemplateTypedBodyStatementKind
     If,
     Break,
     Continue,
-    Return
+    Return,
+    UnsafeBlock,
+    AssumeDisjoint
 }
 
 public enum ImportedTemplateTypedSwitchCaseKind
@@ -1184,7 +1187,8 @@ public enum ImportedTemplateTypedBodyExpressionKind
     TextInterpolation,
     TextBuild,
     TypeLayout,
-    StructuralFact
+    StructuralFact,
+    DisjointCondition
 }
 
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
