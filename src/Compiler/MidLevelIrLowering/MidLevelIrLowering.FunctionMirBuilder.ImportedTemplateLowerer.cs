@@ -5224,8 +5224,30 @@ internal sealed partial class MidLevelIrLowerer
             constant = default;
             if (expression.Name is not { } operatorText
                 || expression.Args.Count != 2
-                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var left)
-                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out var right))
+                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var left))
+            {
+                return false;
+            }
+
+            if (operatorText is "&&" or "||")
+            {
+                if (left.Kind != CompileTimeConstantKind.Bool || left.IsSymbolic)
+                {
+                    return false;
+                }
+
+                if (operatorText == "&&" ? !left.BoolValue : left.BoolValue)
+                {
+                    constant = left;
+                    return true;
+                }
+
+                return TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out constant)
+                    && constant.Kind == CompileTimeConstantKind.Bool
+                    && !constant.IsSymbolic;
+            }
+
+            if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out var right))
             {
                 return false;
             }
@@ -7076,7 +7098,14 @@ internal sealed partial class MidLevelIrLowerer
                 if (address is not null)
                 {
                     var evaluatedAddress = EmitRequiredTemporary(new MidLevelIrUseRValue(address), "argument_address");
-                    var evaluatedValue = EmitRequiredTemporary(new MidLevelIrUseRValue(value), "argument_value");
+                    // This is a non-owning snapshot for a borrow, not an owning
+                    // assignment that moves a noncopyable source into the temp.
+                    MidLevelIrRValue snapshot = parameterType.BorrowKind != StarkBorrowKind.None
+                        && parameterType.InitializationKind == StarkInitializationKind.None
+                        && value.Type.BorrowKind == StarkBorrowKind.None
+                            ? new MidLevelIrLoadIndirectRValue(evaluatedAddress, value.Type, value.Text)
+                            : new MidLevelIrUseRValue(value);
+                    var evaluatedValue = EmitRequiredTemporary(snapshot, "argument_value");
                     if (evaluatedValue is not MidLevelIrLocalOperand local)
                     {
                         throw LoweringInvariantViolation(null, "Borrow argument snapshot did not produce a local value.");

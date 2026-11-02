@@ -3614,7 +3614,13 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
-        publishedExpression = null!;
+        // Preserve the intrinsic and its arguments before ordinary call lowering,
+        // including facts nested within a compound comptime expression.
+        if (TryBuildPublishedTypedTemplateStructuralFactExpression(
+                module, postfixExpression, out publishedExpression))
+        {
+            return true;
+        }
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
         StarkPackageTypedTemplateExpressionManifest? baseExpression = null;
@@ -4674,7 +4680,7 @@ internal static partial class PackageImageBuilder
         {
             if (TryBuildPublishedTypedTemplateStructuralFactExpression(
                 module,
-                operandExpression,
+                TryGetSimplePostfixExpression(operandExpression),
                 out publishedExpression))
             {
                 return true;
@@ -6153,12 +6159,10 @@ internal static partial class PackageImageBuilder
 
     private static bool TryBuildPublishedTypedTemplateStructuralFactExpression(
         LoadedModuleDocument module,
-        StarkParser.UnaryExpressionContext operandExpression,
+        StarkParser.PostfixExpressionContext? postfixExpression,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
         publishedExpression = null!;
-
-        var postfixExpression = TryGetSimplePostfixExpression(operandExpression);
         if (postfixExpression?.primaryExpression()?.genericQualifiedName() is not { } genericQualifiedName
             || postfixExpression.postfixPart().Length != 1
             || postfixExpression.postfixPart()[0].argumentList() is not { } argumentList

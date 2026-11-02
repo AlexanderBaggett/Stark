@@ -479,6 +479,15 @@ reconstruct or lower imported code.
 In addition to the structured statement and expression tree, the package image
 preserves optimizer-relevant facts such as:
 
+- structural-fact identity and type/comptime arguments within compound
+  expressions, including boolean operations and exponentiation. Consumers
+  substitute concrete generic arguments before evaluation and preserve boolean
+  short-circuit semantics. This uses existing expression nodes; older packages
+  that discarded nested fact arguments must be rebuilt
+- borrowed argument storage identity independently of its evaluated value. An
+  imported call's argument snapshot is a non-owning read, not a move from an
+  owned source; the original owner remains valid for a later transfer. Evaluated
+  addresses and initialization provenance continue through the shared call builder
 - initialization views and their dynamic-owner/start provenance, so writes through
   an imported init slice and full initialization helpers retain owner-length commits
 - structured unsafe blocks and scoped disjoint assumptions, including all region

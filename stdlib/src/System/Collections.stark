@@ -1751,26 +1751,37 @@ public struct Dictionary<K, V>
         {
             stack u64[0 2 ** 63 - 1] length = self.Length;
             stack u64[0 2 ** 61] capacity = self.StorageCapacity;
-            // This proves capacity is nonzero and one entry fits without
-            // overflow or growth. The empty home then proves absence.
-            if (length < capacity / 2)
+            if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+            if (capacity > 0)
             {
                 stack u64[0 max] keyHash = DictionaryKey.Hash(key);
                 stack u64[0 2 ** 61 - 1] home = (u64[0 2 ** 61 - 1])(keyHash & (u64[0 max])(capacity - 1));
-                if (*(&self.States[home]) == 0)
+                stack u8[0 2] state = *(&self.States[home]);
+                if (state == 1 && DictionaryKey.Equals(self.Keys[home], key))
+                {
+                    // Replacement needs no additional slot or growth. Moving the
+                    // old value to a local preserves its ordinary drop at return.
+                    stack V oldValue = self.Values[home];
+                    *(&self.Values[home]) = value;
+                    self.Length = length;
+                    self.StorageCapacity = capacity;
+                    return System.Memory.MemoryStatus.Ok;
+                }
+                // An empty home proves absence; the load bound proves one entry
+                // fits without overflow or growth.
+                if (state == 0 && length < capacity / 2)
                 {
                     *(&self.Keys[home]) = key;
                     *(&self.Values[home]) = value;
                     *(&self.States[home]) = 1;
                     self.Length = (u64[0 2 ** 63 - 1])(length + 1);
-                    self.StorageCapacity = (u64[0 2 ** 61])capacity;
+                    self.StorageCapacity = capacity;
                     return System.Memory.MemoryStatus.Ok;
                 }
                 return self.SetAfterHome(key, value, keyHash);
-            }
-            if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
-            {
-                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
             return self.SetAfterHome(key, value, DictionaryKey.Hash(key));
         }

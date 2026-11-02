@@ -106,7 +106,8 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             }
 
             stack u32[0 2 ** 31 - 1] updateKey = 64;
-            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128)
+            stack u64[0 2 ** 63 - 1] updateCapacity = dictionary.Capacity();
+            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128 || dictionary.Capacity() != updateCapacity)
             {
                 return 6;
             }
@@ -149,6 +150,16 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                     || !Ok(clustered.Set(clusterKeyThree, 170)))
                     {
                         return 27;
+                }
+
+                stack u64[0 2 ** 63 - 1] clusterCapacity = clustered.Capacity();
+                if (!Ok(clustered.Set(clusterKeyTwo, 91))
+                    || !clustered.TryGet(clusterKeyTwo, found)
+                    || found != 91 || clustered.Count() != 3
+                    || clustered.Capacity() != clusterCapacity
+                    || !Ok(clustered.Set(clusterKeyTwo, 90)))
+                {
+                    return 30;
                 }
 
                 if (!clustered.Remove(clusterKeyOne)
@@ -327,9 +338,25 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                 return false;
             }
 
+            stack u64[0 2 ** 63 - 1] asciiCapacity = asciiMap.Capacity();
+            if (!Ok(asciiMap.Set(alphaAgain, 12))
+                || !asciiMap.TryGet(alpha, found) || found != 12
+                || asciiMap.Count() != 1 || asciiMap.Capacity() != asciiCapacity)
+            {
+                return false;
+            }
+
             stack unicode gamma = (unicode)"gamma";
             stack unicode gammaAgain = (unicode)"gamma";
             stack unicode delta = (unicode)"delta";
+            stack mut Dictionary<unicode, u32[0 max]> unicodeMap = new();
+            if (!Ok(unicodeMap.Set(gamma, 44)) || !Ok(unicodeMap.Set(gammaAgain, 45))
+                || !unicodeMap.TryGet(gamma, found) || found != 45
+                || unicodeMap.Count() != 1 || unicodeMap.ContainsKey(delta))
+            {
+                return false;
+            }
+
             stack mut HashSet<unicode> unicodeSet = new();
             if (!Ok(unicodeSet.Add(gamma)))
             {
@@ -373,6 +400,13 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             if (!TryGetAsciiKey(ownedAsciiMap, alphaAgain, found)
                 || found != 33
                 || ContainsAsciiKey(ownedAsciiMap, beta))
+            {
+                return false;
+            }
+
+            if (!Ok(ownedAsciiMap.Set(ownedAlphaAgain, 34))
+                || !TryGetAsciiKey(ownedAsciiMap, alpha, found)
+                || found != 34 || ownedAsciiMap.Count() != 1)
             {
                 return false;
             }
