@@ -32,7 +32,7 @@ public inline fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(co
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third, const ascii fourth);
 public fn System.Memory.MemoryStatus TryNormalizeSeparators(mut borrow System.Text.OwnedAscii destination, ascii path);
-public fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
+public inline fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparators(ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparatorsConst(const ascii path);
 public fn System.Memory.MemoryStatus TryNormalizeLexically(mut borrow System.Text.OwnedAscii destination, ascii path);

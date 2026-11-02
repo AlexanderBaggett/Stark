@@ -17,6 +17,14 @@ public sealed class BorrowedScalarCallRuntimeTests
             finite law retborrow u32[0 max] Get(borrow Cell self) { return self.Value; }
         }
         noinline finite law bool Equal(borrow u32[0 max] value) { unsafe { return *((rawptr<u32[0 max]>)(&value)) == 42; } }
+        inline finite void Forward(mut borrow u32[0 max] value) { Set(value); }
+        inline finite bool ForwardAndCheck(mut borrow u32[0 max] value) { Set(value); return Equal(value); }
+        inline finite bool ForwardBranch(mut borrow u32[0 max] value, bool useToken) {
+            if (useToken) { SetWithToken(value, 42); }
+            else { Set(value); }
+            return Equal(value);
+        }
+        inline finite void ForwardCallback(mut borrow u32[0 max] value, fnptr<finite void(mut borrow u32[0 max])> callback) { callback(value); }
         export unsafe ffi fn i32[min max] main() {
             stack Cell cell = new Cell() { Value = 42 };
             if (!Equal(cell.Get())) { return 4; }
@@ -31,6 +39,18 @@ public sealed class BorrowedScalarCallRuntimeTests
             stack mut rawmutptr<u32[0 max]> cursor = &value;
             SetWithToken(*cursor, Redirect(&cursor, &other));
             if (value != 51 || other != 11 || cursor != &other) { return 3; }
+            value = 5;
+            Forward(value);
+            if (value != 42) { return 5; }
+            value = 6;
+            if (!ForwardAndCheck(value) || value != 42) { return 6; }
+            value = 7;
+            if (!ForwardBranch(value, CallsCount() == 4) || value != 42) { return 7; }
+            value = 8;
+            if (!ForwardBranch(value, CallsCount() == 3) || value != 42) { return 8; }
+            value = 9;
+            ForwardCallback(value, callback);
+            if (value != 42) { return 9; }
             return 0;
         }
         """;

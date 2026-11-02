@@ -1885,7 +1885,7 @@ public fn System.Memory.MemoryStatus TryNormalizeSeparators(
         }
 }
 
-public fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(
+public inline fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(
     mut borrow System.Text.OwnedAscii destination,
     const ascii path)
     {

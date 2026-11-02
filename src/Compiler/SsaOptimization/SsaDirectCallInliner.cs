@@ -524,7 +524,7 @@ internal sealed class SsaDirectCallInliner
         {
             if (candidateInstruction is not SsaValueInstruction valueInstruction)
             {
-                clones.Add(RewriteInstruction(candidateInstruction, localReplacements));
+                clones.Add(RewriteInstruction(candidateInstruction, localReplacements, parameterAddressReplacements));
                 continue;
             }
 
@@ -1321,7 +1321,7 @@ internal sealed class SsaDirectCallInliner
                 callLocation ?? valueInstruction.Location,
                 valueInstruction.ScopedNoAliasGroups,
                 valueInstruction.LoopAccessGroups),
-            _ => RewriteInstruction(instruction, replacements)
+            _ => RewriteInstruction(instruction, replacements, parameterAddressReplacements)
         };
     }
 
@@ -1720,13 +1720,14 @@ internal sealed class SsaDirectCallInliner
 
     private static SsaInstruction RewriteInstruction(
         SsaInstruction instruction,
-        IReadOnlyDictionary<string, SsaValue> replacements)
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaValue>? parameterAddressReplacements = null)
     {
         return instruction switch
         {
             SsaValueInstruction valueInstruction => valueInstruction with
             {
-                Value = RewriteRValue(valueInstruction.Value, replacements)
+                Value = RewriteRValue(valueInstruction.Value, replacements, parameterAddressReplacements)
             },
             SsaCallInstruction call => call with
             {
@@ -1739,14 +1740,14 @@ internal sealed class SsaDirectCallInliner
                         call.IndirectArgumentLocalNames,
                         call.IndirectArgumentAddresses,
                         replacements,
-                        parameterAddressReplacements: null)),
+                        parameterAddressReplacements)),
                 IndirectArgumentAddresses = RewriteIndirectArgumentAddresses(
                     call.IndirectArgumentLocalNames,
                     call.IndirectArgumentAddresses,
                     replacements,
-                    parameterAddressReplacements: null)
+                    parameterAddressReplacements)
             },
-            SsaIndirectCallInstruction call => RewriteIndirectCallInstruction(call, replacements),
+            SsaIndirectCallInstruction call => RewriteIndirectCallInstruction(call, replacements, parameterAddressReplacements),
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
