@@ -31,6 +31,13 @@ borrow values that the call renderer still uses. Assembly calls without a
 resolved ordinary ABI remain conservative. Source and package consumers use the
 same resolved ABI and target-layout rules.
 
+Address-based copies, field reads and structured returns can also leave an SSA
+snapshot without a native register consumer. After rendering a function, discard
+only emitted nonvolatile aggregate loads whose result has no LLVM uses. Keep the
+load at its original position until this check; delaying a live load across a
+mutation would change its snapshot. SSA facts, copies, lifetimes and ownership
+operations remain intact.
+
 ## 1. Locked Decision
 
 The blessed backend shape is:

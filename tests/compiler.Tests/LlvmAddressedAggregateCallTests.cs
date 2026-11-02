@@ -23,6 +23,19 @@ public sealed class LlvmAddressedAggregateCallTests
                     return self.Marker;
                 }
             }
+            public struct Envelope { public Packet Value; public i32[min max] Tag; }
+            public noinline finite law Packet Construct(i8[min max] first, i8[min max] last)
+            {
+                stack mut Packet packet = new Packet();
+                packet.Payload[0] = first;
+                packet.Payload[1023] = last;
+                packet.Marker = 13;
+                return packet;
+            }
+            public noinline finite law Envelope Wrap(Packet packet)
+            {
+                return new Envelope() { Value = packet, Tag = 29 };
+            }
             noinline finite law i32[min max] Read(borrow Packet packet) { return packet.Marker; }
             noinline finite law i32[min max] ReadPayload(borrow Packet packet)
             {
@@ -55,6 +68,8 @@ public sealed class LlvmAddressedAggregateCallTests
                 if (ReadPayload(snapshot) != -3 || ReadPayload(packet) != 16) { return 5; }
                 stack i32[min max] scalar = 9;
                 if (ReadScalar(scalar) != 9) { return 2; }
+                stack Envelope envelope = Wrap(Construct(-9, 23));
+                if (ReadPayload(envelope.Value) != 14 || Read(envelope.Value) != 13 || envelope.Tag != 29) { return 6; }
                 return 0;
             }
             """;
@@ -67,6 +82,15 @@ public sealed class LlvmAddressedAggregateCallTests
             var forward = Regex.Match(ir, $@"(?ms)^define[^\n]*@{name}\([^\n]*\n?\{{\n.*?^}}");
             Assert.True(forward.Success, ir);
             Assert.DoesNotContain("load %Packet,", forward.Value, StringComparison.Ordinal);
+        }
+        foreach (Match function in Regex.Matches(ir, @"(?ms)^define[^\n]*\n?\{\n.*?^}"))
+        {
+            foreach (Match load in Regex.Matches(function.Value, @"(?m)^\s*(%[\w.$-]+) = load %(?:Packet|Envelope),"))
+            {
+                var uses = Regex.Matches(function.Value, @"%[\w.$-]+")
+                    .Count(token => token.Value == load.Groups[1].Value);
+                Assert.True(uses > 1, $"Unused aggregate snapshot: {load.Value}");
+            }
         }
         var directory = Directory.CreateTempSubdirectory("stark-addressed-aggregate-");
         try

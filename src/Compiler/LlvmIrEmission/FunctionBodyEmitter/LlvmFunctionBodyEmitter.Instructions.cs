@@ -73,6 +73,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var result = $"%{EscapeIdentifier(instruction.ResultName)}";
+        if (instruction.Value is SsaLoadLocalRValue or SsaLoadIndirectRValue
+            && ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
+            && !StarkTypeSymbols.IsPointerBackedBorrowType(instruction.Value.Type))
+        {
+            _aggregateLoadResults.Add(result);
+        }
+
         switch (instruction.Value)
         {
             case SsaUseRValue:

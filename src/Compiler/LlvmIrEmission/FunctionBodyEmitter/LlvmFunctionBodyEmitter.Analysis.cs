@@ -7,6 +7,43 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed partial class LlvmFunctionBodyEmitter
 {
+    private readonly HashSet<string> _aggregateLoadResults = new(StringComparer.Ordinal);
+
+    private void RemoveUnusedAggregateLoads(int bodyStart)
+    {
+        if (_aggregateLoadResults.Count == 0) return;
+
+        // SSA consumers can lower to memcpy, GEP or a structured sret store instead
+        // of using the loaded register. Keep the original snapshot at its original
+        // position until all consumers have been rendered: mutation can make that
+        // snapshot necessary. Only then discard a nonvolatile load with no LLVM
+        // uses, before SROA can expand it into thousands of dead element operations.
+        // Count complete identifiers (including debug uses); an apparent use in
+        // other textual content can conservatively retain a load, never delete one.
+        var body = _builder.ToString(bodyStart, _builder.Length - bodyStart);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match match in
+                 System.Text.RegularExpressions.Regex.Matches(body, @"%[\w.$-]+"))
+        {
+            if (_aggregateLoadResults.Contains(match.Value))
+                counts[match.Value] = counts.GetValueOrDefault(match.Value) + 1;
+        }
+
+        var offset = body.Length;
+        foreach (var line in body.Split('\n').Reverse())
+        {
+            offset -= line.Length;
+            var trimmed = line.TrimStart();
+            var end = trimmed.IndexOf(" = load ", StringComparison.Ordinal);
+            if (end > 0 && counts.TryGetValue(trimmed[..end], out var count) && count == 1)
+            {
+                var length = line.Length + (offset + line.Length < body.Length ? 1 : 0);
+                _builder.Remove(bodyStart + offset, length);
+            }
+            offset--;
+        }
+    }
+
     private HashSet<string> CollectReferencedValueNames(SsaFunction function)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
