@@ -218,6 +218,80 @@ public sealed class PackageImageQualifiedEnumCallTests
         finally { directory.Delete(recursive: true); }
     }
 
+    [Fact]
+    public async Task ClosedLawPreservesMixedLocalAndImportedEnumValuesWithoutSources()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var target)) return;
+        var directory = Directory.CreateTempSubdirectory("stark-package-mixed-enum-values-");
+        try
+        {
+            var cases = Path.Combine(directory.FullName, "Cases.stark");
+            await File.WriteAllTextAsync(cases, """
+                module External.Cases
+                public enum Status { Ok, NoMemory, Misuse, }
+                """);
+            var casesLibrary = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "Cases.lib" : "libCases.a");
+            await CompileAsync([cases, "--emit-lib", "--target", target.Triple, "-o", casesLibrary]);
+            File.Delete(cases);
+
+            var facade = Path.Combine(directory.FullName, "Facade.stark");
+            await File.WriteAllTextAsync(facade, """
+                import External.Cases
+                module Facade
+                public enum InputError { OutOfMemory, TooLarge, InvalidLayout, }
+                public enum Fault { Wrapped(Status), TooLarge, }
+                internal finite law Fault FromError(InputError error)
+                {
+                    switch (error)
+                    {
+                        case InputError.OutOfMemory: return Fault.Wrapped(Status.NoMemory);
+                        case InputError.TooLarge: return Fault.TooLarge;
+                        case InputError.InvalidLayout: return Fault.Wrapped(Status.Misuse);
+                    }
+                }
+                public inline finite law Fault Convert(InputError error) { return FromError(error); }
+                """);
+            var facadeLibrary = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            await CompileAsync([facade, "--emit-lib", "--target", target.Triple, "-I", directory.FullName, "-o", facadeLibrary]);
+            File.Delete(facade);
+
+            var app = Path.Combine(directory.FullName, "App.stark");
+            await File.WriteAllTextAsync(app, """
+                import External.Cases
+                import Facade
+                module Consumer
+                finite law bool Check(Fault result, Status expected)
+                {
+                    switch (result)
+                    {
+                        case Fault.TooLarge: return false;
+                        case Fault.Wrapped(var status): return status == expected;
+                    }
+                }
+                export finite i32[min max] main()
+                {
+                    if (!Check(Convert(InputError.OutOfMemory), Status.NoMemory)) { return 1; }
+                    if (Convert(InputError.TooLarge) != Fault.TooLarge) { return 2; }
+                    if (!Check(Convert(InputError.InvalidLayout), Status.Misuse)) { return 3; }
+                    return 0;
+                }
+                """);
+            var output = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+            await CompileAsync([app, "--emit-exe", "--target", target.Triple, "--no-stark-path", "-I", directory.FullName, "-o", output]);
+            using var process = Process.Start(new ProcessStartInfo(output)
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
+            })!;
+            var stdout = await process.StandardOutput.ReadToEndAsync();
+            var stderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, $"Exit {process.ExitCode}: {stdout}{stderr}");
+            Assert.Equal(string.Empty, stdout);
+            Assert.Equal(string.Empty, stderr);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     private static async Task CompileAsync(string[] arguments)
     {
         var stdout = new StringWriter();
