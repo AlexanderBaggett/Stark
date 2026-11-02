@@ -7,7 +7,7 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed partial class LlvmFunctionBodyEmitter
 {
-    private static HashSet<string> CollectReferencedValueNames(SsaFunction function)
+    private HashSet<string> CollectReferencedValueNames(SsaFunction function)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
@@ -172,19 +172,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         void VisitDirectCall(ISsaDirectCallOperation call)
         {
-            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses);
+            var abi = _context.TryGetAsmFunction(call.FunctionName, out _)
+                ? null : _resolveCallAbi(_function.Name, call.FunctionName);
+            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses, abi?.UserParameters);
         }
 
         void VisitIndirectCall(ISsaIndirectCallOperation call)
         {
             VisitValue(call.Target);
-            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses);
+            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses,
+                BuildIndirectCallAbi(call).UserParameters);
         }
 
         void VisitCallArguments(
             IReadOnlyList<SsaValue> arguments,
             IReadOnlyList<string?>? indirectArgumentLocalNames,
-            IReadOnlyList<SsaValue?>? indirectArgumentAddresses)
+            IReadOnlyList<SsaValue?>? indirectArgumentAddresses,
+            IReadOnlyList<AbiParameterSymbol>? parameters)
         {
             for (var index = 0; index < arguments.Count; index++)
             {
@@ -196,10 +200,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     continue;
                 }
 
-                // A promoted local is not necessarily the value used at the
-                // call site: direct pointer-backed borrows still render the SSA
-                // argument itself. Keep that value live conservatively; an
-                // indirect ABI call may emit one harmless unused local load.
+                // Indirect ABI calls pass this storage, not the register snapshot.
+                // Keep direct pointer-backed borrows live: they render the value.
+                if (parameters is not null && index < parameters.Count
+                    && parameters[index].Kind == AbiParameterKind.IndirectIn
+                    && ShouldPreferAddressBasedAggregateLowering(arguments[index].Type)
+                    && !StarkTypeSymbols.IsPointerBackedBorrowType(arguments[index].Type)
+                    && indirectArgumentLocalNames is not null && index < indirectArgumentLocalNames.Count
+                    && !string.IsNullOrWhiteSpace(indirectArgumentLocalNames[index]))
+                {
+                    continue;
+                }
+
                 VisitValue(arguments[index]);
             }
 

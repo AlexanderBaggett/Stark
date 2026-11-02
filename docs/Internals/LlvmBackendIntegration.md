@@ -20,6 +20,17 @@ callee, even with explicit inline intent. Literal structs have stable structural
 identity across modules. Existing native packages remain ABI compatible; their
 old bitcode may need rebuilding to benefit from the corrected type identity.
 
+Large aggregate arguments retain their value and storage facts in SSA. When the
+resolved call ABI passes an existing local or parameter address, LLVM emission
+does not need an otherwise unused aggregate register snapshot. Omit those dead
+loads before LLVM's aggregate splitting; a single large load can otherwise
+expand into thousands of element loads and insertions before it is removed.
+Apply the same rule to direct and indirect calls. Keep snapshots with actual
+value consumers, required copies and ownership operations, and pointer-backed
+borrow values that the call renderer still uses. Assembly calls without a
+resolved ordinary ABI remain conservative. Source and package consumers use the
+same resolved ABI and target-layout rules.
+
 ## 1. Locked Decision
 
 The blessed backend shape is:

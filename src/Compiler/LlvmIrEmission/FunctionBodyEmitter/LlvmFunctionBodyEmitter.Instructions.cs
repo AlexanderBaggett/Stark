@@ -58,7 +58,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private void EmitValueInstruction(SsaValueInstruction instruction)
     {
         if (!_referencedValueNames.Contains(instruction.ResultName)
-            && instruction.Value is SsaLoadLocalRValue)
+            && (instruction.Value is SsaLoadLocalRValue
+                || (instruction.Value is SsaLoadIndirectRValue
+                    && ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
+                    && !StarkTypeSymbols.IsPointerBackedBorrowType(instruction.Value.Type))))
         {
             return;
         }
