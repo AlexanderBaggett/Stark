@@ -746,6 +746,14 @@ internal finite law u32[0 max] BuildNormalFunctionEffectFlags(
     {
         flags = flags | TypedFunctionEffectFlagHasBody();
     }
+    else
+    {
+        flags = flags | TypedFunctionEffectFlagReadsOtherMemory();
+        if (!TypedFunctionKindIsLaw(functionKind))
+        {
+            flags = flags | TypedFunctionEffectFlagWritesOtherMemory();
+        }
+    }
 
     if (readsArgumentMemory)
     {

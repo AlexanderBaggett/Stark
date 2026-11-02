@@ -735,6 +735,29 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void BodylessDeclarationsKeepUnknownMemoryEffectsAndLawReadOnlyContract()
+    {
+        var result = Compile(
+            """
+            module Demo
+            public unsafe finite void Store(rawmutptr<i32[min max]> value);
+            public unsafe finite law i32[min max] Read(rawptr<i32[min max]> value);
+            """);
+        Assert.True(result.Succeeded, string.Join("\n", result.Diagnostics));
+        var validation = result.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+        var store = validation.Functions["Store"];
+        Assert.False(store.HasBody);
+        Assert.True(store.MemoryEffects!.ReadsOtherMemory);
+        Assert.True(store.MemoryEffects.WritesOtherMemory);
+        Assert.True(store.MemoryEffects.WritesArgumentMemory);
+        var read = validation.Functions["Read"];
+        Assert.False(read.HasBody);
+        Assert.True(read.MemoryEffects!.ReadsOtherMemory);
+        Assert.False(read.MemoryEffects.WritesOtherMemory);
+        Assert.False(read.MemoryEffects.WritesArgumentMemory);
+    }
+
+    [Fact]
     public void SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorState()
     {
         var result = Compile(

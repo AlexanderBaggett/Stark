@@ -519,10 +519,10 @@ internal fn bool StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContractsImpl
     // bodies, so those body-scoped checks are dropped; the module-wide Contains checks
     // for the intrinsic definitions and Owned* static contracts are kept.
     stack ascii llvm = Llvm(c);
-    if (!System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_ascii_hash(%stark_ascii %value)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_unicode_hash(%stark_unicode %value)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)")
+    if (!System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_ascii_hash({ ptr, i64 } %value)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_unicode_hash({ ptr, i64 } %value)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_ascii_equal({ ptr, i64 } %left, { ptr, i64 } %right)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_unicode_equal({ ptr, i64 } %left, { ptr, i64 } %right)")
         || !System.Testing.Contains(llvm, "OwnedAscii_Hash")
         || !System.Testing.Contains(llvm, "OwnedAscii_Equals")
         || !System.Testing.Contains(llvm, "OwnedUnicode_Hash")

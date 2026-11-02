@@ -3982,7 +3982,7 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("@Buffer = local_unnamed_addr constant ptr null, align 8", llvm);
-        Assert.Contains("@Label = local_unnamed_addr constant %stark_ascii", llvm);
+        Assert.Contains("@Label = local_unnamed_addr constant { ptr, i64 }", llvm);
         Assert.Contains("i64 2 }, align 8", llvm);
     }
 
@@ -4013,7 +4013,7 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("@Value = local_unnamed_addr constant double 0x400C000000000000, align 4", llvm);
         Assert.Contains("@FloatValue = local_unnamed_addr constant float 0x400C000000000000, align 4", llvm);
         Assert.Contains("@Buffer = local_unnamed_addr constant ptr null, align 4", llvm);
-        Assert.Contains("@Label = local_unnamed_addr constant %stark_ascii", llvm);
+        Assert.Contains("@Label = local_unnamed_addr constant { ptr, i64 }", llvm);
         Assert.Contains("i64 2 }, align 4", llvm);
     }
 
@@ -4171,10 +4171,9 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
         Assert.Contains("%Inner = type { i32 }", llvm);
-        Assert.Contains("%Outer = type { %Inner, %stark_ascii }", llvm);
-        Assert.Contains("@Graph = local_unnamed_addr constant %Outer { %Inner { i32 7 }, %stark_ascii { ptr getelementptr inbounds nuw (", llvm);
+        Assert.Contains("%Outer = type { %Inner, { ptr, i64 } }", llvm);
+        Assert.Contains("@Graph = local_unnamed_addr constant %Outer { %Inner { i32 7 }, { ptr, i64 } { ptr getelementptr inbounds nuw (", llvm);
         Assert.Contains("i64 2 } }", llvm);
     }
 
@@ -6191,13 +6190,13 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("extractvalue %stark_ascii %arg_value, 0", llvm);
-        Assert.Contains("extractvalue %stark_ascii %arg_value, 1", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_value, 0", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_value, 1", llvm);
         Assert.Contains("icmp eq i64", llvm);
         Assert.Contains("load i8, ptr", llvm);
         Assert.Contains("select i1 %arg_allow", llvm);
-        Assert.DoesNotContain("switch %stark_ascii", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_ascii, i1)", llvm);
+        Assert.DoesNotContain("switch { ptr, i64 }", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run({ ptr, i64 }, i1)", llvm);
     }
 
     [Fact]
@@ -6240,10 +6239,10 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Equal(1, CountOccurrences(llvm, "extractvalue %stark_ascii %arg_value, 1"));
+        Assert.Equal(1, CountOccurrences(llvm, "extractvalue { ptr, i64 } %arg_value, 1"));
         Assert.Contains("switch i64", llvm);
         Assert.Contains("icmp eq i8", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_ascii)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run({ ptr, i64 })", llvm);
     }
 
     [Fact]
@@ -6270,10 +6269,10 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Matches(@"define fastcc .* i32 @Run\(%stark_unicode %arg_value\)", llvm);
-        Assert.Contains("extractvalue %stark_unicode %arg_value, 0", llvm);
+        Assert.Matches(@"define fastcc .* i32 @Run\(\{ ptr, i64 \} %arg_value\)", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_value, 0", llvm);
         Assert.Contains("load i32, ptr", llvm);
-        Assert.DoesNotContain("declare fastcc i32 @Run(%stark_unicode)", llvm);
+        Assert.DoesNotContain("declare fastcc i32 @Run({ ptr, i64 })", llvm);
     }
 
     [Fact]
@@ -6297,18 +6296,16 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc %stark_ascii @SliceAscii(%stark_ascii %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
-        Assert.Contains("extractvalue %stark_ascii %arg_text, 0", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @SliceAscii({ ptr, i64 } %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
+        Assert.Contains("extractvalue { ptr, i64 } %arg_text, 0", llvm);
         Assert.Contains("getelementptr i8, ptr", llvm);
         Assert.DoesNotContain("getelementptr inbounds i8, ptr", llvm);
-        Assert.Contains("insertvalue %stark_ascii", llvm);
+        Assert.Contains("insertvalue { ptr, i64 }", llvm);
         Assert.Contains("i64 %", llvm);
 
-        Assert.Contains("define fastcc %stark_unicode @SliceUnicode(%stark_unicode %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
-        Assert.Contains("extractvalue %stark_unicode %arg_text, 0", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @SliceUnicode({ ptr, i64 } %arg_text, i32 %arg_start, i32 %arg_length)", llvm);
         Assert.Contains("getelementptr i32, ptr", llvm);
         Assert.DoesNotContain("getelementptr inbounds i32, ptr", llvm);
-        Assert.Contains("insertvalue %stark_unicode", llvm);
     }
 
     [Fact]
@@ -6327,10 +6324,10 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("define fastcc %stark_unicode @Run()", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @Run()", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.", llvm);
         Assert.DoesNotContain("Unsupported SSA conversion from 'ascii' to 'unicode'", llvm);
-        Assert.DoesNotContain("declare fastcc %stark_unicode @Run()", llvm);
+        Assert.DoesNotContain("declare fastcc { ptr, i64 } @Run()", llvm);
     }
 
     [Fact]
@@ -6350,7 +6347,7 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("private unnamed_addr constant [11 x i8] c\"Score: 100\\00\"", llvm);
-        Assert.Contains("ret %stark_ascii { ptr getelementptr inbounds nuw ([11 x i8], ptr @.str.", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr inbounds nuw ([11 x i8], ptr @.str.", llvm);
     }
 
     [Fact]
@@ -6461,8 +6458,8 @@ public sealed partial class LlvmIrEmissionTests
 
         Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
         Assert.Contains("%Unicode = type { ptr, i64, i64 }", llvm);
-        Assert.Contains("define fastcc %stark_ascii @AsciiView(", llvm);
-        Assert.Contains("define fastcc %stark_unicode @UnicodeView(", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @AsciiView(", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @UnicodeView(", llvm);
         Assert.Contains("define fastcc i1 @TryConcatAscii(", llvm);
         Assert.Contains("define fastcc i1 @TryConcatUnicode(", llvm);
         Assert.Contains("%concat_left_nonnegative = icmp sge i64 %concat_left_length, 0", llvm);
@@ -6474,7 +6471,7 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
         Assert.DoesNotContain("%concat_left_index = phi i64", llvm);
         Assert.Contains("getelementptr inbounds nuw i32, ptr %concat_data, i64 %concat_left_length", llvm);
-        Assert.Contains("call fastcc %stark_unicode @UnicodeView(", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @UnicodeView(", llvm);
         Assert.DoesNotContain("declare fastcc i1 @TryConcatAscii(", llvm);
         Assert.DoesNotContain("declare fastcc i1 @TryConcatUnicode(", llvm);
     }
@@ -6510,7 +6507,7 @@ public sealed partial class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc i1 @TryConvertAsciiToUnicode(", llvm);
         Assert.Contains("alwaysinline", llvm);
-        Assert.Contains("%convert_source_data = extractvalue %stark_ascii %arg_source, 0", llvm);
+        Assert.Contains("%convert_source_data = extractvalue { ptr, i64 } %arg_source, 0", llvm);
         Assert.Contains("%convert_fast_wide = zext i8 %convert_fast_unit to i32", llvm);
         Assert.Contains("%convert_fast_disjoint = or i1 %convert_fast_source_before_dest, %convert_fast_dest_before_source", llvm);
         Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm);
@@ -7363,7 +7360,6 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("@.str.0 = private unnamed_addr constant", llvm);
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
         Assert.Contains("declare i32 @puts(ptr readonly) nounwind", llvm);
         Assert.Contains("define i32 @main()", llvm);
         Assert.Contains("call i32 @puts(ptr getelementptr inbounds nuw ([15 x i8], ptr @.str.0, i32 0, i32 0))", llvm);
@@ -8027,11 +8023,10 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)", llvm);
-        Assert.Contains("ret %stark_ascii %arg_text", llvm);
-        Assert.Contains("define fastcc %stark_ascii @Run(%stark_ascii %arg_input)", llvm);
-        Assert.Contains("call fastcc %stark_ascii @Echo(%stark_ascii %arg_input)", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @Echo({ ptr, i64 } %arg_text)", llvm);
+        Assert.Contains("ret { ptr, i64 } %arg_text", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @Run({ ptr, i64 } %arg_input)", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @Echo({ ptr, i64 } %arg_input)", llvm);
     }
 
     [Fact]
@@ -8055,14 +8050,12 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
         Assert.Contains("@.str.0 = private unnamed_addr constant [2 x i8] c\"a\\00\"", llvm);
         Assert.Contains("private unnamed_addr constant [2 x i32] [i32 945, i32 0]", llvm);
-        Assert.Contains("define fastcc %stark_ascii @AsciiChar()", llvm);
-        Assert.Contains("define fastcc %stark_unicode @UnicodeChar()", llvm);
-        Assert.Contains("ret %stark_ascii { ptr getelementptr inbounds nuw ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str.", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @AsciiChar()", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @UnicodeChar()", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr inbounds nuw ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str.", llvm);
         Assert.Contains(", i64 1 }", llvm);
     }
 
@@ -8087,10 +8080,9 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
         Assert.Contains("private unnamed_addr constant [2 x i32] [i32 945, i32 0]", llvm);
         Assert.Contains("private unnamed_addr constant [2 x i32] [i32 201, i32 0]", llvm);
-        Assert.Equal(2, CountOccurrences(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str."));
+        Assert.Equal(2, CountOccurrences(llvm, "ret { ptr, i64 } { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str."));
         Assert.Equal(2, CountOccurrences(llvm, ", i64 1 }"));
     }
 
@@ -8488,7 +8480,7 @@ public sealed partial class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("define fastcc noundef ptr @Pick(ptr noundef", ExtractDefinitionHeader(llvm, "Pick"));
-        Assert.Contains("define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)", ExtractDefinitionHeader(llvm, "Echo"));
+        Assert.Contains("define fastcc noundef { ptr, i64 } @Echo({ ptr, i64 } noundef %arg_text)", ExtractDefinitionHeader(llvm, "Echo"));
         Assert.Contains("define fastcc noundef %Pair @Keep(%Pair noundef %arg_pair)", ExtractDefinitionHeader(llvm, "Keep"));
 
         var copyHeader = ExtractDefinitionHeader(llvm, "Copy");
@@ -9097,11 +9089,10 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("define fastcc %stark_ascii @Message()", llvm);
+        Assert.Contains("define fastcc { ptr, i64 } @Message()", llvm);
         Assert.Contains("define i32 @main()", llvm);
-        Assert.Contains("call fastcc %stark_ascii @Message()", llvm);
-        Assert.Contains("extractvalue %stark_ascii", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @Message()", llvm);
+        Assert.Contains("extractvalue { ptr, i64 }", llvm);
         Assert.Contains("call i32 @puts(ptr %", llvm);
     }
 
@@ -9954,7 +9945,7 @@ public sealed partial class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Contains("alloca %stark_ascii, align 4", llvm);
+        Assert.Contains("alloca { ptr, i64 }, align 4", llvm);
         Assert.Contains("align 4", llvm);
         Assert.DoesNotContain("align 8", llvm);
     }
@@ -10407,12 +10398,12 @@ public sealed partial class LlvmIrEmissionTests
 
         var asciiEqualHeader = ExtractDefinitionHeader(llvm, "__stark_ascii_equal");
         var unicodeEqualHeader = ExtractDefinitionHeader(llvm, "__stark_unicode_equal");
-        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", asciiEqualHeader);
+        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal({ ptr, i64 } %left, { ptr, i64 } %right)", asciiEqualHeader);
         Assert.Contains("unnamed_addr", asciiEqualHeader);
-        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", unicodeEqualHeader);
+        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal({ ptr, i64 } %left, { ptr, i64 } %right)", unicodeEqualHeader);
         Assert.Contains("unnamed_addr", unicodeEqualHeader);
-        Assert.Contains("call i1 @__stark_ascii_equal(%stark_ascii %arg_left, %stark_ascii %arg_right)", llvm);
-        Assert.Contains("call i1 @__stark_unicode_equal(%stark_unicode %arg_left, %stark_unicode %arg_right)", llvm);
+        Assert.Contains("call i1 @__stark_ascii_equal({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)", llvm);
+        Assert.Contains("call i1 @__stark_unicode_equal({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)", llvm);
         Assert.Contains("getelementptr inbounds nuw i8, ptr %left_data, i64 %textcmp_index", llvm);
         Assert.Contains("getelementptr inbounds nuw i32, ptr %left_data, i64 %textcmp_index", llvm);
         Assert.Contains("xor i1", llvm);

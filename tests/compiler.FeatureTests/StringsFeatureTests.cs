@@ -20,10 +20,9 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @Echo({ ptr, i64 } noundef %arg_text)", llvm);
         Assert.Contains(
-            "ret %stark_ascii { ptr getelementptr inbounds nuw ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }",
+            "ret { ptr, i64 } { ptr getelementptr inbounds nuw ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }",
             llvm);
     }
 
@@ -45,13 +44,12 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc noundef %stark_ascii @SliceAscii(%stark_ascii noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @SliceAscii({ ptr, i64 } noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)", llvm);
         Assert.Contains("getelementptr i8, ptr", llvm);
-        Assert.Contains("insertvalue %stark_ascii", llvm);
+        Assert.Contains("insertvalue { ptr, i64 }", llvm);
 
-        Assert.Contains("define fastcc noundef %stark_unicode @SliceUnicode(%stark_unicode noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @SliceUnicode({ ptr, i64 } noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)", llvm);
         Assert.Contains("getelementptr i32, ptr", llvm);
-        Assert.Contains("insertvalue %stark_unicode", llvm);
     }
 
     [Fact]
@@ -72,12 +70,11 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc noundef %stark_ascii @PickAscii(%stark_ascii noundef %arg_text, i32 noundef %arg_index)", llvm);
-        Assert.Contains("define fastcc noundef %stark_unicode @PickUnicode(%stark_unicode noundef %arg_text, i32 noundef %arg_index)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @PickAscii({ ptr, i64 } noundef %arg_text, i32 noundef %arg_index)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @PickUnicode({ ptr, i64 } noundef %arg_text, i32 noundef %arg_index)", llvm);
         Assert.Contains("getelementptr i8, ptr", llvm);
         Assert.Contains("getelementptr i32, ptr", llvm);
-        Assert.Contains("insertvalue %stark_ascii", llvm);
-        Assert.Contains("insertvalue %stark_unicode", llvm);
+        Assert.Contains("insertvalue { ptr, i64 }", llvm);
         Assert.Contains(", i64 1, 1", llvm);
     }
 
@@ -94,8 +91,8 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("define fastcc noundef %stark_unicode @Run()", llvm);
-        Assert.Contains("ret %stark_unicode { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @Run()", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.", llvm);
         Assert.DoesNotContain("Unsupported SSA conversion from 'ascii' to 'unicode'", llvm);
     }
 
@@ -172,13 +169,13 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
 
         Assert.Contains("%Ascii = type { ptr, i64, i64 }", llvm);
         Assert.Contains("define fastcc noundef i1 @TryConcatAscii(", llvm);
-        Assert.Contains("define fastcc noundef %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @AsciiView(", llvm);
         Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)", llvm);
         Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)", llvm);
         Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
         Assert.DoesNotContain("%concat_left_index = phi i64", llvm);
         Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
-        Assert.Contains("call fastcc %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @AsciiView(", llvm);
     }
 
     [Fact]
@@ -220,7 +217,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """);
 
         Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
-        Assert.Contains("call fastcc %stark_ascii @AsciiView(", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @AsciiView(", llvm);
         Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
         Assert.Contains("[4 x i8]", llvm);
     }
@@ -264,7 +261,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """);
 
         Assert.Contains("call fastcc i1 @TryConcatUnicode(", llvm);
-        Assert.Contains("call fastcc %stark_unicode @UnicodeView(", llvm);
+        Assert.Contains("call fastcc { ptr, i64 } @UnicodeView(", llvm);
         Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
         Assert.Contains("[4 x i32]", llvm);
     }

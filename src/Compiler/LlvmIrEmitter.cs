@@ -8,8 +8,6 @@ namespace Stark.Compiler;
 
 internal sealed class LlvmIrEmitter
 {
-    private const string AsciiStringTypeName = "stark_ascii";
-    private const string UnicodeStringTypeName = "stark_unicode";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateMemcpyThresholdBytes = 32;
     private const int AggregateInlineMemcpyThresholdBytes = 256;
@@ -260,8 +258,6 @@ internal sealed class LlvmIrEmitter
             TryGetConcreteTypeLayout);
         _emissionContext = LlvmEmissionContextBuilder.Build(
             syntaxModel.ModuleName,
-            AsciiStringTypeName,
-            UnicodeStringTypeName,
             parseResult,
             loadedModules,
             typeModel,
@@ -3038,8 +3034,10 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
             StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",
-            StarkTypeKind.Ascii => $"%{AsciiStringTypeName}",
-            StarkTypeKind.Unicode => $"%{UnicodeStringTypeName}",
+            // Structural view types keep caller and callee function types
+            // identical when ThinLTO merges equal identified struct bodies.
+            // The source type still carries its encoding and element type.
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode => "{ ptr, i64 }",
             StarkTypeKind.Named when type.NamedType is not null
                                      && _typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
                                      && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record

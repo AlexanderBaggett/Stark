@@ -575,7 +575,6 @@ internal sealed class SemanticValidator
             signature.PointeeDeadOnReturnParameters,
             _typeModel.NamedTypes,
             _enumLayoutModel.Layouts);
-        ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
         if (functionDeclaration.Body.block() is not { } block)
@@ -5446,7 +5445,8 @@ internal sealed class SemanticValidator
                 return new FunctionMemoryEffectSummary(
                     ReadsArgumentMemory: effects.ReadsArgumentMemory,
                     WritesArgumentMemory: false,
-                    CapturesArgumentMemory: false);
+                    CapturesArgumentMemory: false,
+                    ReadsOtherMemory: true);
             }
 
             return new FunctionMemoryEffectSummary(
@@ -7614,36 +7614,6 @@ internal sealed class SemanticValidator
         return false;
     }
 
-    private void ApplyBuiltinDeclarationMemoryEffects(
-        FunctionDeclarationModel declaration,
-        FunctionValidationBuilder summary)
-    {
-        if (!IsSystemMemoryAllocatorBuiltin(declaration))
-        {
-            return;
-        }
-
-        summary.MarkOtherMemoryRead();
-        summary.MarkOtherMemoryWrite();
-    }
-
-    private bool IsSystemMemoryAllocatorBuiltin(FunctionDeclarationModel declaration)
-    {
-        if (!string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var sourceName = declaration.Name;
-        const string qualifiedPrefix = "System.Memory.";
-        if (sourceName.StartsWith(qualifiedPrefix, StringComparison.Ordinal))
-        {
-            sourceName = sourceName[qualifiedPrefix.Length..];
-        }
-
-        return sourceName is "Allocate" or "Reallocate" or "Free";
-    }
-
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
 
     private SourceLocation Location(IToken token) => Location(token, token);
@@ -8260,7 +8230,7 @@ internal sealed class SemanticValidator
                 .Select(parameter => parameter.GetEffectiveEffects(HasBody))
                 .ToArray();
 
-            return new FunctionMemoryEffectSummary(
+            var effects = new FunctionMemoryEffectSummary(
                 parameterEffects.Any(static parameter => parameter.Reads),
                 parameterEffects.Any(static parameter => parameter.Writes),
                 parameterEffects.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
@@ -8268,6 +8238,7 @@ internal sealed class SemanticValidator
                 WritesOtherMemory,
                 Parameters.Values.Any(static parameter => parameter.InitializationRanges.Count > 0),
                 Parameters.Values.Any(static parameter => parameter.PointeeDeadOnReturn));
+            return HasBody ? effects : effects.WithUnknownImplementation(DeclaredKind);
         }
 
         public FunctionValidationSummary Build()
@@ -8284,6 +8255,10 @@ internal sealed class SemanticValidator
                 WritesOtherMemory,
                 parameterSummaries.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
                 parameterSummaries.Any(static parameter => parameter.PointeeDeadOnReturn));
+            if (!HasBody)
+            {
+                memoryEffects = memoryEffects.WithUnknownImplementation(DeclaredKind);
+            }
 
             return new FunctionValidationSummary(
                 Name,

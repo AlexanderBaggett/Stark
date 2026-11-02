@@ -281,6 +281,19 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
+                // A declaration does not prove that writes stop at its immediate
+                // arguments. In particular, an owner pointer can reach payload
+                // outside the header's LLVM argmem region. Repair older images'
+                // empty-body summaries without changing any parameter facts.
+                if (loadedFunctionSignatures.TryGetValue(functionSemantic.QualifiedResolvedName, out var signature)
+                    && !signature.HasBody && summary.MemoryEffects is not null)
+                {
+                    summary = summary with
+                    {
+                        MemoryEffects = summary.MemoryEffects.WithUnknownImplementation(signature.Kind)
+                    };
+                }
+
                 loadedFunctionSemantics[functionSemantic.QualifiedResolvedName] = summary;
             }
 

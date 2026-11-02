@@ -285,8 +285,8 @@ unsafe fn ascii Run()
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define")
-        && DoesNotContain(llvm, "add %stark_ascii")
-        && Contains(llvm, "ret %stark_ascii { ptr getelementptr");
+        && DoesNotContain(llvm, "add { ptr, i64 }")
+        && Contains(llvm, "ret { ptr, i64 } { ptr getelementptr");
 }
 
 // Ported from LlvmEmitterConversionTests.AsciiToUnicodeReinterpretCastIsNotLowered.

@@ -486,6 +486,12 @@ preserves optimizer-relevant facts such as:
   rules without extending a proof outside its body
 - top-level statement count and estimated body cost
 - semantic summaries, including effective kind, memory effects, and called-function sets
+- body knowledge: a declaration without an implementation cannot establish an
+  absence of other-memory effects. Such declarations retain unknown reads and,
+  unless their law contract forbids writes, unknown writes. A pointer to an owner
+  can reach payload outside the header's LLVM argmem region. Producers and loaders
+  preserve this distinction, including older bodyless summaries, while keeping
+  parameter contracts and precise known-body facts intact
 - structural optimization summaries for wrapper-like and terminal-control-flow helpers
 - per-call memory and capture facts
 - typed local declaration facts

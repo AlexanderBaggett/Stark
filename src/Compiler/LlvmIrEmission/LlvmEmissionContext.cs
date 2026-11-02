@@ -33,8 +33,6 @@ internal sealed class LlvmEmissionContext
 
     public LlvmEmissionContext(
         string moduleName,
-        string asciiStringTypeName,
-        string unicodeStringTypeName,
         ParseResult parseResult,
         LoadedModuleSet loadedModules,
         TypeCheckModel typeModel,
@@ -67,8 +65,6 @@ internal sealed class LlvmEmissionContext
         Func<string, Func<string, string>, string> getSelfReferentialMetadataRef)
     {
         ModuleName = moduleName;
-        AsciiStringTypeName = asciiStringTypeName;
-        UnicodeStringTypeName = unicodeStringTypeName;
         ParseResult = parseResult;
         LoadedModules = loadedModules;
         TypeModel = typeModel;
@@ -103,10 +99,6 @@ internal sealed class LlvmEmissionContext
     }
 
     public string ModuleName { get; }
-
-    public string AsciiStringTypeName { get; }
-
-    public string UnicodeStringTypeName { get; }
 
     public ParseResult ParseResult { get; }
 

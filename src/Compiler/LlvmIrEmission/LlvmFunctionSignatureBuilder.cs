@@ -21,6 +21,11 @@ internal sealed class LlvmFunctionSignatureBuilder
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
+        if (!function.HasBody)
+        {
+            memoryEffects = (memoryEffects ?? new FunctionMemoryEffectSummary(
+                effects.ReadsArgumentMemory, false, false)).WithUnknownImplementation(function.Kind);
+        }
         var segments = new List<string> { "declare" };
 
         if (internalize)

@@ -4528,6 +4528,12 @@ public sealed record FunctionMemoryEffectSummary(
     public bool ReadsMemory => ReadsArgumentMemory || ReadsOtherMemory;
 
     public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory || InitializesArgumentMemory;
+
+    internal FunctionMemoryEffectSummary WithUnknownImplementation(StarkFunctionKind kind) => this with
+    {
+        ReadsOtherMemory = true,
+        WritesOtherMemory = WritesOtherMemory || !FunctionKindFacts.IsLaw(kind)
+    };
 }
 
 public sealed record CallArgumentMemoryEffectSummary(

@@ -761,10 +761,10 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
         Assert.NotNull(llvm);
-        Assert.Contains("define internal dso_local i64 @__stark_ascii_hash(%stark_ascii %value)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i64 @__stark_unicode_hash(%stark_unicode %value)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i64 @__stark_ascii_hash({ ptr, i64 } %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i64 @__stark_unicode_hash({ ptr, i64 } %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal({ ptr, i64 } %left, { ptr, i64 } %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal({ ptr, i64 } %left, { ptr, i64 } %right)", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedAscii_Hash", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedAscii_Equals", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedUnicode_Hash", llvm.Text, StringComparison.Ordinal);

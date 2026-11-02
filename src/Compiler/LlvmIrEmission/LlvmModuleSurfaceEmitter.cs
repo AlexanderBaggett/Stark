@@ -32,7 +32,7 @@ internal sealed class LlvmModuleSurfaceEmitter
 
     public void Emit(StringBuilder builder)
     {
-        EmitBuiltinTypeDefinitions(builder);
+        builder.AppendLine();
         EmitNamedTypeDefinitions(builder);
         EmitStringConstants(builder);
         EmitVTableGlobals(builder);
@@ -130,13 +130,6 @@ internal sealed class LlvmModuleSurfaceEmitter
         }
 
         return false;
-    }
-
-    private void EmitBuiltinTypeDefinitions(StringBuilder builder)
-    {
-        builder.AppendLine($"%{_context.AsciiStringTypeName} = type {{ ptr, i64 }}");
-        builder.AppendLine($"%{_context.UnicodeStringTypeName} = type {{ ptr, i64 }}");
-        builder.AppendLine();
     }
 
     private void EmitNamedTypeDefinitions(StringBuilder builder)
