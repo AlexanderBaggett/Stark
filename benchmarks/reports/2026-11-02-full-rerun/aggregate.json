@@ -1,0 +1,55 @@
+{
+  "scenarios": 75,
+  "processes_per_scenario_per_language": 1000,
+  "measured_processes": 225000,
+  "warmup_processes": 225,
+  "geometric_mean_ratios": {
+    "stark_C": 0.8612385448674388,
+    "rust_C": 1.2526677582134103,
+    "stark_Rust": 0.6875235186828479
+  },
+  "median_per_benchmark_ratios": {
+    "stark_C": 0.9474128937615209,
+    "rust_C": 1.2626121681799911,
+    "stark_Rust": 0.7124381269846923
+  },
+  "counts_vs_C": {
+    "faster_by_more_than_1_percent": 58,
+    "within_1_percent": 15,
+    "slower_by_more_than_1_percent": 2,
+    "strictly_lower_mean": 69
+  },
+  "counts_vs_Rust": {
+    "faster_by_more_than_1_percent": 75,
+    "within_1_percent": 0,
+    "slower_by_more_than_1_percent": 0,
+    "strictly_lower_mean": 75
+  },
+  "sum_of_mean_runtime_ratios": {
+    "stark_C": 0.8561654002614237,
+    "stark_Rust": 0.7253522768694449
+  },
+  "median_unstripped_binary_bytes": {
+    "c": 16040,
+    "rust": 4531168,
+    "stark": 12328
+  },
+  "return_only_mains": {
+    "c": 2,
+    "rust": 4,
+    "stark": 6
+  },
+  "window_utc": [
+    "2026-11-02T14:09:09.349982+00:00",
+    "2026-11-02T14:49:46.071242+00:00"
+  ],
+  "maximum_observed_build_validation_process_group_rss_bytes": 1222451200,
+  "compiler_sha256": "dd42cb704c5395d16afc6ab507bee11ff8af9836fca7567d57114b21b89f7ce3",
+  "repository_commit": "470497967b44343e69ff5d7a1c80a0174407c935",
+  "source_changes": false,
+  "README_changed": false,
+  "host_exclusivity": "unconfirmed",
+  "aggregation": "Geometric mean of 75 per-scenario arithmetic-mean runtime ratios; one equal weight per canonical scenario. Not an average of rounded ratios.",
+  "policy": "One predetermined 1,000-round window per case; all completed samples included, no performance-driven repetitions.",
+  "comparison_scope": "Development snapshot of canonical programs, including process startup and library/algorithm/workload differences; not a universal language-speed or steady-state-kernel claim."
+}

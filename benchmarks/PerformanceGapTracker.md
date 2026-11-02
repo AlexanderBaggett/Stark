@@ -6,7 +6,32 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 2, 2026): sequential benchmark completion goal complete.** All 52 initially open items have accepted C/Rust comparisons and individual completion commits. The final evidence audit and targeted package-artifact revalidations pass. All own work windows are closed; preserve peer notes.
+**Current work (November 2, 2026): unmodified full-suite rerun complete.** All 75 runnable canonical benchmarks were rebuilt with the same compiler and measured one at a time, with 1,000 randomized interleaved rounds per language. Individual results, aggregates, raw samples and provenance are saved in [the full rerun report](reports/2026-11-02-full-rerun/README.md). Compiler, library, benchmark and root README sources are unchanged. All work windows are closed; preserve peer notes.
+
+**Unmodified full-rerun coordination:** Complete: 75 cases, 225,000 measured processes, all native preflights and LLVM checks passed. Independent decimal recomputation verifies the individual means/ratios, aggregate geometric means and counts; executable/source/compiler hashes are stable and timing windows are serial. No build/test/debugger/timing window is active. Preserve peer notes.
+
+## Unmodified full-suite rerun (November 2, 2026)
+
+**Current evidence: 75 of 75 runnable benchmarks measured.** This is a fresh single-compiler snapshot, collected one case at a time without compiler/library/benchmark edits. Each canonical C, Rust and source-built Stark executable has one untimed warmup and **1,000 measured executions**, balanced in randomized interleaved rounds on CPU 0. All **225,000 measured processes** succeed, with unchanged executable hashes and no excluded samples or performance-driven repeat windows. The two compile-only surfaces are inventoried separately.
+
+| Geometric mean of per-scenario arithmetic-mean runtime ratios | Ratio |
+| --- | ---: |
+| Stark / C | **0.861239** |
+| Rust / C | **1.252668** |
+| Stark / Rust | **0.687524** |
+
+| Comparison | Stark >1% faster | Within ±1% | Stark >1% slower |
+| --- | ---: | ---: | ---: |
+| versus C | **58** | **15** | **2** |
+| versus Rust | **75** | **0** | **0** |
+
+Each scenario has equal weight in the geometric mean. The ±1% band is descriptive, not a statistical equivalence test. With strict comparisons, Stark has a lower mean in 69/75 C comparisons and 75/75 Rust comparisons. The six C-relative means above 1.0 are retained. This fresh measurement is separate from the older optimization-acceptance windows below.
+
+**Scope:** Linux x86-64, Ryzen 7 5700G, unchanged Release C# bootstrap compiler `dd42cb704c5395d16afc6ab507bee11ff8af9836fca7567d57114b21b89f7ce3`, commit `470497967b44343e69ff5d7a1c80a0174407c935`. Native program startup is included; the self-hosted compiler is not measured. Builds and validation finish before each timing window, and exclusive host access is unconfirmed. C/Rust use the locked optimized flags. Source/compiler hashes are checked throughout. Two unchanged standalone System.Memory fixtures require byte-identical staging into a declared development SDK source root; that configuration and the initial namespace diagnostic are retained. The largest observed build/validation process-group RSS is 1,222,451,200 bytes, under unchanged 1 GiB managed / 2 GiB process-group limits.
+
+**Interpretation:** These are canonical-program observations, not a general language-speed claim. Some kernels fold to return-only native bodies, while buffering, hash algorithms, allocation lifetimes, payload checks, encodings and constant-specialization opportunities differ across implementations. The report records those differences; no benchmark was rewritten for this run. The root README is intentionally unchanged pending user review.
+
+**Saved results:** [Full individual list and aggregate report](reports/2026-11-02-full-rerun/README.md), [75-row individual CSV](reports/2026-11-02-full-rerun/individual-results.csv), [225-row language CSV](reports/2026-11-02-full-rerun/language-results.csv), and [exact aggregate JSON](reports/2026-11-02-full-rerun/aggregate.json). The same directory retains all 225,000 raw observations, source/executable hashes, machine/toolchain metadata, verification, build provenance and archived method scripts. Native binaries, initial/reference/post-LTO LLVM, disassembly and full logs remain in ignored `benchmarks/codegen/full-rerun-20261102/`. All windows are closed; preserve peer work.
 
 ## Sequential completion goal (October 31, 2026)
 
@@ -14,7 +39,7 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 52 of 52 initially open items are complete; none remains queued or in progress. All accepted source means beat C and canonical Rust. ExplicitArithmeticRangePruning finishes at **0.7874 × C / 0.8458 × Rust** (source) and **0.7868 × C / 0.8452 × Rust** (source-free package), over 1,000 randomized interleaved rounds. The complete raw-evidence/commit audit and both package-artifact revalidations pass. All windows are closed; preserve other-agent notes.
+**Earlier optimization-queue evidence:** 52 of 52 initially open items are complete; none remains queued or in progress. All accepted source means beat C and canonical Rust. ExplicitArithmeticRangePruning finishes at **0.7874 × C / 0.8458 × Rust** (source) and **0.7868 × C / 0.8452 × Rust** (source-free package), over 1,000 randomized interleaved rounds. The complete raw-evidence/commit audit and both package-artifact revalidations pass. All windows are closed; preserve other-agent notes.
 
 **PathJoin coordination (goal turn 3):** Completed; validation, native builds, tracing and timing are finished. The production source and source-free package have identical native code. The 1,000-round window passed both C and canonical Rust criteria; host exclusivity was unconfirmed. Only this chat's source and tracker changes belong in the completion commit; preserve peer tracker sections.
 

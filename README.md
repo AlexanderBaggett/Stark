@@ -9,7 +9,7 @@ Stark is a performance-focused programming language targeting LLVM. It's about i
 - String types for differenet uses `Ascii` and `Unicode`, pick the right one for the job instead of paying for one size fits all
 - Opt-in to deep interior immutability via `const`
 
-The result is clear intentions and blazing fast code. In fact, in our benchmark suite, Stark beats Rust on most scenarios. Run the benchmark suite in /benchmarks to see for yourself.
+The result is clear intentions and blazing fast code. Stark uses explicit program contracts to optimize native code. See the [performance results](#performance) for measured comparisons with C and Rust.
 
 The syntax is C#-adjacent, but the semantics are systems-oriented:
 explicit storage classes, deterministic ownership, no hidden exceptions, no
@@ -59,20 +59,36 @@ counterparts, and the public documentation site.
 
 ## Performance
 
-I ran 72 benchmarks comparing Stark, Rust, and C (all release builds, ratios normalized to C):
+In our November 2, 2026 development snapshot, Stark had lower
+whole-process runtime than Rust in all 75 canonical benchmark scenarios.
 
-| | Stark faster | Tied (±1%) | Slower |
-|---|---|---|---|
-| **vs Rust** | 57 (79%) | 11 (15%) | 4 (6%) |
-| **vs C** | 20 (28%) | 20 (28%) | 32 (44%) |
+All benchmarks used optimized native builds on Linux x86-64, on an
+AMD Ryzen 7 5700G. Each scenario ran 1,000 randomized, interleaved
+executions per language.
 
-- **Geometric mean runtime:** Stark 0.989× C, Rust 1.071× C
-- **Median binary size:** Stark 11.5 KB, Rust 3.95 MB, C 16 KB
+| Geometric-mean runtime, C = 1.000 | Ratio |
+| --- | ---: |
+| C | 1.000 |
+| Stark | 0.861 |
+| Rust | 1.253 |
 
-Stark essentially matches C on average and beats Rust on most workloads. The places Rust wins are micro-benchmarks where the gap is under 2%. Big Stark wins concentrate in text/formatting and dictionary lookup, where range types and non-overlap pay off.
+Stark's geometric-mean runtime was **0.688× Rust's**. That corresponds
+to **13.9% less elapsed time than C** and **31.2% less than Rust**
+across this suite, with each scenario weighted equally.
 
-The benchmark suite, the actual numbers, and the harness are in the repo — happy to
+| Comparison | Stark >1% faster | Within ±1% | Stark >1% slower |
+| --- | ---: | ---: | ---: |
+| vs C | 58 | 15 | 2 |
+| vs Rust | 75 | 0 | 0 |
 
+These measurements include process startup. Some constant-input
+kernels optimize away, and some implementations differ in buffering,
+hashing, allocation, or encoding work. The results describe these
+canonical programs on this machine; they are not a general ranking
+of language speed. The ±1% band is descriptive, not a statistical
+equivalence test.
+
+See the [full report, individual results, raw samples, and methodology](benchmarks/reports/2026-11-02-full-rerun/README.md).
 
 The active implementation roadmap lives in
 [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md).
