@@ -1048,7 +1048,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
     IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null)
+    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null,
+    bool IsGeneric = true)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
@@ -1130,7 +1131,9 @@ public enum ImportedTemplateTypedBodyStatementKind
     If,
     Break,
     Continue,
-    Return
+    Return,
+    UnsafeBlock,
+    AssumeDisjoint
 }
 
 public enum ImportedTemplateTypedSwitchCaseKind
@@ -1184,7 +1187,8 @@ public enum ImportedTemplateTypedBodyExpressionKind
     TextInterpolation,
     TextBuild,
     TypeLayout,
-    StructuralFact
+    StructuralFact,
+    DisjointCondition
 }
 
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
@@ -4524,6 +4528,12 @@ public sealed record FunctionMemoryEffectSummary(
     public bool ReadsMemory => ReadsArgumentMemory || ReadsOtherMemory;
 
     public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory || InitializesArgumentMemory;
+
+    internal FunctionMemoryEffectSummary WithUnknownImplementation(StarkFunctionKind kind) => this with
+    {
+        ReadsOtherMemory = true,
+        WritesOtherMemory = WritesOtherMemory || !FunctionKindFacts.IsLaw(kind)
+    };
 }
 
 public sealed record CallArgumentMemoryEffectSummary(
@@ -5397,7 +5407,8 @@ public sealed record MidLevelIrMakeSliceFromPointerRValue(
     MidLevelIrOperand Pointer,
     MidLevelIrOperand Length,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrDynamicStorageAllocationRValue(
@@ -5500,7 +5511,8 @@ public sealed record MidLevelIrElementAddressRValue(
     MidLevelIrOperand? Index,
     int? ConstantIndex,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrSliceElementAddressRValue(
@@ -5622,6 +5634,12 @@ public sealed record SsaTextDataAddressValue(
     StarkTypeSymbol TextType,
     StarkTypeSymbol Type)
     : SsaValue(Type, $"&{LiteralText}.data");
+
+// Integer elements keep their target representation until LLVM lays them out.
+public sealed record SsaStaticArrayAddressValue(
+    IReadOnlyList<BigInteger> Elements,
+    StarkTypeSymbol Type)
+    : SsaValue(Type, $"readonly[{string.Join(",", Elements)}]");
 
 public sealed record SsaBoolConstant(bool Value)
     : SsaValue(StarkTypeSymbols.Bool, Value ? "true" : "false");
@@ -6006,7 +6024,8 @@ public sealed record SsaMakeSliceFromPointerRValue(
     SsaValue Pointer,
     SsaValue Length,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaDynamicStorageAllocationRValue(
@@ -6111,7 +6130,8 @@ public sealed record SsaElementAddressRValue(
     SsaValue? Index,
     int? ConstantIndex,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    StarkTypeSymbol? SourceStorageType = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaSliceElementAddressRValue(

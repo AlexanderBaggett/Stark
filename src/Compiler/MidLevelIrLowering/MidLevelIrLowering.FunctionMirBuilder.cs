@@ -314,6 +314,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IDisposable _logScope;
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, MidLevelIrOperand> _loadedAddressesByTempName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DynamicInitSliceProvenance> _dynamicInitSliceProvenanceByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DynamicStorageAllocationKind> _dynamicStorageAllocationKindByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
@@ -3291,6 +3292,15 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
+            return CreateScopedNoAliasGroup(rootKeys, proofKind, location, scopePrefix);
+        }
+
+        private ScopedNoAliasGroup? CreateScopedNoAliasGroup(
+            IEnumerable<string> rootKeys,
+            AliasProofCarrierKind proofKind,
+            SourceLocation? location,
+            string scopePrefix)
+        {
             var distinctRootKeys = rootKeys
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -3321,8 +3331,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 rootKey = TryCreateScopedNoAliasParameterRegionRootKey(
                     regionRootName,
-                    regionStart,
-                    regionLength,
+                    regionStart.GetText(),
+                    regionLength.GetText(),
                     out var regionRootKey)
                         ? regionRootKey
                         : CreateScopedNoAliasParameterRootKey(regionRootName);
@@ -7394,6 +7404,19 @@ internal sealed partial class MidLevelIrLowerer
         {
             value = null;
 
+            // Reanalysis of a compatibility body has already bound this exact
+            // call site. Prefer that typed identity to a published ordinal from
+            // a differently enumerated body.
+            if (TryResolveBoundEnumCall(arguments, out var boundEnumCall))
+            {
+                var boundType = ApplyGenericSubstitution(boundEnumCall.EnumType);
+                return TryLowerEnumConstructorCall(
+                    $"{boundType.DisplayName}.{boundEnumCall.VariantName}",
+                    arguments,
+                    arguments.GetText(),
+                    out value);
+            }
+
             if (!TryResolvePublishedEnumCallSummary(arguments, out var publishedEnumCall))
             {
                 return false;
@@ -8179,7 +8202,8 @@ internal sealed partial class MidLevelIrLowerer
                     start,
                     ConstantIndex: null,
                     AddressType(elementType, dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType)),
-                    $"{target.Text}[{indexExpressions[0].GetText()}]"),
+                    $"{target.Text}[{indexExpressions[0].GetText()}]",
+                    SourceStorageType: target.Type),
                 "addr");
             if (elementAddress is null)
             {
@@ -8202,7 +8226,8 @@ internal sealed partial class MidLevelIrLowerer
                         elementAddress,
                         length,
                         sliceType,
-                        $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]"),
+                        $"{target.Text}[{indexExpressions[0].GetText()}, {indexExpressions[1].GetText()}]",
+                        SourceStorageType: target.Type),
                     "slice");
             }
 
@@ -9186,12 +9211,12 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = ResolveIndirectArgumentAddress(parameterType, arguments.argument(index).expression());
+                var indirectArgumentAddress = ResolveIndirectArgumentAddress(parameterType, arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered) ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -9424,13 +9449,13 @@ internal sealed partial class MidLevelIrLowerer
                 loweredArguments.Add(argument);
                 var indirectArgumentAddress = ResolveIndirectArgumentAddress(
                     parameterType,
-                    arguments.argument(index).expression());
+                    arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -9513,13 +9538,13 @@ internal sealed partial class MidLevelIrLowerer
                 loweredArguments.Add(argument);
                 var indirectArgumentAddress = ResolveIndirectArgumentAddress(
                     parameterType,
-                    arguments.argument(index).expression());
+                    arguments.argument(index).expression(), lowered);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -10405,7 +10430,7 @@ internal sealed partial class MidLevelIrLowerer
                 indirectArgumentAddresses.Add(indirectArgumentLocal is null
                     ? indirectArgumentAddress
                     : null);
-                RecordMoveFromOperand(receiverOperand, receiverParameterType);
+                RecordCallArgumentMove(receiverOperand, receiverParameterType);
             }
 
             for (var index = 0; index < Math.Min(loweredExplicitArguments.Count, explicitParameterCount); index++)
@@ -10420,15 +10445,16 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = syntaxArguments is not null && index < syntaxArguments.argument().Length
-                    ? ResolveIndirectArgumentAddress(parameterType, syntaxArguments.argument(index).expression())
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, sourceArgument)
+                    ?? (syntaxArguments is not null && index < syntaxArguments.argument().Length
+                        ? ResolveIndirectArgumentAddress(parameterType, syntaxArguments.argument(index).expression())
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, sourceArgument)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             if (signature.IsVarargs)
@@ -12718,7 +12744,13 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (_importedEnumCallOrdinals is { } enumCallOrdinals
                 && enumCallOrdinals.TryGetValue(arguments, out var enumCallOrdinal)
-                && _importedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedSummary))
+                && _importedTemplateEnumCalls.TryGetValue(enumCallOrdinal, out var publishedSummary)
+                && arguments.Parent?.Parent is StarkParser.PostfixExpressionContext expression
+                && PublishedEnumCaseMatches(
+                    expression.primaryExpression(),
+                    expression.postfixPart().TakeWhile(part => part.argumentList() != arguments),
+                    publishedSummary.EnumType,
+                    publishedSummary.VariantName))
             {
                 summary = publishedSummary;
                 return true;
@@ -12734,7 +12766,8 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (_importedEnumValueOrdinals is { } enumValueOrdinals
                 && enumValueOrdinals.TryGetValue(expression, out var enumValueOrdinal)
-                && _importedTemplateEnumValues.TryGetValue(enumValueOrdinal, out var publishedSummary))
+                && _importedTemplateEnumValues.TryGetValue(enumValueOrdinal, out var publishedSummary)
+                && PublishedEnumCaseMatches(expression, [], publishedSummary.EnumType, publishedSummary.VariantName))
             {
                 summary = publishedSummary;
                 return true;
@@ -12742,6 +12775,28 @@ internal sealed partial class MidLevelIrLowerer
 
             summary = null!;
             return false;
+        }
+
+        private bool PublishedEnumCaseMatches(
+            StarkParser.PrimaryExpressionContext expression,
+            IEnumerable<StarkParser.PostfixPartContext> qualifiers,
+            StarkTypeSymbol publishedType,
+            string publishedVariant)
+        {
+            var name = expression.GetText();
+            if (expression.genericEnumCaseReference() is { } genericCase
+                && !TryBuildGenericEnumCaseName(genericCase, out name))
+            {
+                return false;
+            }
+
+            foreach (var qualifier in qualifiers) name += qualifier.GetText();
+            // Both runtime lowering and CTFE consult these hints. Raw source
+            // ordinals alone cannot identify a constructor or a unit variant.
+            return TryResolveEnumCaseReference(name, out _, out var authoredLayout, out var authoredVariant)
+                && TryGetEnumLayout(ApplyGenericSubstitution(publishedType), out var publishedLayout)
+                && string.Equals(authoredLayout.EnumName, publishedLayout.EnumName, StringComparison.Ordinal)
+                && string.Equals(authoredVariant.Name, publishedVariant, StringComparison.Ordinal);
         }
 
         private bool TryResolvePublishedEnumPatternSummary(
@@ -13660,6 +13715,24 @@ internal sealed partial class MidLevelIrLowerer
                 return operand;
             }
 
+            // A value supplied to a borrowed parameter retains its value type.
+            // The call's indirect address/local carries the borrow separately.
+            // In particular, an integer value is not a pointer-typed integer cast.
+            if (StarkTypeSymbols.IsPointerBackedBorrowType(targetType)
+                && !StarkTypeSymbols.IsPointerBackedBorrowType(operand.Type)
+                && CanUseOperandAsIndirectArgumentSource(targetType, operand.Type))
+            {
+                targetType = StarkTypeSymbols.BorrowReturnValueType(targetType);
+                if (operand.Type == targetType) return operand;
+            }
+
+            if (IsPointerBackedBorrowRuntimePointerCoercion(operand.Type, targetType))
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "ptrcast");
+            }
+
             if (targetType.Kind == StarkTypeKind.DynTrait
                 && BuildDynTraitCoercion(operand, targetType) is { } dynValue)
             {
@@ -13716,13 +13789,6 @@ internal sealed partial class MidLevelIrLowerer
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     targetType.Kind == StarkTypeKind.RawPointer ? "ptrcast" : "intcast");
-            }
-
-            if (IsPointerBackedBorrowRuntimePointerCoercion(operand.Type, targetType))
-            {
-                return EmitTemporary(
-                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
-                    "ptrcast");
             }
 
             if (operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
@@ -14480,6 +14546,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? EmitTemporary(MidLevelIrRValue value, string hint)
         {
+            if (value is MidLevelIrLoadIndirectRValue load)
+            {
+                // Later arguments can change a pointer local/global. A borrow of the
+                // loaded place must use the address evaluated at this load.
+                value = load with { Address = EmitRequiredTemporary(new MidLevelIrUseRValue(load.Address), "load_address") };
+            }
             var name = AllocateTemporaryName(hint);
             RegisterLocal(
                 name,
@@ -14489,6 +14561,10 @@ internal sealed partial class MidLevelIrLowerer
                 isConstant: false,
                 hasConstProvenance: RValueHasConstProvenance(value));
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
+            if (value is MidLevelIrLoadIndirectRValue indirectLoad)
+            {
+                _loadedAddressesByTempName[name] = indirectLoad.Address;
+            }
             if (value is MidLevelIrDynamicStorageAllocationRValue dynamicAllocation)
             {
                 _dynamicStorageAllocationKindByLocal[name] = dynamicAllocation.AllocationKind;
@@ -15449,8 +15525,13 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? ResolveIndirectArgumentAddress(
             StarkTypeSymbol parameterType,
-            StarkParser.ExpressionContext expression)
+            StarkParser.ExpressionContext expression,
+            MidLevelIrOperand? evaluatedArgument = null)
         {
+            if (ResolveEvaluatedIndirectArgumentAddress(parameterType, evaluatedArgument) is { } address)
+            {
+                return address;
+            }
             if (!RequiresIndirectArgument(parameterType)
                 || parameterType.Kind == StarkTypeKind.Closure
                 || !TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
@@ -15461,6 +15542,16 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return ResolveIndirectArgumentAddress(parameterType, target);
+        }
+
+        private MidLevelIrOperand? ResolveEvaluatedIndirectArgumentAddress(
+            StarkTypeSymbol parameterType,
+            MidLevelIrOperand? argument)
+        {
+            return argument is MidLevelIrLocalOperand local
+                && CanUseOperandAsIndirectArgumentSource(parameterType, argument.Type)
+                && _loadedAddressesByTempName.TryGetValue(local.Name, out var address)
+                    ? address : null;
         }
 
         private static bool MayEvaluateNestedExpressionForAddress(StarkParser.UnaryExpressionContext expression)
@@ -16288,8 +16379,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryCreateScopedNoAliasParameterRegionRootKey(
             string parameterName,
-            StarkParser.ExpressionContext startExpression,
-            StarkParser.ExpressionContext lengthExpression,
+            string startExpression,
+            string lengthExpression,
             out string rootKey)
         {
             rootKey = string.Empty;
@@ -16312,11 +16403,10 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private bool TryResolveParameterIntegerRange(
-            StarkParser.ExpressionContext expression,
+            string text,
             out BigInteger min,
             out BigInteger max)
         {
-            var text = expression.GetText();
             if (BigInteger.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
             {
                 min = literal;

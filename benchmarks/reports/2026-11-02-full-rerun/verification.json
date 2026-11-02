@@ -1,0 +1,9 @@
+{
+  "scenarios": 75,
+  "language_rows": 225,
+  "raw_measured_processes": 225000,
+  "independent_decimal_mean_ratio_geometric_mean_and_count_checks": "pass",
+  "retained_native_executable_hashes_and_ELF_headers": "pass",
+  "source_compiler_and_root_README_unchanged": "pass",
+  "timing_windows_serial_nonoverlapping": "pass"
+}

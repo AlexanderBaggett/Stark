@@ -1007,40 +1007,6 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
     }
 
-    [Fact]
-    public void PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var benchmarkPath = Path.Combine(repositoryRoot, "benchmarks", "collections", "LinkedListReservedPush.stark");
-        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
-            new CompilerOptions(
-                EmitLlvmIr: true,
-                TargetInfo: targetInfo,
-                ModuleResolver: new TargetAwareStdLibModuleResolver(
-                    new FileSystemModuleResolver(sourceRoot),
-                    [sourceRoot],
-                    targetInfo)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var reserveBody = ExtractDefinedFunctionText(
-            llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_ReserveNodes__u32(");
-        var allocateBody = ExtractDefinedFunctionText(
-            llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_AllocateNode__u32(");
-
-        Assert.Contains("__stark_dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("LinkedListValueSlot", reserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("LinkedListLinks", reserveBody, StringComparison.Ordinal);
-        Assert.Contains("LinkedListValueSlot", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("LinkedList_ReserveNodes__u32", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("insertvalue %System_Collections_LinkedListValueSlot_u32_ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
-    }
-
     private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix)
     {
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);

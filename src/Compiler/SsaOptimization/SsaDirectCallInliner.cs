@@ -127,7 +127,25 @@ internal sealed class SsaDirectCallInliner
         return false;
     }
 
-    private bool TryBuildCandidate(SsaFunction function, out InlineCandidate candidate)
+    internal SsaFunction InlineVerifiedLoopCallee(
+        SsaFunction caller,
+        SsaFunction callee,
+        IReadOnlySet<int> callBlocks)
+    {
+        // The loop versioner has verified this concrete body and bounds the
+        // duplication independently of the ordinary inlining size policy.
+        if (!TryBuildCandidate(callee, out var candidate, 128))
+        {
+            return caller;
+        }
+
+        return InlineFunction(caller, new Dictionary<string, InlineCandidate>(StringComparer.Ordinal)
+        {
+            [callee.Name] = candidate with { CanInlineByDefault = true }
+        }, callBlocks);
+    }
+
+    private bool TryBuildCandidate(SsaFunction function, out InlineCandidate candidate, int? instructionLimit = null)
     {
         candidate = default!;
 
@@ -152,9 +170,9 @@ internal sealed class SsaDirectCallInliner
         var hasInlineClosureParameter = function.Parameters.Any(static parameter => IsInlineClosureParameter(parameter.Type));
         var isDeclaredLaw = _declaredLawFunctionNames.Contains(function.Name)
             || FunctionKindFacts.IsLaw(effects.Kind);
-        var maxInlineInstructionCount = hasInlineClosureParameter
+        var maxInlineInstructionCount = instructionLimit ?? (hasInlineClosureParameter
             ? MaxInlineClosureSpecializationInstructionCount
-            : GetMaxInlineInstructionCount(isDeclaredLaw);
+            : GetMaxInlineInstructionCount(isDeclaredLaw));
 
         var instructionCount = 0;
         var directCalls = new List<string>();
@@ -197,6 +215,17 @@ internal sealed class SsaDirectCallInliner
 
             foreach (var instruction in block.Instructions)
             {
+                // These proofs name the callee's parameter roots. Keep the body
+                // and its proofs intact for LLVM's scope-aware inliner rather
+                // than copying those roots into a different SSA function.
+                if (instruction is SsaValueInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaStoreIndirectInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaCopyMemoryInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaCallInstruction { ScopedNoAliasGroups.Count: > 0 }
+                    or SsaIndirectCallInstruction { ScopedNoAliasGroups.Count: > 0 })
+                {
+                    return false;
+                }
                 var resultIsUsed = instruction is SsaValueInstruction valueInstruction
                     && usedValueNames.Contains(valueInstruction.ResultName);
                 if (!IsInlineSafeInstruction(
@@ -308,7 +337,8 @@ internal sealed class SsaDirectCallInliner
 
     private SsaFunction InlineFunction(
         SsaFunction function,
-        IReadOnlyDictionary<string, InlineCandidate> candidates)
+        IReadOnlyDictionary<string, InlineCandidate> candidates,
+        IReadOnlySet<int>? callBlocks = null)
     {
         if (!function.HasBody
             || !function.SupportsDirectCodeGeneration
@@ -329,6 +359,12 @@ internal sealed class SsaDirectCallInliner
 
         foreach (var block in function.Blocks)
         {
+            if (callBlocks is not null && !callBlocks.Contains(block.Id))
+            {
+                blocks.Add(block);
+                continue;
+            }
+
             var instructions = new List<SsaInstruction>(block.Instructions.Count);
             var blockWasSplit = false;
 
@@ -455,6 +491,7 @@ internal sealed class SsaDirectCallInliner
             return false;
         }
 
+        ReserveCalleeNames(candidate, usedValueNames);
         var returnsValue = call.Type.Kind != StarkTypeKind.Void;
         if (returnsValue)
         {
@@ -487,7 +524,7 @@ internal sealed class SsaDirectCallInliner
         {
             if (candidateInstruction is not SsaValueInstruction valueInstruction)
             {
-                clones.Add(RewriteInstruction(candidateInstruction, localReplacements));
+                clones.Add(RewriteInstruction(candidateInstruction, localReplacements, parameterAddressReplacements));
                 continue;
             }
 
@@ -564,6 +601,7 @@ internal sealed class SsaDirectCallInliner
             return false;
         }
 
+        ReserveCalleeNames(candidate, usedValueNames);
         var blockIdMap = new Dictionary<int, int>();
         foreach (var candidateBlock in candidate.Blocks)
         {
@@ -1283,7 +1321,7 @@ internal sealed class SsaDirectCallInliner
                 callLocation ?? valueInstruction.Location,
                 valueInstruction.ScopedNoAliasGroups,
                 valueInstruction.LoopAccessGroups),
-            _ => RewriteInstruction(instruction, replacements)
+            _ => RewriteInstruction(instruction, replacements, parameterAddressReplacements)
         };
     }
 
@@ -1651,7 +1689,7 @@ internal sealed class SsaDirectCallInliner
         }
     }
 
-    private static SsaBasicBlock RewriteBlock(
+    internal static SsaBasicBlock RewriteBlock(
         SsaBasicBlock block,
         IReadOnlyDictionary<string, SsaValue> replacements,
         IReadOnlyDictionary<int, int>? predecessorRedirects = null)
@@ -1682,13 +1720,14 @@ internal sealed class SsaDirectCallInliner
 
     private static SsaInstruction RewriteInstruction(
         SsaInstruction instruction,
-        IReadOnlyDictionary<string, SsaValue> replacements)
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaValue>? parameterAddressReplacements = null)
     {
         return instruction switch
         {
             SsaValueInstruction valueInstruction => valueInstruction with
             {
-                Value = RewriteRValue(valueInstruction.Value, replacements)
+                Value = RewriteRValue(valueInstruction.Value, replacements, parameterAddressReplacements)
             },
             SsaCallInstruction call => call with
             {
@@ -1701,14 +1740,14 @@ internal sealed class SsaDirectCallInliner
                         call.IndirectArgumentLocalNames,
                         call.IndirectArgumentAddresses,
                         replacements,
-                        parameterAddressReplacements: null)),
+                        parameterAddressReplacements)),
                 IndirectArgumentAddresses = RewriteIndirectArgumentAddresses(
                     call.IndirectArgumentLocalNames,
                     call.IndirectArgumentAddresses,
                     replacements,
-                    parameterAddressReplacements: null)
+                    parameterAddressReplacements)
             },
-            SsaIndirectCallInstruction call => RewriteIndirectCallInstruction(call, replacements),
+            SsaIndirectCallInstruction call => RewriteIndirectCallInstruction(call, replacements, parameterAddressReplacements),
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
@@ -2276,6 +2315,14 @@ internal sealed class SsaDirectCallInliner
             or SsaClosureValue
             or SsaUndefValue
             or SsaZeroInitializerValue;
+    }
+
+    private static void ReserveCalleeNames(InlineCandidate candidate, ISet<string> usedNames)
+    {
+        // RewriteValue follows replacement chains. Generated clone names must
+        // not capture source names in a callee that already contains inline clones.
+        usedNames.UnionWith(candidate.DefinedValueNames);
+        usedNames.UnionWith(candidate.Function.Parameters.Select(parameter => parameter.Name));
     }
 
     private static bool IsInlineSafeType(StarkTypeSymbol type)

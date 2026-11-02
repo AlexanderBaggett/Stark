@@ -146,6 +146,7 @@ fn void WriteOwned()
 - `Flush` drains Stark userspace buffering only; `SyncAll` is the explicit durable-storage sync boundary.
 - `Exists` now uses the Linux `stat` boundary instead of probing with open/close.
 - Owned file writes now support `None`, `Line`, and `Full` userspace buffering with an internal fixed-size buffer.
+- Read-only files opened with `Full` buffering use a 4096-byte read buffer; `Seek` accounts for unread buffered bytes. `None`, `Line`, and read/write handles continue to use direct reads.
 - The owned public file surface now supports both `ascii` and `unicode` text writes.
 - Owned files now honor explicit `UTF8`, `UTF16`, and `UTF32` encodings for text writes.
 - Whole-file text and byte helpers now read through fixed 8192-byte stack buffers

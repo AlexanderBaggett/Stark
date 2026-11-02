@@ -250,6 +250,16 @@ facts, compile package-owned native sources when present, add package-owned
 library search directories, and pass package-owned native libraries/link
 arguments to the final link.
 
+`NativeDependencies.ImplicitLibraries` optionally identifies entries in `Libraries`
+that the compiler inferred rather than the package author requested. Currently
+the math-intrinsic scan records `m` this way. Consumers preserve the conservative
+requirement until final linking: on Linux and FreeBSD, only this inferred math
+dependency uses scoped `--as-needed`, so optimized-away math does not load libm.
+Explicit libraries and link arguments retain their requested behavior. Packages
+without this optional fact retain the existing unconditional library behavior.
+The fact survives normalization, binary package encoding, content identities and
+source-free SDK consumption; the package image remains its authoritative source.
+
 When a dependency is not available through `pkg-config`, package authors can
 spell the same information explicitly with `--native-include-dir`,
 `--native-library-dir`, `--native-library`, and `--native-link-arg`. This keeps
@@ -360,10 +370,35 @@ its qualified source name, supports nested name/literal arguments, and uses an
 object-creation row's exact authored `ExpressionText` when the expression has
 no reconstructed arguments. It also reconstructs enum constructor/call/value
 expressions, synthesized named-type constructor/initializer and arena
-allocations, and generic/comptime direct and member calls. Direct calls retain
-Stage0's parsing optimization: pure type arguments remain inferred, while a
-comptime argument makes the complete explicit generic list necessary. Typed
-bodies render ordered local declarations, empty statements, expression
+allocations, and generic/comptime direct and member calls. Enum expressions retain
+their typed identities across qualified namespace paths: publication
+joins typed call facts with generic syntax references in one source-ordered
+ordinal table. Qualified unit variants also remain enum values rather than
+namespace field accesses. Compatibility rendering rejects an incomplete nested
+expression as a whole instead of emitting partial source; imported lowering
+retains the complete typed graph. Reanalyzed enum bindings take precedence over
+ordinal hints from compatibility source, and a hint must match the authored
+constructor identity, including resolved generic type arguments.
+
+Imported assignments retain the resolved place's address model, mutability and
+initialization qualifiers. A whole `out` or `init` parameter write uses its
+mutable destination storage even when the place has a named root. Ordinary
+parameter bindings remain immutable; mutable-borrow field writes use their
+existing projected-place rules. The consumer does not replace these storage
+facts with a temporary value or require an explicit raw-pointer root.
+Call bookkeeping also retains caller ownership of both `out` and `init`
+destination slots; passing a destination does not consume its final value.
+Direct, member and indirect argument lowering share the storage-preserving
+helper before coercion, so an `out` write targets the original local or indexed
+place rather than a temporary cast to the parameter's qualified value type.
+Integer conversions evaluate complete literal-only arithmetic trees with the
+shared constant evaluator before applying the destination range. This retains
+wide intermediate values without narrowing them prematurely; runtime-dependent
+expressions and calls keep the ordinary lowering path.
+
+Direct calls retain Stage0's parsing optimization: pure type arguments remain
+inferred, while a comptime argument makes the complete explicit generic list
+necessary. Typed bodies render ordered local declarations, empty statements, expression
 statements, assignments, breaks, continues, and returns into one reused owned
 scratch buffer. Local declarations preserve their storage class, mutability,
 structured named type, and initializer. Object-initializer expressions retain
@@ -397,18 +432,26 @@ lowering consumes every structured typed-body family.
 The `generic-templates` section is package-boundary specialization material,
 not a dump of every generic body in a package.
 
-Publication starts from generic function or method template bodies where all of
+Publication starts from function or method bodies where all of
 the following are true:
 
-- the declaration is published at package boundary visibility (`public` or `export`)
 - the declaration has a real body
-- the typed function signature is generic, including methods that are generic by
-  virtue of their enclosing generic type
+- either it is `public`/`export` and generic (including methods on generic types),
+  or it has explicit `inline` intent with `public`, `export` or `internal` visibility
 
-The compiler then publishes the package-private generic helper closure required
-by those API-visible templates. This lets downstream packages specialize a
-public generic body that calls internal generic helpers without exposing every
-unrelated internal generic body.
+Internal inline bodies support separately packaged modules of the same logical
+package, including SDK modules. Their source visibility stays internal.
+
+Each body retains `IsGeneric`; older generic-only images default it to true.
+Closed bodies lower directly from typed facts. Unsupported closed bodies and
+private helper closures retain their original native wrapper fallback, without
+re-parsing text that lacks private constants or target bindings. Generic legacy
+body-text compatibility is unchanged.
+
+The compiler then publishes the local helper closure required by those bodies,
+including closed helpers. This lets downstream packages inspect and specialize
+a public generic or explicit-inline body without exposing unrelated private
+bodies or changing the source API.
 
 That means:
 
@@ -417,11 +460,13 @@ That means:
   template entries as specialization material
 - methods on `module` or `internal` types stay package-private with their
   containing type
-- non-generic functions and methods do not get generic template entries
+- closed functions and methods publish bodies only with explicit `inline` intent
+  or when required by a published body
 - declarations without bodies do not advertise a published generic template body
 
-The typed-interface `HasGenericTemplateBody` flag remains an API-surface marker.
-It means the declaration itself publishes a package-boundary generic body, not
+The typed-interface `HasGenericTemplateBody` flag remains a declaration marker.
+Its legacy name covers generic and explicit-inline bodies with their original
+visibility. It means the declaration itself publishes an inspectable body, not
 merely that the helper closure carries a package-private template entry for
 downstream specialization.
 
@@ -434,8 +479,28 @@ reconstruct or lower imported code.
 In addition to the structured statement and expression tree, the package image
 preserves optimizer-relevant facts such as:
 
+- structural-fact identity and type/comptime arguments within compound
+  expressions, including boolean operations and exponentiation. Consumers
+  substitute concrete generic arguments before evaluation and preserve boolean
+  short-circuit semantics. This uses existing expression nodes; older packages
+  that discarded nested fact arguments must be rebuilt
+- borrowed argument storage identity independently of its evaluated value. An
+  imported call's argument snapshot is a non-owning read, not a move from an
+  owned source; the original owner remains valid for a later transfer. Evaluated
+  addresses and initialization provenance continue through the shared call builder
+- initialization views and their dynamic-owner/start provenance, so writes through
+  an imported init slice and full initialization helpers retain owner-length commits
+- structured unsafe blocks and scoped disjoint assumptions, including all region
+  expressions; the consumer retains the scope and reuses the source alias-proof
+  rules without extending a proof outside its body
 - top-level statement count and estimated body cost
 - semantic summaries, including effective kind, memory effects, and called-function sets
+- body knowledge: a declaration without an implementation cannot establish an
+  absence of other-memory effects. Such declarations retain unknown reads and,
+  unless their law contract forbids writes, unknown writes. A pointer to an owner
+  can reach payload outside the header's LLVM argmem region. Producers and loaders
+  preserve this distinction, including older bodyless summaries, while keeping
+  parameter contracts and precise known-body facts intact
 - structural optimization summaries for wrapper-like and terminal-control-flow helpers
 - per-call memory and capture facts
 - typed local declaration facts

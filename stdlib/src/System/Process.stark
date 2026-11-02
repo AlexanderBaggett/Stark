@@ -889,9 +889,9 @@ internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutputWithInputOption
     return WaitProcessAfterCapture(processId, output, timeoutEnabled, deadlineMilliseconds);
 }
 
-public fn i32[min max] CurrentId()
+public finite u32[0 max] CurrentId()
 {
-    return System.Runtime.Platform.ProcessId();
+    return (u32[0 max])System.Runtime.Platform.ProcessId();
 }
 
 public fn void Exit(i32[min max] code)

@@ -407,34 +407,34 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelFlush(
     "mov r0, #0\nsub r0, r0, #38"
 }
 
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxKernelGetProcessId()
+internal unsafe ffi asm(x86_64) finite i64[min max] LinuxKernelGetProcessId()
     out("rax") return,
     clobber("rcx", "r11")
 {
     "movq $$39, %rax\nsyscall"
 }
 
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxKernelGetProcessId()
+internal unsafe ffi asm(aarch64) finite i64[min max] LinuxKernelGetProcessId()
     out("x0") return,
     clobber("x8")
 {
     "mov x8, #172\nsvc #0"
 }
 
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxKernelGetProcessId()
+internal unsafe ffi asm(riscv64) finite i64[min max] LinuxKernelGetProcessId()
     out("a0") return,
     clobber("a7")
 {
     "li a7, 172\necall"
 }
 
-internal unsafe ffi asm(x86) fn i64[min max] LinuxKernelGetProcessId()
+internal unsafe ffi asm(x86) finite i64[min max] LinuxKernelGetProcessId()
     out("eax") return
 {
     "movl $$-38, %eax"
 }
 
-internal unsafe ffi asm(arm) fn i64[min max] LinuxKernelGetProcessId()
+internal unsafe ffi asm(arm) finite i64[min max] LinuxKernelGetProcessId()
     out("r0") return
 {
     "mov r0, #0\nsub r0, r0, #38"

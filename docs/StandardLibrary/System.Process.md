@@ -4,12 +4,14 @@
 spawning, environment, argv, working-directory, stdin, timeout, and
 output-capture surface.
 
+`CurrentId()` returns an unsigned 32-bit ID. Platform error values returned by the internal process-ID boundary are converted to `u32`; for example, an unsupported syscall result of -38 is represented as 4294967258. Callers that previously stored the result in a signed integer must update their code.
+
 ## Public Surface
 
 ```stark
 module System.Process
 
-public fn i32[min max] CurrentId();
+public finite u32[0 max] CurrentId();
 public fn void Exit(i32[min max] code);
 
 public enum ProcessError;

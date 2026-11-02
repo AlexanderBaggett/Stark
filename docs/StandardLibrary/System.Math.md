@@ -101,7 +101,12 @@ public finite law f32 ReciprocalSqrtEstimate(f32 value);
 - On non-Windows native links, the LLVM-intrinsic-backed transcendental math
   functions can require `-lm` after LLVM/toolchain lowering.
 
-The `-lm` dependency is inherited through LLVM and the native toolchain. Under
+The inferred `-lm` dependency is carried through source and package builds. On
+Linux and FreeBSD its final link uses scoped `--as-needed`: live math keeps libm,
+while math eliminated by optimization does not add a runtime dependency.
+Explicit library requests retain their normal linker behavior.
+
+The math dependency is inherited through LLVM and the native toolchain. Under
 the current dependency criteria, this is not treated as a C-backed
 `System.Math` implementation and is not a standard-library replacement target.
 Stark still emits optimizer-visible LLVM math intrinsics so LLVM can choose the

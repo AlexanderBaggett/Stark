@@ -50,10 +50,8 @@ public sealed class V1LoweringContractTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("%stark_ascii = type { ptr, i64 }", llvm);
-        Assert.Contains("%stark_unicode = type { ptr, i64 }", llvm);
-        Assert.Contains("define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)", llvm);
-        Assert.Contains("define fastcc noundef %stark_unicode @Wide(%stark_unicode noundef %arg_text)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @Echo({ ptr, i64 } noundef %arg_text)", llvm);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @Wide({ ptr, i64 } noundef %arg_text)", llvm);
         Assert.Contains("define fastcc noundef i32 @Read({ ptr, i64 } noundef %arg_view, i32 noundef %arg_index)", llvm);
     }
 

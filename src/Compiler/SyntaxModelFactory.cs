@@ -279,7 +279,7 @@ internal static class SyntaxModelFactory
         }
 
         if (!function.Modifiers.IsFfi
-            || function.Kind != StarkFunctionKind.Fn
+            || function.Kind is not (StarkFunctionKind.Fn or StarkFunctionKind.Finite)
             || context.typeParameterList() is not null
             || context.typeParameterConstraints().Length != 0
             || hasUnsupportedModifier
@@ -287,7 +287,7 @@ internal static class SyntaxModelFactory
         {
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2105",
-                $"Asm declaration '{declaration.Name}' must use the v1 surface 'unsafe ffi asm(arch) fn' with no generics or extra modifiers except 'unsafe', and must use an asm template body.",
+                $"Asm declaration '{declaration.Name}' must use 'unsafe ffi asm(arch)' with 'fn' or 'finite', no generics or extra modifiers except 'unsafe', and an asm template body.",
                 nameToken.Line,
                 nameToken.Column + 1));
             return false;

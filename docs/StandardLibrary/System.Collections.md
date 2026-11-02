@@ -149,6 +149,12 @@ The first implementation can share the same contiguous backing strategy as
 storage. Dequeue and peek are O(1): the implementation keeps head/length
 metadata and moves only the occupied slot being removed.
 
+Growth can reallocate the backing storage when the head is zero, preserving
+the occupied prefix without a separate slot-move loop. A nonzero head retains
+the split-copy path that restores logical FIFO order. This applies to both
+`Queue<T>` and `RingQueue<T>`, including owned elements, and retains their
+existing allocation-failure behavior.
+
 ```stark
 public struct Queue<T>
 {
@@ -180,8 +186,11 @@ public struct RingQueue<T>
 
 ## `LinkedList<T>`
 
-`LinkedList<T>` provides stable node storage for workloads where contiguous
-movement is undesirable.
+`LinkedList<T>` stores values and next/previous indices in one indexed node array.
+Indices remain stable while the backing array grows; the API does not expose raw
+node pointers. Copyable singleton removal resets the initialized prefix and free
+list while retaining capacity. Owned values retain their ordinary removal and
+head-order destruction behavior.
 
 ```stark
 public struct LinkedList<T>
@@ -234,7 +243,21 @@ surface area should use the canonical `Eq`, `Hash`, and `Ord` names.
 
 ## `Dictionary<K, V>`
 
-`Dictionary<K, V>` is an owned hash table.
+`Dictionary<K, V>` is an owned hash table. Control bytes and keys occupy checked,
+aligned subregions of one allocation; values have an independently owned dynamic
+backing allocation. Its dynamic initialized length stays zero: the control bytes
+record the sparse live slots, and the dictionary moves/drops only those values.
+Layout planning retains each size, alignment padding and combined byte-length
+check before allocating either region. Together with power-of-two growth, this
+proves successful capacity is at most `2**61`, which private helpers preserve.
+Growth initializes control bytes and moves occupied entries before releasing old
+storage; empty key/value slots remain uninitialized. Failed layout planning
+leaves existing entries and capacity intact. Value backing uses fallible reserve;
+on failure, provisional key/control storage is released before returning
+`OutOfMemory`. Removal keeps a direct home-hit path
+separate from collision search, preserves the capacity while compacting a probe
+cluster, and shifts owned entries without dropping them. `Clear()` on an empty
+table performs no storage reset or element cleanup.
 
 ```stark
 public struct Dictionary<K, V>
@@ -259,8 +282,8 @@ generic collection use sites.
 
 ## `HashSet<T>`
 
-`HashSet<T>` is an owned open-addressed set using the same key-contract and
-storage strategy as `Dictionary<K, V>`.
+`HashSet<T>` is an owned open-addressed set using the same key contract and
+probing policy as `Dictionary<K, V>`.
 
 ```stark
 public struct HashSet<T>
@@ -316,15 +339,18 @@ public struct HashSet<T>
   `AddLast`, `TryRemoveFirst`, `TryRemoveLast`, metadata inspection, `Clear`,
   `ReserveNodes`, and destructor cleanup. `ReserveNodes(count)` is an explicit
   performance knob for workloads that know they will allocate many nodes; it
-  pre-fills the list allocator's node bucket without adding elements to the list.
+  reserves node capacity without adding elements or eagerly building a free
+  list. `Clear` retains capacity for reuse. For copyable elements, it resets
+  the initialized prefix and list metadata; owned elements are
+  dropped in head-to-tail order.
 - `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast` now have
   source-level `out T` bodies.
 - `Get`, `GetMut`, and `Peek` now return safe retborrows from addressable
   storage. Queue and ring-queue peeks borrow from sparse slots, and
   `AsSlice`/`AsMutableSlice` lower to slice views over `List<T>` backing
   storage.
-- `LinkedList<T>` now uses one allocation per internal node. Each node stores
-  next/previous links and the element value together.
+- `LinkedList<T>` stores tagged value slots separately from next/previous index
+  links. Removed slots can be reused, and backing storage grows geometrically.
 - `Eq`, `Hash`, `Ord`, and `Format` are present as the canonical generic
   contract names; `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` remain as
   implementation compatibility vocabulary for dictionary/set internals.

@@ -525,7 +525,8 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, makeSlice.Pointer),
                     LowerOperand(blockId, block, makeSlice.Length),
                     makeSlice.Type,
-                    makeSlice.Text)),
+                    makeSlice.Text,
+                    makeSlice.SourceStorageType)),
                 MidLevelIrDynamicStorageAllocationRValue allocation => EmitValue(block, new SsaDynamicStorageAllocationRValue(
                     LowerOperand(blockId, block, allocation.Capacity),
                     allocation.Type,
@@ -600,7 +601,8 @@ internal sealed class SsaLowerer
                     elementAddress.Index is null ? null : LowerOperand(blockId, block, elementAddress.Index),
                     elementAddress.ConstantIndex,
                     elementAddress.Type,
-                    elementAddress.Text)),
+                    elementAddress.Text,
+                    elementAddress.SourceStorageType)),
                 MidLevelIrSliceElementAddressRValue sliceElementAddress => EmitValue(block, new SsaSliceElementAddressRValue(
                     LowerOperand(blockId, block, sliceElementAddress.Slice),
                     LowerOperand(blockId, block, sliceElementAddress.Index),
@@ -1483,7 +1485,7 @@ internal sealed class SsaLowerer
                     key = $"make-slice|{makeSlice.LocalName}|{TypeKey(makeSlice.SourceType)}|{TypeKey(makeSlice.Type)}";
                     return true;
                 case SsaMakeSliceFromPointerRValue makeSlice:
-                    key = $"make-slice-ptr|{ValueKey(makeSlice.Pointer)}|{ValueKey(makeSlice.Length)}|{TypeKey(makeSlice.Type)}";
+                    key = $"make-slice-ptr|{ValueKey(makeSlice.Pointer)}|{ValueKey(makeSlice.Length)}|{TypeKey(makeSlice.Type)}|{(makeSlice.SourceStorageType is null ? "raw" : TypeKey(makeSlice.SourceStorageType))}";
                     return true;
                 case SsaTextSliceRValue textSlice:
                     key = $"text-slice|{ValueKey(textSlice.TextValue)}|{ValueKey(textSlice.Start)}|{ValueKey(textSlice.Length)}|{TypeKey(textSlice.Type)}";
@@ -1498,7 +1500,7 @@ internal sealed class SsaLowerer
                     key = $"field-address|{ValueKey(fieldAddress.Address)}|{TypeKey(fieldAddress.AggregateType)}|{fieldAddress.FieldName}|{fieldAddress.FieldIndex}|{TypeKey(fieldAddress.Type)}";
                     return true;
                 case SsaElementAddressRValue elementAddress:
-                    key = $"element-address|{ValueKey(elementAddress.Address)}|{TypeKey(elementAddress.AggregateType)}|{ValueKey(elementAddress.Index)}|{elementAddress.ConstantIndex}|{TypeKey(elementAddress.Type)}";
+                    key = $"element-address|{ValueKey(elementAddress.Address)}|{TypeKey(elementAddress.AggregateType)}|{ValueKey(elementAddress.Index)}|{elementAddress.ConstantIndex}|{TypeKey(elementAddress.Type)}|{(elementAddress.SourceStorageType is null ? "raw" : TypeKey(elementAddress.SourceStorageType))}";
                     return true;
                 case SsaSliceElementAddressRValue sliceElementAddress:
                     key = $"slice-element-address|{ValueKey(sliceElementAddress.Slice)}|{ValueKey(sliceElementAddress.Index)}|{TypeKey(sliceElementAddress.Type)}";
@@ -1811,7 +1813,8 @@ internal sealed class SsaLowerer
                     RewriteValue(makeSlice.Pointer, replacements),
                     RewriteValue(makeSlice.Length, replacements),
                     makeSlice.Type,
-                    makeSlice.Text),
+                    makeSlice.Text,
+                    makeSlice.SourceStorageType),
                 SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                     RewriteValue(allocation.Capacity, replacements),
                     allocation.Type,
@@ -1880,7 +1883,8 @@ internal sealed class SsaLowerer
                     elementAddress.Index is null ? null : RewriteValue(elementAddress.Index, replacements),
                     elementAddress.ConstantIndex,
                     elementAddress.Type,
-                    elementAddress.Text),
+                    elementAddress.Text,
+                    elementAddress.SourceStorageType),
                 SsaSliceElementAddressRValue sliceElementAddress => new SsaSliceElementAddressRValue(
                     RewriteValue(sliceElementAddress.Slice, replacements),
                     RewriteValue(sliceElementAddress.Index, replacements),

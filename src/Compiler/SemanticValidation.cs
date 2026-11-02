@@ -575,7 +575,6 @@ internal sealed class SemanticValidator
             signature.PointeeDeadOnReturnParameters,
             _typeModel.NamedTypes,
             _enumLayoutModel.Layouts);
-        ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
         if (functionDeclaration.Body.block() is not { } block)
@@ -4294,6 +4293,8 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(resultType),
                 IsIndirectStorageAccess: true,
                 IsAddressMutable: isAddressMutable,
+                AccessesReachableMemory: indexExpressions.Length == 1 || target.AccessesReachableMemory,
+                IsLoadedPointer: resultType.Kind == StarkTypeKind.RawPointer,
                 UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target)
                     || elementType.AccessKind == StarkAccessKind.Frozen,
                 ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
@@ -4343,6 +4344,10 @@ internal sealed class SemanticValidator
             NamedType: ResolveNamedTypeSymbol(currentType),
             IsIndirectStorageAccess: true,
             IsAddressMutable: currentIsAddressMutable,
+            AccessesReachableMemory: target.AccessesReachableMemory
+                || target.Type.Kind == StarkTypeKind.Slice
+                || target.Type.Kind == StarkTypeKind.RawPointer && (target.IsLoadedPointer || target.RootSymbol is null),
+            IsLoadedPointer: currentType.Kind == StarkTypeKind.RawPointer,
             UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics,
             ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
                 || target.Type.BorrowKind == StarkBorrowKind.StoreBorrow,
@@ -4453,6 +4458,7 @@ internal sealed class SemanticValidator
                     NamedType: ResolveNamedTypeSymbol(NonNegativeI64Type),
                     IsIndirectStorageAccess: true,
                     IsAddressMutable: false,
+                    AccessesReachableMemory: target.AccessesReachableMemory,
                     UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
                     HasConstProvenance: HasConstProvenance(target));
             }
@@ -4481,6 +4487,8 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(projectedType),
                 IsIndirectStorageAccess: true,
                 IsAddressMutable: CanMutateAddressProjection(target, projectedType),
+                AccessesReachableMemory: target.AccessesReachableMemory,
+                IsLoadedPointer: projectedType.Kind == StarkTypeKind.RawPointer,
                 UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
                 ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
                     || target.Type.BorrowKind == StarkBorrowKind.StoreBorrow,
@@ -4667,6 +4675,8 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(targetType),
                 IsIndirectStorageAccess: operand.IsIndirectStorageAccess,
                 UsesFrozenProjectionSemantics: operand.UsesFrozenProjectionSemantics,
+                AccessesReachableMemory: operand.AccessesReachableMemory,
+                IsLoadedPointer: operand.IsLoadedPointer,
                 HasConstProvenance: HasConstProvenance(operand))
             : new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType));
     }
@@ -5082,6 +5092,7 @@ internal sealed class SemanticValidator
             RootSymbol: operand.RootSymbol,
             NamedType: ResolveNamedTypeSymbol(pointerType),
             IsIndirectStorageAccess: true,
+            IsLoadedPointer: operand.AccessesReachableMemory,
             HasConstProvenance: HasConstProvenance(operand));
     }
 
@@ -5100,6 +5111,10 @@ internal sealed class SemanticValidator
             NamedType: ResolveNamedTypeSymbol(pointeeType),
             IsIndirectStorageAccess: true,
             IsAddressMutable: operand.Type.IsMutablePointer && pointeeType.AccessKind != StarkAccessKind.Frozen,
+            // A pointer loaded from a field is not based on the header argument
+            // in LLVM's argmem sense. Keep the payload access separate.
+            AccessesReachableMemory: operand.AccessesReachableMemory || operand.IsLoadedPointer || operand.RootSymbol is null,
+            IsLoadedPointer: pointeeType.Kind == StarkTypeKind.RawPointer,
             HasConstProvenance: HasConstProvenance(operand));
     }
 
@@ -5114,11 +5129,21 @@ internal sealed class SemanticValidator
             ? argumentValue.RootSymbol.Name
             : null;
         var fallbackEffects = DeriveFallbackArgumentEffects(calleeParameter, calleeReturnType, hasBody: false);
-        return new PendingCallArgument(argumentIndex, callerParameterName, calleeParameter.Name, aliasing, argumentValue.RootSymbol, fallbackEffects);
+        return new PendingCallArgument(argumentIndex, callerParameterName, calleeParameter.Name, aliasing,
+            argumentValue.RootSymbol, fallbackEffects,
+            argumentValue.AccessesReachableMemory || argumentValue.IsLoadedPointer
+                || argumentValue.Type.Kind == StarkTypeKind.RawPointer && argumentValue.RootSymbol is null);
     }
 
     private void RecordObservedMemoryRead(ValidationValue value, FunctionValidationBuilder summary)
     {
+        // Loading a stored pointer does not make its pointee LLVM argument
+        // memory, even when the containing header was copied into a local.
+        if (value.AccessesReachableMemory)
+        {
+            summary.MarkOtherMemoryRead();
+        }
+
         if (value.RootSymbol is null)
         {
             return;
@@ -5139,6 +5164,11 @@ internal sealed class SemanticValidator
 
     private void RecordObservedMemoryWrite(ValidationValue value, FunctionValidationBuilder summary)
     {
+        if (value.AccessesReachableMemory)
+        {
+            summary.MarkOtherMemoryWrite();
+        }
+
         if (value.RootSymbol is null)
         {
             return;
@@ -5373,6 +5403,21 @@ internal sealed class SemanticValidator
 
     private FunctionMemoryEffectSummary GetCallMemoryEffects(PendingCall call)
     {
+        var effects = GetCalleeMemoryEffects(call);
+        foreach (var argument in call.Arguments.Where(static argument => argument.AccessesReachableMemory))
+        {
+            var argumentEffects = GetCallArgumentEffects(call.CalleeName, argument.CalleeParameterName, argument.FallbackEffects);
+            effects = effects with
+            {
+                ReadsOtherMemory = effects.ReadsOtherMemory || argumentEffects.Reads,
+                WritesOtherMemory = effects.WritesOtherMemory || argumentEffects.Writes
+            };
+        }
+        return effects;
+    }
+
+    private FunctionMemoryEffectSummary GetCalleeMemoryEffects(PendingCall call)
+    {
         if (_summaries.TryGetValue(call.CalleeName, out var summary))
         {
             var memoryEffects = summary.GetCurrentMemoryEffects();
@@ -5400,7 +5445,8 @@ internal sealed class SemanticValidator
                 return new FunctionMemoryEffectSummary(
                     ReadsArgumentMemory: effects.ReadsArgumentMemory,
                     WritesArgumentMemory: false,
-                    CapturesArgumentMemory: false);
+                    CapturesArgumentMemory: false,
+                    ReadsOtherMemory: true);
             }
 
             return new FunctionMemoryEffectSummary(
@@ -7568,36 +7614,6 @@ internal sealed class SemanticValidator
         return false;
     }
 
-    private void ApplyBuiltinDeclarationMemoryEffects(
-        FunctionDeclarationModel declaration,
-        FunctionValidationBuilder summary)
-    {
-        if (!IsSystemMemoryAllocatorBuiltin(declaration))
-        {
-            return;
-        }
-
-        summary.MarkOtherMemoryRead();
-        summary.MarkOtherMemoryWrite();
-    }
-
-    private bool IsSystemMemoryAllocatorBuiltin(FunctionDeclarationModel declaration)
-    {
-        if (!string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var sourceName = declaration.Name;
-        const string qualifiedPrefix = "System.Memory.";
-        if (sourceName.StartsWith(qualifiedPrefix, StringComparison.Ordinal))
-        {
-            sourceName = sourceName[qualifiedPrefix.Length..];
-        }
-
-        return sourceName is "Allocate" or "Reallocate" or "Free";
-    }
-
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
 
     private SourceLocation Location(IToken token) => Location(token, token);
@@ -7706,7 +7722,9 @@ internal sealed class SemanticValidator
         bool IsAddressMutable = false,
         bool UsesFrozenProjectionSemantics = false,
         bool ReadsIndirectStorageForAddress = false,
-        bool HasConstProvenance = false);
+        bool HasConstProvenance = false,
+        bool AccessesReachableMemory = false,
+        bool IsLoadedPointer = false);
 
     private sealed record EnumConstructorBinding(
         string Name,
@@ -7832,7 +7850,8 @@ internal sealed class SemanticValidator
         string CalleeParameterName,
         bool AliasesCalleeMemory,
         VariableSymbol? RootSymbol,
-        ArgumentEffects FallbackEffects);
+        ArgumentEffects FallbackEffects,
+        bool AccessesReachableMemory = false);
 
     private sealed record PendingCall(
         string CalleeName,
@@ -8211,7 +8230,7 @@ internal sealed class SemanticValidator
                 .Select(parameter => parameter.GetEffectiveEffects(HasBody))
                 .ToArray();
 
-            return new FunctionMemoryEffectSummary(
+            var effects = new FunctionMemoryEffectSummary(
                 parameterEffects.Any(static parameter => parameter.Reads),
                 parameterEffects.Any(static parameter => parameter.Writes),
                 parameterEffects.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
@@ -8219,6 +8238,7 @@ internal sealed class SemanticValidator
                 WritesOtherMemory,
                 Parameters.Values.Any(static parameter => parameter.InitializationRanges.Count > 0),
                 Parameters.Values.Any(static parameter => parameter.PointeeDeadOnReturn));
+            return HasBody ? effects : effects.WithUnknownImplementation(DeclaredKind);
         }
 
         public FunctionValidationSummary Build()
@@ -8235,6 +8255,10 @@ internal sealed class SemanticValidator
                 WritesOtherMemory,
                 parameterSummaries.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
                 parameterSummaries.Any(static parameter => parameter.PointeeDeadOnReturn));
+            if (!HasBody)
+            {
+                memoryEffects = memoryEffects.WithUnknownImplementation(DeclaredKind);
+            }
 
             return new FunctionValidationSummary(
                 Name,

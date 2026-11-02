@@ -171,6 +171,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         module App
 
         static mut i32[min max] DropCounter = 0;
+        static mut i32[min max] Drops1 = 0;
+        static mut i32[min max] Drops2 = 0;
+        static mut i32[min max] Drops3 = 0;
+        static mut i32[min max] Drops4 = 0;
+        static mut i32[min max] Drops5 = 0;
+        static mut i32[min max] Drops6 = 0;
+        static mut i32[min max] Drops7 = 0;
 
         fn bool Ok(MemoryStatus status)
         {
@@ -197,6 +204,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         fn void Bump(i32[min max] value)
         {
             DropCounter = DropCounter + value;
+            if (value == 1) { Drops1 += 1; }
+            if (value == 2) { Drops2 += 1; }
+            if (value == 3) { Drops3 += 1; }
+            if (value == 4) { Drops4 += 1; }
+            if (value == 5) { Drops5 += 1; }
+            if (value == 6) { Drops6 += 1; }
+            if (value == 7) { Drops7 += 1; }
             return;
         }
 
@@ -208,6 +222,13 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
             {
                 Bump(self.Value);
             }
+        }
+
+        noinline fn void WriteResource(out Resource output)
+        {
+            stack mut Resource produced = new Resource() { Value = 8 };
+            output = produced;
+            return;
         }
 
         export fn i32[min max] main()
@@ -236,6 +257,34 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
             if (stable.Count() != experimental.Count() || stable.IsEmpty() != experimental.IsEmpty())
             {
                 return 4;
+            }
+
+            {
+                stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> wrapped = new();
+                if (!Ok(wrapped.Reserve(0)) || !Ok(wrapped.Reserve(8))) { return 17; }
+                for willexit (stack mut u8[0 8] i = 0; i < 8; i += 1)
+                {
+                    if (!Ok(wrapped.Enqueue(i))) { return 18; }
+                }
+                stack mut u32[0 2 ** 31 - 1] value = 0;
+                for willexit (stack mut u8[0 6] i = 0; i < 6; i += 1)
+                {
+                    if (!wrapped.TryDequeue(value) || value != i) { return 19; }
+                }
+                if (!Ok(wrapped.Reserve(0)) || !Ok(wrapped.Reserve(6))) { return 20; }
+                for willexit (stack mut u8[0 20] i = 8; i < 20; i += 1)
+                {
+                    if (!Ok(wrapped.Enqueue(i))) { return 21; }
+                }
+                if (!TooLarge(wrapped.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))) || wrapped.Count() != 14)
+                {
+                    return 22;
+                }
+                for willexit (stack mut u8[0 20] i = 6; i < 20; i += 1)
+                {
+                    if (!wrapped.TryDequeue(value) || value != i) { return 23; }
+                }
+                if (!wrapped.IsEmpty()) { return 24; }
             }
 
             stack mut i64[min max] checksum = 0;
@@ -339,6 +388,123 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
             if (DropCounter != 25)
             {
                 return 16;
+            }
+
+            {
+                stack mut System.Collections.Queue<Resource> growingDrops = new();
+                if (!Ok(growingDrops.Enqueue(new Resource() { Value = 1 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 2 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 3 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 4 }))
+                    || !Ok(growingDrops.Enqueue(new Resource() { Value = 5 })))
+                {
+                    return 25;
+                }
+                if (!Ok(growingDrops.Reserve(2048)) || growingDrops.Count() != 5
+                    || growingDrops.Peek().Value != 1 || DropCounter != 25)
+                {
+                    return 40;
+                }
+                for willexit (stack mut u8[0 5] i = 0; i < 5; i += 1)
+                {
+                    stack mut Resource value = new Resource() { Value = 0 };
+                    if (!growingDrops.TryDequeue(value) || value.Value != (i32[min max])(i + 1))
+                    {
+                        return 41;
+                    }
+                }
+                growingDrops.Clear();
+                if (DropCounter != 40)
+                {
+                    return 26;
+                }
+            }
+            if (DropCounter != 40)
+            {
+                return 27;
+            }
+
+            Drops1 = 0;
+            Drops2 = 0;
+            Drops3 = 0;
+            Drops4 = 0;
+            Drops5 = 0;
+            Drops6 = 0;
+            Drops7 = 0;
+            {
+                stack mut System.Collections.Queue<Resource> ring = new();
+                if (!Ok(ring.Enqueue(new Resource() { Value = 1 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 2 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 3 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 4 })))
+                {
+                    return 28;
+                }
+                stack mut Resource first = new Resource() { Value = 0 };
+                stack mut Resource second = new Resource() { Value = 0 };
+                if (!ring.TryDequeue(first) || !ring.TryDequeue(second)
+                    || first.Value != 1 || second.Value != 2)
+                {
+                    return 29;
+                }
+                if (!Ok(ring.Enqueue(new Resource() { Value = 5 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 6 }))
+                    || !Ok(ring.Enqueue(new Resource() { Value = 7 })))
+                {
+                    return 30;
+                }
+                if (ring.Peek().Value != 3 || ring.Count() != 5)
+                {
+                    return 31;
+                }
+                ring.Clear();
+                if (DropCounter != 65 || Drops1 != 0 || Drops2 != 0
+                    || Drops3 != 1 || Drops4 != 1 || Drops5 != 1 || Drops6 != 1 || Drops7 != 1)
+                {
+                    return 32;
+                }
+            }
+            if (DropCounter != 68 || Drops1 != 1 || Drops2 != 1
+                || Drops3 != 1 || Drops4 != 1 || Drops5 != 1 || Drops6 != 1 || Drops7 != 1)
+            {
+                return 33;
+            }
+            {
+                stack mut Resource output = new Resource() { Value = 0 };
+                WriteResource(output);
+                if (output.Value != 8)
+                {
+                    return 34;
+                }
+            }
+            if (DropCounter != 76)
+            {
+                return 35;
+            }
+            {
+                stack mut Resource output = new Resource() { Value = 0 };
+                stack fnptr<fn void(out Resource)> writer = WriteResource;
+                writer(output);
+                if (output.Value != 8)
+                {
+                    return 36;
+                }
+            }
+            if (DropCounter != 84)
+            {
+                return 37;
+            }
+            {
+                stack mut System.Collections.Queue<Resource> empty = new();
+                stack mut Resource output = new Resource() { Value = 9 };
+                if (empty.TryDequeue(output) || output.Value != 9)
+                {
+                    return 38;
+                }
+            }
+            if (DropCounter != 93)
+            {
+                return 39;
             }
 
             return 0;
@@ -471,6 +637,11 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
                     return 9;
                 }
 
+                if (!Ok(ringDrops.Reserve(2048)) || ringDrops.Count() != 2
+                    || ringDrops.Peek().Value != 1 || DropCounter != 0)
+                {
+                    return 13;
+                }
                 ringDrops.Clear();
                 if (DropCounter != 3)
                 {
@@ -554,9 +725,9 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         var sparseReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_SparseSlots_ReserveRing__u32_0_2147483647(");
-        var dictionaryReserveBody = ExtractDefinedFunctionText(
+        var dictionaryStorageBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_GrowStorage__u32_0_2147483647__u32_0_2147483647(");
 
         Assert.Contains("SparseSlots_ReserveRing__u32", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Allocate(", sparseReserveBody, StringComparison.Ordinal);
@@ -565,11 +736,8 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         Assert.DoesNotContain("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic_try_reserve", ringQueueReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("llvm.memmove", sparseReserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Allocate(", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Free(", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("%slot_nextValueSlots", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", dictionaryReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", dictionaryStorageBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", dictionaryStorageBody, StringComparison.Ordinal);
     }
 
     [Fact]

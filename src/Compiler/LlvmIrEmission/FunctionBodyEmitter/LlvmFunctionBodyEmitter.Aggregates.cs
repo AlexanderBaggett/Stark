@@ -164,7 +164,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
-        if (TryEmitInlineAggregateZeroFill(destinationAddress, valueType, value, alignmentBytes))
+        if (TryEmitAggregateZeroFill(destinationAddress, valueType, value, alignmentBytes))
         {
             return;
         }
@@ -343,20 +343,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return true;
     }
 
-    private bool TryEmitInlineAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
+    private bool TryEmitAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
     {
         if (value is not SsaZeroInitializerValue
-            || !ShouldEmitInlineAggregateZeroFill(valueType)
+            || !ShouldEmitAggregateZeroFill(valueType)
             || TryGetConcreteTypeLayout(valueType) is not { } layout)
         {
             return false;
         }
 
-        AppendLine($"  call void @llvm.memset.inline.p0.i64(ptr{GetArgumentAlignmentFragment(alignmentBytes)} {destinationAddress}, i8 0, i64 {layout.SizeBytes}, i1 false)");
+        // Keep the zero-fill as an ordinary memory operation until LLVM has
+        // combined it with the following field stores. Forcing inline lowering
+        // here can retain a clear that the completed aggregate overwrites.
+        AppendLine($"  call void @llvm.memset.p0.i64(ptr{GetArgumentAlignmentFragment(alignmentBytes)} {destinationAddress}, i8 0, i64 {layout.SizeBytes}, i1 false)");
         return true;
     }
 
-    private bool ShouldEmitInlineAggregateZeroFill(StarkTypeSymbol valueType)
+    private bool ShouldEmitAggregateZeroFill(StarkTypeSymbol valueType)
     {
         if (TryGetConcreteTypeLayout(NormalizeAggregateType(valueType)) is not { } layout
             || layout.SizeBytes <= AggregateScalarizationThresholdBytes)
@@ -369,7 +372,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private bool ShouldPreferAddressBasedAggregateLowering(StarkTypeSymbol valueType)
     {
-        return ShouldEmitInlineAggregateZeroFill(valueType);
+        return ShouldEmitAggregateZeroFill(valueType);
     }
 
     private bool TryEmitScalarizedAggregateCopy(SsaValue destinationAddress, SsaValue sourceAddress, StarkTypeSymbol copyType)
@@ -1459,14 +1462,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var normalizedType = NormalizeAggregateType(aggregateType);
         if (normalizedType.Kind != StarkTypeKind.Named
             || ResolveNamedTypeSymbol(normalizedType) is not { } resolvedNamedType
-            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(resolvedNamedType)
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(resolvedNamedType, _context.TypeModel.NamedTypes, _context.EnumLayouts)
             || TryGetConcreteTypeLayout(normalizedType) is not { } resolvedLayout
             || fieldIndex < 0
-            || fieldIndex >= resolvedNamedType.OrderedFields.Count)
+            || fieldIndex >= LlvmLayoutControlledAggregateFacts.WithStorageFields(resolvedNamedType, _context.EnumLayouts).OrderedFields.Count)
         {
             return false;
         }
 
+        resolvedNamedType = LlvmLayoutControlledAggregateFacts.WithStorageFields(resolvedNamedType, _context.EnumLayouts);
         var resolvedField = resolvedNamedType.OrderedFields[fieldIndex];
         if (!resolvedLayout.TryGetField(resolvedField.Name, out var resolvedFieldLayout))
         {
@@ -1507,7 +1511,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         switch (value)
         {
             case SsaZeroInitializerValue:
-                if (!TryEmitInlineAggregateZeroFill(destinationAddress, valueType, value, destinationAlignmentBytes))
+                if (!TryEmitAggregateZeroFill(destinationAddress, valueType, value, destinationAlignmentBytes))
                 {
                     AppendLine($"  store {MapType(valueType)} zeroinitializer, ptr {destinationAddress}{GetAlignmentSuffix(destinationAlignmentBytes)}");
                 }
@@ -2101,7 +2105,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts))
                 {
                     return false;
                 }

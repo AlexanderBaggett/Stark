@@ -560,6 +560,7 @@ internal struct LogicalPackageManifestJsonGenericTemplateFunctionRow
     u32[0 max] NextRow;
     u32[0 max] TopLevelStatementCount;
     u32[0 max] EstimatedBodyCost;
+    bool IsGeneric;
     bool HasBodyText;
     bool HasBackendOptimizationMode;
     bool HasTopLevelStatementCount;
@@ -569,6 +570,7 @@ internal struct LogicalPackageManifestJsonGenericTemplateFunctionRow
 
     LogicalPackageManifestJsonGenericTemplateFunctionRow()
     {
+        self.IsGeneric = true;
         self.QualifiedResolvedNameStringIndex = PackageImageMissingStringIndex();
         self.QualifiedNameStringIndex = PackageImageMissingStringIndex();
         self.OverloadKeyStringIndex = PackageImageMissingStringIndex();

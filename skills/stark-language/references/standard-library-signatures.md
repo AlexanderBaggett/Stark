@@ -633,17 +633,17 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempPathIn(ascii pa
 public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right) where overlap(destination, left), overlap(destination, right), overlap(left, right);
 public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third) where overlap(destination, first), overlap(destination, second), overlap(destination, third), overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third, ascii fourth) where overlap(destination, first), overlap(destination, second), overlap(destination, third), overlap(destination, fourth), overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
-public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii left, const ascii right) where overlap(left, right);
+public inline fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii left, const ascii right) where overlap(left, right);
 public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii first, const ascii second, const ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryStatus TryJoinConst(mut borrow System.Text.OwnedAscii destination, const ascii first, const ascii second, const ascii third, const ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right) where overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third, ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) where overlap(left, right);
+public inline fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) where overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third) where overlap(first, second), overlap(first, third), overlap(second, third);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii first, const ascii second, const ascii third, const ascii fourth) where overlap(first, second), overlap(first, third), overlap(first, fourth), overlap(second, third), overlap(second, fourth), overlap(third, fourth);
 public fn System.Memory.MemoryStatus TryNormalizeSeparators(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
-public fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
+public inline fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(mut borrow System.Text.OwnedAscii destination, const ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparators(ascii path);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparatorsConst(const ascii path);
 public fn System.Memory.MemoryStatus TryNormalizeLexically(mut borrow System.Text.OwnedAscii destination, ascii path) where overlap(destination, path);
@@ -801,7 +801,7 @@ public inline fn MemoryStatus AppendFillBytes(mut borrow dynamic i8[min max] sto
 public inline fn MemoryStatus AppendCodePointsDisjoint(mut borrow dynamic i32[min max] storage, borrow i32[min max][] source, u64[0 2 ** 63 - 1] count);
 public fn MemoryStatus AppendCodePoints(mut borrow dynamic i32[min max] storage, borrow i32[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(storage, source);
 public inline fn MemoryStatus AppendFillCodePoints(mut borrow dynamic i32[min max] storage, i32[min max] value, u64[0 2 ** 63 - 1] count);
-public inline finite MemoryStatus InitializeBytesDisjoint(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
+public inlinehint finite MemoryStatus InitializeBytesDisjoint(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite MemoryStatus InitializeBytes(borrow i8[min max][] source, init i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite void CopyBytesDisjointInfallible(borrow i8[min max][] source, borrow mut i8[min max][] destination, u64[0 2 ** 63 - 1] count);
 public inline finite MemoryStatus CopyBytesDisjoint(borrow i8[min max][] source, borrow mut i8[min max][] destination, u64[0 2 ** 63 - 1] count);
@@ -901,7 +901,7 @@ Source: `stdlib/src/System/Process.stark`
 Top-level functions:
 
 ```stark
-public fn i32[min max] CurrentId();
+public finite u32[0 max] CurrentId();
 public fn void Exit(i32[min max] code);
 
 public enum ProcessError;
@@ -1035,7 +1035,7 @@ finite law retborrow i8[min max][] ReadSlice(borrow DynamicByteBuffer self);
 finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow DynamicByteBuffer self);
 fn System.Memory.MemoryStatus Reserve(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] additional);
 fn System.Memory.MemoryStatus WriteByte(mut borrow DynamicByteBuffer self, i8[min max] value);
-fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);
+inline fn System.Memory.MemoryStatus WriteSlice(mut borrow DynamicByteBuffer self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) where overlap(self, source);
 fn System.Memory.MemoryStatus WriteFill(mut borrow DynamicByteBuffer self, i8[min max] value, u64[0 2 ** 63 - 1] count);
 fn bool TryReadByte(mut borrow DynamicByteBuffer self, out i8[min max] value);
 fn void AdvanceRead(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] count);
@@ -1502,7 +1502,7 @@ inline finite law bool IsEmpty(borrow OwnedAscii self);
 finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self);
 finite retborrow mut i8[min max][] AsMutableSlice(mut borrow OwnedAscii self);
 finite ascii View(mut borrow OwnedAscii self);
-fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional);
+inline fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional);
 fn System.Memory.MemoryStatus AppendByte(mut borrow OwnedAscii self, i8[min max] value);
 fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedAscii self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count);
 fn System.Memory.MemoryStatus AppendConstAscii(mut borrow OwnedAscii self, const ascii source);
@@ -1512,7 +1512,7 @@ fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedAscii self, i64[min max]
 fn System.Memory.MemoryStatus AppendU64(mut borrow OwnedAscii self, u64[0 max] value);
 fn System.Memory.MemoryStatus AppendCodePointAsUtf8(mut borrow OwnedAscii self, i32[min max] codePoint);
 fn System.Memory.MemoryStatus AppendUnicodeAsUtf8(mut borrow OwnedAscii self, unicode source);
-fn void Clear(mut borrow OwnedAscii self);
+inline fn void Clear(mut borrow OwnedAscii self);
 fn void Truncate(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] length);
 ```
 

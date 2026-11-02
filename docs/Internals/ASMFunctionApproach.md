@@ -41,9 +41,9 @@ visibility unsafe ffi asm(architecture) fn ReturnType Name(parameters)
 
 The v1 validator requires:
 
-- `unsafe ffi asm(arch) fn`
+- `unsafe ffi asm(arch) fn` or `unsafe ffi asm(arch) finite`
 - no generics
-- no `finite` or `law`
+- no `law`
 - no extra modifiers besides `unsafe` and `ffi`
 - an assembly template body rather than a Stark statement body
 

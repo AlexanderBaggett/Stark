@@ -927,7 +927,7 @@ internal sealed class SsaCleanupOptimizer
                 key = $"field-address|{ValueKey(fieldAddress.Address)}|{TypeKey(fieldAddress.AggregateType)}|{fieldAddress.FieldName}|{fieldAddress.FieldIndex}|{TypeKey(fieldAddress.Type)}";
                 return true;
             case SsaElementAddressRValue elementAddress:
-                key = $"element-address|{ValueKey(elementAddress.Address)}|{TypeKey(elementAddress.AggregateType)}|{ValueKey(elementAddress.Index)}|{elementAddress.ConstantIndex}|{TypeKey(elementAddress.Type)}";
+                key = $"element-address|{ValueKey(elementAddress.Address)}|{TypeKey(elementAddress.AggregateType)}|{ValueKey(elementAddress.Index)}|{elementAddress.ConstantIndex}|{TypeKey(elementAddress.Type)}|{(elementAddress.SourceStorageType is null ? "raw" : TypeKey(elementAddress.SourceStorageType))}";
                 return true;
             case SsaSliceElementAddressRValue sliceElementAddress:
                 key = $"slice-element-address|{ValueKey(sliceElementAddress.Slice)}|{ValueKey(sliceElementAddress.Index)}|{TypeKey(sliceElementAddress.Type)}";
@@ -2869,7 +2869,7 @@ internal sealed class SsaCleanupOptimizer
         }
     }
 
-    private static IEnumerable<SsaValue> EnumerateInstructionOperands(SsaInstruction instruction)
+    internal static IEnumerable<SsaValue> EnumerateInstructionOperands(SsaInstruction instruction)
     {
         return instruction switch
         {
@@ -2931,7 +2931,7 @@ internal sealed class SsaCleanupOptimizer
         };
     }
 
-    private static IEnumerable<SsaValue> EnumerateTerminatorOperands(SsaTerminator terminator)
+    internal static IEnumerable<SsaValue> EnumerateTerminatorOperands(SsaTerminator terminator)
     {
         if (terminator.Condition is not null)
         {
@@ -3735,7 +3735,8 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(makeSlice.Pointer, replacements),
                 RewriteValue(makeSlice.Length, replacements),
                 makeSlice.Type,
-                makeSlice.Text),
+                makeSlice.Text,
+                makeSlice.SourceStorageType),
             SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                 RewriteValue(allocation.Capacity, replacements),
                 allocation.Type,
@@ -3804,7 +3805,8 @@ internal sealed class SsaCleanupOptimizer
                 elementAddress.Index is null ? null : RewriteValue(elementAddress.Index, replacements),
                 elementAddress.ConstantIndex,
                 elementAddress.Type,
-                elementAddress.Text),
+                elementAddress.Text,
+                elementAddress.SourceStorageType),
             SsaSliceElementAddressRValue sliceElementAddress => new SsaSliceElementAddressRValue(
                 RewriteValue(sliceElementAddress.Slice, replacements),
                 RewriteValue(sliceElementAddress.Index, replacements),

@@ -10,11 +10,13 @@ internal static class GenericTemplatePublicationPolicy
     public static bool ShouldPublishTypedTemplateBody(
         StarkVisibility visibility,
         bool hasBody,
-        bool isGeneric)
+        bool isGeneric,
+        bool isExplicitInline = false)
     {
-        return HasPublishedApiVisibility(visibility)
-            && hasBody
-            && isGeneric;
+        return hasBody
+            && ((HasPublishedApiVisibility(visibility) && isGeneric)
+                || ((HasPublishedApiVisibility(visibility) || visibility == StarkVisibility.Internal)
+                    && isExplicitInline));
     }
 
     public static bool ShouldPublishTypedTemplateBody(
@@ -24,7 +26,8 @@ internal static class GenericTemplatePublicationPolicy
         return ShouldPublishTypedTemplateBody(
             declaration.Visibility,
             declaration.HasBody,
-            function.IsGeneric);
+            function.IsGeneric,
+            declaration.Modifiers.Any(static modifier => modifier.INLINE() is not null));
     }
 
     public static bool ShouldPublishTypedTemplateBody(
@@ -35,6 +38,8 @@ internal static class GenericTemplatePublicationPolicy
         return ShouldPublishTypedTemplateBody(
             visibility,
             declaration.HasBody,
-            function.IsGeneric);
+            function.IsGeneric,
+            declaration.Modifiers.HasExplicitInlinePreference
+                && declaration.Modifiers.InlinePreference == InlinePreference.Inline);
     }
 }

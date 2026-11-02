@@ -175,9 +175,9 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @TryBuildAbsoluteWindowsWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryBuildLongWindowsWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryBuildWindowsWidePath(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef %stark_ascii @DirectorySeparator()", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef %stark_ascii @AlternateDirectorySeparator()", llvm, StringComparison.Ordinal);
-        Assert.Contains("define fastcc noundef %stark_ascii @PathSeparator()", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @DirectorySeparator()", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @AlternateDirectorySeparator()", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef { ptr, i64 } @PathSeparator()", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDirectorySeparator(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryCurrentDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);

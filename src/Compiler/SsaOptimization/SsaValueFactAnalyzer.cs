@@ -5,7 +5,7 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed class SsaValueFactAnalyzer
+internal sealed partial class SsaValueFactAnalyzer
 {
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> _directCallParameterEffects;
 
@@ -18,15 +18,17 @@ internal sealed class SsaValueFactAnalyzer
 
     public SsaValueFactModel Analyze(SsaIrModule module)
     {
+        var integerBodies = CollectSimpleIntegerBodies(module);
         var functions = module.Functions
             .Where(static function => function.HasBody && function.SupportsDirectCodeGeneration)
-            .Select(function => AnalyzeFunction(module.ModuleName, function))
+            .Select(function => AnalyzeFunction(module.ModuleName, function, integerBodies))
             .ToDictionary(static function => function.FunctionName, StringComparer.Ordinal);
 
         return new SsaValueFactModel(module.ModuleName, functions);
     }
 
-    private SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function)
+    private SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function,
+        IReadOnlyDictionary<string, SsaFunction> integerBodies)
     {
         var values = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         var reachableBlockIds = FindReachableBlockIds(function);
@@ -56,7 +58,12 @@ internal sealed class SsaValueFactAnalyzer
             }
         }
 
-        RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects);
+        RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, integerBodies);
+        var nonNegativeValues = RefineInductiveNonNegativeFacts(function, values, reachableBlockIds, integerBodies);
+        if (nonNegativeValues.Count != 0)
+        {
+            RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects, integerBodies, nonNegativeValues);
+        }
         var blockEntryFacts = AnalyzeBlockEntryFacts(function, values, reachableBlockIds);
         var blockExitFacts = AnalyzeBlockExitFacts(function, values, blockEntryFacts, reachableBlockIds);
         return new SsaFunctionFactModel(function.Name, values, blockEntryFacts, blockExitFacts);
@@ -763,7 +770,9 @@ internal sealed class SsaValueFactAnalyzer
         SsaFunction function,
         Dictionary<string, SsaValueFacts> values,
         ISet<int> reachableBlockIds,
-        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects)
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects,
+        IReadOnlyDictionary<string, SsaFunction> integerBodies,
+        IReadOnlySet<string>? nonNegativeValues = null)
     {
         for (var round = 0; round < 8; round++)
         {
@@ -782,6 +791,10 @@ internal sealed class SsaValueFactAnalyzer
                 }
 
                 var joined = JoinFacts(phi.ResultName, phi.Type, incomingFacts);
+                if (nonNegativeValues?.Contains(phi.ResultName) == true)
+                {
+                    joined = ApplyNonNegativeProof(joined);
+                }
                 if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[phi.ResultName], joined))
                 {
                     values[phi.ResultName] = joined;
@@ -800,7 +813,12 @@ internal sealed class SsaValueFactAnalyzer
                     values,
                     moduleName,
                     function,
-                    reachableBlockIds);
+                    reachableBlockIds,
+                    integerBodies);
+                if (nonNegativeValues?.Contains(valueInstruction.ResultName) == true)
+                {
+                    analyzed = ApplyNonNegativeProof(analyzed);
+                }
                 if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[valueInstruction.ResultName], analyzed))
                 {
                     values[valueInstruction.ResultName] = analyzed;
@@ -811,6 +829,21 @@ internal sealed class SsaValueFactAnalyzer
             if (RefineDynamicStorageLocalFacts(function, values, reachableBlockIds, directCallParameterEffects))
             {
                 changed = true;
+            }
+
+            // The storage transfer also recomputes scalar expressions from
+            // intervals. It must not weaken an independently proved relation.
+            if (nonNegativeValues is not null)
+            {
+                foreach (var name in nonNegativeValues)
+                {
+                    var refined = ApplyNonNegativeProof(values[name]);
+                    if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[name], refined))
+                    {
+                        values[name] = refined;
+                        changed = true;
+                    }
+                }
             }
 
             if (!changed)
@@ -826,7 +859,8 @@ internal sealed class SsaValueFactAnalyzer
         IReadOnlyDictionary<string, SsaValueFacts> knownValues,
         string moduleName,
         SsaFunction function,
-        ISet<int> reachableBlockIds)
+        ISet<int> reachableBlockIds,
+        IReadOnlyDictionary<string, SsaFunction>? integerBodies = null)
     {
         return value switch
         {
@@ -837,7 +871,7 @@ internal sealed class SsaValueFactAnalyzer
             SsaConvertRValue convert => AnalyzeConvert(valueName, convert, knownValues),
             SsaExtractFieldRValue extractField => AnalyzeExtractField(valueName, extractField, knownValues),
             SsaInsertFieldRValue insertField => AnalyzeInsertField(valueName, insertField, knownValues),
-            SsaCallRValue call => AnalyzeCall(valueName, call, knownValues, moduleName),
+            SsaCallRValue call => AnalyzeCall(valueName, call, knownValues, moduleName, integerBodies),
             SsaAddressOfLocalRValue addressOfLocal => CreateAddressFacts(valueName, addressOfLocal.Type, addressOfLocal.PointeeType),
             SsaAddressOfParameterRValue addressOfParameter => CreateAddressFacts(valueName, addressOfParameter.Type, addressOfParameter.PointeeType),
             SsaFieldAddressRValue fieldAddress => AnalyzeDerivedPointerAddress(valueName, fieldAddress.Type, fieldAddress.Address, knownValues),
@@ -868,6 +902,13 @@ internal sealed class SsaValueFactAnalyzer
             SsaBoolConstant boolean => CreateBooleanConstantFacts(valueName, boolean.Value),
             SsaNullConstant nullConstant => CreateNullFacts(valueName, nullConstant.Type),
             SsaStringConstant text => CreateTextConstantFacts(valueName, text.Type, text.LiteralText),
+            SsaStaticArrayAddressValue data => CreateAddressFacts(valueName, data.Type, data.Type.ElementType!) with
+            {
+                BoundedRawPointerRegionKind = SsaFactLatticeKind.Known,
+                BoundedRawPointerRegion = new SsaBoundedRawPointerRegionFact(
+                    new SsaIntegerConstant(data.Elements.Count, StarkTypeSymbols.Integer(64)),
+                    new SsaIntegerRangeFact(data.Elements.Count, data.Elements.Count))
+            },
             SsaGlobalAddressValue globalAddress => CreateAddressFacts(valueName, globalAddress.Type, globalAddress.PointeeType),
             SsaFunctionAddressValue functionAddress => CreateNonNullFacts(valueName, functionAddress.Type),
             SsaZeroInitializerValue { Type.Kind: StarkTypeKind.Dynamic } dynamicZero
@@ -1418,18 +1459,17 @@ internal sealed class SsaValueFactAnalyzer
     {
         if (sourceType.Kind == StarkTypeKind.Integer
             && targetType.Kind == StarkTypeKind.Integer
-            && sourceType.BitWidth == targetType.BitWidth
-            && sourceType.IsUnsigned != targetType.IsUnsigned
+            && (sourceType.BitWidth > targetType.BitWidth || sourceType.IsUnsigned != targetType.IsUnsigned)
             && targetType.BitWidth is int bitWidth
             && bitWidth > 0)
         {
-            return TranslateSameWidthIntegerReinterpretRange(targetType, sourceRange, targetRange, bitWidth);
+            return TranslateIntegerBitsRange(targetType, sourceRange, targetRange, bitWidth);
         }
 
         return ClampRange(sourceRange, targetRange);
     }
 
-    private static SsaIntegerRangeFact TranslateSameWidthIntegerReinterpretRange(
+    private static SsaIntegerRangeFact TranslateIntegerBitsRange(
         StarkTypeSymbol targetType,
         SsaIntegerRangeFact sourceRange,
         SsaIntegerRangeFact targetRange,
@@ -1510,8 +1550,12 @@ internal sealed class SsaValueFactAnalyzer
         string valueName,
         SsaCallRValue call,
         IReadOnlyDictionary<string, SsaValueFacts> knownValues,
-        string moduleName)
+        string moduleName,
+        IReadOnlyDictionary<string, SsaFunction>? integerBodies)
     {
+        if (TryAnalyzeSimpleIntegerCall(valueName, call, knownValues, integerBodies, out var integerFacts))
+            return integerFacts;
+
         if (call.Type.Kind == StarkTypeKind.Integer
             && call.Arguments.Count == 1
             && TryGetSystemTextLengthFunction(call.FunctionName, moduleName, out var textKind)
@@ -3682,7 +3726,28 @@ internal sealed class SsaValueFactAnalyzer
             return false;
         }
 
-        var slicedText = payload.DecodedText.Substring((int)start, (int)length);
+        // Unicode indices count UTF-32 scalars; ascii indices count UTF-8 bytes.
+        // A byte slice of non-ASCII UTF-8 can split a scalar and is not a .NET substring.
+        if (type.Kind == StarkTypeKind.Ascii && !payload.IsAsciiOnly)
+        {
+            return false;
+        }
+        string slicedText;
+        if (type.Kind == StarkTypeKind.Unicode)
+        {
+            var units = payload.Utf32Length == 0 ? [] : payload.Utf32PayloadHex.Split(',');
+            var builder = new StringBuilder();
+            foreach (var unit in units.Skip((int)start).Take((int)length))
+            {
+                var scalar = int.Parse(unit, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                builder.Append(scalar <= char.MaxValue ? ((char)scalar).ToString() : char.ConvertFromUtf32(scalar));
+            }
+            slicedText = builder.ToString();
+        }
+        else
+        {
+            slicedText = payload.DecodedText.Substring((int)start, (int)length);
+        }
         slicedPayload = CreateTextLiteralPayload(new DecodedTextLiteral(slicedText));
         return type.Kind != StarkTypeKind.Ascii || slicedPayload.IsAsciiOnly;
     }

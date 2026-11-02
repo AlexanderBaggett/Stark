@@ -101,7 +101,9 @@ immutability, and emit sound invariant/readonly/capture facts.
           literal `System.IO.Path` facts and projections. The pass precomputes
           `GetFacts`/`GetConstFacts` field values and folds literal
           `Extension`/`BaseName`/`DirectoryName` calls using target-aware path
-          separator semantics.
+          separator semantics. The producer matches the current nine-field
+          `PathFacts` contract, including root length and absolute status,
+          Windows drive-relative/absolute paths and trimmed root-only paths.
     - [x] Retarget literal or permanently const-provenance path writes from
           snapshot-capable helpers to const variants (`TryJoinConst`,
           `JoinConst`, `TryNormalizeSeparatorsConst`,
@@ -426,6 +428,61 @@ lowered to ordinary pointers and lengths.
 LLVM boundary: do not write a custom vectorizer or generic memory optimizer for
 dynamic storage. Stark should expose exact initialized/spare regions, choose the
 right memory intrinsic semantics, and feed alias/range/loop metadata to LLVM.
+
+The first dead-payload implementation handles fresh runtime-owned scalar dynamic
+storage, including dynamic fields in local owners. It proves that no surviving
+SSA operation observably reads or exposes the backing region, follows supported direct
+calls through private specializations, and removes their payload stores while
+preserving header updates, statuses, allocation and destruction. The proof uses
+existing value/range facts and retains source identities for clone metadata.
+Structured storage origins survive MIR/SSA rewrites and common-subexpression
+matching; arbitrary raw offsets and explicit raw slices decline this proof.
+Aggregate constructor/header updates retain the selected owned dynamic field
+through unrelated field insertions. Replacement is accepted only from a proven
+fresh runtime allocation, zero initialization, or an already tracked owner;
+incoming unproven storage and payload observers still decline specialization.
+Scalar payload reads may also disappear when their complete use chain consists
+only of copies into dead payload destinations. Returns, conditions, indexing,
+external stores/calls and unsupported conversions decline that proof. Removed
+loads become valid inhabitants of their scalar types, and changed functions and
+private clones have value facts recomputed with the shared source/package call
+effects; stale range or known-bit promises cannot survive placeholder insertion.
+Empty owned buffers grown by fallible reserve participate in the same read/escape
+proof before header replacement; allocating constructors are not required.
+Borrowed scalar call arguments retain their evaluated place address separately
+from the scalar value, including imported typed templates and indirect calls.
+A later argument cannot retarget an earlier pointer dereference or cause its
+side-effectful pointer producer to run again.
+Binary reachability keeps possible const-helper replacement bodies using the
+same retarget map as specialization. `PathRepeatedSmallOps` eliminates its
+25,000 repeated payload writes. Restoring the complete nine-field literal
+`PathFacts` producer also lets LLVM eliminate the checksum loop; the checked
+reserve, allocation-failure result and real cleanup remain.
+
+General field-sensitive interprocedural summaries remain open. The owner's header
+and its backing allocation are distinct memory regions: reading `Length` or
+`Capacity` observes header fields, whereas dereferencing `Data` observes the
+backing allocation. Loading `Data` from the header alone does not establish that
+the payload was read, but neither does it prove the pointer cannot alias another
+object or escape. The current scalar-replacement pass treats a stack aggregate
+passed to a direct call as escaped. Parameter memory summaries distinguish LLVM
+argument memory from other reachable memory, but do not express a complete
+per-field liveness proof. The new specialization derives that proof from
+visible SSA rather than treating those coarse summaries as sufficient.
+
+For dead-payload-store elimination, track the backing allocation's identity and
+its observable reads and escapes separately from header-field accesses, across
+control-flow joins and calls. Opaque or indirect calls, raw pointer escapes,
+unknown aliases and unmodelled allocation/cleanup must conservatively invalidate
+the relevant proof. Known runtime reserve/reallocation and trivial scalar
+cleanup remain in the graph; arena backing, exported callees and unknown bodies
+stay conservative. Preserve allocation failure, capacity and length updates, and
+destruction of initialized elements. In particular, the runtime allocator's
+interior pointers and metadata do not justify adding blanket LLVM allocation or
+no-alias attributes. Tests must include both length-only consumers and consumers
+that read or expose bytes, plus overlapping inputs, failed reserve, and cleanup.
+The literal `PathRepeatedSmallOps` case is a useful code-generation check, but
+its known lengths alone do not establish that arbitrary joined bytes are dead.
 
 - [x] Preserve dynamic storage facts in SSA.
   - [x] Track owner root, backing allocation, element type, capacity range,

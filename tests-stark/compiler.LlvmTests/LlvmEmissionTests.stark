@@ -1139,13 +1139,13 @@ unsafe fn i32[min max] Run(ascii value, bool allow)
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "extractvalue %stark_ascii %arg_value, 0")
-            && Contains(llvm, "extractvalue %stark_ascii %arg_value, 1")
+        return Contains(llvm, "extractvalue { ptr, i64 } %arg_value, 0")
+            && Contains(llvm, "extractvalue { ptr, i64 } %arg_value, 1")
             && Contains(llvm, "icmp eq i64")
             && Contains(llvm, "load i8, ptr")
             && Contains(llvm, "select i1 %arg_allow")
-            && DoesNotContain(llvm, "switch %stark_ascii")
-            && DoesNotContain(llvm, "declare fastcc i32 @Run(%stark_ascii, i1)");
+            && DoesNotContain(llvm, "switch { ptr, i64 }")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run({ ptr, i64 }, i1)");
     }
 }
 
@@ -1180,7 +1180,6 @@ export unsafe fn i32[min max] main()
 
         stack ascii llvm = Llvm(compiled);
         return Contains(llvm, "@.str.0 = private unnamed_addr constant")
-            && Contains(llvm, "%stark_ascii = type { ptr, i64 }")
             && Contains(llvm, "declare i32 @puts(ptr readonly) nounwind")
             && Contains(llvm, "@main() nounwind")
             && Contains(llvm, "call i32 @puts(ptr getelementptr inbounds nuw ([15 x i8], ptr @.str.0, i32 0, i32 0))")
@@ -1330,10 +1329,10 @@ unsafe fn bool PointerLess(rawptr<i32[min max]> left, rawptr<i32[min max]> right
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "define internal dso_local i32 @__stark_ascii_compare(%stark_ascii %left, %stark_ascii %right)")
-            && Contains(llvm, "define internal dso_local i32 @__stark_unicode_compare(%stark_unicode %left, %stark_unicode %right)")
-            && Contains(llvm, "call i32 @__stark_ascii_compare(%stark_ascii %arg_left, %stark_ascii %arg_right)")
-            && Contains(llvm, "call i32 @__stark_unicode_compare(%stark_unicode %arg_left, %stark_unicode %arg_right)")
+        return Contains(llvm, "define internal dso_local i32 @__stark_ascii_compare({ ptr, i64 } %left, { ptr, i64 } %right)")
+            && Contains(llvm, "define internal dso_local i32 @__stark_unicode_compare({ ptr, i64 } %left, { ptr, i64 } %right)")
+            && Contains(llvm, "call i32 @__stark_ascii_compare({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)")
+            && Contains(llvm, "call i32 @__stark_unicode_compare({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)")
             && Contains(llvm, "icmp slt i32")
             && Contains(llvm, "icmp sge i32")
             && Contains(llvm, "icmp ult i1")
@@ -3542,9 +3541,9 @@ fn bool AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetime()
 
 [Fact]
 [Collection("llvm-ir")]
-fn bool LargeZeroInitializedAggregateStoresUseInlineMemset()
+fn bool LargeZeroInitializedAggregateStoresUseMemset()
 {
-    return LargeZeroInitializedAggregateStoresUseInlineMemsetImpl();
+    return LargeZeroInitializedAggregateStoresUseMemsetImpl();
 }
 
 [Fact]

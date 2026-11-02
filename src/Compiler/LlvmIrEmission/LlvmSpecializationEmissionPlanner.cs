@@ -722,7 +722,11 @@ internal static class LlvmSpecializationEmissionPlanner
                 {
                     candidates.TryAdd(
                         qualifiedName,
-                        new ImportedInlineBodyCandidate(StarkVisibility.Public, HasBody: true));
+                        new ImportedInlineBodyCandidate(
+                            packageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature)
+                                ? signature.Visibility
+                                : StarkVisibility.Module,
+                            HasBody: true));
                 }
             }
         }

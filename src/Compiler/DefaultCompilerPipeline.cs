@@ -48,6 +48,7 @@ public static class DefaultCompilerPipeline
             .Add(new PropagateSsaConstantsPass())
             .Add(new DevirtualizeSsaIrPass())
             .Add(new InlineSsaIrPass())
+            .Add(new VersionQueueDequeueLoopsSsaPass())
             .Add(new CseConstGraphCallsSsaPass())
             .Add(new OptimizeConstLookupTablesSsaPass())
             .Add(new SsaValueFactsPass())
@@ -716,7 +717,8 @@ public static class DefaultCompilerPipeline
 
                 foreach (var (qualifiedName, functionEffects) in packageImageFacts.FunctionEffects)
                 {
-                    if (effects.ContainsKey(qualifiedName))
+                    if (effects.ContainsKey(qualifiedName)
+                        || packageImageFacts.FunctionTemplates.ContainsKey(qualifiedName))
                     {
                         effects[qualifiedName] = functionEffects;
                     }
@@ -741,14 +743,14 @@ public static class DefaultCompilerPipeline
 
                 return new FunctionEffectProfile(
                     Name: name,
-                    Kind: StarkFunctionKind.Fn,
+                    Kind: function.Kind,
                     ReadsArgumentMemory: touchesMemory,
                     IsPure: false,
                     NoSync: false,
                     NoFree: false,
                     NoUnwind: true,
-                    WillReturn: false,
-                    MustProgress: false,
+                    WillReturn: function.Kind == StarkFunctionKind.Finite,
+                    MustProgress: function.Kind == StarkFunctionKind.Finite,
                     UseFastCallingConvention: false,
                     IsFfi: true,
                     IsVarargs: false,
@@ -1114,7 +1116,7 @@ public static class DefaultCompilerPipeline
                         expanded,
                         pending);
                     ExpandImportedTemplateCallSummaryTriggers(
-                        GetImportedTemplateReachableCallSignatures(importedTemplate),
+                        ImportedTemplateCallFacts.GetReachableCallSignatures(importedTemplate),
                         substitution,
                         valueSubstitution,
                         trigger.Location,
@@ -1577,7 +1579,7 @@ public static class DefaultCompilerPipeline
                 AddExpandedTypeTriggers(concreteTargetType, location, typeModel, seen, expanded);
             }
 
-            foreach (var callSignature in GetImportedTemplateReachableCallSignatures(importedTemplate))
+            foreach (var callSignature in ImportedTemplateCallFacts.GetReachableCallSignatures(importedTemplate))
             {
                 AddTypeTriggersFromCallSignature(
                     callSignature,
@@ -1595,36 +1597,6 @@ public static class DefaultCompilerPipeline
                 typeModel,
                 seen,
                 expanded);
-        }
-
-        private static IReadOnlyList<TypedFunctionSignature> GetImportedTemplateReachableCallSignatures(
-            ImportedFunctionTemplateSummary importedTemplate)
-        {
-            var boundCalls = importedTemplate.BoundOperations
-                .Select(static summary => summary.Operation)
-                .Select(static operation => operation switch
-                {
-                    BoundDirectCallOperation directCall => directCall.Signature,
-                    BoundMemberCallOperation memberCall => memberCall.Signature,
-                    _ => null
-                })
-                .Where(static signature => signature is not null)
-                .Cast<TypedFunctionSignature>()
-                .ToArray();
-            var functionAddressSignatures = importedTemplate.FunctionAddresses
-                .Select(static functionAddress => functionAddress.Signature)
-                .ToArray();
-            if (boundCalls.Length != 0)
-            {
-                return boundCalls
-                    .Concat(functionAddressSignatures)
-                    .ToArray();
-            }
-
-            return importedTemplate.DirectCalls.Select(static call => call.Signature)
-                .Concat(importedTemplate.MemberCalls.Select(static call => call.Signature))
-                .Concat(functionAddressSignatures)
-                .ToArray();
         }
 
         private static void AddTypeTriggersFromImportedTemplateBoundOperations(
@@ -4089,13 +4061,18 @@ public static class DefaultCompilerPipeline
                             return null;
                         }
 
+                        var canLowerBody = function.HasBody;
+                        if (module.PackageImageFacts is { } packageFacts
+                            && packageFacts.FunctionTemplates.TryGetValue(qualifiedName, out var template)
+                            && !template.IsGeneric)
+                            canLowerBody &= ImportedTemplateCallFacts.CanMaterializeClosedBody(qualifiedName, packageFacts);
                         return new HighLevelIrFunction(
                             qualifiedName,
                             types.Functions.TryGetValue(qualifiedName, out var signature)
                                 ? signature
                                 : fallbackSignatures[qualifiedName],
-                            function.HasBody,
-                            DetermineBodyLoweringKind(function),
+                            canLowerBody,
+                            canLowerBody ? DetermineBodyLoweringKind(function) : FunctionBodyLoweringKind.DeclarationOnly,
                             effects.Functions[qualifiedName]);
                     })
                     .Where(static function => function is not null)
@@ -4171,7 +4148,34 @@ public static class DefaultCompilerPipeline
                 types.Functions,
                 fallbackSignatures,
                 types);
+            // Closed helpers carried with published inline bodies are optimization
+            // material, not declarations in the downstream source API.
+            var declaredNames = declaredFunctions.Select(static function => function.Name).ToHashSet(StringComparer.Ordinal);
+            var importedHelpers = loadedModules.ImportedModules
+                .Where(static module => module.PackageImageFacts is not null)
+                .SelectMany(module =>
+                {
+                    var facts = module.PackageImageFacts!;
+                    return facts.FunctionTemplates.Values
+                        .SelectMany(ImportedTemplateCallFacts.GetReachableCallSignatures)
+                        .Where(signature => !signature.IsGeneric
+                            && signature.TemplateName is null
+                            && !declaredNames.Contains(signature.Name)
+                            && facts.FunctionTemplates.TryGetValue(signature.Name, out var template)
+                            && template.TypedBody is not null
+                            && ImportedTemplateCallFacts.CanMaterializeClosedBody(signature.Name, facts)
+                            && effects.Functions.ContainsKey(signature.Name))
+                        .DistinctBy(static signature => signature.Name)
+                        .Select(signature => new HighLevelIrFunction(
+                            signature.Name,
+                            signature,
+                            HasBody: true,
+                            BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                            Effects: effects.Functions[signature.Name],
+                            BodyTemplateName: signature.Name));
+                });
             var functions = declaredFunctions
+                .Concat(importedHelpers)
                 .Concat(lambdaFunctions)
                 .Concat(closureLambdaFunctions)
                 .Concat(closureFunctionAdapterFunctions)
@@ -4881,6 +4885,28 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class VersionQueueDequeueLoopsSsaPass : ICompilerPass
+    {
+        public string Id => "queue-dequeue-loop-ssa";
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+        public IReadOnlyList<string> Dependencies => ["inline-ssa", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var strategies = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var effects = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var parameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation),
+                context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules), strategies);
+            var versioned = new SsaQueueDequeueLoopVersioner(strategies, effects, parameterEffects).Optimize(ssa);
+            if (ReferenceEquals(ssa, versioned)) return;
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(versioned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, new SsaConstantPropagator().Optimize(cleaned));
+        }
+    }
+
     private sealed class CseConstGraphCallsSsaPass : ICompilerPass
     {
         public string Id => "cse-const-graph-calls-ssa";
@@ -4889,7 +4915,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["inline-ssa", "refine-function-effects", "semantic-validate", "type-check"];
+        public IReadOnlyList<string> Dependencies => ["queue-dequeue-loop-ssa", "refine-function-effects", "semantic-validate", "type-check"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -4913,6 +4939,20 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private static SsaValueFactModel AnalyzeSsaValueFacts(
+        CompilerPassContext context,
+        SsaIrModule ssa,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>>? directCallParameterEffects = null)
+    {
+        // Recomputing facts after a rewrite must use the same call effects as the
+        // original analysis; otherwise even read-only calls erase storage facts.
+        directCallParameterEffects ??= SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+            context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation),
+            context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules),
+            context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy));
+        return new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(ssa);
+    }
+
     private sealed class SsaValueFactsPass : ICompilerPass
     {
         public string Id => "value-facts";
@@ -4934,7 +4974,7 @@ public static class DefaultCompilerPipeline
                 semanticValidation,
                 loadedModules,
                 specializationCodegenStrategy);
-            var facts = new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(ssa);
+            var facts = AnalyzeSsaValueFacts(context, ssa, directCallParameterEffects);
             context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, facts);
             context.Logs.Info(
                 category: "optimization",
@@ -5112,7 +5152,7 @@ public static class DefaultCompilerPipeline
             }
 
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, specialized));
         }
     }
 
@@ -5143,7 +5183,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(specialized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5179,7 +5219,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated, directCallParameterEffects));
         }
     }
 
@@ -5214,7 +5254,7 @@ public static class DefaultCompilerPipeline
                 loadedModules,
                 specializationCodegenStrategy);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated, directCallParameterEffects));
         }
     }
 
@@ -5239,7 +5279,7 @@ public static class DefaultCompilerPipeline
             }
 
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, specialized));
         }
     }
 
@@ -5267,7 +5307,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(pruned);
             var optimized = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(optimized));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, optimized));
         }
     }
 
@@ -5295,7 +5335,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5323,7 +5363,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5350,7 +5390,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5378,7 +5418,7 @@ public static class DefaultCompilerPipeline
             var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
             var propagated = new SsaConstantPropagator().Optimize(cleaned);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, propagated));
         }
     }
 
@@ -5398,7 +5438,7 @@ public static class DefaultCompilerPipeline
 
             var shaped = new SsaCleanupOptimizer(enableSelectPredication: true).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, shaped);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(shaped));
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, shaped));
         }
     }
 
@@ -5418,13 +5458,17 @@ public static class DefaultCompilerPipeline
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
 
             var folded = new SsaIntegerArithmeticFolder().Optimize(ssa);
-            if (ReferenceEquals(folded, ssa))
+            var propagated = ReferenceEquals(folded, ssa)
+                ? ssa
+                : new SsaConstantPropagator().Optimize(new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded));
+            var reduced = new SsaCyclicArraySumOptimizer().Optimize(propagated,
+                context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts));
+            var widened = new SsaLoopCounterWidening().Optimize(reduced);
+            if (ReferenceEquals(widened, ssa))
             {
                 return;
             }
 
-            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded);
-            var propagated = new SsaConstantPropagator().Optimize(cleaned);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
             var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
             var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
@@ -5432,8 +5476,8 @@ public static class DefaultCompilerPipeline
                 semanticValidation,
                 loadedModules,
                 specializationCodegenStrategy);
-            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
-            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, widened);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, AnalyzeSsaValueFacts(context, widened, directCallParameterEffects));
         }
     }
 

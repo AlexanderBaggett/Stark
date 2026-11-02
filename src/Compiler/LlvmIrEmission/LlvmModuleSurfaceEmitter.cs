@@ -32,7 +32,7 @@ internal sealed class LlvmModuleSurfaceEmitter
 
     public void Emit(StringBuilder builder)
     {
-        EmitBuiltinTypeDefinitions(builder);
+        builder.AppendLine();
         EmitNamedTypeDefinitions(builder);
         EmitStringConstants(builder);
         EmitVTableGlobals(builder);
@@ -132,13 +132,6 @@ internal sealed class LlvmModuleSurfaceEmitter
         return false;
     }
 
-    private void EmitBuiltinTypeDefinitions(StringBuilder builder)
-    {
-        builder.AppendLine($"%{_context.AsciiStringTypeName} = type {{ ptr, i64 }}");
-        builder.AppendLine($"%{_context.UnicodeStringTypeName} = type {{ ptr, i64 }}");
-        builder.AppendLine();
-    }
-
     private void EmitNamedTypeDefinitions(StringBuilder builder)
     {
         var emittedAny = false;
@@ -152,8 +145,9 @@ internal sealed class LlvmModuleSurfaceEmitter
             var fieldsSource = namedType.Kind == DeclarationKind.Enum
                 ? _context.EnumLayouts[namedType.Name].OrderedFields
                 : namedType.OrderedFields;
-            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
-                && TryBuildLayoutControlledTypeDefinition(namedType, out var layoutControlledDefinition))
+            if (TryBuildLayoutControlledTypeDefinition(
+                    LlvmLayoutControlledAggregateFacts.WithStorageFields(namedType, _context.EnumLayouts),
+                    out var layoutControlledDefinition))
             {
                 builder.AppendLine($"%{EscapeIdentifier(namedType.Name)} = type {layoutControlledDefinition}");
                 continue;
@@ -174,7 +168,7 @@ internal sealed class LlvmModuleSurfaceEmitter
     private bool TryBuildLayoutControlledTypeDefinition(NamedTypeSymbol namedType, out string definition)
     {
         definition = string.Empty;
-        if (!LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+        if (!LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType, _context.TypeModel.NamedTypes, _context.EnumLayouts)
             || _context.TryGetConcreteTypeLayout(StarkTypeSymbols.Named(namedType.Name)) is not { } layout)
         {
             return false;

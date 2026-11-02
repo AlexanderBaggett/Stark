@@ -62,7 +62,7 @@ internal static partial class PackageImageLoader
             return false;
         }
 
-        if (string.Equals(manifest.Kind, "block", StringComparison.Ordinal))
+        if (manifest.Kind is "block" or "unsafe-block" or "assume-disjoint")
         {
             var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
             foreach (var bodyStatement in manifest.BodyStatements ?? [])
@@ -76,8 +76,16 @@ internal static partial class PackageImageLoader
             }
 
             summary = new ImportedTemplateTypedBodyStatementSummary(
-                ImportedTemplateTypedBodyStatementKind.Block,
+                manifest.Kind switch
+                {
+                    "unsafe-block" => ImportedTemplateTypedBodyStatementKind.UnsafeBlock,
+                    "assume-disjoint" => ImportedTemplateTypedBodyStatementKind.AssumeDisjoint,
+                    _ => ImportedTemplateTypedBodyStatementKind.Block
+                },
+                Expression: expression,
                 BodyStatements: bodyStatements);
+            if (manifest.Kind == "assume-disjoint"
+                && expression is not { Kind: ImportedTemplateTypedBodyExpressionKind.DisjointCondition }) return false;
             return true;
         }
 
@@ -681,6 +689,20 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyExpressionSummary(
                 ImportedTemplateTypedBodyExpressionKind.Comptime,
                 Arguments: [operand]);
+            return true;
+        }
+
+        if (manifest.Kind == "disjoint-condition")
+        {
+            if (manifest.Arguments is not { Count: >= 2 }) return false;
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>();
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument)) return false;
+                arguments.Add(builtArgument);
+            }
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.DisjointCondition, Arguments: arguments);
             return true;
         }
 

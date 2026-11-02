@@ -33,8 +33,6 @@ internal sealed class LlvmEmissionContext
 
     public LlvmEmissionContext(
         string moduleName,
-        string asciiStringTypeName,
-        string unicodeStringTypeName,
         ParseResult parseResult,
         LoadedModuleSet loadedModules,
         TypeCheckModel typeModel,
@@ -67,8 +65,6 @@ internal sealed class LlvmEmissionContext
         Func<string, Func<string, string>, string> getSelfReferentialMetadataRef)
     {
         ModuleName = moduleName;
-        AsciiStringTypeName = asciiStringTypeName;
-        UnicodeStringTypeName = unicodeStringTypeName;
         ParseResult = parseResult;
         LoadedModules = loadedModules;
         TypeModel = typeModel;
@@ -104,10 +100,6 @@ internal sealed class LlvmEmissionContext
 
     public string ModuleName { get; }
 
-    public string AsciiStringTypeName { get; }
-
-    public string UnicodeStringTypeName { get; }
-
     public ParseResult ParseResult { get; }
 
     public LoadedModuleSet LoadedModules { get; }
@@ -117,6 +109,13 @@ internal sealed class LlvmEmissionContext
     public IReadOnlyDictionary<string, EnumLayoutSymbol> EnumLayouts { get; }
 
     public IReadOnlyList<EmittedStringConstant> StringConstants { get; }
+
+    public EmittedStringConstant ResolveStaticArrayConstant(SsaStaticArrayAddressValue value)
+    {
+        var shape = LlvmStaticArrayConstant.Describe(value);
+        return StringConstants.First(constant => constant.ArrayType == shape.ArrayType
+                                                && constant.Initializer == shape.Initializer);
+    }
 
     public LlvmTargetInfo? TargetInfo { get; }
 

@@ -55,6 +55,8 @@ site/static/reference/
 tools/hugo/hugo
 benchmarks/results/
 benchmarks/codegen/
+benchmarks/compiler-sources/
+benchmarks/toolchains/
 
 # OS noise
 .DS_Store

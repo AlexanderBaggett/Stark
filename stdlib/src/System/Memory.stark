@@ -262,7 +262,8 @@ public inline fn MemoryStatus AppendFillCodePoints(
     return FillCodePoints(tail, value, safeCount);
 }
 
-public inline finite MemoryStatus InitializeBytesDisjoint(
+// Keep this loop intact through SSA inlining so LLVM can lower it as a bulk copy.
+public inlinehint finite MemoryStatus InitializeBytesDisjoint(
     borrow i8[min max][] source,
     init i8[min max][] destination,
     u64[0 2 ** 63 - 1] count)

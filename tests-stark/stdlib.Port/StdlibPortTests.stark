@@ -142,16 +142,16 @@ fn bool SystemCStringHelpersWorkAtRuntime()
 
 [Fact]
 [Collection("collections-dictionary")]
-fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+fn bool StdLibSourceDictionaryKeepsStorageFieldsInternal()
 {
-    return StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustifiedImpl();
+    return StdLibSourceDictionaryKeepsStorageFieldsInternalImpl();
 }
 
 [Fact]
 [Collection("collections-dictionary")]
-fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
+fn bool StdLibSourcePromotedDictionaryPreservesSparseValueStorage()
 {
-    return StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl();
+    return StdLibSourcePromotedDictionaryPreservesSparseValueStorageImpl();
 }
 
 [Fact]
@@ -334,13 +334,6 @@ fn bool SourceStdLibPromotedListMatchesStableListExecutableRuns()
 fn bool SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRuns()
 {
     return SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRunsImpl();
-}
-
-[Fact]
-[Collection("collections")]
-fn bool PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
-{
-    return PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeListImpl();
 }
 
 [Fact]

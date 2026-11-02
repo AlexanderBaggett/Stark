@@ -1401,7 +1401,7 @@ public struct OwnedAscii
         }
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional)
+    inline fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional)
     {
         if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.Bytes.Length)
         {
@@ -2011,7 +2011,7 @@ public struct OwnedAscii
         }
     }
 
-    fn void Clear(mut borrow OwnedAscii self)
+    inline fn void Clear(mut borrow OwnedAscii self)
     {
         while willexit (self.Bytes.Length > 0)
         {
@@ -6910,6 +6910,63 @@ public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source)
     }
 }
 
+// The checked parsers call this only when the decimal result fits in 1024 bits.
+// Expose a single limb carry chain to LLVM for the multiply and digit addition.
+inline finite law u1024[0 max] MultiplyU1024By10AddDigit(u1024[0 max] value, u8[0 9] digit)
+{
+    stack u1024[0 max] mask = (u1024[0 max])(2 ** 64 - 1);
+    stack mut u128[0 max] carry = (u128[0 max])digit;
+    stack mut u1024[0 max] result = 0;
+    stack u128[0 max] part0 = (u128[0 max])((u64[0 max])(value & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part0 & (u128[0 max])(2 ** 64 - 1)));
+    carry = part0 >> 64;
+    stack u128[0 max] part1 = (u128[0 max])((u64[0 max])((value >> 64) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part1 & (u128[0 max])(2 ** 64 - 1))) << 64;
+    carry = part1 >> 64;
+    stack u128[0 max] part2 = (u128[0 max])((u64[0 max])((value >> 128) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part2 & (u128[0 max])(2 ** 64 - 1))) << 128;
+    carry = part2 >> 64;
+    stack u128[0 max] part3 = (u128[0 max])((u64[0 max])((value >> 192) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part3 & (u128[0 max])(2 ** 64 - 1))) << 192;
+    carry = part3 >> 64;
+    stack u128[0 max] part4 = (u128[0 max])((u64[0 max])((value >> 256) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part4 & (u128[0 max])(2 ** 64 - 1))) << 256;
+    carry = part4 >> 64;
+    stack u128[0 max] part5 = (u128[0 max])((u64[0 max])((value >> 320) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part5 & (u128[0 max])(2 ** 64 - 1))) << 320;
+    carry = part5 >> 64;
+    stack u128[0 max] part6 = (u128[0 max])((u64[0 max])((value >> 384) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part6 & (u128[0 max])(2 ** 64 - 1))) << 384;
+    carry = part6 >> 64;
+    stack u128[0 max] part7 = (u128[0 max])((u64[0 max])((value >> 448) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part7 & (u128[0 max])(2 ** 64 - 1))) << 448;
+    carry = part7 >> 64;
+    stack u128[0 max] part8 = (u128[0 max])((u64[0 max])((value >> 512) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part8 & (u128[0 max])(2 ** 64 - 1))) << 512;
+    carry = part8 >> 64;
+    stack u128[0 max] part9 = (u128[0 max])((u64[0 max])((value >> 576) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part9 & (u128[0 max])(2 ** 64 - 1))) << 576;
+    carry = part9 >> 64;
+    stack u128[0 max] part10 = (u128[0 max])((u64[0 max])((value >> 640) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part10 & (u128[0 max])(2 ** 64 - 1))) << 640;
+    carry = part10 >> 64;
+    stack u128[0 max] part11 = (u128[0 max])((u64[0 max])((value >> 704) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part11 & (u128[0 max])(2 ** 64 - 1))) << 704;
+    carry = part11 >> 64;
+    stack u128[0 max] part12 = (u128[0 max])((u64[0 max])((value >> 768) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part12 & (u128[0 max])(2 ** 64 - 1))) << 768;
+    carry = part12 >> 64;
+    stack u128[0 max] part13 = (u128[0 max])((u64[0 max])((value >> 832) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part13 & (u128[0 max])(2 ** 64 - 1))) << 832;
+    carry = part13 >> 64;
+    stack u128[0 max] part14 = (u128[0 max])((u64[0 max])((value >> 896) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part14 & (u128[0 max])(2 ** 64 - 1))) << 896;
+    carry = part14 >> 64;
+    stack u128[0 max] part15 = (u128[0 max])((u64[0 max])((value >> 960) & mask)) * (u128[0 max])10 + carry;
+    result |= (u1024[0 max])((u64[0 max])(part15 & (u128[0 max])(2 ** 64 - 1))) << 960;
+    return result;
+}
+
 public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
 {
     unsafe
@@ -6945,6 +7002,13 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
         {
             cutlim = 8;
         }
+        // Any 307 decimal digits fit in the signed 1024-bit magnitude.
+        // Account for the optional leading minus when comparing the index.
+        stack mut i64[min max] uncheckedDigitEnd = 307;
+        if (negative)
+        {
+            uncheckedDigitEnd = 308;
+        }
         stack mut u1024[0 max] value = 0;
         while willexit (index < length)
         {
@@ -6955,12 +7019,12 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source)
             }
 
             stack u8[0 9] unsignedDigit = (u8[0 9])digit;
-            if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim))
+            if (index >= uncheckedDigitEnd && (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)))
             {
                 return TextResult<i1024[min max]>.Err(TextError.Overflow);
             }
 
-            value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
+            value = MultiplyU1024By10AddDigit(value, unsignedDigit);
             index += 1;
         }
 
@@ -7039,12 +7103,13 @@ public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source)
             }
 
             stack u8[0 9] unsignedDigit = (u8[0 9])digit;
-            if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim))
+            // Any 308 decimal digits fit in an unsigned 1024-bit value.
+            if (index >= 308 && (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)))
             {
                 return TextResult<u1024[0 max]>.Err(TextError.Overflow);
             }
 
-            value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
+            value = MultiplyU1024By10AddDigit(value, unsignedDigit);
             index += 1;
         }
 
@@ -7679,7 +7744,7 @@ public finite TextResult<u768[0 max]> ParseU768Unicode(unicode source)
     }
 }
 
-fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
+finite law i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
 {
     unsafe
     {
@@ -7724,7 +7789,7 @@ fn i64[min max] Utf8EncodedLength(i32[min max] codePoint)
     return 4;
 }
 
-unsafe fn void WriteUtf8CodePoint(
+internal unsafe finite void WriteUtf8CodePoint(
     rawmutptr<i8[min max]>[capacity] destination,
     u64[0 2 ** 63 - 1] capacity,
     rawmutptr<i64[min max]> writeIndex,
@@ -9911,6 +9976,55 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, u
     }
 }
 internal unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+// Compiler-selected constant transcoding keeps the converter's capacity semantics.
+internal unsafe finite bool TryCopyPreencodedUtf16(
+    rawmutptr<i16[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
+    rawptr<i16[min max]> data,
+    i64[min max] unitCount,
+    rawmutptr<i64[min max]> writtenLength,
+    bool writePrefix)
+{
+    if (writtenLength == null)
+    {
+        return false;
+    }
+    *writtenLength = 0;
+    stack mut i64[min max] copyCount = unitCount;
+    if (unitCount > capacity)
+    {
+        if (!writePrefix)
+        {
+            return false;
+        }
+        copyCount = (i64[min max])capacity;
+        // Do not copy half of a supplementary character on capacity failure.
+        if (copyCount > 0)
+        {
+            stack i32[min max] last = (i32[min max])data[copyCount - 1] & 65535;
+            if (55296 <= last && last <= 56319)
+            {
+                copyCount -= 1;
+            }
+        }
+    }
+    if (copyCount > 0 && destination == null)
+    {
+        return false;
+    }
+    for willexit (stack mut i64[min max] i = 0; i < copyCount; i += 1)
+    {
+        destination[i] = data[i];
+    }
+    if (unitCount > capacity)
+    {
+        *writtenLength = 0;
+        return false;
+    }
+    *writtenLength = unitCount;
+    return true;
+}
 
 internal unsafe fn bool TryConvertAsciiToUtf16(
     rawmutptr<i16[min max]>[capacity] destination,

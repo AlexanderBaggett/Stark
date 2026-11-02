@@ -525,6 +525,180 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                             return new();
                     }
                 }
+                unsafe fn bool WriteRuntimeUtf16Lines(ascii path, System.IO.File.FileBuffering buffering)
+                {
+                    stack mut System.IO.File.File writer = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write, System.Text.Encoding.UTF16, buffering));
+                    stack mut i8[min max][1025] bytes;
+                    stack mut i32[min max][1025] points;
+                    for willexit (stack mut i64[min max] i = 0; i < 1025; i += 1)
+                    {
+                        bytes[i] = (i8[min max])(i % 128);
+                        points[i] = (i32[min max])(i % 128);
+                    }
+
+                    // Include embedded NULs, all ASCII values, and both sides of the fast-path bound.
+                    stack i64[min max][10] lengths = { 0, 1, 4, 5, 127, 128, 1022, 1023, 1024, 1025 };
+                    for willexit (stack mut i64[min max] c = 0; c < 10; c += 1)
+                    {
+                        stack Ascii a = new Ascii()
+                        {
+                            Data = &bytes[0],
+                            Length = lengths[c],
+                            Capacity = 1025
+                        };
+                        stack Unicode u = new Unicode()
+                        {
+                            Data = &points[0],
+                            Length = lengths[c],
+                            Capacity = 1025
+                        };
+                        if (!StatusOk(writer.WriteLine(System.Text.AsciiView(a)))
+                            || !StatusOk(writer.WriteLine(System.Text.UnicodeView(u))))
+                        {
+                            return false;
+                        }
+                    }
+
+                    // Reject after a converted ASCII prefix without writing that prefix twice.
+                    bytes[0] = 65;
+                    bytes[1] = 0;
+                    bytes[2] = 66;
+                    bytes[3] = -61;
+                    bytes[4] = -87;
+                    stack Ascii utf8 = new Ascii()
+                    {
+                        Data = &bytes[0],
+                        Length = 5,
+                        Capacity = 1025
+                    };
+                    if (!StatusOk(writer.WriteLine(System.Text.AsciiView(utf8))))
+                    {
+                        return false;
+                    }
+                    bytes[3] = -1;
+                    stack Ascii malformed = new Ascii()
+                    {
+                        Data = &bytes[0],
+                        Length = 4,
+                        Capacity = 1025
+                    };
+                    if (!StatusOk(writer.WriteLine(System.Text.AsciiView(malformed))))
+                    {
+                        return false;
+                    }
+                    points[0] = 65;
+                    points[1] = 0;
+                    points[2] = 66;
+                    points[3] = 128;
+                    points[4] = 66376;
+                    points[5] = 65533;
+                    stack Unicode nonascii = new Unicode()
+                    {
+                        Data = &points[0],
+                        Length = 6,
+                        Capacity = 1025
+                    };
+                    return StatusOk(writer.WriteLine(System.Text.UnicodeView(nonascii))) && StatusOk(writer.Close());
+                }
+
+                unsafe fn bool WriteConstantEncodedLines(ascii path, System.Text.Encoding encoding, System.IO.File.FileBuffering buffering)
+                {
+                    stack mut System.IO.File.File writer = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write, encoding, buffering));
+                    stack ascii original = "arbitrary\0text";
+                    stack ascii copy = original;
+                    stack unicode wide = (unicode)"café 🌍\0";
+                    if (System.Text.UnicodeLength(wide) != 7 || System.Text.UnicodeData(wide)[5] != 127757)
+                    {
+                        return false;
+                    }
+                    stack ascii utf8 = "AéZ";
+                    if (!StatusOk(writer.WriteLine(copy)) || !StatusOk(writer.WriteLine(wide))
+                        || !StatusOk(writer.WriteLine(wide[5, 1])) || !StatusOk(writer.WriteLine(utf8[2, 1]))
+                        || !StatusOk(writer.WriteText((unicode)"Ω🌍")) || !StatusOk(writer.WriteLine("")))
+                    {
+                        return false;
+                    }
+                    return StatusOk(writer.Close());
+                }
+
+                unsafe noinline fn bool DynamicAscii(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, ascii source, rawmutptr<i64[min max]> written)
+                    where disjoint(source, destination[0, capacity])
+                {
+                    return System.Text.TryConvertAsciiToUtf16(destination, capacity, source, written);
+                }
+                unsafe noinline fn bool DynamicUnicode(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, unicode source, rawmutptr<i64[min max]> written)
+                    where disjoint(source, destination[0, capacity])
+                {
+                    return System.Text.TryConvertUnicodeToUtf16(destination, capacity, source, written);
+                }
+                // This finite caller checks the helper's contract after source/package loading.
+                unsafe finite bool CopyKnownUtf16(rawmutptr<i16[min max]>[capacity] destination, u64[0 2 ** 63 - 1] capacity, rawptr<i16[min max]> data, i64[min max] count, rawmutptr<i64[min max]> written)
+                {
+                    return System.Text.TryCopyPreencodedUtf16(destination, capacity, data, count, written, true);
+                }
+
+                unsafe fn i32[min max] CheckUtf16ConversionCapacity()
+                {
+                    stack mut i16[min max][8] expected = { -123, -123, -123, -123, -123, -123, -123, -123 };
+                    stack mut i16[min max][8] actual = { -123, -123, -123, -123, -123, -123, -123, -123 };
+                    for willexit (stack mut i64[min max] iteration = 0; iteration <= 8; iteration += 1)
+                    {
+                        stack u8[0 8] capacity = (u8[0 8])iteration;
+                        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+                        {
+                            expected[i] = -123;
+                            actual[i] = -123;
+                        }
+                        stack mut i64[min max] a = -1;
+                        stack mut i64[min max] b = -1;
+                        stack bool x = DynamicAscii(&expected[0], capacity, "Aé🌍Z", &a);
+                        stack bool y = System.Text.TryConvertAsciiToUtf16(&actual[0], capacity, "Aé🌍Z", &b);
+                        if (x != y || a != b)
+                        {
+                            return 1;
+                        }
+                        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+                        {
+                            if (expected[i] != actual[i])
+                            {
+                                return 2;
+                            }
+                            expected[i] = -123;
+                            actual[i] = -123;
+                        }
+                        a = -1;
+                        b = -1;
+                        stack bool u = DynamicUnicode(&expected[0], capacity, (unicode)"Aé🌍Z", &a);
+                        stack bool v = System.Text.TryConvertUnicodeToUtf16(&actual[0], capacity, (unicode)"Aé🌍Z", &b);
+                        if (u != v || a != b)
+                        {
+                            return 3;
+                        }
+                        for willexit (stack mut i64[min max] i = 0; i < 8; i += 1)
+                        {
+                            if (expected[i] != actual[i])
+                            {
+                                return 4;
+                            }
+                        }
+                    }
+                    stack mut i64[min max] written = -1;
+                    if (System.Text.TryConvertAsciiToUtf16(&actual[0], 8, "Aé🌍Z", null))
+                    {
+                        return 7;
+                    }
+                    stack i16[min max][2] known =
+                    {
+                        65, 66
+                    };
+                    if (!CopyKnownUtf16(&actual[0], 8, &known[0], 2, &written)
+                        || written != 2 || actual[0] != 65 || actual[1] != 66)
+                    {
+                        return 10;
+                    }
+                    return 0;
+                }
+
                 export unsafe fn i32[min max] main()
                 {
                     stack mut i32[min max][1] gothicBuffer =
@@ -562,6 +736,23 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                         Capacity = 1
                     };
 
+                    stack mut System.IO.File.File unbuffered = OpenOrEmpty(System.IO.File.Open("utf16-unbuffered.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16, System.IO.File.FileBuffering.None));
+                    if (!StatusOk(unbuffered.WriteLine("child"))
+                        || !StatusOk(unbuffered.WriteLine((unicode)"wide"))
+                        || !StatusOk(unbuffered.WriteLine(""))
+                        || !StatusOk(unbuffered.WriteLine(System.Text.UnicodeView(gothic)))
+                        || !StatusOk(unbuffered.Close()))
+                    {
+                        return 4;
+                    }
+
+                    gothic = new Unicode()
+                    {
+                        Data = &gothicBuffer[0],
+                        Length = 1,
+                        Capacity = 1
+                    };
+
                     stack mut System.IO.File.File utf32 = OpenOrEmpty(System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32));
                     utf32.WriteText("Z");
                     utf32.WriteText(System.Text.UnicodeView(gothic));
@@ -569,6 +760,26 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                     if (!StatusOk(utf32.Close()))
                     {
                         return 3;
+                    }
+
+                    if (!WriteRuntimeUtf16Lines("utf16-runtime-none.txt", System.IO.File.FileBuffering.None)
+                        || !WriteRuntimeUtf16Lines("utf16-runtime-full.txt", System.IO.File.FileBuffering.Full)
+                        || !WriteRuntimeUtf16Lines("utf16-runtime-line.txt", System.IO.File.FileBuffering.Line))
+                    {
+                        return 5;
+                    }
+
+                    if (!WriteConstantEncodedLines("constant-none.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.None)
+                        || !WriteConstantEncodedLines("constant-full.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.Full)
+                        || !WriteConstantEncodedLines("constant-line.txt", System.Text.Encoding.UTF16, System.IO.File.FileBuffering.Line)
+                        || !WriteConstantEncodedLines("constant-utf8.txt", System.Text.Encoding.UTF8, System.IO.File.FileBuffering.None))
+                    {
+                        return 6;
+                    }
+
+                    if (CheckUtf16ConversionCapacity() != 0)
+                    {
+                        return 7;
                     }
 
                     return 0;
@@ -616,8 +827,65 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
                 System.Text.Encoding.Unicode.GetBytes("A" + gothic + "Î²\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16.txt")));
             Assert.Equal(
+                System.Text.Encoding.Unicode.GetBytes("child\nwide\n\n" + gothic + "\n"),
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16-unbuffered.txt")));
+            Assert.Equal(
                 System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "Î³\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));
+
+            var runtimeText = new System.Text.StringBuilder();
+            foreach (var length in new[] { 0, 1, 4, 5, 127, 128, 1022, 1023, 1024, 1025 })
+            {
+                for (var representation = 0; representation < 2; representation++)
+                {
+                    for (var i = 0; i < length; i++)
+                    {
+                        runtimeText.Append((char)(i % 128));
+                    }
+                    runtimeText.Append('\n');
+                }
+            }
+            runtimeText.Append("A\0B\u00e9\nA\0B\ufffd\nA\0B\u0080" + gothic + "\ufffd\n");
+            var expectedRuntimeBytes = System.Text.Encoding.Unicode.GetBytes(runtimeText.ToString());
+            foreach (var mode in new[] { "none", "full", "line" })
+            {
+                Assert.Equal(expectedRuntimeBytes,
+                    await File.ReadAllBytesAsync(Path.Combine(appDirectory, $"utf16-runtime-{mode}.txt")));
+            }
+
+            const string constantText = "arbitrary\0text\ncafé 🌍\0\n🌍\n\ufffd\nΩ🌍\n";
+            foreach (var mode in new[] { "none", "full", "line" })
+            {
+                Assert.Equal(System.Text.Encoding.Unicode.GetBytes(constantText),
+                    await File.ReadAllBytesAsync(Path.Combine(appDirectory, $"constant-{mode}.txt")));
+            }
+            var constantUtf8 = System.Text.Encoding.UTF8.GetBytes("arbitrary\0text\ncafé 🌍\0\n🌍\n")
+                .Concat(new byte[] { 0xa9, 10 })
+                .Concat(System.Text.Encoding.UTF8.GetBytes("Ω🌍\n")).ToArray();
+            Assert.Equal(constantUtf8,
+                await File.ReadAllBytesAsync(Path.Combine(appDirectory, "constant-utf8.txt")));
+
+            // The source-free package consumer must retain the optimization facts,
+            // while the runtime-buffer program must stay on the dynamic path.
+            var optimized = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(await File.ReadAllTextAsync(appPath), appPath),
+                new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa",
+                    TargetInfo: (await SharedStdlibPackage.GetAsync()).TargetInfo,
+                    ModuleResolver: new FileSystemModuleResolver(packageDirectory)));
+            Assert.True(optimized.Succeeded, string.Join(Environment.NewLine, optimized.Diagnostics));
+            var ssa = optimized.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var constant = Assert.Single(ssa.Functions, function => function.Name == "WriteConstantEncodedLines");
+            Assert.Contains(constant.Blocks.SelectMany(block => block.Instructions).OfType<SsaValueInstruction>(),
+                instruction => instruction.Value is SsaCallRValue call
+                    && call.Arguments.Any(argument => argument is SsaStaticArrayAddressValue));
+            var dynamic = Assert.Single(ssa.Functions, function => function.Name == "WriteRuntimeUtf16Lines");
+            Assert.DoesNotContain(dynamic.Blocks.SelectMany(block => block.Instructions).OfType<SsaValueInstruction>(),
+                instruction => instruction.Value is SsaCallRValue call
+                    && call.Arguments.Any(argument => argument is SsaStaticArrayAddressValue));
+            var converter = Assert.Single(ssa.Functions, function => function.Name == "CheckUtf16ConversionCapacity");
+            Assert.Contains(converter.Blocks.SelectMany(block => block.Instructions).OfType<SsaValueInstruction>(),
+                instruction => instruction.Value is SsaCallRValue call
+                    && call.Arguments.Any(argument => argument is SsaStaticArrayAddressValue));
         }
         finally
         {

@@ -1,0 +1,15 @@
+{
+  "individual-results.csv": "42bba4ce0e69d2d1ac52c914f5400b682fdf71ae838a78c22565667f9f42e3af",
+  "verification.json": "79f7f4d60d081f6f6bce33aab1b0cf0ff5b1da251da6170cff10553721b6550c",
+  "native-body-classification.json": "9d012c9fadfb8dc8ab3d8f77c9371a9d6473f011126713f8a128891237b1db66",
+  "aggregate.json": "f18dbc5a5dfb62756377c8f7ca11886bd7cbf9ce831f145241df135e28f36960",
+  "README.md": "f22c5569750ed761dcdb0bd387b12a564f812322dbccb6ea4cdb137df3fd22da",
+  "measurement-methods.json.gz": "7fa9831a20ba16650f0b8b732c74918fcd742d82bed883b9027c314c838bf29e",
+  "workload-notes.json": "1069efb7a04b23c1e484c3553831b19e415ecd9ffd417de70afc3acc48bf7723",
+  "raw-samples.json.gz": "29bbcae58eb3790011c5c3b99ee1cb4136efa6461b662e23f68e8fb650bb8dcd",
+  "machine.json": "8bf52b5ef992aa8a4ed3217cc95a54b44563367e6cb2a0788bbabc67d603338d",
+  "machine-after.json": "fd641d9f16d57dae3eb4d6d0cf6de0ef0f3355587edda45d9a94d84643a1256a",
+  "build-provenance.json.gz": "35c4bcc454f8de8b0d4c69db167749904beb2ee9eed57cf51751ca239534a43f",
+  "language-results.csv": "d490ec8b627ee32bbe2de7d71c8b08aa26350a592b8e82ad118778f91bd768dc",
+  "manifest.json": "1d3e767898cacd87f4b788979c3fcbdab230848777e391efa3e5290f1d426610"
+}

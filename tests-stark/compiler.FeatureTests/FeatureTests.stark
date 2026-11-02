@@ -696,9 +696,8 @@ finite law ascii Run()
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "%stark_ascii = type { ptr, i64 }")
-            && Contains(llvm, "define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)")
-            && Contains(llvm, "ret %stark_ascii { ptr getelementptr inbounds nuw ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }");
+        return Contains(llvm, "define fastcc noundef { ptr, i64 } @Echo({ ptr, i64 } noundef %arg_text)")
+            && Contains(llvm, "ret { ptr, i64 } { ptr getelementptr inbounds nuw ([3 x i8], ptr @.str.0, i32 0, i32 0), i64 2 }");
     }
 }
 
@@ -728,12 +727,12 @@ fn unicode SliceUnicode(unicode text, i32[min max] start, i32[min max] length)
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "define fastcc noundef %stark_ascii @SliceAscii(%stark_ascii noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
+        return Contains(llvm, "define fastcc noundef { ptr, i64 } @SliceAscii({ ptr, i64 } noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
             && Contains(llvm, "getelementptr i8, ptr")
-            && Contains(llvm, "insertvalue %stark_ascii")
-            && Contains(llvm, "define fastcc noundef %stark_unicode @SliceUnicode(%stark_unicode noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
+            && Contains(llvm, "insertvalue { ptr, i64 }")
+            && Contains(llvm, "define fastcc noundef { ptr, i64 } @SliceUnicode({ ptr, i64 } noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
             && Contains(llvm, "getelementptr i32, ptr")
-            && Contains(llvm, "insertvalue %stark_unicode");
+            && Contains(llvm, "insertvalue { ptr, i64 }");
     }
 }
 
@@ -763,12 +762,12 @@ fn unicode PickUnicode(unicode text, i32[min max] index)
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "define fastcc noundef %stark_ascii @PickAscii(%stark_ascii noundef %arg_text, i32 noundef %arg_index)")
-            && Contains(llvm, "define fastcc noundef %stark_unicode @PickUnicode(%stark_unicode noundef %arg_text, i32 noundef %arg_index)")
+        return Contains(llvm, "define fastcc noundef { ptr, i64 } @PickAscii({ ptr, i64 } noundef %arg_text, i32 noundef %arg_index)")
+            && Contains(llvm, "define fastcc noundef { ptr, i64 } @PickUnicode({ ptr, i64 } noundef %arg_text, i32 noundef %arg_index)")
             && Contains(llvm, "getelementptr i8, ptr")
             && Contains(llvm, "getelementptr i32, ptr")
-            && Contains(llvm, "insertvalue %stark_ascii")
-            && Contains(llvm, "insertvalue %stark_unicode")
+            && Contains(llvm, "insertvalue { ptr, i64 }")
+            && Contains(llvm, "insertvalue { ptr, i64 }")
             && Contains(llvm, ", i64 1, 1");
     }
 }
@@ -795,8 +794,8 @@ finite law unicode Run()
         }
 
         stack ascii llvm = Llvm(compiled);
-        return Contains(llvm, "define fastcc noundef %stark_unicode @Run()")
-            && Contains(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.")
+        return Contains(llvm, "define fastcc noundef { ptr, i64 } @Run()")
+            && Contains(llvm, "ret { ptr, i64 } { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.")
             && DoesNotContain(llvm, "Unsupported SSA conversion from 'ascii' to 'unicode'");
     }
 }
@@ -892,13 +891,13 @@ public unsafe fn ascii Run()
         stack ascii llvm = Llvm(compiled);
         return Contains(llvm, "%Ascii = type { ptr, i64, i64 }")
             && Contains(llvm, "define fastcc noundef i1 @TryConcatAscii(")
-            && Contains(llvm, "define fastcc noundef %stark_ascii @AsciiView(")
+            && Contains(llvm, "define fastcc noundef { ptr, i64 } @AsciiView(")
             && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr %concat_data, ptr %concat_left_data, i64 %concat_left_bytes, i1 false)")
             && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr %concat_right_dest, ptr %concat_right_data, i64 %concat_right_bytes, i1 false)")
             && Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(")
             && DoesNotContain(llvm, "%concat_left_index = phi i64")
             && Contains(llvm, "call fastcc i1 @TryConcatAscii(")
-            && Contains(llvm, "call fastcc %stark_ascii @AsciiView(");
+            && Contains(llvm, "call fastcc { ptr, i64 } @AsciiView(");
     }
 }
 
@@ -950,7 +949,7 @@ public unsafe fn i64[min max] Run()
 
         stack ascii llvm = Llvm(compiled);
         return Contains(llvm, "call fastcc i1 @TryConcatAscii(")
-            && Contains(llvm, "call fastcc %stark_ascii @AsciiView(")
+            && Contains(llvm, "call fastcc { ptr, i64 } @AsciiView(")
             && Contains(llvm, "call coldcc void @__stark_unreachable_trap()")
             && Contains(llvm, "[4 x i8]");
     }
@@ -1004,7 +1003,7 @@ public unsafe fn i64[min max] Run()
 
         stack ascii llvm = Llvm(compiled);
         return Contains(llvm, "call fastcc i1 @TryConcatUnicode(")
-            && Contains(llvm, "call fastcc %stark_unicode @UnicodeView(")
+            && Contains(llvm, "call fastcc { ptr, i64 } @UnicodeView(")
             && Contains(llvm, "call coldcc void @__stark_unreachable_trap()")
             && Contains(llvm, "[4 x i32]");
     }

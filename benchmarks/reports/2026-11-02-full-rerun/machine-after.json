@@ -1,0 +1,52 @@
+{
+  "captured_utc": "2026-11-02T14:51:14.566626+00:00",
+  "load_average": [
+    1.22216796875,
+    1.7841796875,
+    1.82080078125
+  ],
+  "cpufreq": {
+    "scaling_governor": "powersave",
+    "scaling_cur_freq": "2967713",
+    "scaling_min_freq": "2393223",
+    "scaling_max_freq": "3000000"
+  },
+  "temperatures": {
+    "/sys/class/hwmon/hwmon4/temp1_input": {
+      "millidegrees_C": 44000,
+      "label": null
+    },
+    "/sys/class/hwmon/hwmon0/temp1_input": {
+      "millidegrees_C": 41850,
+      "label": "Composite"
+    },
+    "/sys/class/hwmon/hwmon3/temp6_input": {
+      "millidegrees_C": 0,
+      "label": "CPU VRM Temperature"
+    },
+    "/sys/class/hwmon/hwmon3/temp3_input": {
+      "millidegrees_C": 36000,
+      "label": "Motherboard Temperature"
+    },
+    "/sys/class/hwmon/hwmon3/temp4_input": {
+      "millidegrees_C": 49000,
+      "label": "Chipset Temperature"
+    },
+    "/sys/class/hwmon/hwmon3/temp1_input": {
+      "millidegrees_C": 38000,
+      "label": "CPU Temperature"
+    },
+    "/sys/class/hwmon/hwmon3/temp5_input": {
+      "millidegrees_C": 216000,
+      "label": "Tsensor 1 Temperature"
+    },
+    "/sys/class/hwmon/hwmon3/temp2_input": {
+      "millidegrees_C": 34000,
+      "label": "CPU Socket Temperature"
+    },
+    "/sys/class/hwmon/hwmon1/temp1_input": {
+      "millidegrees_C": 38250,
+      "label": "Tctl"
+    }
+  }
+}

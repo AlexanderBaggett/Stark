@@ -1699,7 +1699,10 @@ internal static class CompilerCli
         bool requiresNtDllLibrary,
         LlvmTargetInfo? targetInfo)
     {
-        if ((!requiresMathLibrary || explicitArguments.Contains("-lm", StringComparer.Ordinal))
+        var mathLinkArgument = ImplicitMathLinkArgument(targetInfo);
+        var hasMathLinkArgument = explicitArguments.Contains("-lm", StringComparer.Ordinal)
+            || explicitArguments.Contains(mathLinkArgument, StringComparer.Ordinal);
+        if ((!requiresMathLibrary || hasMathLinkArgument)
             && (!requiresWinsockLibrary || ContainsWinsockLinkArgument(explicitArguments))
             && (!requiresWindowsSynchronizationLibrary || ContainsWindowsSynchronizationLinkArgument(explicitArguments))
             && (!requiresNtDllLibrary || ContainsNtDllLinkArgument(explicitArguments)))
@@ -1708,9 +1711,9 @@ internal static class CompilerCli
         }
 
         var combined = explicitArguments.ToList();
-        if (requiresMathLibrary && !explicitArguments.Contains("-lm", StringComparer.Ordinal))
+        if (requiresMathLibrary && !hasMathLinkArgument)
         {
-            combined.Add("-lm");
+            combined.Add(mathLinkArgument);
         }
 
         if (requiresWinsockLibrary && !ContainsWinsockLinkArgument(explicitArguments))
@@ -1729,6 +1732,19 @@ internal static class CompilerCli
         }
 
         return combined;
+    }
+
+    private static string ImplicitMathLinkArgument(LlvmTargetInfo? targetInfo)
+    {
+        var supportsScopedMathDependency = targetInfo?.Triple is { Length: > 0 } triple
+            ? triple.Contains("linux", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("freebsd", StringComparison.OrdinalIgnoreCase)
+            : OperatingSystem.IsLinux() || OperatingSystem.IsFreeBSD();
+
+        // Pre-optimization math intrinsics may disappear during final linking.
+        // Keep that dependency conditional without changing explicit libraries or
+        // the surrounding linker state.
+        return supportsScopedMathDependency ? "-Wl,--push-state,--as-needed,-lm,--pop-state" : "-lm";
     }
 
     private static StarkPackageNativeDependencyManifest? BuildPackageNativeDependencyManifest(
@@ -1750,12 +1766,14 @@ internal static class CompilerCli
 
         var libraries = manifest?.Libraries?.ToList() ?? [];
         var linkArguments = manifest?.LinkArguments ?? [];
+        var implicitLibraries = manifest?.ImplicitLibraries?.ToList() ?? [];
 
         if (requiresMathLibrary
             && !ContainsNativeLibraryName(libraries, "m")
             && !linkArguments.Contains("-lm", StringComparer.Ordinal))
         {
             libraries.Add("m");
+            implicitLibraries.Add("m");
         }
 
         if (requiresWinsockLibrary
@@ -1790,7 +1808,8 @@ internal static class CompilerCli
             LibraryDirectories: manifest?.LibraryDirectories,
             Libraries: libraries.Count == 0 ? null : CombineDistinct(libraries),
             LinkArguments: manifest?.LinkArguments,
-            PkgConfigPackages: manifest?.PkgConfigPackages);
+            PkgConfigPackages: manifest?.PkgConfigPackages,
+            ImplicitLibraries: implicitLibraries.Count == 0 ? null : implicitLibraries);
     }
 
     private static bool ContainsNativeLibraryName(IReadOnlyList<string> libraries, string name)
@@ -2229,7 +2248,11 @@ internal static class CompilerCli
                     continue;
                 }
 
-                linkArguments.Add(FormatNativeLibraryArgument(library.Trim(), compilerOptions.TargetInfo));
+                var name = library.Trim();
+                linkArguments.Add(string.Equals(name, "m", StringComparison.Ordinal)
+                    && dependencySet.Dependencies.ImplicitLibraries?.Contains(name, StringComparer.Ordinal) == true
+                        ? ImplicitMathLinkArgument(compilerOptions.TargetInfo)
+                        : FormatNativeLibraryArgument(name, compilerOptions.TargetInfo));
             }
 
             foreach (var linkArgument in dependencySet.Dependencies.LinkArguments ?? [])

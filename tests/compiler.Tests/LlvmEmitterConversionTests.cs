@@ -149,8 +149,8 @@ public sealed class LlvmEmitterConversionTests
         var llvm = EmitSingleUse(new SsaStringConstant("hello", StarkTypeSymbols.Ascii));
 
         Assert.Contains("define", llvm);
-        Assert.DoesNotContain("add %stark_ascii", llvm);
-        Assert.Contains("ret %stark_ascii { ptr getelementptr", llvm);
+        Assert.DoesNotContain("add { ptr, i64 }", llvm);
+        Assert.Contains("ret { ptr, i64 } { ptr getelementptr", llvm);
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public sealed class LlvmEmitterConversionTests
 
         Assert.DoesNotContain("define", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
-        Assert.Contains("declare fastcc noundef %stark_unicode @Run()", llvm);
+        Assert.Contains("declare fastcc noundef { ptr, i64 } @Run()", llvm);
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("define", llvm);
         Assert.Contains("@Run()", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'unicode' to 'ascii'.", llvm);
-        Assert.Contains("declare fastcc noundef %stark_ascii @Run()", llvm);
+        Assert.Contains("declare fastcc noundef { ptr, i64 } @Run()", llvm);
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public sealed class LlvmEmitterConversionTests
         Assert.DoesNotContain("define", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
         Assert.Contains("declaration omitted for source body 'Run'", llvm);
-        Assert.DoesNotContain("declare fastcc noundef %stark_unicode @Run()", llvm);
+        Assert.DoesNotContain("declare fastcc noundef { ptr, i64 } @Run()", llvm);
     }
 
     private static string EmitSingleConversion(

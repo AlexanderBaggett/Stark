@@ -68,7 +68,8 @@ internal sealed record StarkPackageNativeDependencyManifest(
     IReadOnlyList<string>? LibraryDirectories = null,
     IReadOnlyList<string>? Libraries = null,
     IReadOnlyList<string>? LinkArguments = null,
-    IReadOnlyList<string>? PkgConfigPackages = null);
+    IReadOnlyList<string>? PkgConfigPackages = null,
+    IReadOnlyList<string>? ImplicitLibraries = null);
 
 internal sealed record StarkPackageModuleManifest(
     string ModuleName,
@@ -812,7 +813,8 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     IReadOnlyList<StarkPackageTemplateFunctionAddressManifest>? FunctionAddresses = null,
     IReadOnlyList<StarkPackageTemplateBoundOperationManifest>? BoundOperations = null,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageTemplateTryPropagationManifest>? TryPropagations = null);
+    IReadOnlyList<StarkPackageTemplateTryPropagationManifest>? TryPropagations = null,
+    bool IsGeneric = true);
 
 /// <summary>
 /// Republished `try` propagation facts for one `try` expression inside an exported generic

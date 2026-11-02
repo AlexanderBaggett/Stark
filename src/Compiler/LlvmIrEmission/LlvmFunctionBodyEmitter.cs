@@ -278,6 +278,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     public void Emit()
     {
+        var bodyStart = _builder.Length;
         if (_ssaFunction.Blocks.Count == 0)
         {
             _currentDebugLocation = _ssaFunction.Location;
@@ -356,6 +357,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _currentInstructionIndex = -1;
 
         FlushEntryStaticAllocas();
+        RemoveUnusedAggregateLoads(bodyStart);
     }
 
 

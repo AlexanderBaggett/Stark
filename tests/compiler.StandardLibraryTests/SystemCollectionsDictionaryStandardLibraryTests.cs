@@ -106,7 +106,8 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             }
 
             stack u32[0 2 ** 31 - 1] updateKey = 64;
-            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128)
+            stack u64[0 2 ** 63 - 1] updateCapacity = dictionary.Capacity();
+            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128 || dictionary.Capacity() != updateCapacity)
             {
                 return 6;
             }
@@ -149,6 +150,16 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                     || !Ok(clustered.Set(clusterKeyThree, 170)))
                     {
                         return 27;
+                }
+
+                stack u64[0 2 ** 63 - 1] clusterCapacity = clustered.Capacity();
+                if (!Ok(clustered.Set(clusterKeyTwo, 91))
+                    || !clustered.TryGet(clusterKeyTwo, found)
+                    || found != 91 || clustered.Count() != 3
+                    || clustered.Capacity() != clusterCapacity
+                    || !Ok(clustered.Set(clusterKeyTwo, 90)))
+                {
+                    return 30;
                 }
 
                 if (!clustered.Remove(clusterKeyOne)
@@ -327,9 +338,25 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                 return false;
             }
 
+            stack u64[0 2 ** 63 - 1] asciiCapacity = asciiMap.Capacity();
+            if (!Ok(asciiMap.Set(alphaAgain, 12))
+                || !asciiMap.TryGet(alpha, found) || found != 12
+                || asciiMap.Count() != 1 || asciiMap.Capacity() != asciiCapacity)
+            {
+                return false;
+            }
+
             stack unicode gamma = (unicode)"gamma";
             stack unicode gammaAgain = (unicode)"gamma";
             stack unicode delta = (unicode)"delta";
+            stack mut Dictionary<unicode, u32[0 max]> unicodeMap = new();
+            if (!Ok(unicodeMap.Set(gamma, 44)) || !Ok(unicodeMap.Set(gammaAgain, 45))
+                || !unicodeMap.TryGet(gamma, found) || found != 45
+                || unicodeMap.Count() != 1 || unicodeMap.ContainsKey(delta))
+            {
+                return false;
+            }
+
             stack mut HashSet<unicode> unicodeSet = new();
             if (!Ok(unicodeSet.Add(gamma)))
             {
@@ -373,6 +400,13 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             if (!TryGetAsciiKey(ownedAsciiMap, alphaAgain, found)
                 || found != 33
                 || ContainsAsciiKey(ownedAsciiMap, beta))
+            {
+                return false;
+            }
+
+            if (!Ok(ownedAsciiMap.Set(ownedAlphaAgain, 34))
+                || !TryGetAsciiKey(ownedAsciiMap, alpha, found)
+                || found != 34 || ownedAsciiMap.Count() != 1)
             {
                 return false;
             }
@@ -446,23 +480,29 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         """;
 
     [Fact]
-    public void StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+    public void StdLibSourceDictionaryKeepsStorageFieldsInternal()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var source = File.ReadAllText(Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark"));
-
-        Assert.Contains("Raw pointer boundary: Dictionary keeps sparse key/value/control storage", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<K> Keys;", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<V> Values;", source, StringComparison.Ordinal);
-        Assert.Contains("internal rawmutptr<u8[0 2]> States;", source, StringComparison.Ordinal);
-        Assert.Contains("internal System.Memory.Allocation KeysAllocation;", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("public rawptr", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("public rawmutptr", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", source, StringComparison.Ordinal);
+        var result = DefaultCompilerPipeline.Create().Run(new CompilationInput("""
+            import System.Collections
+            module Demo
+            fn u64[0 max] ReadCount()
+            {
+                stack Dictionary<u32[0 max],u32[0 max]> values = new();
+                return values.Count();
+            }
+            """, Path.Combine(repositoryRoot, "tests", "tmp", "DictionaryVisibility.stark")), new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(Path.Combine(repositoryRoot, "stdlib", "src")),
+                StopAfterPassId: "semantic-validate"));
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics));
+        var dictionary = Assert.Single(result.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel).NamedTypes.Values,
+            type => type.Name == "System.Collections.Dictionary<u32,u32>");
+        Assert.NotEmpty(dictionary.Fields);
+        Assert.All(dictionary.Fields.Values, field => Assert.Equal(StarkVisibility.Internal, field.Visibility));
     }
 
     [Fact]
-    public void StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
+    public void StdLibSourcePromotedDictionaryPreservesSparseValueStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -522,22 +562,19 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryValueSlot", llvm.Text, StringComparison.Ordinal);
 
-        var reserveBody = ExtractDefinedFunctionText(
+        var storageBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(",
-            "Expected Dictionary.Reserve specialization to be emitted.");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_GrowStorage__u32_0_2147483647__u32_0_2147483647(",
+            "Expected Dictionary.GrowStorage specialization to be emitted.");
         var tryGetBody = ExtractDefinedFunctionText(
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__u32_0_2147483647__u32_0_2147483647(",
             "Expected Dictionary.TryGet specialization to be emitted.");
 
-        Assert.Contains("@System_Memory_Allocate(", reserveBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Memory_Free(", reserveBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", storageBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", storageBody, StringComparison.Ordinal);
         Assert.DoesNotContain("switch", tryGetBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("DictionaryValueSlot", tryGetBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -561,7 +598,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var findIndexBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__u32__u32(");
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndexAfterHome__u32__u32(");
         var findInsertionBody = ExtractDefinedFunctionText(
             llvm,
             "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__u32__u32(");
@@ -735,18 +772,12 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32",
             "Expected custom-key Dictionary.TryGet specialization to be emitted.");
-        var findIndexBody = ExtractDefinedFunctionText(
-            llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32",
-            "Expected custom-key Dictionary.FindIndex specialization to be emitted.");
-        Assert.Contains("load i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("zext i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq i32", findIndexBody, StringComparison.Ordinal);
-        Assert.Contains("!tbaa", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("load i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("zext i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i32", tryGetBody, StringComparison.Ordinal);
+        Assert.Contains("!tbaa", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Hash", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Equals", tryGetBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -764,10 +795,10 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
         Assert.NotNull(llvm);
-        Assert.Contains("define internal dso_local i64 @__stark_ascii_hash(%stark_ascii %value)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i64 @__stark_unicode_hash(%stark_unicode %value)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i64 @__stark_ascii_hash({ ptr, i64 } %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i64 @__stark_unicode_hash({ ptr, i64 } %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal({ ptr, i64 } %left, { ptr, i64 } %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal({ ptr, i64 } %left, { ptr, i64 } %right)", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedAscii_Hash", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedAscii_Equals", llvm.Text, StringComparison.Ordinal);
         Assert.Contains("OwnedUnicode_Hash", llvm.Text, StringComparison.Ordinal);

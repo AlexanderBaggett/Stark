@@ -1155,6 +1155,12 @@ derived structurally:
 * a type with a destructor is never copyable
 * anything owning — `dynamic` storage, the `Ascii` / `Unicode` owning text containers, heap closures, heap `dyn` trait objects — is never copyable
 
+Generic code can query the shared proof with
+`comptime System.Compiler.IsCopyable<T>()`. A true result guarantees a
+byte-safe copy with no drop obligation, allowing collection cleanup to use a
+bulk operation. The query is conservative for unresolved generic types and
+borrow-qualified values; false does not necessarily mean destruction has effects.
+
 Reads of copyable values out of fields, indexed places, and locals are
 copies, not moves: the source stays usable, and accessors can return the
 value directly.
@@ -3089,6 +3095,10 @@ pointer accesses remove it and emit the corresponding `memory(none)` or
 direction-flag, floating-point-status, and flags clobbers. Ordinary calls and
 function addresses use normal reachability; only explicit `symbol(...)`
 references are rooted through `@llvm.used`.
+
+An assembly declaration can use `finite` in place of `fn` when its author
+guarantees that it returns. This does not make the assembly a `law` or remove
+its side effects.
 
 ### 13.3 Unsafe Operations
 

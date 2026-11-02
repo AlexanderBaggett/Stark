@@ -968,6 +968,14 @@ internal static class NativeToolchain
             {
                 yield return "-fuse-ld=lld";
             }
+
+            if (linkerIsClangDriver)
+            {
+                foreach (var argument in GetBranchAlignmentArguments(targetInfo, forLtoLink: true))
+                {
+                    yield return argument;
+                }
+            }
         }
 
         foreach (var objectPath in objectPaths)
@@ -1178,6 +1186,11 @@ internal static class NativeToolchain
 
     private static void AppendTargetCodegenArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo, bool compileOnly)
     {
+        foreach (var argument in GetBranchAlignmentArguments(targetInfo))
+        {
+            arguments.Add(argument);
+        }
+
         if (targetInfo is null)
         {
             return;
@@ -1205,6 +1218,37 @@ internal static class NativeToolchain
         }
 
         AppendCodegenModelArguments(arguments, targetInfo, compileOnly);
+    }
+
+    private static IEnumerable<string> GetBranchAlignmentArguments(LlvmTargetInfo? targetInfo, bool forLtoLink = false)
+    {
+        var architecture = targetInfo?.Triple.Split('-', 2, StringSplitOptions.TrimEntries)[0];
+        var isX86 = architecture is null
+            ? System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture is
+                System.Runtime.InteropServices.Architecture.X86 or System.Runtime.InteropServices.Architecture.X64
+            : architecture.ToLowerInvariant() is "x86" or "i386" or "i486" or "i586" or "i686" or "x86_64" or "amd64";
+        if (isX86)
+        {
+            // Keep branches and fused compare/branch pairs within fetch boundaries.
+            // Apply this at native emission and again at the ThinLTO link: bitcode
+            // does not retain assembler options. Darwin and MSVC link drivers do
+            // not forward Clang's branch-alignment flag to their LTO backends.
+            var triple = targetInfo?.Triple ?? (OperatingSystem.IsWindows() ? "windows-msvc"
+                : OperatingSystem.IsMacOS() ? "apple-darwin" : string.Empty);
+            if (forLtoLink && triple.Contains("apple", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return "-Wl,-mllvm,-x86-branches-within-32B-boundaries";
+            }
+            else if (forLtoLink && triple.Contains("windows", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("gnu", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return "-Wl,/mllvm:-x86-branches-within-32B-boundaries";
+            }
+            else
+            {
+                yield return "-mbranches-within-32B-boundaries";
+            }
+        }
     }
 
     private static void AppendTargetCpuArgument(ICollection<string> arguments, LlvmTargetInfo targetInfo)

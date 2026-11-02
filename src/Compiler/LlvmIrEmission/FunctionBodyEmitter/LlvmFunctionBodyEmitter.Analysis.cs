@@ -7,7 +7,44 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed partial class LlvmFunctionBodyEmitter
 {
-    private static HashSet<string> CollectReferencedValueNames(SsaFunction function)
+    private readonly HashSet<string> _aggregateLoadResults = new(StringComparer.Ordinal);
+
+    private void RemoveUnusedAggregateLoads(int bodyStart)
+    {
+        if (_aggregateLoadResults.Count == 0) return;
+
+        // SSA consumers can lower to memcpy, GEP or a structured sret store instead
+        // of using the loaded register. Keep the original snapshot at its original
+        // position until all consumers have been rendered: mutation can make that
+        // snapshot necessary. Only then discard a nonvolatile load with no LLVM
+        // uses, before SROA can expand it into thousands of dead element operations.
+        // Count complete identifiers (including debug uses); an apparent use in
+        // other textual content can conservatively retain a load, never delete one.
+        var body = _builder.ToString(bodyStart, _builder.Length - bodyStart);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match match in
+                 System.Text.RegularExpressions.Regex.Matches(body, @"%[\w.$-]+"))
+        {
+            if (_aggregateLoadResults.Contains(match.Value))
+                counts[match.Value] = counts.GetValueOrDefault(match.Value) + 1;
+        }
+
+        var offset = body.Length;
+        foreach (var line in body.Split('\n').Reverse())
+        {
+            offset -= line.Length;
+            var trimmed = line.TrimStart();
+            var end = trimmed.IndexOf(" = load ", StringComparison.Ordinal);
+            if (end > 0 && counts.TryGetValue(trimmed[..end], out var count) && count == 1)
+            {
+                var length = line.Length + (offset + line.Length < body.Length ? 1 : 0);
+                _builder.Remove(bodyStart + offset, length);
+            }
+            offset--;
+        }
+    }
+
+    private HashSet<string> CollectReferencedValueNames(SsaFunction function)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
@@ -172,19 +209,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         void VisitDirectCall(ISsaDirectCallOperation call)
         {
-            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses);
+            var abi = _context.TryGetAsmFunction(call.FunctionName, out _)
+                ? null : _resolveCallAbi(_function.Name, call.FunctionName);
+            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses, abi?.UserParameters);
         }
 
         void VisitIndirectCall(ISsaIndirectCallOperation call)
         {
             VisitValue(call.Target);
-            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses);
+            VisitCallArguments(call.Arguments, call.IndirectArgumentLocalNames, call.IndirectArgumentAddresses,
+                BuildIndirectCallAbi(call).UserParameters);
         }
 
         void VisitCallArguments(
             IReadOnlyList<SsaValue> arguments,
             IReadOnlyList<string?>? indirectArgumentLocalNames,
-            IReadOnlyList<SsaValue?>? indirectArgumentAddresses)
+            IReadOnlyList<SsaValue?>? indirectArgumentAddresses,
+            IReadOnlyList<AbiParameterSymbol>? parameters)
         {
             for (var index = 0; index < arguments.Count; index++)
             {
@@ -196,10 +237,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     continue;
                 }
 
-                // A promoted local is not necessarily the value used at the
-                // call site: direct pointer-backed borrows still render the SSA
-                // argument itself. Keep that value live conservatively; an
-                // indirect ABI call may emit one harmless unused local load.
+                // Indirect ABI calls pass this storage, not the register snapshot.
+                // Keep direct pointer-backed borrows live: they render the value.
+                if (parameters is not null && index < parameters.Count
+                    && parameters[index].Kind == AbiParameterKind.IndirectIn
+                    && ShouldPreferAddressBasedAggregateLowering(arguments[index].Type)
+                    && !StarkTypeSymbols.IsPointerBackedBorrowType(arguments[index].Type)
+                    && indirectArgumentLocalNames is not null && index < indirectArgumentLocalNames.Count
+                    && !string.IsNullOrWhiteSpace(indirectArgumentLocalNames[index]))
+                {
+                    continue;
+                }
+
                 VisitValue(arguments[index]);
             }
 
@@ -923,6 +972,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     break;
                 case SsaStringConstant:
                 case SsaTextDataAddressValue:
+                case SsaStaticArrayAddressValue:
                     break;
                 default:
                     AddAddressValueRoots(value, visitedValueNames);

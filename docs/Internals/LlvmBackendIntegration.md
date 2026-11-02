@@ -7,6 +7,37 @@ The self-hosted compiler uses **libLLVM as the primary backend integration**.
 Textual LLVM remains a debug and artifact-inspection output, never a compiler
 input.
 
+Text views use the structural LLVM type `{ ptr, i64 }` for their pointer and
+code-unit count. ASCII and Unicode remain distinct Stark types, retaining their
+encoding, element type, ranges, provenance and ownership facts. The pointer uses
+the target's pointer width; the count remains i64. Physical layout and the native
+ABI are unchanged. FFI pointer lowering is unchanged.
+
+Do not give these equal physical views separate identified LLVM struct names.
+ThinLTO can merge equal identified structs while leaving a call's function type
+different from the imported definition. LLVM then cannot recognize the direct
+callee, even with explicit inline intent. Literal structs have stable structural
+identity across modules. Existing native packages remain ABI compatible; their
+old bitcode may need rebuilding to benefit from the corrected type identity.
+
+Large aggregate arguments retain their value and storage facts in SSA. When the
+resolved call ABI passes an existing local or parameter address, LLVM emission
+does not need an otherwise unused aggregate register snapshot. Omit those dead
+loads before LLVM's aggregate splitting; a single large load can otherwise
+expand into thousands of element loads and insertions before it is removed.
+Apply the same rule to direct and indirect calls. Keep snapshots with actual
+value consumers, required copies and ownership operations, and pointer-backed
+borrow values that the call renderer still uses. Assembly calls without a
+resolved ordinary ABI remain conservative. Source and package consumers use the
+same resolved ABI and target-layout rules.
+
+Address-based copies, field reads and structured returns can also leave an SSA
+snapshot without a native register consumer. After rendering a function, discard
+only emitted nonvolatile aggregate loads whose result has no LLVM uses. Keep the
+load at its original position until this check; delaying a live load across a
+mutation would change its snapshot. SSA facts, copies, lifetimes and ownership
+operations remain intact.
+
 ## 1. Locked Decision
 
 The blessed backend shape is:

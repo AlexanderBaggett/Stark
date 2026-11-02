@@ -168,8 +168,7 @@ internal static partial class PackageImageBuilder
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
-                if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature)
-                    || !functionSignature.IsGeneric)
+                if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature))
                 {
                     return null;
                 }
@@ -299,7 +298,8 @@ internal static partial class PackageImageBuilder
                     FunctionAddresses: BuildPublishedTemplateFunctionAddresses(module, functionPointerPromotions),
                     BoundOperations: BuildPublishedTemplateBoundOperations(module, function.Body, boundOperations),
                     BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode),
-                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations));
+                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations),
+                    IsGeneric: functionSignature.IsGeneric);
             })
             .Where(static template => template is not null)
             .Cast<StarkPackageFunctionTemplateManifest>()
@@ -326,7 +326,7 @@ internal static partial class PackageImageBuilder
 
         foreach (var candidate in candidates)
         {
-            if (GenericTemplatePublicationPolicy.HasPublishedApiVisibility(candidate.Function.Visibility))
+            if (GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(candidate.Function, candidate.Signature))
             {
                 Enqueue(candidate.LookupName);
             }
@@ -348,7 +348,7 @@ internal static partial class PackageImageBuilder
             {
                 foreach (var promotion in functionPointerPromotions)
                 {
-                    EnqueueTemplate(promotion.Signature.TemplateName);
+                    EnqueueTemplate(promotion.Signature.TemplateName ?? promotion.Signature.Name);
                 }
             }
 
@@ -359,10 +359,10 @@ internal static partial class PackageImageBuilder
                     switch (operation)
                     {
                         case BoundDirectCallOperation directCall:
-                            EnqueueTemplate(directCall.Signature.TemplateName);
+                            EnqueueTemplate(directCall.Signature.TemplateName ?? directCall.Signature.Name);
                             break;
                         case BoundMemberCallOperation memberCall:
-                            EnqueueTemplate(memberCall.Signature.TemplateName);
+                            EnqueueTemplate(memberCall.Signature.TemplateName ?? memberCall.Signature.Name);
                             break;
                     }
                 }
@@ -506,19 +506,9 @@ internal static partial class PackageImageBuilder
             .Where(item => enumConstructorsByLocation.ContainsKey(
                 BuildTemplateEnumConstructorLookupKey(item.enumConstructor.Start.Line, item.enumConstructor.Start.Column + 1)))
             .ToDictionary(static item => item.enumConstructor, static item => item.ordinal);
-        var enumCallsByLocation = (enumCalls ?? [])
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var syntacticEnumCallReferences = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes);
-        var enumCallOrdinals = syntacticEnumCallReferences.Count > 0
-            ? syntacticEnumCallReferences
-                .Select((reference, ordinal) => (reference.Context, ordinal))
-                .ToDictionary(static item => item.Context, static item => item.ordinal)
-            : CollectTemplateDirectCallArgumentLists(functionBody)
-                .Select((argumentList, ordinal) => (argumentList, ordinal))
-                .Where(item => enumCallsByLocation.ContainsKey(
-                    TemplateDirectCallFacts.BuildLookupKey(item.argumentList.Start.Line, item.argumentList.Start.Column + 1)))
-                .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var enumCallOrdinals = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes, enumCalls)
+            .Select((reference, ordinal) => (reference.Context, ordinal))
+            .ToDictionary(static item => item.Context, static item => item.ordinal);
         var enumValuesByLocation = (enumValues ?? [])
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
@@ -626,7 +616,7 @@ internal static partial class PackageImageBuilder
         for (var index = 0; index < publishedStatements.Count - 1; index++)
         {
             if (!string.Equals(publishedStatements[index].Kind, "local-variable", StringComparison.Ordinal)
-                && !string.Equals(publishedStatements[index].Kind, "block", StringComparison.Ordinal)
+                && !IsScopedTemplateStatement(publishedStatements[index].Kind)
                 && !string.Equals(publishedStatements[index].Kind, "empty", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "expression", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
@@ -643,11 +633,14 @@ internal static partial class PackageImageBuilder
         return AssignTypedTemplateTryOrdinals(new StarkPackageTypedTemplateBodyManifest(publishedStatements));
     }
 
+    private static bool IsScopedTemplateStatement(string kind) =>
+        kind is "block" or "unsafe-block" or "assume-disjoint";
+
     private static bool CanUsePublishedTypedTemplateImplicitVoidReturnStatement(
         StarkPackageTypedTemplateStatementManifest statement)
     {
         return string.Equals(statement.Kind, "local-variable", StringComparison.Ordinal)
-            || string.Equals(statement.Kind, "block", StringComparison.Ordinal)
+            || IsScopedTemplateStatement(statement.Kind)
             || string.Equals(statement.Kind, "empty", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "expression", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
@@ -715,8 +708,9 @@ internal static partial class PackageImageBuilder
                     Expression = AssignExpression(statement.Expression)!,
                     SwitchCases = AssignSwitchCases(statement.SwitchCases)
                 },
-                "block" => statement with
+                "block" or "unsafe-block" or "assume-disjoint" => statement with
                 {
+                    Expression = AssignExpression(statement.Expression)!,
                     BodyStatements = AssignStatements(statement.BodyStatements)
                 },
                 _ => statement with
@@ -882,7 +876,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
     {
-        if (statement.block() is { } block)
+        if ((statement.block() ?? statement.unsafeStatement()?.block()) is { } block)
         {
             if (!TryBuildPublishedTypedTemplateStatementList(
                     module,
@@ -913,9 +907,72 @@ internal static partial class PackageImageBuilder
             publishedStatements =
             [
                 new StarkPackageTypedTemplateStatementManifest(
-                    Kind: "block",
+                    Kind: statement.unsafeStatement() is null ? "block" : "unsafe-block",
                     BodyStatements: blockStatements)
             ];
+            return true;
+        }
+
+        if ((statement.assumeStatement() ?? statement.unsafeStatement()?.assumeStatement()) is { } assumeStatement)
+        {
+            var regions = new List<StarkPackageTypedTemplateExpressionManifest>();
+            foreach (var region in assumeStatement.disjointRuntimeCondition().expressionList().expression())
+            {
+                if (!TryBuildPublishedTypedTemplateExpression(
+                        module,
+                        region,
+                        namedTypes,
+                        literalsByLocation,
+                        conversionsByLocation,
+                        objectCreationOrdinals,
+                        enumConstructorOrdinals,
+                        enumCallOrdinals,
+                        enumValueOrdinals,
+                        functionAddressOrdinals,
+                        directCallOrdinals,
+                        dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
+                        memberCallOrdinals,
+                        fieldAccessOrdinals,
+                        out var publishedRegion))
+                {
+                    publishedStatements = [];
+                    return false;
+                }
+                regions.Add(publishedRegion);
+            }
+            if (!TryBuildPublishedTypedTemplateBranchStatement(
+                    module,
+                    assumeStatement.statement(),
+                    namedTypes,
+                    literalsByLocation,
+                    localDeclarationsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    localStorageCapacitiesByLocation,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var assumedBody))
+            {
+                publishedStatements = [];
+                return false;
+            }
+            StarkPackageTypedTemplateStatementManifest assumed = new(
+                Kind: "assume-disjoint",
+                Expression: new StarkPackageTypedTemplateExpressionManifest("disjoint-condition", Arguments: regions),
+                BodyStatements: assumedBody);
+            publishedStatements = [statement.unsafeStatement() is null
+                ? assumed
+                : new StarkPackageTypedTemplateStatementManifest("unsafe-block", BodyStatements: [assumed])];
             return true;
         }
 
@@ -1692,7 +1749,7 @@ internal static partial class PackageImageBuilder
             return statement.Expression is not null || returnType.Kind == StarkTypeKind.Void;
         }
 
-        if (string.Equals(statement.Kind, "block", StringComparison.Ordinal))
+        if (IsScopedTemplateStatement(statement.Kind))
         {
             return statement.BodyStatements is { Count: > 0 }
                 && CanUseTypedTemplateStatementListAsTerminal(statement.BodyStatements, returnType);
@@ -3557,7 +3614,13 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
-        publishedExpression = null!;
+        // Preserve the intrinsic and its arguments before ordinary call lowering,
+        // including facts nested within a compound comptime expression.
+        if (TryBuildPublishedTypedTemplateStructuralFactExpression(
+                module, postfixExpression, out publishedExpression))
+        {
+            return true;
+        }
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
         StarkPackageTypedTemplateExpressionManifest? baseExpression = null;
@@ -3957,8 +4020,7 @@ internal static partial class PackageImageBuilder
                     && postfixParts[index + 1].argumentList() is { } chainedDirectArgumentList)
                 {
                     var enumCallOrdinal = -1;
-                    var hasChainedEnumCall = publishedExpression.Kind == "name"
-                        && enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out enumCallOrdinal);
+                    var hasChainedEnumCall = enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out enumCallOrdinal);
                     var directCallOrdinal = -1;
                     var hasChainedDirectCall = !dynamicStorageOperationOrdinals.ContainsKey(chainedDirectArgumentList)
                         && directCallOrdinals.TryGetValue(chainedDirectArgumentList, out directCallOrdinal);
@@ -4618,7 +4680,7 @@ internal static partial class PackageImageBuilder
         {
             if (TryBuildPublishedTypedTemplateStructuralFactExpression(
                 module,
-                operandExpression,
+                TryGetSimplePostfixExpression(operandExpression),
                 out publishedExpression))
             {
                 return true;
@@ -4720,7 +4782,7 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*")
+        if (operatorText is not ("+" or "-" or "-%" or "!" or "~" or "*" or "init")
             || !TryBuildPublishedTypedTemplateUnaryExpression(
                 module,
                 operandExpression,
@@ -5150,36 +5212,11 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyList<EnumCallTypingRecord>? enumCalls)
     {
-        var syntacticReferences = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes);
-        if (syntacticReferences.Count > 0)
-        {
-            return syntacticReferences
-                .Select((reference, ordinal) => new StarkPackageTemplateEnumCallManifest(
+        var published = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes, enumCalls)
+            .Select((reference, ordinal) => new StarkPackageTemplateEnumCallManifest(
                     ordinal,
                     BuildPublishedAbiTypeReference(reference.EnumType, module),
                     reference.VariantName))
-                .ToArray();
-        }
-
-        if (enumCalls is not { Count: > 0 })
-        {
-            return null;
-        }
-
-        var enumCallsByLocation = enumCalls
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var published = CollectTemplateDirectCallArgumentLists(functionBody)
-            .Select((argumentList, ordinal) => enumCallsByLocation.TryGetValue(
-                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
-                    out var record)
-                ? new StarkPackageTemplateEnumCallManifest(
-                    ordinal,
-                    BuildPublishedAbiTypeReference(record.EnumType, module),
-                    record.VariantName)
-                : null)
-            .Where(static enumCall => enumCall is not null)
-            .Cast<StarkPackageTemplateEnumCallManifest>()
             .ToArray();
 
         return published.Length == 0 ? null : published;
@@ -6122,12 +6159,10 @@ internal static partial class PackageImageBuilder
 
     private static bool TryBuildPublishedTypedTemplateStructuralFactExpression(
         LoadedModuleDocument module,
-        StarkParser.UnaryExpressionContext operandExpression,
+        StarkParser.PostfixExpressionContext? postfixExpression,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
     {
         publishedExpression = null!;
-
-        var postfixExpression = TryGetSimplePostfixExpression(operandExpression);
         if (postfixExpression?.primaryExpression()?.genericQualifiedName() is not { } genericQualifiedName
             || postfixExpression.postfixPart().Length != 1
             || postfixExpression.postfixPart()[0].argumentList() is not { } argumentList
@@ -6966,18 +7001,24 @@ internal static partial class PackageImageBuilder
 
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
-        if (primaryExpression is null || postfixParts.Length != 1)
+        if (primaryExpression is null || postfixParts.Length == 0)
         {
             return false;
         }
 
-        var variantPart = postfixParts[0];
+        var variantPart = postfixParts[^1];
         var enumTypeName = primaryExpression.Identifier()?.GetText()
             ?? primaryExpression.qualifiedName()?.GetText();
         var variantName = variantPart.Identifier()?.GetText();
         if (enumTypeName is null || variantName is null)
         {
             return false;
+        }
+
+        foreach (var qualifier in postfixParts.Take(postfixParts.Length - 1))
+        {
+            if (qualifier.Identifier() is not { } identifier) return false;
+            enumTypeName += "." + identifier.GetText();
         }
 
         if (!TryResolvePublishedTemplateEnumType(module, namedTypes, enumTypeName, out var enumType))
@@ -7002,25 +7043,36 @@ internal static partial class PackageImageBuilder
     private static IReadOnlyList<PublishedTemplateEnumCallReference> CollectPublishedTemplateEnumCallReferences(
         LoadedModuleDocument module,
         ParserRuleContext node,
-        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyList<EnumCallTypingRecord>? enumCalls)
     {
-        var references = new List<PublishedTemplateEnumCallReference>();
-        Collect(node, references);
-        return references;
+        var callsByLocation = (enumCalls ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var references = new Dictionary<StarkParser.ArgumentListContext, PublishedTemplateEnumCallReference>();
+        Collect(node);
+        return references.Values.OrderBy(static reference => reference.Context.Start.TokenIndex).ToArray();
 
-        void Collect(
-            Antlr4.Runtime.Tree.IParseTree current,
-            List<PublishedTemplateEnumCallReference> accumulator)
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
         {
             if (current is StarkParser.PostfixExpressionContext postfixExpression
                 && TryResolvePublishedTemplateEnumCallReference(module, postfixExpression, namedTypes, out var reference))
             {
-                accumulator.Add(reference);
+                references.TryAdd(reference.Context, reference);
+            }
+
+            // Retain typed calls even when their namespace-qualified syntax
+            // differs from the simple enum references used in generic bodies.
+            if (current is StarkParser.ArgumentListContext arguments
+                && callsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(arguments.Start.Line, arguments.Start.Column + 1), out var call))
+            {
+                references[arguments] = new PublishedTemplateEnumCallReference(arguments, call.EnumType, call.VariantName);
             }
 
             for (var index = 0; index < current.ChildCount; index++)
             {
-                Collect(current.GetChild(index), accumulator);
+                Collect(current.GetChild(index));
             }
         }
     }
@@ -7035,19 +7087,25 @@ internal static partial class PackageImageBuilder
 
         var primaryExpression = postfixExpression.primaryExpression();
         var postfixParts = postfixExpression.postfixPart();
-        if (primaryExpression is null || postfixParts.Length != 2)
+        if (primaryExpression is null || postfixParts.Length < 2)
         {
             return false;
         }
 
-        var variantPart = postfixParts[0];
-        var argumentList = postfixParts[1].argumentList();
+        var variantPart = postfixParts[^2];
+        var argumentList = postfixParts[^1].argumentList();
         var enumTypeName = primaryExpression.Identifier()?.GetText()
             ?? primaryExpression.qualifiedName()?.GetText();
         var variantName = variantPart.Identifier()?.GetText();
         if (enumTypeName is null || variantName is null || argumentList is null)
         {
             return false;
+        }
+
+        foreach (var qualifier in postfixParts.Take(postfixParts.Length - 2))
+        {
+            if (qualifier.Identifier() is not { } identifier) return false;
+            enumTypeName += "." + identifier.GetText();
         }
 
         if (!TryResolvePublishedTemplateEnumType(module, namedTypes, enumTypeName, out var enumType))

@@ -58,7 +58,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private void EmitValueInstruction(SsaValueInstruction instruction)
     {
         if (!_referencedValueNames.Contains(instruction.ResultName)
-            && instruction.Value is SsaLoadLocalRValue)
+            && (instruction.Value is SsaLoadLocalRValue
+                || (instruction.Value is SsaLoadIndirectRValue
+                    && ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
+                    && !StarkTypeSymbols.IsPointerBackedBorrowType(instruction.Value.Type))))
         {
             return;
         }
@@ -70,6 +73,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var result = $"%{EscapeIdentifier(instruction.ResultName)}";
+        if (instruction.Value is SsaLoadLocalRValue or SsaLoadIndirectRValue
+            && ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
+            && !StarkTypeSymbols.IsPointerBackedBorrowType(instruction.Value.Type))
+        {
+            _aggregateLoadResults.Add(result);
+        }
+
         switch (instruction.Value)
         {
             case SsaUseRValue:
@@ -311,8 +321,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Integer)
         {
+            // A signed storage type can carry a proved nonnegative value. Keep
+            // that fact at widening; negative-capable values still sign extend.
             var opcode = sourceType.BitWidth < targetType.BitWidth
-                ? (HasUnsignedIntegerSemantics(sourceType) ? "zext" : "sext")
+                ? (HasUnsignedIntegerSemantics(sourceType) || CanProveNonNegativeInteger(convert.Operand) ? "zext" : "sext")
                 : "trunc";
             AppendLine($"  {result} = {opcode} {MapType(sourceType)} {FormatValue(convert.Operand)} to {MapType(targetType)}");
             return;

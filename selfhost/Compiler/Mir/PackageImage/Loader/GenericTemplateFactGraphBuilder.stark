@@ -111,6 +111,7 @@ internal fn bool LogicalPackageGenericTemplateFactGraphAddFunctionTemplateRow(
     u32[0 max] functionAddressCount,
     u32[0 max] boundOperationCount,
     u32[0 max] tryPropagationCount,
+    bool isGeneric,
     out u32[0 max] templateRow)
 {
     templateRow = 0;
@@ -130,6 +131,7 @@ internal fn bool LogicalPackageGenericTemplateFactGraphAddFunctionTemplateRow(
     stack LogicalPackageFunctionTemplateRow row = new LogicalPackageFunctionTemplateRow()
     {
         ModuleOrdinalValue = moduleOrdinal,
+        IsGenericValue = isGeneric,
         TemplateOrdinalValue = templateOrdinal,
         QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
         QualifiedNameTextRowValue = qualifiedNameTextRow,

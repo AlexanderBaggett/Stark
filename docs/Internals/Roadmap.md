@@ -581,7 +581,7 @@ Goal: unlock the language surface the standard library wants before the stdlib i
   - [x] ownership integration for scope-exit cleanup
   - [x] MIR/SSA/LLVM lowering for destructor calls
 - [x] Implement ASM Functions
-  - [x] Freeze the v1 surface as `ffi asm(arch) fn` only, keeping v1 focused on syscall-oriented stdlib shims and deferring methods, generics, and trait/doctrine integration.
+  - [x] Establish the v1 `ffi asm(arch) fn` surface for syscall-oriented stdlib shims, deferring methods, generics, and trait/doctrine integration; assembly declarations also support `finite`.
   - [x] Extend grammar and parsing for `asm(arch)` plus `in(...)`, `out(...)`,
     `clobber(...)`, typed opaque `symbol(...)`, and explicit `memory(...)`
     clauses. Omitted memory remains the conservative compatibility behavior.
@@ -1998,7 +1998,7 @@ turn that book outline into published website content.
         - [x] add the `benchmarks/collections/QueueGrowth` `stark-experimental` row with C and Rust counterparts so the experimental queue can be measured beside `stark`
         - [x] record the remaining replacement gap: full ring-buffer API parity for borrowed payload inspection, such as `Peek`, needs borrowed enum-payload projection or a first-class sparse initialized-slot view so the implementation can expose safe borrows without raw pointers
       - [x] implement experimental `LinkedList<T>` or an index-node equivalent only after choosing the storage model: dynamic node arena with stable indices, slab-backed node reserve, or an explicit sparse-slot primitive; benchmark AddFirst/AddLast/remove/build-and-drain/churn separately
-        - [x] choose an index-node arena over raw node pointers for the comparison implementation: dynamic value slots hold `Free`/`Occupied(T)` state, a parallel dynamic links array holds stable next/previous indices, and the free list reuses node slots without public raw pointers
+        - [x] choose an index-node arena over raw node pointers for the comparison implementation: one dynamic node array holds `Free`/`Occupied(T)` value state and stable next/previous indices, and the free list reuses node slots without public raw pointers
         - [x] add old-vs-new executable correctness coverage for default construction, `ReserveNodes`, `AddFirst`, `AddLast`, front/back removal, order parity, clear/drop behavior, and scope-exit destructible cleanup
         - [x] fix switch-case runtime drop lowering so enum payload captures from dynamic-backed slots drop exactly once and sibling cases do not poison each other's drop state
         - [x] add `benchmarks/collections/LinkedListPush`, `LinkedListBuildClear`, `LinkedListPopOnly`, `LinkedListChurn`, and `LinkedListReservedPush` `stark-experimental` rows with C and Rust counterparts so the index-node candidate can be measured beside `stark`

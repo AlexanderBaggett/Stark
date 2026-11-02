@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stark Performance Optimization"
+  short_description: "Optimize Stark using LLVM IR, proofs, and measurements"
+  default_prompt: "Use $stark-performance-optimization to investigate a Stark performance gap, preserve compiler facts, and validate the production result against C and Rust."

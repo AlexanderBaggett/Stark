@@ -989,7 +989,8 @@ internal enum CompileTimeStructuralFactKind
     FieldThreadSafetyLawAttributeConditionTypeModuleName,
     FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation,
     FieldThreadSafetyLawAttributeConditionTypeArgumentCount,
-    FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount
+    FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount,
+    IsCopyable
 }
 
 internal sealed record CompileTimeStructuralFactArguments(
@@ -1047,6 +1048,7 @@ internal static class CompileTimeStructuralFacts
         kind = localName switch
         {
             "IsBool" => CompileTimeStructuralFactKind.IsBool,
+            "IsCopyable" => CompileTimeStructuralFactKind.IsCopyable,
             "IsInteger" => CompileTimeStructuralFactKind.IsInteger,
             "IsFloat" => CompileTimeStructuralFactKind.IsFloat,
             "IsRawPointer" => CompileTimeStructuralFactKind.IsRawPointer,
@@ -4615,6 +4617,13 @@ internal static class CompileTimeStructuralFacts
         out CompileTimeConstant constant)
     {
         constant = default;
+        if (kind == CompileTimeStructuralFactKind.IsCopyable)
+        {
+            var facts = new CopyabilityFacts(name => resolveNamedType(StarkTypeSymbols.Named(name)));
+            constant = CompileTimeConstant.Bool(facts.IsCopyable(arguments.TargetType));
+            return true;
+        }
+
         if (IsTypeQualifierMetadataFact(kind))
         {
             return TryEvaluateTypeQualifierMetadataFact(kind, arguments, out constant);

@@ -51,6 +51,15 @@ public static partial class LlvmModuleLint
 
     private const string FreshScopeMarker = ".fresh.";
 
+    [GeneratedRegex(@"\bptr(?<attributes>[^%]*?)\s+%(?<name>[A-Za-z0-9_.$]+)(?=[,)])")]
+    private static partial Regex PointerParameterPattern();
+
+    [GeneratedRegex(@"\balign\s+(\d+)")]
+    private static partial Regex AlignmentPattern();
+
+    [GeneratedRegex(@"^\s*%abi_dict_key_[^ ]+ = load [^,]+, ptr %(?<name>[A-Za-z0-9_.$]+), align (?<alignment>\d+)")]
+    private static partial Regex DictionaryKeyParameterLoadPattern();
+
     /// <summary>
     /// True when emitted modules should be linted: always in debug builds
     /// (which is what test suites run), overridable either way with
@@ -86,8 +95,47 @@ public static partial class LlvmModuleLint
 
         CheckAttributeExtents(lines, violations);
         CheckFreshResultScopes(moduleText, lines, violations);
+        CheckDictionaryKeyParameterAlignments(lines, violations);
 
         return violations;
+    }
+
+    private static void CheckDictionaryKeyParameterAlignments(string[] lines, List<string> violations)
+    {
+        // These compiler-materialized loads read the parameter's referent
+        // directly, without a derived address or a stronger alignment proof.
+        var parameters = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("define ", StringComparison.Ordinal))
+            {
+                parameters.Clear();
+                foreach (Match parameter in PointerParameterPattern().Matches(line))
+                {
+                    var alignment = AlignmentPattern().Match(parameter.Groups["attributes"].Value);
+                    if (alignment.Success)
+                    {
+                        parameters[parameter.Groups["name"].Value] = int.Parse(alignment.Groups[1].Value);
+                    }
+                    else if (parameter.Groups["attributes"].Value.Contains("readonly", StringComparison.Ordinal)
+                        && parameter.Groups["attributes"].Value.Contains("dereferenceable(", StringComparison.Ordinal))
+                    {
+                        parameters[parameter.Groups["name"].Value] = 1;
+                    }
+                }
+            }
+            else if (line.Trim() == "}")
+            {
+                parameters.Clear();
+            }
+            else
+            {
+                var load = DictionaryKeyParameterLoadPattern().Match(line);
+                if (load.Success && parameters.TryGetValue(load.Groups["name"].Value, out var guaranteed)
+                    && int.Parse(load.Groups["alignment"].Value) > guaranteed)
+                    violations.Add($"Dictionary-key load alignment exceeds parameter '%{load.Groups["name"].Value}' referent alignment {guaranteed}: {line.Trim()}");
+            }
+        }
     }
 
     private static void CheckAttributeExtents(string[] lines, List<string> violations)

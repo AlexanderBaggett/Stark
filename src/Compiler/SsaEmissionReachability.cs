@@ -288,6 +288,14 @@ internal static class SsaEmissionReachability
             if (kept.Add(functionName))
             {
                 pending.Push(functionName);
+                // Const specialization runs after this walk. Keep the possible
+                // replacement bodies and their dependency closure so later
+                // analyses do not lose them only in binary-output builds.
+                foreach (var target in SsaConstStdlibHelperSpecializer.EnumeratePotentialConstRetargets(
+                             functionName, mir.ModuleName, typeModel))
+                {
+                    Keep(target);
+                }
             }
         }
 

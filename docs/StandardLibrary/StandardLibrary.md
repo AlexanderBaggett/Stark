@@ -1230,7 +1230,7 @@ Current status:
 - The LLVM-intrinsic scalar math slice is implemented for `f32` and `f64`.
 - `Math.SinCos` now returns a small `SinCosF32`/`SinCosF64` aggregate backed by `@llvm.sincos.*`.
 - The current hardware/compiler-intrinsic math batch is implemented for `Math.Sqrt`, `Math.FusedMultiplyAdd`, `Math.ReciprocalEstimate`, `Math.ReciprocalSqrtEstimate`, `Math.Ceiling`, `Math.Floor`, `Math.Truncate`, `Math.Round`, `Math.Min`, and `Math.Max` on x86/x64 and ARM64.
-- On non-Windows targets, only the LLVM-intrinsic-backed math functions currently add `-lm`; the hardware-asm batch does not.
+- On non-Windows targets, LLVM-intrinsic-backed math functions can require `-lm`; the hardware-asm batch does not. On Linux and FreeBSD, compiler-inferred math dependencies are retained only when needed at final linking, including through packages. Explicit library requests keep their normal behavior.
 - `Math.ReciprocalEstimate` and `Math.ReciprocalSqrtEstimate` are currently exposed as `f32` only so the shared single-instruction surface stays aligned across x86/x64 and ARM64.
 - For v1, x86/x64 hardware math lowerings target a modern baseline rather than per-feature CPU gating. `Math.Ceiling`, `Math.Floor`, `Math.Truncate`, and `Math.Round` therefore assume SSE4.1-capable x86/x64 machines.
 - `Math.FusedMultiplyAdd` on x86/x64 currently assumes FMA3 support.

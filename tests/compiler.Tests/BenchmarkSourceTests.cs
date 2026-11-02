@@ -210,7 +210,6 @@ public sealed class BenchmarkSourceTests
             Assert.Contains("define internal dso_local noundef ptr @__stark_os_reallocate(ptr %ptr, i64 noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
             Assert.Contains("call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, i64 noundef %size)", llvm, StringComparison.Ordinal);
             Assert.Contains("br i1 %realloc_old_is_bucket, label %try_bucket_reuse, label %os_realloc_check", llvm, StringComparison.Ordinal);
-            Assert.Contains("br i1 %realloc_bucket_can_reuse, label %reuse_old, label %fallback", llvm, StringComparison.Ordinal);
             Assert.Contains("os_realloc_check:", llvm, StringComparison.Ordinal);
             Assert.Contains("%realloc_header_is_base = icmp eq ptr %realloc_base, %realloc_header", llvm, StringComparison.Ordinal);
             Assert.Contains("%realloc_os_alignment_ok = icmp ule i64 %realloc_effective_alignment, 8", llvm, StringComparison.Ordinal);

@@ -533,6 +533,34 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void FiniteAssemblyCanBeCalledFromFiniteFunctions()
+    {
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                unsafe ffi asm(x86_64) finite i64[min max] ReadValue()
+                    out("rax") return
+                {
+                    "movq $$7, %rax"
+                }
+
+                finite i64[min max] Read()
+                {
+                    unsafe { return ReadValue(); }
+                }
+                """),
+            new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics));
+        var effects = result.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects).Functions["ReadValue"];
+        Assert.True(effects.WillReturn);
+        Assert.True(effects.MustProgress);
+        Assert.False(effects.IsPure);
+    }
+
+    [Fact]
     public void AsmDeclarationsReportMissingTargetMatchesAndRejectUnsupportedV1Shapes()
     {
         var pipeline = DefaultCompilerPipeline.Create();

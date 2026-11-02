@@ -1345,7 +1345,8 @@ public fn System.Memory.MemoryStatus TryJoin(
         }
 }
 
-public fn System.Memory.MemoryStatus TryJoinConst(
+// Keep const input pointers and lengths visible to the caller's copy specialization.
+public inline fn System.Memory.MemoryStatus TryJoinConst(
     mut borrow System.Text.OwnedAscii destination,
     const ascii left,
     const ascii right)
@@ -1759,7 +1760,7 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, as
     }
 }
 
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right)
+public inline fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right)
     where overlap(left, right)
 {
     stack mut System.Text.OwnedAscii destination = new();
@@ -1884,7 +1885,7 @@ public fn System.Memory.MemoryStatus TryNormalizeSeparators(
         }
 }
 
-public fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(
+public inline fn System.Memory.MemoryStatus TryNormalizeSeparatorsConst(
     mut borrow System.Text.OwnedAscii destination,
     const ascii path)
     {

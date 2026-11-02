@@ -11,7 +11,7 @@ const Iterations = 256;
 const ExpectedBytes = 1048576;
 
 fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
-    stack i32[min max] processId = System.Process.CurrentId();
+    stack u32[0 max] processId = System.Process.CurrentId();
     stack mut u32[0 max] positiveProcessId = 0;
     if (processId > 0) {
         positiveProcessId = (u32[0 max])processId;
@@ -44,9 +44,10 @@ export unsafe ffi fn i32[min max] main() {
         return 9;
     }
 
-    stack mut u8[0 63] attempt = 0;
+    stack mut u8[0 64] attempt = 0;
     while willexit (attempt < 64) {
-        stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(attempt);
+        stack u8[0 63] currentAttempt = (u8[0 63])attempt;
+        stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(currentAttempt);
         stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
             System.Net.Tcp.TcpListener.Listen(endpoint);
 
@@ -56,7 +57,7 @@ export unsafe ffi fn i32[min max] main() {
             case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listenerValue):
                 stack mut System.Net.Tcp.TcpListener listener = listenerValue;
                 stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
-                    System.Net.Tcp.TcpClient.Connect(LoopbackEndpoint(attempt));
+                    System.Net.Tcp.TcpClient.Connect(LoopbackEndpoint(currentAttempt));
 
                 switch (connected) {
                     case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var connectError):

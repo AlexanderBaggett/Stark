@@ -216,3 +216,12 @@ The locked default flags are:
   lowering.
 - `network/*.stark` covers loopback TCP throughput and scatter/gather-style
   socket paths through the canonical `System.Net.Tcp` API.
+
+## Console output contracts
+
+`console/ConsoleWrites` exercises the existing immediate Stark console API.
+`console/ConsoleWritesBuffered` opts into `BufferedUtf8Writer` and checks an
+explicit final flush; its C counterpart uses buffered stdio and Rust uses a
+4,096-byte `BufWriter`. All buffered variants print the same UTF-8 text and keep
+stderr immediate. Buffered success may defer stdout errors until a flush, so
+compare these as separate workloads.

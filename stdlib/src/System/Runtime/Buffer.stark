@@ -1023,7 +1023,7 @@ public struct DynamicByteBuffer
         return System.Memory.MemoryStatus.Ok;
     }
 
-    fn System.Memory.MemoryStatus WriteSlice(
+    inline fn System.Memory.MemoryStatus WriteSlice(
         mut borrow DynamicByteBuffer self,
         borrow i8[min max][] source,
         u64[0 2 ** 63 - 1] count)

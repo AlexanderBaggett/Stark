@@ -509,8 +509,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max] x, i32[min max] y)
+            finite law i32[min max] Run(i16[min max] smallX, i16[min max] smallY)
             {
+                stack i32[min max] x = (i32[min max])smallX;
+                stack i32[min max] y = (i32[min max])smallY;
                 return x + x + y + y + y + 4;
             }
             """);
@@ -3939,10 +3941,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetConstFacts(const ascii path);
@@ -4038,10 +4042,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetFacts(ascii path);
@@ -4074,6 +4080,51 @@ public sealed class CompilerPipelineOptimizeSsaTests
 
         Assert.Contains(calls, static call => call.FunctionName.Contains("GetFacts", StringComparison.Ordinal));
         Assert.Contains(calls, static call => call.FunctionName.Contains("Extension", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstPathSpecializationHandlesImportedOverloadsWithoutDiscardingMutableInputs()
+    {
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.IO.Path
+                import System.Text
+                import System.Memory
+                module Demo
+
+                fn System.Memory.MemoryStatus Literals(mut borrow System.Text.OwnedAscii destination)
+                {
+                    return System.IO.Path.TryJoin(destination, "alpha", "beta.txt");
+                }
+
+                fn System.Memory.MemoryStatus Mixed(mut borrow System.Text.OwnedAscii destination, ascii other)
+                    where overlap(destination, other)
+                {
+                    return System.IO.Path.TryJoin(destination, "alpha", "beta", other);
+                }
+
+                fn System.Memory.MemoryStatus AllThree(mut borrow System.Text.OwnedAscii destination)
+                {
+                    return System.IO.Path.TryJoin(destination, "alpha", "beta", "gamma.txt");
+                }
+                """),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(StandardLibrarySourceRoot()),
+                StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var ssa = result.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+        var literal = Assert.Single(ssa.Functions, static function => function.Name == "Literals");
+        var mixed = Assert.Single(ssa.Functions, static function => function.Name == "Mixed");
+        var allThree = Assert.Single(ssa.Functions, static function => function.Name == "AllThree");
+        var literalCalls = literal.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static i => i.Value).OfType<SsaCallRValue>();
+        var mixedCalls = mixed.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static i => i.Value).OfType<SsaCallRValue>();
+        Assert.Contains(literalCalls, static call => call.FunctionName.Contains("TryJoinConst", StringComparison.Ordinal));
+        Assert.Contains(mixedCalls, static call => call.FunctionName.Contains("TryJoin#", StringComparison.Ordinal));
+        Assert.DoesNotContain(mixedCalls, static call => call.FunctionName.Contains("TryJoinConst", StringComparison.Ordinal));
+        Assert.Contains(allThree.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static i => i.Value).OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryJoinConst", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -4408,10 +4459,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     internal ascii Path;
                     internal i64[min max] Length;
                     internal i64[min max] End;
+                    internal i64[min max] RootLength;
                     internal i64[min max] SegmentStart;
                     internal i64[min max] ExtensionStart;
                     internal i64[min max] DirectoryLength;
                     internal bool HasExtension;
+                    internal bool Absolute;
                 }
 
                 public finite law PathFacts GetConstFacts(const ascii path);

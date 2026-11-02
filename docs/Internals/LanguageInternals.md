@@ -297,9 +297,12 @@ Sparse data structures use explicit source facts for initialized slots. When the
 
 The standard library's `System.Collections.SparseSlots<T>` is the current
 internal sparse initialized-slot view for ring-shaped collections. It owns the
-allocation, moves only the caller-declared live ring range during growth, and
-exposes direct slot move/borrow helpers so `Queue<T>` and `RingQueue<T>` avoid
-per-slot enum tags in their hot paths.
+allocation and preserves the caller-declared live ring range during growth.
+A zero head permits backing reallocation with the live prefix unchanged;
+otherwise split moves restore FIFO order. Unoccupied backing bytes do not
+become initialized elements or acquire drop obligations. Direct slot move/borrow
+helpers let `Queue<T>` and `RingQueue<T>` avoid per-slot enum tags in their hot
+paths.
 
 ### 2.5 Standard Library Promotion Status
 
@@ -543,6 +546,14 @@ return carrier for the parameter would place only the first byte correctly on
 Apple arm64, producing corrupt colors or a zero alpha channel. Homogeneous
 floating-point/vector aggregate classification remains a distinct AAPCS64
 path; it must not be coerced through the integer-like rule.
+
+Large aggregate initialization emits ordinary `llvm.memset` zero fills before
+field updates. The backend can combine or remove fills overwritten by the
+completed value, while keeping zeros that a byte-reading consumer observes.
+The intrinsic retains the target layout size and proven destination alignment;
+it does not assert that the storage or allocation is dead. ABI carrier scratch
+storage keeps its separate inline-fill lowering. Native lowering may choose a
+memory-library call for large surviving fills, just as for large copies.
 
 The ABI model can represent one or many physical LLVM values for one Stark
 source parameter. `AbiParameterSymbol.LlvmType` retains the canonical direct

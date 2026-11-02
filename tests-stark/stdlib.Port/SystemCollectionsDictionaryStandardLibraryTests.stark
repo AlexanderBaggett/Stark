@@ -5,16 +5,14 @@ import System.Testing
 import System.Text
 module SystemCollectionsDictionaryStandardLibraryTests
 
-// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified.
-internal fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustifiedImpl()
+// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourceDictionaryKeepsStorageFieldsInternal.
+internal fn bool StdLibSourceDictionaryKeepsStorageFieldsInternalImpl()
 {
-    // PORT-NOTE: the C# test reads stdlib/src/System/Collections.stark from disk and
-    // asserts source-text invariants (internal rawmutptr storage, no public rawptr,
-    // no DictionaryValueSlot). The compile-only bridge cannot read arbitrary stdlib
-    // source files, so this reduces to compiling a program that exercises Dictionary
-    // (forcing the stdlib source to be parsed/compiled) and asserting it succeeds.
+    // PORT-NOTE: the host test checks semantic storage-field visibility. This
+    // compile-only bridge exercises the public API; native ownership, alignment
+    // and reader behavior are covered by the host integration tests.
     stack mut ProgramCompile c = CompileProgram(
-        "dict-raw-sparse-internal",
+        "dict-storage-internal",
         raw"""
         import System.Collections
         import System.Memory
@@ -50,8 +48,8 @@ internal fn bool StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified
     return true;
 }
 
-// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourcePromotedDictionaryUsesSparseRawValueStorage.
-internal fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl()
+// Ported from SystemCollectionsDictionaryStandardLibraryTests.StdLibSourcePromotedDictionaryPreservesSparseValueStorage.
+internal fn bool StdLibSourcePromotedDictionaryPreservesSparseValueStorageImpl()
 {
     stack mut ProgramCompile c = CompileProgram(
         "dict-promoted-sparse-raw-value",
@@ -98,13 +96,12 @@ internal fn bool StdLibSourcePromotedDictionaryUsesSparseRawValueStorageImpl()
     }
 
     // PORT-NOTE: the C# test targets x86_64-linux explicitly and inspects extracted
-    // Reserve/TryGet function bodies for libc-free sparse storage (no @malloc/@realloc/
-    // @free, no DictionaryValueSlot, Allocate/Free present). The bridge cannot pin the
+    // GrowStorage/TryGet function bodies for libc-free sparse storage (no @malloc/@realloc/
+    // @free, Allocate/Free present). The bridge cannot pin the
     // target triple or extract per-function bodies, so these are applied over the whole
     // LLVM text and the per-body Allocate/Free presence checks are dropped.
     stack ascii llvm = Llvm(c);
-    if (!System.Testing.DoesNotContain(llvm, "; LLVM body emission fallback")
-        || !System.Testing.DoesNotContain(llvm, "DictionaryValueSlot"))
+    if (!System.Testing.DoesNotContain(llvm, "; LLVM body emission fallback"))
     {
         return false;
     }
@@ -331,25 +328,18 @@ internal fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsC
     stack ascii tryGetBody = LlvmDefinitionBody(
         llvm,
         "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32");
-    stack ascii findIndexBody = LlvmDefinitionBody(
-        llvm,
-        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32");
     stack ascii findInsertionIndexBody = LlvmDefinitionBody(
         llvm,
         "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__Symbol__u32");
     if (!System.Testing.Contains(symbolHashBody, "load i32")
         || !System.Testing.Contains(symbolEqualsBody, "icmp eq i32")
         || !System.Testing.Contains(setBody, "load i32")
-        || !System.Testing.Contains(setBody, "Dictionary_FindInsertionIndex__Symbol__u32")
-        || !System.Testing.Contains(tryGetBody, "Dictionary_FindIndex__Symbol__u32")
-        || !System.Testing.Contains(findIndexBody, "icmp eq i32")
+        || !System.Testing.Contains(tryGetBody, "icmp eq i32")
         || !System.Testing.Contains(findInsertionIndexBody, "icmp eq i32")
         || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Equals")
         || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Equals")
-        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Hash")
-        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Equals")
         || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Hash")
         || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Equals"))
     {
@@ -400,9 +390,25 @@ internal fn bool StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContractsImpl
                 return false;
             }
 
+            stack u64[0 2 ** 63 - 1] asciiCapacity = asciiMap.Capacity();
+            if (!Ok(asciiMap.Set(alphaAgain, 12))
+                || !asciiMap.TryGet(alpha, found) || found != 12
+                || asciiMap.Count() != 1 || asciiMap.Capacity() != asciiCapacity)
+            {
+                return false;
+            }
+
             stack unicode gamma = (unicode)"gamma";
             stack unicode gammaAgain = (unicode)"gamma";
             stack unicode delta = (unicode)"delta";
+            stack mut Dictionary<unicode, u32[0 max]> unicodeMap = new();
+            if (!Ok(unicodeMap.Set(gamma, 44)) || !Ok(unicodeMap.Set(gammaAgain, 45))
+                || !unicodeMap.TryGet(gamma, found) || found != 45
+                || unicodeMap.Count() != 1 || unicodeMap.ContainsKey(delta))
+            {
+                return false;
+            }
+
             stack mut HashSet<unicode> unicodeSet = new();
             if (!Ok(unicodeSet.Add(gamma)))
             {
@@ -446,6 +452,13 @@ internal fn bool StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContractsImpl
             if (!TryGetAsciiKey(ownedAsciiMap, alphaAgain, found)
                 || found != 33
                 || ContainsAsciiKey(ownedAsciiMap, beta))
+            {
+                return false;
+            }
+
+            if (!Ok(ownedAsciiMap.Set(ownedAlphaAgain, 34))
+                || !TryGetAsciiKey(ownedAsciiMap, alpha, found)
+                || found != 34 || ownedAsciiMap.Count() != 1)
             {
                 return false;
             }
@@ -529,10 +542,10 @@ internal fn bool StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContractsImpl
     // bodies, so those body-scoped checks are dropped; the module-wide Contains checks
     // for the intrinsic definitions and Owned* static contracts are kept.
     stack ascii llvm = Llvm(c);
-    if (!System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_ascii_hash(%stark_ascii %value)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_unicode_hash(%stark_unicode %value)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)")
-        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)")
+    if (!System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_ascii_hash({ ptr, i64 } %value)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i64 @__stark_unicode_hash({ ptr, i64 } %value)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_ascii_equal({ ptr, i64 } %left, { ptr, i64 } %right)")
+        || !System.Testing.Contains(llvm, "define internal dso_local i1 @__stark_unicode_equal({ ptr, i64 } %left, { ptr, i64 } %right)")
         || !System.Testing.Contains(llvm, "OwnedAscii_Hash")
         || !System.Testing.Contains(llvm, "OwnedAscii_Equals")
         || !System.Testing.Contains(llvm, "OwnedUnicode_Hash")
@@ -654,7 +667,8 @@ internal fn bool SourceStdLibPromotedDictionaryExecutableRunsImpl()
             }
 
             stack u32[0 2 ** 31 - 1] updateKey = 64;
-            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128)
+            stack u64[0 2 ** 63 - 1] updateCapacity = dictionary.Capacity();
+            if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128 || dictionary.Capacity() != updateCapacity)
             {
                 return 6;
             }
@@ -697,6 +711,16 @@ internal fn bool SourceStdLibPromotedDictionaryExecutableRunsImpl()
                     || !Ok(clustered.Set(clusterKeyThree, 170)))
                     {
                         return 27;
+                }
+
+                stack u64[0 2 ** 63 - 1] clusterCapacity = clustered.Capacity();
+                if (!Ok(clustered.Set(clusterKeyTwo, 91))
+                    || !clustered.TryGet(clusterKeyTwo, found)
+                    || found != 91 || clustered.Count() != 3
+                    || clustered.Capacity() != clusterCapacity
+                    || !Ok(clustered.Set(clusterKeyTwo, 90)))
+                {
+                    return 30;
                 }
 
                 if (!clustered.Remove(clusterKeyOne)
@@ -891,9 +915,25 @@ internal fn bool SourceStdLibTextKeyCollectionsExecutableRunsImpl()
                 return false;
             }
 
+            stack u64[0 2 ** 63 - 1] asciiCapacity = asciiMap.Capacity();
+            if (!Ok(asciiMap.Set(alphaAgain, 12))
+                || !asciiMap.TryGet(alpha, found) || found != 12
+                || asciiMap.Count() != 1 || asciiMap.Capacity() != asciiCapacity)
+            {
+                return false;
+            }
+
             stack unicode gamma = (unicode)"gamma";
             stack unicode gammaAgain = (unicode)"gamma";
             stack unicode delta = (unicode)"delta";
+            stack mut Dictionary<unicode, u32[0 max]> unicodeMap = new();
+            if (!Ok(unicodeMap.Set(gamma, 44)) || !Ok(unicodeMap.Set(gammaAgain, 45))
+                || !unicodeMap.TryGet(gamma, found) || found != 45
+                || unicodeMap.Count() != 1 || unicodeMap.ContainsKey(delta))
+            {
+                return false;
+            }
+
             stack mut HashSet<unicode> unicodeSet = new();
             if (!Ok(unicodeSet.Add(gamma)))
             {
@@ -937,6 +977,13 @@ internal fn bool SourceStdLibTextKeyCollectionsExecutableRunsImpl()
             if (!TryGetAsciiKey(ownedAsciiMap, alphaAgain, found)
                 || found != 33
                 || ContainsAsciiKey(ownedAsciiMap, beta))
+            {
+                return false;
+            }
+
+            if (!Ok(ownedAsciiMap.Set(ownedAlphaAgain, 34))
+                || !TryGetAsciiKey(ownedAsciiMap, alpha, found)
+                || found != 34 || ownedAsciiMap.Count() != 1)
             {
                 return false;
             }

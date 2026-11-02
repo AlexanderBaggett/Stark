@@ -178,13 +178,82 @@ internal sealed class SsaIntegerArithmeticFolder
             return false;
         }
 
-        instructions = EmitFoldedInstruction(
+        var savedCounter = temporaryCounter;
+        var candidate = EmitFoldedInstruction(
             instruction,
             family,
             compactedTerms,
             usedNames,
             ref temporaryCounter);
+        if (family == LinearArithmeticFamily.Ordinary
+            && !PreservesOrdinaryIntermediateBounds(candidate, instruction.ResultName, definitions))
+        {
+            foreach (var value in candidate.OfType<SsaValueInstruction>())
+                if (value.ResultName != instruction.ResultName) usedNames.Remove(value.ResultName);
+            temporaryCounter = savedCounter;
+            return false;
+        }
+        instructions = candidate;
         return true;
+    }
+
+    private static bool PreservesOrdinaryIntermediateBounds(
+        IReadOnlyList<SsaInstruction> candidate, string resultName,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        var emitted = candidate.OfType<SsaValueInstruction>().ToArray();
+        var results = emitted.ToDictionary(i => i.ResultName, StringComparer.Ordinal);
+        // The final mathematical result inherits the source expression's
+        // contract. Newly introduced partial sums/products do not: cancellation
+        // can make the original expression valid while those overflow.
+        while (results.TryGetValue(resultName, out var final)
+            && final.Value is SsaUseRValue { Value: SsaValueReference alias }
+            && results.ContainsKey(alias.Name)) resultName = alias.Name;
+        var ranges = new Dictionary<string, (BigInteger Min, BigInteger Max)>(StringComparer.Ordinal);
+        bool Range(SsaValue value, out BigInteger min, out BigInteger max)
+        {
+            if (value is SsaValueReference r && ranges.TryGetValue(r.Name, out var known))
+            { min = known.Min; max = known.Max; return true; }
+            return TryGetStaticIntegerRange(value, definitions, new HashSet<string>(StringComparer.Ordinal), out min, out max);
+        }
+        foreach (var instruction in emitted)
+        {
+            if (instruction.ResultName == resultName) return true;
+            if (instruction.Value is not SsaBinaryRValue binary
+                || !Range(binary.Left, out var lmin, out var lmax)
+                || !Range(binary.Right, out var rmin, out var rmax)) return false;
+            if (!TryGetOrdinaryBinaryRange(binary.Operator, lmin, lmax, rmin, rmax, out var lower, out var upper)
+                || binary.Type.BitWidth is not int width || width <= 0) return false;
+            IntegerRangeStorageFacts.GetIntegerTypeBounds(width, binary.Type.IsUnsigned, out var min, out var max);
+            if (lower < min || upper > max) return false;
+            ranges[instruction.ResultName] = (lower, upper);
+        }
+        return false;
+    }
+
+    private static bool TryGetOrdinaryBinaryRange(
+        SsaBinaryOperator op, BigInteger leftMin, BigInteger leftMax,
+        BigInteger rightMin, BigInteger rightMax, out BigInteger min, out BigInteger max)
+    {
+        switch (op)
+        {
+            case SsaBinaryOperator.Add:
+                min = leftMin + rightMin;
+                max = leftMax + rightMax;
+                return true;
+            case SsaBinaryOperator.Subtract:
+                min = leftMin - rightMax;
+                max = leftMax - rightMin;
+                return true;
+            case SsaBinaryOperator.Multiply:
+                var products = new[] { leftMin * rightMin, leftMin * rightMax, leftMax * rightMin, leftMax * rightMax };
+                min = products.Min();
+                max = products.Max();
+                return true;
+            default:
+                min = max = BigInteger.Zero;
+                return false;
+        }
     }
 
     private static bool TryFoldProductIntegerInstruction(
@@ -856,6 +925,37 @@ internal sealed class SsaIntegerArithmeticFolder
         out BigInteger min,
         out BigInteger max)
     {
+        return TryGetStaticIntegerRange(value, definitions, visited,
+            new Dictionary<string, (BigInteger Min, BigInteger Max)>(StringComparer.Ordinal), out min, out max);
+    }
+
+    private static bool TryGetStaticIntegerRange(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visited,
+        Dictionary<string, (BigInteger Min, BigInteger Max)> ranges,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        if (value is SsaValueReference cached && ranges.TryGetValue(cached.Name, out var range))
+        {
+            min = range.Min;
+            max = range.Max;
+            return true;
+        }
+        var known = TryGetStaticIntegerRangeCore(value, definitions, visited, ranges, out min, out max);
+        if (known && value is SsaValueReference reference) ranges[reference.Name] = (min, max);
+        return known;
+    }
+
+    private static bool TryGetStaticIntegerRangeCore(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visited,
+        Dictionary<string, (BigInteger Min, BigInteger Max)> ranges,
+        out BigInteger min,
+        out BigInteger max)
+    {
         switch (value)
         {
             case SsaIntegerConstant integer
@@ -869,9 +969,43 @@ internal sealed class SsaIntegerArithmeticFolder
                 switch (definition)
                 {
                     case SsaUseRValue use:
-                        return TryGetStaticIntegerRange(use.Value, definitions, visited, out min, out max);
-                    case SsaConvertRValue convert when IsSameWidthIntegerConversion(convert):
-                        return TryGetStaticIntegerRange(convert.Operand, definitions, visited, out min, out max);
+                        return TryGetStaticIntegerRange(use.Value, definitions, visited, ranges, out min, out max);
+                    case SsaBinaryRValue binary when binary.Type.BitWidth is int width && width > 0:
+                        // Arithmetic result types can retain an operand's range
+                        // annotation. Derive the result interval instead of
+                        // treating that annotation as a new value contract.
+                        IntegerRangeStorageFacts.GetIntegerTypeBounds(width, binary.Type.IsUnsigned, out min, out max);
+                        if (TryGetStaticIntegerRange(binary.Left, definitions, visited, ranges, out var leftMin, out var leftMax)
+                            && TryGetStaticIntegerRange(binary.Right, definitions, visited, ranges, out var rightMin, out var rightMax)
+                            && TryGetOrdinaryBinaryRange(binary.Operator, leftMin, leftMax, rightMin, rightMax, out var lower, out var upper)
+                            && lower <= max && upper >= min)
+                        {
+                            min = BigInteger.Max(min, lower);
+                            max = BigInteger.Min(max, upper);
+                        }
+                        return true;
+                    case SsaUnaryRValue unary when unary.Type.BitWidth is int unaryWidth && unaryWidth > 0:
+                        IntegerRangeStorageFacts.GetIntegerTypeBounds(unaryWidth, unary.Type.IsUnsigned, out min, out max);
+                        if (unary.Operator == SsaUnaryOperator.Negate
+                            && TryGetStaticIntegerRange(unary.Operand, definitions, visited, ranges, out var operandMin, out var operandMax)
+                            && -operandMax <= max && -operandMin >= min)
+                        {
+                            min = BigInteger.Max(min, -operandMax);
+                            max = BigInteger.Min(max, -operandMin);
+                        }
+                        return true;
+                    case SsaConvertRValue convert
+                        when convert.Operand.Type.Kind == StarkTypeKind.Integer
+                             && convert.TargetType.Kind == StarkTypeKind.Integer:
+                        if (TryGetStaticIntegerRange(convert.Operand, definitions, visited, ranges, out var sourceMin, out var sourceMax)
+                            && StarkTypeSymbols.TryGetEffectiveIntegerBounds(convert.TargetType, out var targetMin, out var targetMax)
+                            && sourceMin >= targetMin && sourceMax <= targetMax)
+                        {
+                            min = sourceMin;
+                            max = sourceMax;
+                            return true;
+                        }
+                        break;
                 }
 
                 break;

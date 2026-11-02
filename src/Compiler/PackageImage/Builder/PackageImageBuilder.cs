@@ -493,6 +493,7 @@ internal static partial class PackageImageBuilder
         var libraries = NormalizeNativeDependencyList(dependencies.Libraries);
         var linkArguments = NormalizeNativeLinkArgumentList(dependencies.LinkArguments);
         var pkgConfigPackages = NormalizeNativeDependencyList(dependencies.PkgConfigPackages);
+        var implicitLibraries = NormalizeNativeDependencyList(dependencies.ImplicitLibraries);
 
         if (sources is null
             && includeDirectories is null
@@ -510,7 +511,8 @@ internal static partial class PackageImageBuilder
             libraryDirectories,
             libraries,
             linkArguments,
-            pkgConfigPackages);
+            pkgConfigPackages,
+            implicitLibraries);
     }
 
     private static IReadOnlyList<string>? NormalizeNativeDependencyList(IReadOnlyList<string>? values)

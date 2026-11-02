@@ -165,8 +165,34 @@ internal sealed partial class MidLevelIrLowerer
 
             RecordMoveFromOperand(initializer, declaredType);
             SetRuntimeDropState(name, isActive: true);
+            TryRecordImportedDynamicInitSliceProvenance(name, declaredType, statement.Expression);
             return true;
         }
+
+        private void TryRecordImportedDynamicInitSliceProvenance(
+            string name, StarkTypeSymbol declaredType, ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (declaredType.Kind != StarkTypeKind.Slice
+                || declaredType.InitializationKind != StarkInitializationKind.Init
+                || expression is not { Kind: ImportedTemplateTypedBodyExpressionKind.UnaryOperation, Name: "init", Args.Count: 1 }
+                || expression.Args[0] is not { Kind: ImportedTemplateTypedBodyExpressionKind.IndexAccess, Args.Count: 3 } slice
+                || !IsSimpleImportedInitSliceStart(slice.Args[1])
+                || !TryResolveImportedTypedTemplateAssignmentTarget(slice.Args[0], out var storage)
+                || storage.Type.Kind != StarkTypeKind.Dynamic)
+                return;
+            var address = BuildAddress(storage);
+            var start = LowerImportedTypedTemplateExpressionCore(slice.Args[1], NonNegativeI64Type);
+            if (address is not null && start is not null && start.Type.Kind == StarkTypeKind.Integer)
+                _dynamicInitSliceProvenanceByLocal[name] = new DynamicInitSliceProvenance(
+                    address, storage.Type, CoerceOperand(start, NonNegativeI64Type) ?? start);
+        }
+
+        private static bool IsSimpleImportedInitSliceStart(ImportedTemplateTypedBodyExpressionSummary expression) =>
+            expression.Kind is ImportedTemplateTypedBodyExpressionKind.NameReference
+                or ImportedTemplateTypedBodyExpressionKind.Literal
+                or ImportedTemplateTypedBodyExpressionKind.FieldAccess
+                or ImportedTemplateTypedBodyExpressionKind.IndexAccess
+            && expression.Args.All(IsSimpleImportedInitSliceStart);
 
         private bool TryLowerImportedTypedTemplateFixedTextStorageLocal(
             ImportedTemplateTypedBodyStatementSummary statement,
@@ -914,7 +940,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (_parametersByName.ContainsKey(rootName))
                 {
-                    return false;
+                    return target.UsesAddressModel
+                        && target.IsAddressMutable
+                        && target.Type.InitializationKind != StarkInitializationKind.None;
                 }
 
                 return _typeModel.Globals.TryGetValue(rootName, out var global)
@@ -2006,6 +2034,52 @@ internal sealed partial class MidLevelIrLowerer
             value = BigInteger.Zero;
             return expression is { Kind: ImportedTemplateTypedBodyExpressionKind.Literal, LiteralText: { } literalText }
                 && BigInteger.TryParse(literalText, out value);
+        }
+
+        private bool TryLowerImportedAssumeDisjoint(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.Expression is not { Kind: ImportedTemplateTypedBodyExpressionKind.DisjointCondition } condition)
+                return false;
+            var roots = condition.Args.Select(TryResolveImportedDisjointRootKey)
+                .Where(static root => root is not null).Cast<string>();
+            var group = CreateScopedNoAliasGroup(roots, AliasProofCarrierKind.UnsafeAssumeDisjoint,
+                _currentStatementLocation ?? _functionLocation, "unsafe-assume-disjoint");
+            if (group is null) return TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true);
+            _activeScopedNoAliasGroups.Push(group);
+            try
+            {
+                return TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true);
+            }
+            finally
+            {
+                _activeScopedNoAliasGroups.Pop();
+            }
+        }
+
+        private string? TryResolveImportedDisjointRootKey(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.IndexAccess
+                && expression.Args.Count == 3
+                && expression.Args[0] is { Kind: ImportedTemplateTypedBodyExpressionKind.NameReference, Name: { } regionName }
+                && _parametersByName.TryGetValue(regionName, out var regionParameter)
+                && regionParameter.Type.Kind == StarkTypeKind.RawPointer)
+            {
+                // Reuse the authoritative literal/parameter range proof, including
+                // the parameter's original integer width and declared interval.
+                if (TryCreateScopedNoAliasParameterRegionRootKey(regionName,
+                        RenderImportedTypedTemplateExpressionCore(expression.Args[1]),
+                        RenderImportedTypedTemplateExpressionCore(expression.Args[2]), out var regionKey))
+                    return regionKey;
+            }
+            while (expression.Args.Count > 0
+                && (expression.Kind is ImportedTemplateTypedBodyExpressionKind.FieldAccess
+                    or ImportedTemplateTypedBodyExpressionKind.IndexAccess
+                    || expression is { Kind: ImportedTemplateTypedBodyExpressionKind.UnaryOperation, Name: "*" }))
+                expression = expression.Args[0];
+            return expression is { Kind: ImportedTemplateTypedBodyExpressionKind.NameReference, Name: { } name }
+                && _parametersByName.ContainsKey(name)
+                    ? CreateScopedNoAliasParameterRootKey(name)
+                    : null;
         }
 
         private bool TryLowerImportedTypedTemplateIf(ImportedTemplateTypedBodyStatementSummary statement)
@@ -3586,6 +3660,8 @@ internal sealed partial class MidLevelIrLowerer
             switch (statement.Kind)
             {
                 case ImportedTemplateTypedBodyStatementKind.Block:
+                case ImportedTemplateTypedBodyStatementKind.UnsafeBlock:
+                case ImportedTemplateTypedBodyStatementKind.AssumeDisjoint:
                     return TryExecuteImportedTypedTemplateStatementListConstant(
                         statement.Body,
                         createScope: true,
@@ -5148,8 +5224,30 @@ internal sealed partial class MidLevelIrLowerer
             constant = default;
             if (expression.Name is not { } operatorText
                 || expression.Args.Count != 2
-                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var left)
-                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out var right))
+                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var left))
+            {
+                return false;
+            }
+
+            if (operatorText is "&&" or "||")
+            {
+                if (left.Kind != CompileTimeConstantKind.Bool || left.IsSymbolic)
+                {
+                    return false;
+                }
+
+                if (operatorText == "&&" ? !left.BoolValue : left.BoolValue)
+                {
+                    constant = left;
+                    return true;
+                }
+
+                return TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out constant)
+                    && constant.Kind == CompileTimeConstantKind.Bool
+                    && !constant.IsSymbolic;
+            }
+
+            if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out var right))
             {
                 return false;
             }
@@ -5805,7 +5903,8 @@ internal sealed partial class MidLevelIrLowerer
                     start,
                     ConstantIndex: null,
                     AddressType(elementType, dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType)),
-                    $"{target.Text}[{startText}]"),
+                    $"{target.Text}[{startText}]",
+                    SourceStorageType: target.Type),
                 "addr");
             if (elementAddress is null)
             {
@@ -5828,7 +5927,8 @@ internal sealed partial class MidLevelIrLowerer
                         elementAddress,
                         length,
                         sliceType,
-                        $"{target.Text}[{startText}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]"),
+                        $"{target.Text}[{startText}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]",
+                        SourceStorageType: target.Type),
                     "slice");
             }
 
@@ -5912,6 +6012,17 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var targetType = ApplyGenericSubstitution(publishedType);
+            // Evaluate the complete literal expression before applying its
+            // destination width/range. An intermediate such as 2 ** 63 may
+            // exceed the final range even though 2 ** 63 - 1 fits it.
+            if (targetType.Kind == StarkTypeKind.Integer
+                && IsImportedLiteralIntegerExpression(expression.Args[0])
+                && TryEvaluateImportedTypedTemplateConversionConstant(expression, out var constant))
+            {
+                var folded = CreateCompileTimeOperand(constant);
+                return expectedType is null ? folded : CoerceOperand(folded, expectedType);
+            }
+
             var operand = LowerImportedTypedTemplateExpressionCore(expression.Args[0], targetType);
             if (operand is null)
             {
@@ -5920,6 +6031,21 @@ internal sealed partial class MidLevelIrLowerer
 
             var converted = CoerceOperand(operand, targetType);
             return expectedType is null ? converted : CoerceOperand(converted, expectedType);
+        }
+
+        private static bool IsImportedLiteralIntegerExpression(ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            return expression.Kind switch
+            {
+                ImportedTemplateTypedBodyExpressionKind.Literal => expression.Type?.Kind == StarkTypeKind.Integer,
+                ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type?.Kind == StarkTypeKind.Integer
+                    && expression.Args.Count == 1 && IsImportedLiteralIntegerExpression(expression.Args[0]),
+                ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is "+" or "-"
+                    && expression.Args.Count == 1 && IsImportedLiteralIntegerExpression(expression.Args[0]),
+                ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is "+" or "-" or "*" or "**" or "/" or "%"
+                    && expression.Args.Count == 2 && expression.Args.All(IsImportedLiteralIntegerExpression),
+                _ => false
+            };
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateTryPropagation(
@@ -5966,6 +6092,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var text = RenderImportedTypedTemplateExpressionCore(expression);
+            if (operatorText == "init")
+            {
+                var view = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType);
+                if (view is null) return null;
+                var initType = expectedType ?? StarkTypeSymbols.WithQualifiers(view.Type, initializationKind: StarkInitializationKind.Init);
+                return CoerceOperand(view, initType);
+            }
             if (operatorText == "&")
             {
                 var address = LowerImportedTypedTemplateAddressOfUnary(expression.Args[0]);
@@ -6386,7 +6519,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6424,7 +6557,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6504,7 +6637,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     var parameterType = functionPointerParameterTypes[index];
                     var argumentExpression = expression.Args[index + 1];
-                    var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                    var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                     if (lowered is null)
                     {
                         return false;
@@ -6517,15 +6650,16 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     functionPointerArguments.Add(argument);
-                    var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                        : null;
+                    var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                        ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                            ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                            : null);
                     functionPointerIndirectLocals.Add(indirectArgumentAddress is null
                         ? ResolveIndirectArgumentLocal(parameterType, lowered)
                             ?? ResolveIndirectArgumentLocal(parameterType, argument)
                         : null);
                     functionPointerIndirectAddresses.Add(indirectArgumentAddress);
-                    RecordMoveFromOperand(argument, parameterType);
+                    RecordCallArgumentMove(argument, parameterType);
                 }
 
                 call = new LoweredIndirectCallParts(
@@ -6588,7 +6722,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var parameterType = parameterTypes[index];
                 var argumentExpression = expression.Args[index + 1];
-                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                 if (lowered is null)
                 {
                     return false;
@@ -6601,15 +6735,16 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                    ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -6759,7 +6894,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var parameterType = methodParameters[index].Type;
                 var argumentExpression = expression.Args[index];
-                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                var lowered = LowerImportedTypedTemplateCallArgument(argumentExpression, parameterType);
                 if (lowered is null)
                 {
                     return false;
@@ -6772,15 +6907,16 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments.Add(argument);
-                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
-                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
-                    : null;
+                var indirectArgumentAddress = ResolveEvaluatedIndirectArgumentAddress(parameterType, lowered)
+                    ?? (TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                        : null);
                 indirectArgumentLocals.Add(indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(parameterType, lowered)
                         ?? ResolveIndirectArgumentLocal(parameterType, argument)
                     : null);
                 indirectArgumentAddresses.Add(indirectArgumentAddress);
-                RecordMoveFromOperand(argument, parameterType);
+                RecordCallArgumentMove(argument, parameterType);
             }
 
             call = new LoweredIndirectCallParts(
@@ -6865,7 +7001,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6928,7 +7064,7 @@ internal sealed partial class MidLevelIrLowerer
                 var parameterType = index < signature.Parameters.Count
                     ? signature.Parameters[index].Type
                     : null;
-                var argument = LowerImportedTypedTemplateExpressionCore(expression.Args[index], parameterType);
+                var argument = LowerImportedTypedTemplateCallArgument(expression.Args[index], parameterType);
                 if (argument is null)
                 {
                     return false;
@@ -6945,6 +7081,46 @@ internal sealed partial class MidLevelIrLowerer
                 text: RenderImportedTypedTemplateExpressionCore(expression),
                 out call,
                 loweredExplicitArguments: loweredArguments);
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateCallArgument(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            StarkTypeSymbol? parameterType)
+        {
+            // Keep the argument's value/storage identity until the shared call
+            // builder forms a borrow. An integer cast to an out-qualified type
+            // would otherwise pass a temporary instead of the original local.
+            if (parameterType is not null && RequiresIndirectArgument(parameterType)
+                && TryResolveImportedTypedTemplateAssignmentTarget(expression, out var place))
+            {
+                var address = ResolveIndirectArgumentAddress(parameterType, place);
+                var value = ReadPlace(place);
+                if (address is not null)
+                {
+                    var evaluatedAddress = EmitRequiredTemporary(new MidLevelIrUseRValue(address), "argument_address");
+                    // This is a non-owning snapshot for a borrow, not an owning
+                    // assignment that moves a noncopyable source into the temp.
+                    MidLevelIrRValue snapshot = parameterType.BorrowKind != StarkBorrowKind.None
+                        && parameterType.InitializationKind == StarkInitializationKind.None
+                        && value.Type.BorrowKind == StarkBorrowKind.None
+                            ? new MidLevelIrLoadIndirectRValue(evaluatedAddress, value.Type, value.Text)
+                            : new MidLevelIrUseRValue(value);
+                    var evaluatedValue = EmitRequiredTemporary(snapshot, "argument_value");
+                    if (evaluatedValue is not MidLevelIrLocalOperand local)
+                    {
+                        throw LoweringInvariantViolation(null, "Borrow argument snapshot did not produce a local value.");
+                    }
+                    _loadedAddressesByTempName[local.Name] = evaluatedAddress;
+                    if (place.Path.Count == 0 && place.RootName is { } sourceName
+                        && _dynamicInitSliceProvenanceByLocal.TryGetValue(sourceName, out var provenance))
+                        _dynamicInitSliceProvenanceByLocal[local.Name] = provenance;
+                    return evaluatedValue;
+                }
+
+                return value;
+            }
+
+            return LowerImportedTypedTemplateExpressionCore(expression, parameterType);
         }
 
         private bool TryBuildImportedTypedTemplateDynamicStorageOperation(
@@ -7663,6 +7839,7 @@ internal sealed partial class MidLevelIrLowerer
             return expression.Kind switch
             {
                 ImportedTemplateTypedBodyExpressionKind.NameReference => expression.Name ?? string.Empty,
+                ImportedTemplateTypedBodyExpressionKind.DisjointCondition => $"disjoint({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
                 ImportedTemplateTypedBodyExpressionKind.Literal => expression.LiteralText ?? string.Empty,
                 ImportedTemplateTypedBodyExpressionKind.ArrayInitializer => expression.Args.Count == 0
                     ? "{}"
@@ -7678,7 +7855,7 @@ internal sealed partial class MidLevelIrLowerer
                     : "try",
                 ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is { } unaryOperator
                     && expression.Args.Count == 1
-                    ? $"{unaryOperator}{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}"
+                    ? $"{unaryOperator}{(unaryOperator == "init" ? " " : "")}{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}"
                     : "unary",
                 ImportedTemplateTypedBodyExpressionKind.BinaryOperation => expression.Name is { } binaryOperator
                     && expression.Args.Count == 2
@@ -7884,7 +8061,10 @@ internal sealed partial class MidLevelIrLowerer
                     switch (statement.Kind)
                     {
                         case ImportedTemplateTypedBodyStatementKind.Block:
+                        case ImportedTemplateTypedBodyStatementKind.UnsafeBlock:
                             return TryLowerBlock(statement);
+                        case ImportedTemplateTypedBodyStatementKind.AssumeDisjoint:
+                            return _builder.TryLowerImportedAssumeDisjoint(statement);
                         case ImportedTemplateTypedBodyStatementKind.Empty:
                             return TryLowerEmpty();
                         case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:

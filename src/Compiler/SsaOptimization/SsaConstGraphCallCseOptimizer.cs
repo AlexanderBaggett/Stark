@@ -312,6 +312,7 @@ internal sealed class SsaConstGraphCallCseOptimizer
         {
             SsaStringConstant => true,
             SsaTextDataAddressValue => true,
+            SsaStaticArrayAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsPermanentConstGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => HasConstMemoryProvenance(
                 function,
@@ -826,6 +827,11 @@ internal sealed class SsaConstGraphCallCseOptimizer
                 builder.Append(textData.TextType.DisplayName);
                 builder.Append(':');
                 builder.Append(textData.LiteralText);
+                return true;
+            case SsaStaticArrayAddressValue data:
+                builder.Append(data.Type.DisplayName);
+                builder.Append(':');
+                builder.Append(data.Text);
                 return true;
             case SsaBoolConstant boolean:
                 builder.Append(boolean.Value ? "true" : "false");

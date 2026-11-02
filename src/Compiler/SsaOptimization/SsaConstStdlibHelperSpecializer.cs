@@ -5,7 +5,7 @@ using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed class SsaConstStdlibHelperSpecializer
+internal sealed partial class SsaConstStdlibHelperSpecializer
 {
     private readonly TypeCheckModel _typeModel;
     private readonly LlvmTargetInfo? _targetInfo;
@@ -16,6 +16,58 @@ internal sealed class SsaConstStdlibHelperSpecializer
     {
         _typeModel = typeModel;
         _targetInfo = targetInfo;
+    }
+
+    internal static IEnumerable<string> EnumeratePotentialConstRetargets(
+        string functionName, string moduleName, TypeCheckModel types)
+    {
+        string targetModule;
+        string targetName;
+        var addedParameters = 0;
+        if (TryResolveConsoleWrite(functionName, moduleName, out var buffered, out _, out _))
+        {
+            targetModule = "System.Console";
+            targetName = buffered ? "BufferedUtf8Writer.WritePreencodedUtf8" : "WritePreencodedUtf8";
+            addedParameters = buffered ? 1 : 2;
+        }
+        else if (TryResolveUtf16ConversionVariant(functionName, moduleName))
+        {
+            targetModule = "System.Text";
+            targetName = "TryCopyPreencodedUtf16";
+            addedParameters = 2;
+        }
+        else if (TryResolveUtf16FileVariant(functionName, moduleName, out targetName))
+        {
+            targetModule = "System.IO.File";
+            addedParameters = 5;
+        }
+        else if (TryResolveConstPathVariant(functionName, moduleName, out var path, out _))
+        {
+            targetModule = "System.IO.Path";
+            targetName = path.SimpleName;
+        }
+        else if (TryResolveConstTextVariant(functionName, moduleName, out var text))
+        {
+            targetModule = "System.Text";
+            targetName = text.TargetSimpleName;
+        }
+        else
+        {
+            yield break;
+        }
+
+        var count = types.Functions.GetValueOrDefault(functionName)?.Parameters.Count + addedParameters;
+        foreach (var name in EnumerateRetargetNameCandidates(functionName, moduleName, targetModule, targetName))
+        {
+            if (types.Functions.TryGetValue(name, out var direct) && (count is null || direct.Parameters.Count == count))
+            {
+                yield return direct.Name;
+            }
+            foreach (var overload in types.Overloads.GetValueOrDefault(name) ?? [])
+            {
+                if (count is null || overload.Parameters.Count == count) yield return overload.Name;
+            }
+        }
     }
 
     public SsaIrModule Optimize(
@@ -107,6 +159,24 @@ internal sealed class SsaConstStdlibHelperSpecializer
                 continue;
             }
 
+            if (instruction is SsaCallInstruction effect
+                && (TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
+                    constProvenanceLocalNames, effect, out var encodedEffect)
+                    || TryPreencodeConsoleCall(function, moduleName, facts, valueDefinitions,
+                        constProvenanceLocalNames, effect, out encodedEffect)))
+            {
+                instructions.Add(effect with
+                {
+                    FunctionName = encodedEffect.FunctionName,
+                    Arguments = encodedEffect.Arguments,
+                    Text = encodedEffect.Text,
+                    IndirectArgumentLocalNames = encodedEffect.IndirectArgumentLocalNames,
+                    IndirectArgumentAddresses = encodedEffect.IndirectArgumentAddresses
+                });
+                changed = true;
+                blockChanged = true;
+                continue;
+            }
             instructions.Add(instruction);
         }
 
@@ -127,6 +197,15 @@ internal sealed class SsaConstStdlibHelperSpecializer
         out IReadOnlyList<SsaInstruction> replacements)
     {
         replacements = [];
+
+        if (TryPreencodeUtf16Call(function, moduleName, facts, valueDefinitions,
+                constProvenanceLocalNames, call, out var encoded)
+            || TryPreencodeConsoleCall(function, moduleName, facts, valueDefinitions,
+                constProvenanceLocalNames, call, out encoded))
+        {
+            replacements = [valueInstruction with { Value = encoded }];
+            return true;
+        }
 
         if (TryRetargetConstTextVariant(
             function,
@@ -251,7 +330,26 @@ internal sealed class SsaConstStdlibHelperSpecializer
         out SsaValueInstruction retargeted)
     {
         retargeted = valueInstruction;
-        if (!TryResolveConstPathVariant(call.FunctionName, moduleName, out var constVariant, out var sourceArgumentIndexes)
+        if (!TryResolveConstPathVariant(call.FunctionName, moduleName, out var constVariant, out var sourceArgumentIndexes))
+        {
+            return false;
+        }
+
+        if (constVariant.SimpleName == "TryJoinConst")
+        {
+            if (call.Arguments.Count <= 1)
+            {
+                return false;
+            }
+
+            sourceArgumentIndexes = Enumerable.Range(1, call.Arguments.Count - 1).ToArray();
+        }
+        else if (constVariant.SimpleName == "JoinConst")
+        {
+            sourceArgumentIndexes = Enumerable.Range(0, call.Arguments.Count).ToArray();
+        }
+
+        if (sourceArgumentIndexes.Count == 0
             || call.Arguments.Count <= sourceArgumentIndexes.Max()
             || !AllArgumentsHaveConstMemoryProvenance(
                 function,
@@ -318,6 +416,7 @@ internal sealed class SsaConstStdlibHelperSpecializer
         {
             SsaStringConstant => true,
             SsaTextDataAddressValue => true,
+            SsaStaticArrayAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsPermanentConstGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => HasConstMemoryProvenance(
                 function,
@@ -539,13 +638,15 @@ internal sealed class SsaConstStdlibHelperSpecializer
         out string replaced)
     {
         replaced = string.Empty;
-        var separatorIndex = sourceFunctionName.LastIndexOf('.');
+        var overloadIndex = sourceFunctionName.IndexOf("#(", StringComparison.Ordinal);
+        var baseName = overloadIndex < 0 ? sourceFunctionName : sourceFunctionName[..overloadIndex];
+        var separatorIndex = baseName.LastIndexOf('.');
         if (separatorIndex < 0)
         {
             return false;
         }
 
-        replaced = $"{sourceFunctionName[..(separatorIndex + 1)]}{targetSimpleName}";
+        replaced = $"{baseName[..(separatorIndex + 1)]}{targetSimpleName}";
         return true;
     }
 
@@ -718,10 +819,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
             "Path" => new SsaStringConstant(facts.PathLiteralText, field.Type),
             "Length" => new SsaIntegerConstant(facts.Length, field.Type),
             "End" => new SsaIntegerConstant(facts.End, field.Type),
+            "RootLength" => new SsaIntegerConstant(facts.RootLength, field.Type),
             "SegmentStart" => new SsaIntegerConstant(facts.SegmentStart, field.Type),
             "ExtensionStart" => new SsaIntegerConstant(facts.ExtensionStart, field.Type),
             "DirectoryLength" => new SsaIntegerConstant(facts.DirectoryLength, field.Type),
             "HasExtension" => new SsaBoolConstant(facts.HasExtension),
+            "Absolute" => new SsaBoolConstant(facts.Absolute),
             _ => throw new InvalidOperationException(
                 $"Unsupported System.IO.Path.PathFacts field '{field.Name}' in const stdlib helper specialization.")
         };
@@ -736,7 +839,7 @@ internal sealed class SsaConstStdlibHelperSpecializer
             || string.IsNullOrWhiteSpace(type.NamedType)
             || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
             || !IsPathFactsTypeName(namedType.Name)
-            || namedType.OrderedFields.Count != 7)
+            || namedType.OrderedFields.Count != 9)
         {
             return false;
         }
@@ -745,10 +848,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
         if (!IsAsciiField(fields[0], "Path")
             || !IsIntegerField(fields[1], "Length", 64)
             || !IsIntegerField(fields[2], "End", 64)
-            || !IsIntegerField(fields[3], "SegmentStart", 64)
-            || !IsIntegerField(fields[4], "ExtensionStart", 64)
-            || !IsIntegerField(fields[5], "DirectoryLength", 64)
-            || !IsBoolField(fields[6], "HasExtension"))
+            || !IsIntegerField(fields[3], "RootLength", 64)
+            || !IsIntegerField(fields[4], "SegmentStart", 64)
+            || !IsIntegerField(fields[5], "ExtensionStart", 64)
+            || !IsIntegerField(fields[6], "DirectoryLength", 64)
+            || !IsBoolField(fields[7], "HasExtension")
+            || !IsBoolField(fields[8], "Absolute"))
         {
             return false;
         }
@@ -772,6 +877,19 @@ internal sealed class SsaConstStdlibHelperSpecializer
         var separators = ResolvePathSeparators(_targetInfo);
         var end = pathBytes.Count;
         var length = end;
+        var windows = IsWindowsTarget(_targetInfo);
+        var rootLength = 0;
+        if (windows && length >= 2
+            && (pathBytes[0] is >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z')
+            && pathBytes[1] == (byte)':')
+        {
+            rootLength = length >= 3 && IsDirectorySeparator(pathBytes[2], separators) ? 3 : 2;
+        }
+        if (rootLength == 0 && length > 0 && IsDirectorySeparator(pathBytes[0], separators))
+        {
+            rootLength = 1;
+        }
+        var absolute = windows ? rootLength > 2 : rootLength > 0;
         while (end > 1 && IsDirectorySeparator(pathBytes[end - 1], separators))
         {
             end--;
@@ -794,12 +912,24 @@ internal sealed class SsaConstStdlibHelperSpecializer
             separator--;
         }
 
-        var segmentStart = separator + 1;
-        var directoryLength = separator == 0
-            ? 1
-            : separator > 0
-                ? separator
-                : 0;
+        // Match GetFacts/GetConstFacts, including roots longer than the
+        // trimmed end (for example Windows "C:/"). Keep every field instead
+        // of reconstructing root information from a later projection.
+        var segmentStart = Math.Max(separator + 1, rootLength);
+        var directoryLength = 0;
+        if (end <= rootLength && rootLength > 0)
+        {
+            directoryLength = rootLength;
+            segmentStart = end;
+        }
+        else if (separator >= 0)
+        {
+            directoryLength = separator < rootLength ? rootLength : separator == 0 ? 1 : separator;
+        }
+        else if (rootLength > 0)
+        {
+            directoryLength = rootLength;
+        }
 
         var extensionStart = end - 1;
         var hasExtension = false;
@@ -818,10 +948,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
             pathLiteralText,
             length,
             end,
+            rootLength,
             segmentStart,
             extensionStart,
             directoryLength,
-            hasExtension);
+            hasExtension,
+            absolute);
         return true;
     }
 
@@ -1410,6 +1542,10 @@ internal sealed class SsaConstStdlibHelperSpecializer
     private static bool IsWindowsTarget(LlvmTargetInfo? targetInfo)
     {
         var triple = targetInfo?.Triple;
+        if (string.IsNullOrWhiteSpace(triple))
+        {
+            return OperatingSystem.IsWindows();
+        }
         return !string.IsNullOrWhiteSpace(triple)
                && (triple.Contains("windows", StringComparison.OrdinalIgnoreCase)
                    || triple.Contains("win32", StringComparison.OrdinalIgnoreCase)
@@ -1448,6 +1584,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
 
     private static bool IsPathFunction(string functionName, string moduleName, string simpleName)
     {
+        var overloadIndex = functionName.IndexOf("#(", StringComparison.Ordinal);
+        if (overloadIndex >= 0)
+        {
+            functionName = functionName[..overloadIndex];
+        }
+
         return string.Equals(functionName, $"System.IO.Path.{simpleName}", StringComparison.Ordinal)
                || string.Equals(moduleName, "System.IO.Path", StringComparison.Ordinal)
                && string.Equals(functionName, simpleName, StringComparison.Ordinal);
@@ -1492,10 +1634,12 @@ internal sealed class SsaConstStdlibHelperSpecializer
         string PathLiteralText,
         BigInteger Length,
         BigInteger End,
+        BigInteger RootLength,
         BigInteger SegmentStart,
         BigInteger ExtensionStart,
         BigInteger DirectoryLength,
-        bool HasExtension)
+        bool HasExtension,
+        bool Absolute)
     {
         public static PathFactsValue Empty() => new(
             TextLiteralDecoder.EncodeStringLiteral(string.Empty),
@@ -1504,6 +1648,8 @@ internal sealed class SsaConstStdlibHelperSpecializer
             BigInteger.Zero,
             BigInteger.Zero,
             BigInteger.Zero,
+            BigInteger.Zero,
+            false,
             false);
     }
 

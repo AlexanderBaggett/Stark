@@ -6,8 +6,6 @@ internal static class LlvmEmissionContextBuilder
 {
     public static LlvmEmissionContext Build(
         string moduleName,
-        string asciiStringTypeName,
-        string unicodeStringTypeName,
         ParseResult parseResult,
         LoadedModuleSet loadedModules,
         TypeCheckModel typeModel,
@@ -41,8 +39,6 @@ internal static class LlvmEmissionContextBuilder
     {
         return new LlvmEmissionContext(
             moduleName,
-            asciiStringTypeName,
-            unicodeStringTypeName,
             parseResult,
             loadedModules,
             typeModel,

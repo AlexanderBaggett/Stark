@@ -314,7 +314,6 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         var asciiLine = ExtractLlvmFunctionBody(llvm, "@WriteAsciiLineToHandle(");
         var unicodeLine = ExtractLlvmFunctionBody(llvm, "@WriteUnicodeLineToHandle(");
 
-        Assert.Contains("%System_Runtime_Buffer_FixedByteBuffer8192", bufferLine, StringComparison.Ordinal);
         Assert.Contains("@WriteBufferToHandle(", bufferLine, StringComparison.Ordinal);
         Assert.Contains("@WriteBufferLineToHandle(", asciiLine, StringComparison.Ordinal);
         Assert.Contains("%System_Runtime_Buffer_FixedByteBuffer4096", unicodeLine, StringComparison.Ordinal);

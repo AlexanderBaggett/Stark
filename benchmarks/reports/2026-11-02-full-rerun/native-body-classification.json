@@ -1,0 +1,377 @@
+{
+  "HeapLocalBucketReuse": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "MemoryDynamicReserveGrowth": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "SystemMemoryBucketReallocate": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "SystemMemoryFallbackReallocate": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DictionaryLookup": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DictionaryMixed": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "LinkedListReservedPush": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "QueueDequeue": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ConsoleWrites": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ConsoleWritesBuffered": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DirectoryEnumeration": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "FileSystemPathTranscode": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AbstractionHandWritten": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AlgebraicIdentitySimplification": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "BitwiseRangePruning": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DirectCallInlining": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "StackNestedFieldForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "StackScalarLoadForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AsciiToUnicodeConversionTinyLiteral": {
+    "c": false,
+    "rust": true,
+    "stark": true
+  },
+  "AsciiToUnicodeLargeLiteralSpecialization": {
+    "c": false,
+    "rust": false,
+    "stark": true
+  },
+  "ConstantIntegerFormatting": {
+    "c": false,
+    "rust": false,
+    "stark": true
+  },
+  "PathRepeatedSmallOps": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "UnicodeFormatting": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ArenaAllocator": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "MemoryCopyFill": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DictionaryInsert": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DictionaryRemove": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DictionaryUpdate": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "LinkedListBuildClear": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "LinkedListChurn": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "LinkedListPopOnly": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "LinkedListPush": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ListGrowth": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ListIteration": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "QueueChurn": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "QueueGrowth": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "StackGrowth": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "FileBufferedReadWrite": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AbstractionGenericWrapper": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AbstractionLawWrapper": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AggregatePhiFieldForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "Arithmetic": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "BranchSelectPredication": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "Branching": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "Calls": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "DeadStackFieldStore": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ExplicitArithmeticRangePruning": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "FactDrivenBranchPruning": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "FunctionPointerDevirtualization": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "GlobalScalarLoadForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "IndependentRawPointerRegions": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "IndependentSliceAdd": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "MemoryAccess": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "NullBranchPruning": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "PureCallGlobalForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "ReadonlyOtherLocalFieldStore": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "StackFieldBranchForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "StackFieldLoadForwarding": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "TailCalls": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "TextLiteralLengthPruning": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "TcpLoopbackThroughput": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "TcpScatterGatherLoopback": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "RuntimeBufferDynamic": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "RuntimeBufferFixed": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AsciiToUnicodeConversion": {
+    "c": false,
+    "rust": true,
+    "stark": true
+  },
+  "AsciiToUnicodeConversionRuntime": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "AsciiToUnicodeWideningKernel": {
+    "c": false,
+    "rust": true,
+    "stark": true
+  },
+  "OwnedPathAllocation": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "OwnedTextAllocation": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "PathFacts": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "PathJoin": {
+    "c": true,
+    "rust": false,
+    "stark": false
+  },
+  "PathNormalize": {
+    "c": true,
+    "rust": false,
+    "stark": false
+  },
+  "PathQueries": {
+    "c": false,
+    "rust": true,
+    "stark": true
+  },
+  "TextConcatCopy": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  },
+  "TextParsing": {
+    "c": false,
+    "rust": false,
+    "stark": false
+  }
+}

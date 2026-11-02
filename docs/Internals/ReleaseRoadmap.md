@@ -1166,7 +1166,7 @@ Completion rules:
           is zero-instruction, preserves the original value spelling, and works
           for floats, raw pointers, text/aggregate constants, function/global
           addresses, and integer values. Focused emission tests cover float,
-          raw-pointer, and `%stark_ascii` aggregate `use` values and assert that
+          raw-pointer, and `{ ptr, i64 }` aggregate `use` values and assert that
           no invalid `add` instruction is emitted.
     - [x] 2026-05-13 function-address contract tightening: SSA validation now
           requires `SsaFunctionAddressValue` targets to have ABI lowering and

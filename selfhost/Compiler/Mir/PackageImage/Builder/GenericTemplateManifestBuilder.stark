@@ -210,6 +210,21 @@ internal struct LogicalPackageManifestJsonGenericTemplateBuilder
         return true;
     }
 
+    internal fn bool SetGenericTemplateFunctionKind(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        u32[0 max] functionTemplateRow,
+        bool isGeneric)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.IsGeneric = isGeneric;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
     internal fn bool SetGenericTemplateFunctionBodyText(
         mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
         mut borrow LogicalPackageImageStringTableBuilder strings,

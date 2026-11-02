@@ -121,10 +121,13 @@ direct syscall-backed virtual-memory allocation on supported syscall
 architectures. Windows targets use OS heap APIs rather than the CRT allocator.
 Small and medium allocations are cached in simple size-class free lists so
 collection growth and heap locals do not need an operating-system allocation for
-every reuse. When a size-class bucket is empty, the runtime allocates one
-slab/page-sized region, returns the first block, and pushes the remaining blocks
-onto the bucket free list. Very large allocations and allocations requiring
-alignment above the current bucket guarantee stay on the OS-backed path. The
+every reuse. When a size-class bucket is empty, the runtime can reuse a larger
+cached block from a class produced by slab expansion, retaining its physical
+size class in the header. If none fits, it requests one slab (targeting 64 KiB
+on wide targets, 4 KiB on 32-bit targets) and returns its first block. Unused
+slots stay behind a cursor/count; each header is initialized only when its
+block is allocated. Cached frees in the same class take priority over the tail. Very
+large allocations and allocations requiring alignment above the current bucket guarantee stay on the OS-backed path. The
 public `System.Memory` surface should stay stable as the backend continues to
 grow.
 
@@ -138,8 +141,18 @@ lower peak retention.
 
 `Reallocate` may reuse a small or medium bucket allocation in place when the new
 requested byte length still fits the recorded bucket size and the requested
-alignment is no stronger than the bucket alignment. If those facts are not
-proven, the runtime keeps the conservative allocate-copy-free fallback.
+alignment is no stronger than the bucket alignment. A first block may also
+grow into its slab when the recorded extent and untouched-tail or complete
+free-chain proof establishes that every sibling is unused. The runtime detaches
+cached siblings or claims the never-exposed tail before exposing its bytes, then records the larger physical bucket for later
+growth/free. The preserved base, extent and physical class can also prove
+exclusive ownership for later OS-backed growth, including after cache reuse.
+For supported pointer-aligned layouts, it reuses available extent or calls the
+OS reallocator, then relocates overlapping payload bytes before updating the
+header. Further logical growth reuses the recorded OS extent while it fits;
+shrinking retains the existing OS resize path. Failure leaves the original
+allocation and its header facts intact. Unproven extents, live siblings, changed free chains and unsupported alignment retain the conservative
+allocate-copy-free fallback.
 Because in-place reallocation can return the original pointer, realloc lowering
 must not expose fresh-allocation-only LLVM facts such as a blanket `noalias`
 result.

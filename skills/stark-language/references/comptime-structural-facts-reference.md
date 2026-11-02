@@ -8,6 +8,7 @@ Runtime use is a compile-time diagnostic.
 
 Return `bool`:
 
+- `IsCopyable<T>()`
 - `IsBool<T>()`
 - `IsInteger<T>()`
 - `IsFloat<T>()`
@@ -25,6 +26,13 @@ Return `bool`:
 - `IsDoctrine<T>()`
 - `IsDynTrait<T>()`
 - `HasConcreteLayout<T>()`
+
+`IsCopyable<T>()` uses the compiler's shared structural copyability proof: true
+means reading a value makes a byte-safe copy with no new drop obligation. It
+recurses through fixed arrays and concrete struct/record/enum fields, rejects
+owned storage and destructor-bearing types, and conservatively returns false
+for borrows or unresolved generic types. It is suitable for selecting no-drop
+collection paths; false does not by itself prove that destruction has effects.
 
 ## Type Layout Facts
 
