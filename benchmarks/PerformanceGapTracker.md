@@ -6,15 +6,15 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 
 ## Handoff: current optimization work
 
-**Current work (November 2, 2026): sequential benchmark completion goal active.** ArenaAllocator, MemoryCopyFill, DictionaryInsert, DictionaryRemove and LinkedListBuildClear have completed their fresh C/Rust comparisons. LinkedListChurn is complete in `70365b6`; LinkedListPopOnly also passed its fresh comparison. LinkedListPush also passed; ListGrowth is complete after its third goal turn. ListIteration, QueueChurn and QueueGrowth passed on their first turns; StackGrowth passed on goal turn 1. Arithmetic passed on goal turn 2 with the checked nonnegative-recurrence proof; BranchSelectPredication passed on goal turn 1; Branching passed on goal turn 1; FactDrivenBranchPruning passed on goal turn 2; FunctionPointerDevirtualization passed on goal turn 1; GlobalScalarLoadForwarding passed on goal turn 1; IndependentRawPointerRegions passed on goal turn 1; IndependentSliceAdd passed on goal turn 1; MemoryAccess passed on goal turn 1; PureCallGlobalForwarding passed on goal turn 1; ReadonlyOtherLocalFieldStore passed on goal turn 1; StackFieldLoadForwarding passed on goal turn 1; TailCalls passed on goal turn 1; TcpLoopbackThroughput passed on goal turn 1; TcpScatterGatherLoopback passed on goal turn 1 after the shared retry-range correction; AsciiToUnicodeConversionRuntime passed on goal turn 1 with checked block widening; OwnedPathAllocation passed on goal turn 1 with the inline owned const-join wrapper; OwnedTextAllocation passed on goal turn 1 with unchanged canonical source/package builds; PathJoin passed on goal turn 3 with general package fact preservation; PathNormalize passed on goal turn 1 with its inspectable const wrapper and borrowed-address remapping; TextConcatCopy passed on goal turn 2 with structural LLVM views and honest declaration effects; DictionaryUpdate passed on goal turn 1 with direct home replacement and package fact/borrow preservation; FileBufferedReadWrite passed on goal turn 1 with addressed-aggregate LLVM liveness; AbstractionGenericWrapper passed on goal turn 1 with unchanged production facts/codegen; AbstractionLawWrapper passed on goal turn 1 with unchanged public-law codegen; AggregatePhiFieldForwarding passed on goal turn 1 with unchanged aggregate/range forwarding; Calls passed on goal turn 1 with existing facts across noinline calls; DeadStackFieldStore passed on goal turn 1 with current production facts/codegen; NullBranchPruning passed on goal turn 1 with current production facts/codegen; StackFieldBranchForwarding passed on goal turn 1 with current production facts/codegen; TextLiteralLengthPruning passed on goal turn 1 with current production facts/codegen; RuntimeBufferDynamic passed on goal turn 1 with current production facts/codegen; RuntimeBufferFixed passed on goal turn 1 with current production facts/codegen; AsciiToUnicodeConversion passed on goal turn 1 with current production facts/codegen; AsciiToUnicodeWideningKernel passed on goal turn 2 with current production facts/codegen; PathFacts passed on goal turn 1 with current production facts/codegen; PathQueries passed on goal turn 1 with current production facts/codegen; TextParsing passed on goal turn 1 with current production facts/codegen; ExplicitArithmeticRangePruning passed on goal turn 1 with current production facts/codegen; final completion audit is next. Previously accepted DictionaryLookup/x86 placement work remains complete. See the current coordination entry for active build/test/timing windows.
+**Current work (November 2, 2026): sequential benchmark completion goal complete.** All 52 initially open items have accepted C/Rust comparisons and individual completion commits. The final evidence audit and targeted package-artifact revalidations pass. All own work windows are closed; preserve peer notes.
 
 ## Sequential completion goal (October 31, 2026)
 
-**Status: active. All 52 benchmark comparisons pass; final completion audit pending.** Work one benchmark at a time in the full-suite table's listed order, then historical-only entries in their listed order. Already explicitly completed DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. ArenaAllocator passed its fresh C/Rust comparison and is complete. Other historical results are not current evidence.
+**Status: complete. All 52 initially open benchmarks meet the requested completion criteria.** Previously accepted DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status. See the completion audit for evidence and measurement limits.
 
 **User completion criteria:** attempt to beat C; after three goal turns on an item without beating C, it becomes eligible for a tie when its C-relative ratio rounds to 1.00 at two decimal places. Every item must beat canonical Rust, without exception. Record actual per-item goal-turn counts rather than counting multiple controls within a turn. Use 1,000-run randomized interleaved arithmetic means and commit after each completed tracker item. Preserve allocation failure, byte-reading, ownership, target and package semantics.
 
-**Current evidence:** 52 of 52 initially open items are complete. ExplicitArithmeticRangePruning passes on goal turn 1: source **0.7874 × C / 0.8458 × Rust**, source-free package **0.7868 × C / 0.8452 × Rust**, in a fresh 1,000-round comparison. Current LLVM/native and observable-result checks pass. No implementation patch was needed. All windows are closed; preserve other-agent notes.
+**Current evidence:** 52 of 52 initially open items are complete; none remains queued or in progress. All accepted source means beat C and canonical Rust. ExplicitArithmeticRangePruning finishes at **0.7874 × C / 0.8458 × Rust** (source) and **0.7868 × C / 0.8452 × Rust** (source-free package), over 1,000 randomized interleaved rounds. The complete raw-evidence/commit audit and both package-artifact revalidations pass. All windows are closed; preserve other-agent notes.
 
 **PathJoin coordination (goal turn 3):** Completed; validation, native builds, tracing and timing are finished. The production source and source-free package have identical native code. The 1,000-round window passed both C and canonical Rust criteria; host exclusivity was unconfirmed. Only this chat's source and tracker changes belong in the completion commit; preserve peer tracker sections.
 
@@ -57,6 +57,8 @@ C criterion: Stark average > C average. Rust criterion: Stark average >= Rust av
 **TextParsing coordination (goal turn 1):** Completed; canonical builds, LLVM/native inspection, observable-result validation and 1,000-round timing are finished. Both final means beat C and canonical Rust. Compiler/library sources are unchanged. Host exclusivity was unconfirmed. Commit only owned tracker evidence; preserve peer notes. No build/test/timing window is active.
 
 **ExplicitArithmeticRangePruning coordination (goal turn 1):** Completed; canonical builds, LLVM/native inspection, observable-result validation and 1,000-round timing are finished. Both final means beat C and canonical Rust. Compiler/library sources are unchanged. Host exclusivity was unconfirmed. Commit only owned tracker evidence; preserve peer notes. No build/test/timing window is active.
+
+**Final audit coordination:** Complete. All 52 accepted source comparisons, completion commits and canonical-source checks verify; package retention/revalidation is resolved. No own build, test, debugger or timing window is active. Preserve peer notes.
 
 | Order | Benchmark | Status | Goal turns | Stark / C | Stark / Rust |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -513,6 +515,25 @@ The driver pinned itself/children to CPU 0, warmed each executable once, and ran
 
 Reproducible scripts, exact binaries/hashes, raw samples, compiler/CPU metadata, IR/disassembly, native fault traces and final test logs are under ignored `benchmarks/codegen/console-combined-implementation-20261029/`. The benchmark is closed at the user's request; unrelated installer/tracker work remains untouched.
 
+## Sequential goal completion audit (November 2, 2026)
+
+**Status: complete — all 52 initially open benchmark items meet the requested completion criteria.** Every accepted source-built Stark arithmetic mean is below C and canonical Rust. The per-item completion commits are all ancestors of this branch; each successful item was committed before advancing. Previously accepted DictionaryLookup, ConsoleWrites, FileSystemPathTranscode, QueueDequeue and PathRepeatedSmallOps retain their accepted status.
+
+**Audit:** Recomputed the means from every accepted raw sample set and matched both table ratios, sample counts and before/after executable hashes. All 52 accepted source executables and their C/Rust references remain byte-identical to their timing hashes. All 156 canonical Stark/C/Rust sources match their respective completion commit; 44 cases also have all three separately recorded build-source hashes verified. The corrected TcpLoopbackThroughput result is correctly found under the scatter/gather item's shared-fix regression directory. Each comparison has at least 1,000 observations per variant. PathQueries retains both declared 1,000-round windows and pools all 2,000 observations; its first slightly slower window was neither hidden nor excluded.
+
+**Package evidence:** Audited 45 package comparisons in the accepted timing windows. LinkedListChurn's package result is 1.0015 × C / 0.6596 × Rust on goal turn 5, satisfying the explicitly authorized two-decimal C tie; all source comparisons strictly beat C. MemoryAccess's exact timed package executable is retained under its implementation directory. Two older package executable paths had been overwritten after timing; their old timing hashes/records are preserved, and new current-compiler source/package builds were independently rebuilt, verified and measured in fresh 1,000-round windows. No claim is made that a replacement is the original timed executable.
+
+| Artifact-retention revalidation | Stark source / C | Stark package / C | Rust / C |
+| --- | ---: | ---: | ---: |
+| Arithmetic, seed 911163 | 0.8701 | 0.8690 | 1.1285 |
+| IndependentRawPointerRegions, seed 911164 | 0.9966 | 0.9970 | 1.1614 |
+
+Both revalidation windows use CPU 0, one separate warmup, arithmetic means including startup, no excluded samples and unchanged hashes. All new source/package preflights and initial/post-LTO LLVM verification pass. The normal source-free SDK is reused unchanged; builds remain serial under 1 GiB managed / 2 GiB process-group limits. Neither debug controls nor builds overlapped these windows; exclusive host access was unconfirmed.
+
+**Scope and limits:** This audit verifies the accepted production builds at their individual completion commits, plus the explicit revalidations above. It is not a new all-benchmarks timing sweep on one final compiler binary or a full release run. Small startup-dominated C leads remain local point estimates. Workload differences and optional remaining opportunities stay documented in their individual entries; none is relabeled as an implemented optimization. The earlier open-status investigation notes below are explicitly marked historical where a later completed result supersedes them.
+
+**Evidence:** ignored `benchmarks/codegen/sequential-goal-20261031/completion-audit-20261102.json` records all 52 accepted measurement paths, recomputed criteria, retained hashes, source provenance and completion commits, package checks, and both replacement comparisons. Their complete raw data, executables, commands, provenance, LLVM and native code are retained under each item's artifact directory. All own build/test/debug/timing windows are closed. Preserve the other agent's uncommitted tracker notes.
+
 ## ExplicitArithmeticRangePruning completion (November 2, 2026)
 
 **Status: completed, goal turn 1.** Current canonical source and source-free package means both beat C and canonical Rust. No new compiler/library/benchmark implementation patch or C tie allowance was needed.
@@ -534,7 +555,7 @@ Reproducible scripts, exact binaries/hashes, raw samples, compiler/CPU metadata,
 
 Stark/Rust is **0.8458 source / 0.8452 package**. This is current-production verification; no new Stark/before implementation speedup is claimed. All windows are closed.
 
-**Evidence:** ignored `benchmarks/codegen/sequential-goal-20261031/ExplicitArithmeticRangePruning/turn1/current/` retains raw samples/ratios, canonical binaries/commands, initial/reference/post-LTO LLVM, disassembly/dependencies, native validation, LLVM verification, guarded resource reports and source/compiler/toolchain/SDK hashes. Next item: final completion audit.
+**Evidence:** ignored `benchmarks/codegen/sequential-goal-20261031/ExplicitArithmeticRangePruning/turn1/current/` retains raw samples/ratios, canonical binaries/commands, initial/reference/post-LTO LLVM, disassembly/dependencies, native validation, LLVM verification, guarded resource reports and source/compiler/toolchain/SDK hashes. No benchmark items remain in the sequential completion goal.
 
 ## TextParsing completion (November 2, 2026)
 
@@ -1957,7 +1978,7 @@ Authoritative ignored evidence: `benchmarks/codegen/sequential-goal-20261031/Fac
 
 **Historical goal-turn-1 evidence; superseded by the completed turn-2 implementation above.**
 
-**Status: open, actual goal turn 1.** The production compiler still loses to C. No compiler, stdlib or benchmark source was changed for this investigation. BranchSelectPredication and Branching were cleared and committed separately before this item began. Do not advance to FunctionPointerDevirtualization yet, and do not count the diagnostic windows as separate goal turns.
+**Historical status, superseded by the completed entry and goal table: open, actual goal turn 1.** The production compiler still loses to C. No compiler, stdlib or benchmark source was changed for this investigation. BranchSelectPredication and Branching were cleared and committed separately before this item began. Do not advance to FunctionPointerDevirtualization yet, and do not count the diagnostic windows as separate goal turns.
 
 ### Current production and exact behavior
 
@@ -2085,7 +2106,7 @@ Ignored evidence is under `benchmarks/codegen/sequential-goal-20261031/Arithmeti
 
 ## Arithmetic sign-fact investigation (November 1, 2026)
 
-**Status: open, goal turn 1.** StackGrowth is committed complete in `6a44a5a`; 13 of the original 52 items are complete. Arithmetic beats Rust but misses C. The three-turn C tie allowance is **not yet available**; separate experiments/windows in this turn do not count as additional goal turns. No compiler or standard-library source changed in this investigation.
+**Historical status, superseded by the completed entry and goal table: open, goal turn 1.** StackGrowth is committed complete in `6a44a5a`; 13 of the original 52 items are complete. Arithmetic beats Rust but misses C. The three-turn C tie allowance is **not yet available**; separate experiments/windows in this turn do not count as additional goal turns. No compiler or standard-library source changed in this investigation.
 
 ### Actual work and production comparison
 
@@ -2346,7 +2367,7 @@ Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/ListGrowth/turn3/
 
 ## ListGrowth slab-reuse investigation (November 1, 2026)
 
-**Status: open, goal turn 2.** The source/package correctness checkpoint is `c347de6`. This turn implements general slab expansion and reuse of cached expansion classes. ListGrowth still misses C, so it is not closed and ListIteration has not started. The three-turn C tie allowance is not yet available.
+**Historical status, superseded by the completed entry and goal table: open, goal turn 2.** The source/package correctness checkpoint is `c347de6`. This turn implements general slab expansion and reuse of cached expansion classes. ListGrowth still misses C, so it is not closed and ListIteration has not started. The three-turn C tie allowance is not yet available.
 
 ### Preserve backing extent and physical capacity
 
@@ -2408,7 +2429,7 @@ Evidence: ignored `benchmarks/codegen/sequential-goal-20261031/ListGrowth/turn2/
 
 ## ListGrowth sequential investigation (November 1, 2026)
 
-**Status: open, goal turn 1.** Eight of 52 initially open items remain complete; do not advance to ListIteration. Source-built Stark is **1.0664 × C / 0.7549 × Rust**, source-free package **1.0667 × C / 0.7552 × Rust**. Both beat Rust but miss C, and the three-turn tie allowance is not yet available. The source-free compiler repairs below are a validated checkpoint, not a performance completion.
+**Historical status, superseded by the completed entry and goal table: open, goal turn 1.** Eight of 52 initially open items remain complete; do not advance to ListIteration. Source-built Stark is **1.0664 × C / 0.7549 × Rust**, source-free package **1.0667 × C / 0.7552 × Rust**. Both beat Rust but miss C, and the three-turn tie allowance is not yet available. The source-free compiler repairs below are a validated checkpoint, not a performance completion.
 
 All sources append 4,096 values, check count/capacity, pop in reverse and verify checksum `8386560`. C uses a realloc-backed array starting at capacity eight; Stark List starts at four; canonical Rust uses Vec. Process measurements include growth, popping and cleanup. C/Rust were freshly compiled with canonical harness flags, using separate Rust native/LLVM invocations. The source-free SDK has no `.stark` fallback and is the existing `70365b6` package chain; the consumer fixes work without rebuilding it.
 
@@ -2571,7 +2592,7 @@ Turn-4 evidence is under ignored `benchmarks/codegen/sequential-goal-20261031/Li
 
 ### Goal turn 3: combined storage and physical-layout repair
 
-**Status: open after implementation and validation.** Five of the 52 initially open benchmarks remain completed. LinkedListChurn has used three investigation turns, so the two-decimal C tie allowance is available, but the pooled source result still rounds to **1.01**. Do not advance to LinkedListPopOnly or label the item completed.
+**Historical status, superseded by the completed entry and goal table: open after implementation and validation.** Five of the 52 initially open benchmarks remain completed. LinkedListChurn has used three investigation turns, so the two-decimal C tie allowance is available, but the pooled source result still rounds to **1.01**. Do not advance to LinkedListPopOnly or label the item completed.
 
 Two comparable final production windows (seeds `611043` and `611044`) each ran **1,000 randomized interleaved rounds per executable**. Their raw samples are pooled below (2,000 per language/build), without selecting the favorable window or discarding samples:
 
