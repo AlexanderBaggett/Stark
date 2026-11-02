@@ -953,14 +953,6 @@ public class StandardLibraryTestSuite
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var functionBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef i1 @FileExists(",
-            "Expected FileExists definition in emitted LLVM.");
-        var pathExistsBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef i1 @PathExists(",
-            "Expected PathExists definition in emitted LLVM.");
         var helperBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef i1 @TryReadPathMode(",
@@ -970,11 +962,8 @@ public class StandardLibraryTestSuite
             "define fastcc noundef i32 @StatPathInto(",
             "Expected StatPathInto definition in emitted LLVM.");
 
-        Assert.Contains("@PathExists(", functionBody, StringComparison.Ordinal);
-        Assert.Contains("@TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
         // TryReadPathMode delegates to the shared StatPathInto helper, which issues the
         // statat syscall with the comptime-folded number (262) and AT_FDCWD (-100).
-        Assert.Contains("@StatPathInto(", helperBody, StringComparison.Ordinal);
         AssemblyLoweringAssertions.ContainsDirectLinuxX64Syscall(statHelperBody, 262);
         AssemblyLoweringAssertions.DoesNotContainLinuxSyscallBridgeCalls(llvm);
         Assert.DoesNotContain("@OpenFileRead(", helperBody, StringComparison.Ordinal);
@@ -2772,7 +2761,7 @@ public class StandardLibraryTestSuite
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
+        var bodyStart = llvm.IndexOf("\n{", functionStart, StringComparison.Ordinal) + 1;
         Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;

@@ -821,8 +821,8 @@ internal fn bool MinimalModuleRunsThroughTheFullPipelineImpl()
         // PORT-NOTE: the original asserts the full pipeline succeeded, then probes a long list of
         // intermediate artifacts (SyntaxModel with ModuleName "Demo", SemanticValidation,
         // SpecializationPlan, SpecializationCodegenStrategy, OwnershipValidation,
-        // LoweringContractValidation, AbiModel, SsaIr, OptimizedSsaIr), that exactly 43 passes
-        // Executed, and that a verbose "pass-completed" pipeline log was emitted for stage
+        // LoweringContractValidation, AbiModel, SsaIr, OptimizedSsaIr), and that a verbose
+        // "pass-completed" pipeline log was emitted for stage
         // "emit-llvm". Per-artifact presence, pass-execution counts, and pipeline lifecycle logs
         // are not expressible via the compile helpers, so this reduces to "the embedded program
         // compiles through the full pipeline and the emitted LLVM IR carries the Demo module id"
@@ -845,9 +845,8 @@ internal fn bool ManifestBackedAsmLibrariesResolveWithoutSourceFilesAndStayAbiDe
         // PORT-NOTE: the C# test compiles the Syscall library, builds a package image,
         // writes the manifest JSON, deletes Syscall.stark, then re-imports Syscall into the
         // Demo consumer and inspects the loaded module's SyntaxModel (Syscall0 asm x86_64
-        // "syscall"), the HighLevelIr BodyLoweringKind (AsmBypass) and the LlvmIrModule
-        // text ("declare i64 @Syscall0(i64)", "call i64 @Syscall0(i64 39)", no "asm
-        // sideeffect"). Package-image bytes, manifest round-tripping, filesystem effects and
+        // "syscall"), and the LlvmIrModule
+        // text for the emitted inline syscall assembly. Package-image bytes, manifest round-tripping, filesystem effects and
         // loaded-module/HIR/LLVM artifact inspection are not expressible via the helpers, so
         // this resolves Syscall through the filesystem module resolver and asserts the Demo
         // consumer type-checks (the import-resolution success signal).

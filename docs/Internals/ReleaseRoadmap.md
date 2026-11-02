@@ -1237,24 +1237,15 @@ Completion rules:
           is precomputed before body emission, rather than populated while
           walking blocks, so PHI incoming values can reference aliases defined
           in predecessor blocks without producing undefined `%v...` operands.
-    - [x] Build an emitter coverage matrix from the audited SSA node inventory:
-          every accepted `SsaInstruction`, `SsaRValue`, `SsaValue`, and
-          `SsaTerminator` concrete type must have at least one direct LLVM
-          emission test or be rejected by validation before emission.
-      - [x] 2026-05-13 executable coverage matrix added in
-            `tests/compiler.Tests/SsaEmitterCoverageMatrixTests.cs`. The test
-            reflects the compiler assembly for every concrete `SsaValue`,
-            `SsaRValue`, `SsaInstruction`, the concrete `SsaTerminator`, and
-            each `SsaTerminatorKind`; it fails if a node is missing from the
-            audited matrix or if a row points at a stale/non-test method. This
-            keeps future SSA additions from silently depending on backend
-            fallback behavior.
+    - [x] Cover supported SSA operations through direct emission, validation
+          rejection, and native runtime regression tests. The former name-only
+          coverage matrix was retired during v0.2 release preparation: listing a
+          test name did not prove that the corresponding SSA node was exercised.
     - [x] Add positive LLVM tests for optimized raw-pointer loops, dynamic
           storage runtime helpers, slice/text operations, memory copy/move/set,
           and address forms that currently rely on backend assumptions.
-      - [x] 2026-05-13 positive backend-assumption matrix rows now pin the
-            existing LLVM tests for optimized raw-pointer loops, dynamic
-            storage runtime helpers, slice/text operations, memory
+      - [x] Direct LLVM and runtime tests cover optimized raw-pointer loops,
+            dynamic storage runtime helpers, slice/text operations, memory
             copy/move/set, and address forms. A focused positive LLVM test was
             added for integer/boolean unary lowering so integer negation,
             logical-not, and bitwise-not all have direct emission coverage
@@ -1263,15 +1254,11 @@ Completion rules:
           monomorphized calls, FFI calls, indirect function-pointer calls,
           sret returns, large `byval` parameters, borrow/out/init arguments,
           and void statement calls.
-      - [x] 2026-05-13 positive backend-assumption matrix rows now pin direct
-            calls, imported calls, source-backed and package-image-backed
-            monomorphized calls, FFI/varargs calls, indirect function-pointer
-            calls, sret returns, large `byval` parameters, borrow/out/init
-            arguments, and direct void statement calls to concrete LLVM tests.
-            The matrix verifies these named tests still exist so call ABI
-            coverage cannot drift silently.
-    - [x] Run the benchmark/example/package/stdlib no-fallback gates after the
-          coverage matrix lands and record the `Release` command results here.
+      - [x] Direct call, package, ABI, and native runtime tests exercise these
+            surfaces. The removed name-only registry did not contribute runtime
+            or emission coverage.
+    - [x] Run the benchmark/example/package/stdlib no-fallback gates and record
+          the `Release` command results here.
       - [x] 2026-05-13 verification:
             `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj --filter "FullyQualifiedName~BenchmarkSourceTests.BenchmarkSourcesCompile|FullyQualifiedName~ExampleSourceTests.RepresentativeExampleSourcesEmitLlvmWithoutFallbackLogs|FullyQualifiedName~StandardLibrarySourceTests.StandardLibraryRootEmitsLlvmWithoutFallbackLogs|FullyQualifiedName~PackageImageCallableValueTests.PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs"`
             passed: `4` passed, `0` failed, `0` skipped, duration `48 s`.

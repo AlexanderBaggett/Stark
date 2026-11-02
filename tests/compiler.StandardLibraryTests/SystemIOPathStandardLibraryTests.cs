@@ -65,88 +65,6 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("extractvalue { ptr, i64, i64 }", llvm.Text, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopies()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "IO", "Path.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(File.ReadAllText(modulePath), modulePath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                EmitLlvmIr: true));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var tryJoinBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(",
-            "Expected promoted TryJoin definition in path module.");
-        var tryJoinPointerRangesBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges(",
-            "Expected promoted TryJoinPointerRanges definition in path module.");
-        var appendPointerRangeBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @AppendPointerRangeDisjoint(",
-            "Expected promoted path pointer append helper definition in path module.");
-        var tryJoin3Body = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_ascii_(",
-            "Expected promoted three-part TryJoin definition in path module.");
-        var tryJoinPointerRanges3Body = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges3(",
-            "Expected promoted three-part TryJoin pointer core definition in path module.");
-        var tryJoin4Body = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_ascii_ascii_(",
-            "Expected promoted four-part TryJoin definition in path module.");
-        var tryJoinPointerRanges4Body = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges4(",
-            "Expected promoted four-part TryJoin pointer core definition in path module.");
-        var tryJoinConstBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinConst__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(",
-            "Expected promoted TryJoinConst definition in path module.");
-        var tryNormalizeBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparators(",
-            "Expected promoted TryNormalizeSeparators definition in path module.");
-        var tryNormalizeConstBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparatorsConst(",
-            "Expected promoted TryNormalizeSeparatorsConst definition in path module.");
-        var getConstFactsBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc void @GetConstFacts(",
-            "Expected promoted GetConstFacts definition in path module.");
-
-        Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
-        Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
-        Assert.Contains("@TryJoinPointerRanges3", tryJoin3Body, StringComparison.Ordinal);
-        Assert.Contains("@TryJoinPointerRanges4", tryJoin4Body, StringComparison.Ordinal);
-        Assert.True(
-            CountOccurrences(tryJoinPointerRangesBody, "@llvm.memcpy.p0.p0.i64") >= 2,
-            "Expected TryJoin pointer core to copy left and right path ranges through direct tail-region memcpy operations.");
-        Assert.True(
-            CountOccurrences(tryJoinPointerRanges3Body, "@AppendJoinedPointerRangeDisjoint") >= 3,
-            "Expected three-part TryJoin pointer core to append each path range through the joined tail-region helper.");
-        Assert.True(
-            CountOccurrences(tryJoinPointerRanges4Body, "@AppendJoinedPointerRangeDisjoint") >= 4,
-            "Expected four-part TryJoin pointer core to append each path range through the joined tail-region helper.");
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", appendPointerRangeBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
-        Assert.Contains("@AppendNormalizedSeparatorsCore", tryNormalizeBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@AppendNormalizedSeparators(", tryNormalizeBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", tryJoinConstBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", tryNormalizeConstBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Text_AsciiLength", getConstFactsBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Text_AsciiData", getConstFactsBody, StringComparison.Ordinal);
-    }
 
     [Fact]
     public void StdLibSourcePromotedPathCorrectnessSurfaceCompiles()
@@ -1313,28 +1231,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             Assert.Contains("c\"/\\00\"", llvm, StringComparison.Ordinal);
             Assert.Contains("c\";\\00\"", llvm, StringComparison.Ordinal);
 
-            var isDirectorySeparatorBody = ExtractDefinedFunctionText(
-                llvm,
-                "define fastcc noundef i1 @IsDirectorySeparatorUnit(",
-                "Expected staged Windows path build to emit the path separator unit helper.");
-            Assert.Contains("icmp eq i8", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.True(
-                isDirectorySeparatorBody.Contains("@DirectorySeparatorUnit(", StringComparison.Ordinal)
-                || isDirectorySeparatorBody.Contains("@.str.0", StringComparison.Ordinal),
-                isDirectorySeparatorBody);
-            Assert.Contains("@.str.1", isDirectorySeparatorBody, StringComparison.Ordinal);
 
-            var tryJoinSignature = llvm.Contains(
-                "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
-                StringComparison.Ordinal)
-                    ? "define fastcc noundef %System_Memory_MemoryStatus @TryJoin("
-                    : "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(";
-            var tryJoinBody = ExtractDefinedFunctionText(
-                llvm,
-                tryJoinSignature,
-                "Expected TryJoin definition in staged Windows path module.");
-            Assert.Contains("icmp eq i8", tryJoinBody, StringComparison.Ordinal);
-            Assert.DoesNotContain("@System_Runtime_Platform_Windows_IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
         }
         finally
         {

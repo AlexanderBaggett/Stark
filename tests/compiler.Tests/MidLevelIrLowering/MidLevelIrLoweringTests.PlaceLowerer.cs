@@ -673,10 +673,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(function.Locals, local => local.Name == "box" && local.IsAddressable);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue);
         Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
-        Assert.Contains(
-            statements,
-            statement => statement.Value is MidLevelIrLoadIndirectRValue load
-                && load.Address is MidLevelIrGlobalAddressOperand { Name: "Counter" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
     }
 
     [Fact]

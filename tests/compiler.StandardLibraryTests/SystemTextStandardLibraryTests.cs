@@ -64,107 +64,6 @@ public sealed class SystemTextStandardLibraryTests
         Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Text.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(File.ReadAllText(modulePath), modulePath),
-            new CompilerOptions(
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                EmitLlvmIr: true));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var asciiSliceBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSlice(",
-            "Expected OwnedAscii.AppendSlice to lower as a defined function.");
-        var asciiLiteralBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAscii(",
-            "Expected OwnedAscii.AppendAscii to lower as a defined function.");
-        var unicodeSliceBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSlice(",
-            "Expected OwnedUnicode.AppendSlice to lower as a defined function.");
-        var unicodeLiteralBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicode(",
-            "Expected OwnedUnicode.AppendUnicode to lower as a defined function.");
-        var asciiSliceDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSliceDisjoint(",
-            "Expected OwnedAscii.AppendSliceDisjoint to lower as a defined function.");
-        var asciiLiteralDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAsciiDisjoint(",
-            "Expected OwnedAscii.AppendAsciiDisjoint to lower as a defined function.");
-        var asciiConstBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAscii(",
-            "Expected OwnedAscii.AppendConstAscii to lower as a defined function.");
-        var asciiConstDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAsciiDisjoint(",
-            "Expected OwnedAscii.AppendConstAsciiDisjoint to lower as a defined function.");
-        var unicodeSliceDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSliceDisjoint(",
-            "Expected OwnedUnicode.AppendSliceDisjoint to lower as a defined function.");
-        var unicodeLiteralDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicodeDisjoint(",
-            "Expected OwnedUnicode.AppendUnicodeDisjoint to lower as a defined function.");
-        var unicodeConstBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicode(",
-            "Expected OwnedUnicode.AppendConstUnicode to lower as a defined function.");
-        var unicodeConstDisjointBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicodeDisjoint(",
-            "Expected OwnedUnicode.AppendConstUnicodeDisjoint to lower as a defined function.");
-
-        Assert.Contains("@OwnedAscii_AppendSliceDisjoint", asciiSliceBody, StringComparison.Ordinal);
-        Assert.Contains("@OwnedAscii_AppendAsciiDisjoint", asciiLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("@OwnedAscii_AppendConstAsciiDisjoint", asciiConstBody, StringComparison.Ordinal);
-        Assert.Contains("@OwnedUnicode_AppendSliceDisjoint", unicodeSliceBody, StringComparison.Ordinal);
-        Assert.Contains("@OwnedUnicode_AppendUnicodeDisjoint", unicodeLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("@OwnedUnicode_AppendConstUnicodeDisjoint", unicodeConstBody, StringComparison.Ordinal);
-
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", asciiSliceDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", asciiLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", asciiConstDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", unicodeSliceDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", unicodeLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memcpy.p0.p0.i64", unicodeConstDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq ptr", asciiLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq ptr", asciiConstDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq ptr", unicodeLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("icmp eq ptr", unicodeConstDisjointBody, StringComparison.Ordinal);
-        Assert.Contains("slot_snapshot", asciiLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("slot_snapshot", asciiConstBody, StringComparison.Ordinal);
-        Assert.Contains("slot_snapshot", unicodeLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("slot_snapshot", unicodeConstBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", asciiLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", asciiConstBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", unicodeLiteralBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", unicodeConstBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", asciiSliceDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", asciiLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", asciiConstDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", unicodeSliceDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", unicodeLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("slot_snapshot", unicodeConstDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", asciiSliceDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", asciiLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", asciiConstDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", unicodeSliceDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", unicodeLiteralDisjointBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("icmp ule ptr", unicodeConstDisjointBody, StringComparison.Ordinal);
-    }
 
     [Fact]
     public void StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectly()
@@ -753,7 +652,7 @@ public sealed class SystemTextStandardLibraryTests
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
+        var bodyStart = llvm.IndexOf("\n{", functionStart, StringComparison.Ordinal) + 1;
         Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;

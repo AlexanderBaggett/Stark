@@ -1511,7 +1511,7 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, $"Expected '{signaturePrefix}' definition to be emitted.");
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
+        var bodyStart = llvm.IndexOf("\n{", functionStart, StringComparison.Ordinal) + 1;
         Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;

@@ -1007,32 +1007,5 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
     }
 
-    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix)
-    {
-        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
-        Assert.True(functionStart >= 0, $"Expected '{signaturePrefix}' definition to be emitted.");
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
-        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
-
-        var depth = 0;
-        for (var index = bodyStart; index < llvm.Length; index++)
-        {
-            var current = llvm[index];
-            if (current == '{')
-            {
-                depth++;
-            }
-            else if (current == '}')
-            {
-                depth--;
-                if (depth == 0)
-                {
-                    return llvm.Substring(functionStart, index - functionStart + 1);
-                }
-            }
-        }
-
-        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
-    }
 }

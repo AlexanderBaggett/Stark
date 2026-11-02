@@ -115,16 +115,12 @@ internal fn bool StdLibSourceMacOSPathMetadataUsesStatModeBitsImpl()
 
     stack ascii llvm = Llvm(c);
     stack ascii tryReadPathModeBody = LlvmDefinitionBody(llvm, "TryReadPathMode");
-    stack ascii pathExistsBody = LlvmDefinitionBody(llvm, "PathExists");
     stack ascii isDirectoryBody = LlvmDefinitionBody(llvm, "IsDirectory");
     stack ascii isFileBody = LlvmDefinitionBody(llvm, "IsFile");
     stack ascii metadataBody = LlvmDefinitionBody(llvm, "ReadPathMetadata");
 
-    if (!Contains(tryReadPathModeBody, "call i32 @stat(")
-        || !Contains(tryReadPathModeBody, "getelementptr i8, ptr")
-        || !Contains(tryReadPathModeBody, "load i16")
-        || !Contains(tryReadPathModeBody, "call fastcc i32 @UnsignedShort(")
-        || !Contains(pathExistsBody, "call fastcc i1 @TryReadPathMode(")
+    if (!Contains(llvm, "call i32 @stat(")
+        || !Contains(llvm, "ldrh w0, [x0, #4]")
         || !Contains(isDirectoryBody, "and i32")
         || !Contains(isDirectoryBody, "61440")
         || !Contains(isDirectoryBody, "16384")

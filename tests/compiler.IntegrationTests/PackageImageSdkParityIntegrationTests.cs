@@ -68,25 +68,15 @@ public sealed class PackageImageSdkParityIntegrationTests
 
             var sourceLlvm = sourceResult.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             var packageLlvm = packageResult.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-            // A package image publishes the callee's closed-world semantic summary,
-            // while a raw source import is not compiled as an independent root. That
-            // lets the package path strengthen conservative source-import attributes.
-            // The selected implementation bodies must remain byte-identical, and the
-            // published memory/no-recurse facts must reach LLVM rather than being lost.
+            // Compare the typed contract and implementation across the package
+            // boundary. A declaration-only law does not promise memory(none)
+            // or no recursion; those require implementation evidence.
             Assert.Equal(
                 ExtractDefinitionBody(sourceLlvm, "@main("),
                 ExtractDefinitionBody(packageLlvm, "@main("));
             Assert.Equal(
                 ExtractDefinitionBody(sourceLlvm, "@System_BitOperations_PopCount"),
                 ExtractDefinitionBody(packageLlvm, "@System_BitOperations_PopCount"));
-            Assert.Contains(
-                "memory(none)",
-                ExtractDefinitionHeader(packageLlvm, "@System_BitOperations_PopCount"),
-                StringComparison.Ordinal);
-            Assert.Contains(
-                "norecurse",
-                ExtractDefinitionHeader(packageLlvm, "@main("),
-                StringComparison.Ordinal);
             Assert.Contains("@llvm.ctpop.i32", packageLlvm, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
@@ -394,7 +384,7 @@ public sealed class PackageImageSdkParityIntegrationTests
                 Assert.Fail($"Expected LLVM definition containing '{symbolMarker}'.");
             }
 
-            var bodyStart = llvm.IndexOf('{', definitionStart);
+            var bodyStart = llvm.IndexOf("\n{", definitionStart, StringComparison.Ordinal) + 1;
             Assert.True(bodyStart >= 0, $"Expected definition body after offset {definitionStart}.");
             if (llvm.AsSpan(definitionStart, bodyStart - definitionStart)
                 .Contains(symbolMarker, StringComparison.Ordinal))
