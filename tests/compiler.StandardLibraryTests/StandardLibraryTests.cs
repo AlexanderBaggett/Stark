@@ -2761,8 +2761,9 @@ public class StandardLibraryTestSuite
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
 
-        var bodyStart = llvm.IndexOf("\n{", functionStart, StringComparison.Ordinal) + 1;
-        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+        var bodyMatch = System.Text.RegularExpressions.Regex.Match(llvm[functionStart..], @"(?m)\{\r?$");
+        var bodyStart = functionStart + bodyMatch.Index;
+        Assert.True(bodyMatch.Success, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;
         for (var index = bodyStart; index < llvm.Length; index++)

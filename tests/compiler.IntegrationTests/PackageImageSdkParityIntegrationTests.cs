@@ -384,8 +384,9 @@ public sealed class PackageImageSdkParityIntegrationTests
                 Assert.Fail($"Expected LLVM definition containing '{symbolMarker}'.");
             }
 
-            var bodyStart = llvm.IndexOf("\n{", definitionStart, StringComparison.Ordinal) + 1;
-            Assert.True(bodyStart >= 0, $"Expected definition body after offset {definitionStart}.");
+            var bodyMatch = System.Text.RegularExpressions.Regex.Match(llvm[definitionStart..], @"(?m)\{\r?$");
+            var bodyStart = definitionStart + bodyMatch.Index;
+            Assert.True(bodyMatch.Success, $"Expected definition body after offset {definitionStart}.");
             if (llvm.AsSpan(definitionStart, bodyStart - definitionStart)
                 .Contains(symbolMarker, StringComparison.Ordinal))
             {
