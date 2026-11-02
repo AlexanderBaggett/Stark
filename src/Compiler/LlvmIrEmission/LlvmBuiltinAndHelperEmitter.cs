@@ -2717,7 +2717,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     {
         return _enumerateBinaryOperations()
             .Where(static binary => binary.Operator is SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual)
-            .Select(static binary => binary.Left.Type)
+            .SelectMany(binary => CollectTextEqualityOperandTypes(binary.Left.Type))
             .Concat(CollectDictionaryKeyTextSignatureTypes(signatures, DictionaryKeyTextCallOperation.Equals))
             .Concat(CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation.Equals))
             .Select(NormalizeAggregateType)
@@ -2726,6 +2726,30 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             .Select(static group => group.First())
             .OrderBy(static type => type.Kind)
             .ToArray();
+    }
+
+    private IEnumerable<StarkTypeSymbol> CollectTextEqualityOperandTypes(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        if (IsTextType(normalizedType))
+        {
+            yield return normalizedType;
+        }
+        else if (TryGetScalarizableAggregateLeaves(
+                     normalizedType,
+                     requireRepresentationPreserving: false,
+                     ignoreScalarizationThresholds: true,
+                     allowTextLeaves: true,
+                     allowSliceLeaves: true,
+                     out var leaves))
+        {
+            // Match the leaf walk used by aggregate equality emission: text
+            // helpers are needed even when no text is compared directly.
+            foreach (var leaf in leaves.Where(static leaf => IsTextType(leaf.Type)))
+            {
+                yield return leaf.Type;
+            }
+        }
     }
 
     private IReadOnlyList<StarkTypeSymbol> CollectTextOrderedComparisonTypes()

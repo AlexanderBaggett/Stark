@@ -1,4 +1,5 @@
 using Stark.Compiler;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
@@ -396,7 +397,7 @@ public sealed partial class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void AggregateAccessorScanLoopDoesNotFoldToMissedMatch()
+    public async Task AggregateAccessorScanLoopDoesNotFoldToMissedMatch()
     {
         // Mirror of the selfhost owner-scan shape: a column-backed table, a
         // by-value accessor copying guarded dynamic reads into a loop-local
@@ -405,6 +406,7 @@ public sealed partial class LlvmIrEmissionTests
         // folds Run to `ret i64 1`; folding to `ret i64 0` (scan never
         // matches) is the wrong-code this pins — observed as the selfhost
         // enum-owner lookup failing unless IO calls sat in the loop body.
+        NativeToolchain.TryDetectDefaultTargetInfo(out var target);
         var result = Compile(
             """
             module Demo
@@ -512,28 +514,42 @@ public sealed partial class LlvmIrEmissionTests
                     return 0;
                 }
 
+                if (foundIndex != 1 || found.Kind != 1 || found.Name != 9
+                    || found.Start != 0 || found.End != 0 || found.Extra != 0)
+                {
+                    return -2;
+                }
+                // An existing name with the wrong kind and an absent name
+                // must both miss and clear the previous successful outputs.
+                if (Scan(tags, table, 7, foundIndex, found)
+                    || foundIndex != 0 || found.Kind != 0 || found.Name != 0)
+                {
+                    return -3;
+                }
+                if (Scan(tags, table, 99, foundIndex, found)
+                    || foundIndex != 0 || found.Kind != 0 || found.Name != 0)
+                {
+                    return -4;
+                }
                 return 1;
             }
+
+            export fn i32[min max] main()
+            {
+                if (Run() != 1) { return 1; }
+                return 0;
+            }
             """,
-            options: new CompilerOptions());
+            options: new CompilerOptions(TargetInfo: target));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        // The producing sret call must be allowed to write its own result
-        // slot: the fresh scope claimed by the slot reload's !alias.scope may
-        // not appear in the call's !noalias set, or LLVM proves the reload
-        // independent of the call and forwards stale pre-call bytes.
-        var scanBody = ExtractDefinitionBody(llvm, "Scan");
-        var sretCall = Regex.Match(scanBody, @"call .*sret\(%Item\).*!noalias !(\d+)");
-        Assert.True(sretCall.Success, "expected a scoped sret call to ItemAt inside Scan");
-        var callNoAliasId = sretCall.Groups[1].Value;
-        var freshScopeNode = Regex.Match(llvm, @"!(\d+) = distinct !\{![0-9]+, ![0-9]+, !""[^""]*\.fresh\.[^""]*""\}");
-        Assert.True(freshScopeNode.Success, "expected a fresh-result noalias scope node");
-        var freshId = freshScopeNode.Groups[1].Value;
-        var callNoAliasList = Regex.Match(llvm, $@"^!{callNoAliasId} = !\{{([^}}]*)\}}", RegexOptions.Multiline);
-        Assert.True(callNoAliasList.Success, "expected the call's noalias metadata list");
-        Assert.DoesNotContain($"!{freshId}", callNoAliasList.Groups[1].Value.Split(',').Select(static part => part.Trim()));
+        // Calls reading through dynamic-array pointers may conservatively
+        // omit alias metadata. The invariant is that any emitted metadata is
+        // sound, and optimizing the native scan still finds the matching row.
+        Assert.Empty(LlvmModuleLint.Check(llvm));
+        await AssertOptimizedNativeSuccess(llvm, target);
     }
 
     [Fact]
@@ -10412,8 +10428,9 @@ public sealed partial class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void AggregatesWithTextFieldsEmitScalarLeafTextComparisons()
+    public async Task AggregatesWithTextFieldsEmitScalarLeafTextComparisons()
     {
+        NativeToolchain.TryDetectDefaultTargetInfo(out var target);
         var result = Compile(
             """
             module Demo
@@ -10422,18 +10439,44 @@ public sealed partial class LlvmIrEmissionTests
             {
             }
 
-            unsafe fn bool Same(Label left, Label right)
+            unsafe noinline finite law bool Same(Label left, Label right)
             {
                 return left == right;
             }
 
-            unsafe fn bool Different(Label left, Label right)
+            unsafe noinline finite law bool Different(Label left, Label right)
             {
                 return left != right;
             }
-            """);
+            record Envelope(Label Value, ascii[2] Tags) {}
 
-        Assert.True(result.Succeeded);
+            unsafe noinline finite law bool SameEnvelope(Envelope left, Envelope right)
+            {
+                return left == right;
+            }
+
+            export unsafe finite i32[min max] main()
+            {
+                stack Label left = new Label("arbitrary", (unicode)"λ🦉");
+                stack Label equalLabel = new Label("arbitrary", (unicode)"λ🦉");
+                stack Label otherTag = new Label("different", (unicode)"λ🦉");
+                stack Label otherWord = new Label("arbitrary", (unicode)"λ🐦");
+                if (!Same(left, equalLabel) || Different(left, equalLabel)) { return 1; }
+                if (Same(left, otherTag) || !Different(left, otherTag)) { return 2; }
+                if (Same(left, otherWord) || !Different(left, otherWord)) { return 3; }
+                stack ascii[2] tags = { "one", "two" };
+                stack ascii[2] changedTags = { "one", "changed" };
+                stack Envelope wrapped = new Envelope(left, tags);
+                if (!SameEnvelope(wrapped, new Envelope(equalLabel, tags))) { return 4; }
+                if (SameEnvelope(wrapped, new Envelope(otherWord, tags))) { return 5; }
+                if (SameEnvelope(wrapped, new Envelope(equalLabel, changedTags))) { return 6; }
+                stack Label empty = new Label("", (unicode)"");
+                if (!Same(empty, empty) || Same(left, empty)) { return 7; }
+                return 0;
+            }
+            """, new CompilerOptions(TargetInfo: target));
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Diagnostics));
         var llvm = GetLlvm(result);
 
         Assert.Contains("call i1 @__stark_ascii_equal(", llvm);
@@ -10442,6 +10485,8 @@ public sealed partial class LlvmIrEmissionTests
         Assert.Contains("or i1", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Same", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Different", llvm);
+        Assert.Empty(LlvmModuleLint.Check(GetLlvmRaw(result)));
+        await AssertOptimizedNativeSuccess(GetLlvmRaw(result), target);
     }
 
     [Fact]
@@ -17508,6 +17553,23 @@ public sealed partial class LlvmIrEmissionTests
 
         Assert.Equal(3, Regex.Matches(runBody, @"\bmul\b").Count);
         Assert.DoesNotContain("@__stark_int_pow_i32", llvm, StringComparison.Ordinal);
+    }
+
+    private static async Task AssertOptimizedNativeSuccess(string llvm, LlvmTargetInfo? target)
+    {
+        if (target is null) return;
+        var directory = Directory.CreateTempSubdirectory("stark-aggregate-regression-");
+        try
+        {
+            var binary = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+            var native = NativeToolchain.EmitExecutable(llvm, binary, target);
+            Assert.True(native.Succeeded, native.StandardError);
+            using var process = Process.Start(new ProcessStartInfo(binary) { UseShellExecute = false });
+            Assert.NotNull(process);
+            await process.WaitForExitAsync();
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally { directory.Delete(recursive: true); }
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
