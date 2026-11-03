@@ -7,11 +7,28 @@ namespace compiler.IntegrationTests;
 public sealed class PackageImagePrivateConstantTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PrivateConstantsSurviveInlineBodiesAndRetainVisibility(bool convert)
+    [InlineData(false, 7, false)]
+    [InlineData(true, 7, false)]
+    [InlineData(true, -100, true)]
+    [InlineData(true, 1024, true)]
+    public async Task PrivateConstantsSurviveInlineBodiesAndRetainVisibility(bool convert, int eventMask, bool assembly)
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var target)) return;
+        if (assembly && !target.Triple.StartsWith("x86_64", StringComparison.Ordinal)) return;
+        var assemblyIdentity = assembly ? """
+            public unsafe ffi asm(x86_64) finite i64[min max] Identity64(i64[min max] value)
+                in("rax") value,
+                out("rax") return
+            {
+                ""
+            }
+            """ : string.Empty;
+        var callbackSource = assembly ? """
+            noinline unsafe finite i64[min max] InvokeCallback(fnptr<unsafe finite i64[min max](i64[min max])> callback, i64[min max] value)
+            {
+                return callback(value);
+            }
+            """ : string.Empty;
         var directory = Directory.CreateTempSubdirectory("stark-package-private-constant-");
         try
         {
@@ -19,7 +36,8 @@ public sealed class PackageImagePrivateConstantTests
             var library = Path.Combine(directory.FullName, OperatingSystem.IsWindows() ? "Library.lib" : "libLibrary.a");
             await File.WriteAllTextAsync(source, $$"""
                 module PrivateConstants
-                const EventMask = 7;
+                const EventMask = {{eventMask}};
+                {{assemblyIdentity}}
                 public static mut u32[0 max] Calls = 0;
                 internal noinline finite i32[min max] Apply(i16[min max] mask, i32[min max] value)
                 {
@@ -38,14 +56,16 @@ public sealed class PackageImagePrivateConstantTests
             await CompileAsync([source, "--emit-lib", "--target", target.Triple, "--no-stark-path", "-o", library]);
             File.Delete(source);
             var app = Path.Combine(directory.FullName, "App.stark");
-            await File.WriteAllTextAsync(app, """
+            await File.WriteAllTextAsync(app, $$"""
                 import PrivateConstants
                 module Consumer
-                export finite i32[min max] main()
+                {{callbackSource}}
+                export {{(assembly ? "unsafe " : "")}}finite i32[min max] main()
                 {
-                    if (Observe(5) != 12) { return 1; }
+                    if (Observe(5) != {{eventMask + 5}}) { return 1; }
                     if (Calls != 1) { return 3; }
                     if (Shadow(21) != 21) { return 2; }
+                    {{(assembly ? "if (Identity64(4294967303) != 4294967303) { return 4; } if (InvokeCallback(Identity64, 4294967303) != 4294967303) { return 5; }" : "")}}
                     return 0;
                 }
                 """);

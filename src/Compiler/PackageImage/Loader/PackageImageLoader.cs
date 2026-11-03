@@ -438,8 +438,7 @@ internal static partial class PackageImageLoader
     {
         document = default!;
 
-        if (module.Module.EffectiveTypedInterface?.Functions.Any(static function => function.Asm is not null) == true
-            || !TryBuildModuleSyntaxModel(module, out var syntaxModel)
+        if (!TryBuildModuleSyntaxModel(module, out var syntaxModel)
             || !TryBuildModuleSource(module, out var sourceText))
         {
             return false;
@@ -464,8 +463,7 @@ internal static partial class PackageImageLoader
     {
         document = default!;
 
-        if (module.Module.EffectiveTypedInterface?.Functions.Any(static function => function.Asm is not null) == true
-            || !TryBuildModuleSyntaxModel(module, out var syntaxModel)
+        if (!TryBuildModuleSyntaxModel(module, out var syntaxModel)
             || !TryBuildLoadedPackageImageFacts(module, out var packageImageFacts)
             || !TryBuildStructuredModuleSource(module, out var sourceText))
         {
