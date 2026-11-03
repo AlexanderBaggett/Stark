@@ -963,12 +963,17 @@ internal static class CompilerCli
                 && loadedModules is not null)
             {
                 var sourceDependencyModules = new List<LoadedModuleDocument>();
+                var linkedPackageMembers = new List<PackageImageLinkageFacts>();
                 var packageProvidedModuleNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
                     if (!string.IsNullOrWhiteSpace(module.Reference.LibraryPath))
                     {
                         var libraryPath = Path.GetFullPath(module.Reference.LibraryPath!);
+                        if (module.PackageImageFacts?.Linkage is { } linkage)
+                        {
+                            linkedPackageMembers.Add(linkage);
+                        }
                         if (linkedLibraries.Add(libraryPath))
                         {
                             packageLibraryInputs.Add(libraryPath);
@@ -981,10 +986,8 @@ internal static class CompilerCli
                     sourceDependencyModules.Add(module);
                 }
 
-                // A linked package archive bundles every module object its own
-                // build compiled (its modules plus its stdlib closure). Any of
-                // those modules that this build ALSO reaches from source must
-                // not be compiled locally, or the link sees duplicate symbols.
+                // A linked archive provides the modules listed in its package
+                // image. Do not also emit those modules from source.
                 sourceDependencyModules.RemoveAll(module =>
                     packageProvidedModuleNames.Contains(module.SyntaxModel.ModuleName));
 
@@ -992,6 +995,7 @@ internal static class CompilerCli
                 var sourceDependencyResult = CompileAndEmitReferencedDependencyObjects(
                     sourceDependencyModules,
                     llvmModule.Text,
+                    linkedPackageMembers,
                     compilerOptions,
                     intermediateDirectory,
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
@@ -1169,6 +1173,12 @@ internal static class CompilerCli
             }
 
             objectPaths.Add(rootObjectResult.OutputPath);
+            var rootSymbols = SummarizeLlvmSymbols(llvmModule.Text);
+            var compiledModuleLinkage = new Dictionary<string, PackageImageLinkageFacts>(StringComparer.Ordinal)
+            {
+                [result.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules).RootModuleName] = new(
+                    Path.GetFileName(rootObjectResult.OutputPath), rootSymbols.DefinedSymbols, rootSymbols.ReferencedSymbols)
+            };
             var requiresMathLibrary = TargetRequiresExplicitMathLibrary(compilerOptions.TargetInfo)
                 && LlvmTextRequiresMathLibrary(llvmModule.Text);
             var requiresWinsockLibrary = TargetRequiresWinsockLibrary(compilerOptions.TargetInfo)
@@ -1221,8 +1231,9 @@ internal static class CompilerCli
                         graphModules: libraryGraphModules));
                 DependencyLlvmCache.WriteLogSummary();
 
-                foreach (var dependencyResult in dependencyResults)
+                for (var index = 0; index < dependencyResults.Length; index++)
                 {
+                    var dependencyResult = dependencyResults[index];
                     if (dependencyResult.ToolchainResult is not null)
                     {
                         toolchainMetrics.AddLlvmObject(dependencyResult.ToolchainResult);
@@ -1243,6 +1254,7 @@ internal static class CompilerCli
                     if (dependencyResult.ObjectPath is not null)
                     {
                         objectPaths.Add(dependencyResult.ObjectPath);
+                        compiledModuleLinkage[dependencyModules[index].SyntaxModel.ModuleName] = dependencyResult.Linkage!;
                     }
 
                     requiresMathLibrary |= dependencyResult.RequiresMathLibrary;
@@ -1290,7 +1302,8 @@ internal static class CompilerCli
                         requiresWinsockLibrary,
                         requiresWindowsSynchronizationLibrary,
                         requiresNtDllLibrary),
-                    packageProfile),
+                    packageProfile,
+                    compiledModuleLinkage),
                 emitTypedOnlyPackageImage)
                 with
                 {
@@ -3152,13 +3165,15 @@ internal static class CompilerCli
         var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto, toolchain);
         toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
-            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary, dependencyResult.RequiresNtDllLibrary)
+            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary, dependencyResult.RequiresNtDllLibrary,
+                new PackageImageLinkageFacts(Path.GetFileName(toolchainResult.OutputPath), dependencyResult.Symbols.DefinedSymbols, dependencyResult.Symbols.ReferencedSymbols))
             : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
     }
 
     private static SourceDependencyLinkResult CompileAndEmitReferencedDependencyObjects(
         IReadOnlyList<LoadedModuleDocument> modules,
         string rootLlvmText,
+        IReadOnlyList<PackageImageLinkageFacts> linkedPackageMembers,
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
@@ -3169,6 +3184,7 @@ internal static class CompilerCli
     {
         var rootSymbols = SummarizeLlvmSymbols(rootLlvmText);
         var unresolvedSymbols = new HashSet<string>(rootSymbols.ReferencedSymbols, StringComparer.Ordinal);
+        var referencedPackageMembers = new HashSet<PackageImageLinkageFacts>();
         var emittedModuleIndexes = new HashSet<int>();
         var broadenedModuleIndexes = new HashSet<int>();
         var objectPaths = new List<string>();
@@ -3178,9 +3194,9 @@ internal static class CompilerCli
         var requiresNtDllLibrary = false;
 
         // Dependency modules compile lazily: a module's pipeline only runs once the
-        // unresolved-symbol loop suspects it (by sanitized name match), with one
-        // completeness fallback wave that compiles everything left when suspicion
-        // misses. Fully inlined roots therefore skip dependency compilation entirely.
+        // unresolved-symbol loop suspects it (by sanitized name match). Package
+        // linkage facts extend that loop to references inside selected archives.
+        // Fully inlined roots can skip dependency compilation entirely.
         // Each wave compiles its modules in parallel; the runs only share the module
         // resolver and the parse cache, which are thread-safe.
         var compiledModules = new DependencyLlvmCompileResult?[modules.Count];
@@ -3246,6 +3262,19 @@ internal static class CompilerCli
         while (true)
         {
             var madeProgress = false;
+            // Native archive members can call source dependencies that the root
+            // never references directly. Preserve that published link graph.
+            foreach (var member in linkedPackageMembers)
+            {
+                if (!referencedPackageMembers.Contains(member)
+                    && member.DefinedSymbols.Overlaps(unresolvedSymbols))
+                {
+                    referencedPackageMembers.Add(member);
+                    unresolvedSymbols.UnionWith(member.ReferencedSymbols);
+                    madeProgress = true;
+                }
+            }
+
             for (var index = 0; index < compiledModules.Length; index++)
             {
                 if (emittedModuleIndexes.Contains(index)
@@ -5041,7 +5070,8 @@ internal static class CompilerCli
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
         bool RequiresWindowsSynchronizationLibrary,
-        bool RequiresNtDllLibrary);
+        bool RequiresNtDllLibrary,
+        PackageImageLinkageFacts? Linkage = null);
 
     private sealed record DependencyLlvmCompileResult(
         bool Success,
