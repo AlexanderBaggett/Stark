@@ -886,8 +886,8 @@ internal fn bool ManifestBackedAsmLibrariesRejectMismatchedTargetArchitecturesIm
 {
     {
         // PORT-NOTE: the C# test publishes an x86_64-only Syscall asm library, then compiles
-        // the Demo consumer against an aarch64 target and asserts a STK2102 diagnostic naming
-        // "Syscall0" and "aarch64". The mismatch depends on a CompilerOptions TargetInfo
+        // the Demo consumer against an aarch64 target and asserts a STK7311 package-target
+        // compatibility diagnostic naming "Syscall" and "aarch64". The mismatch depends on a CompilerOptions TargetInfo
         // (aarch64-unknown-linux-gnu) that the compile helpers cannot set, so the failure
         // cannot be reproduced. This reduces to resolving Syscall through the filesystem
         // module resolver and compiling the Demo consumer (the closest available signal); on

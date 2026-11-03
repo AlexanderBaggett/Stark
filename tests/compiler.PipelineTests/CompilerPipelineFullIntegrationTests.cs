@@ -2450,8 +2450,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.False(consumerResult.Succeeded);
             Assert.Contains(
                 consumerResult.Diagnostics,
-                diagnostic => diagnostic.Code == "STK2102"
-                    && diagnostic.Message.Contains("Syscall0", StringComparison.Ordinal)
+                diagnostic => diagnostic.Code == "STK7311"
+                    && diagnostic.Message.Contains("Syscall", StringComparison.Ordinal)
                     && diagnostic.Message.Contains("aarch64", StringComparison.Ordinal));
         }
         finally

@@ -186,6 +186,17 @@ internal sealed class LlvmFunctionAttributeBuilder
             attributes.Add("norecurse");
         }
 
+        // Linux Stark code does not implicitly depend on libc. Keep this fact in
+        // the IR so loop-idiom recognition cannot introduce strlen during ThinLTO.
+        // This disables synthesis of the libcall, not explicit ffi(c) calls.
+        var triple = _context.TargetInfo?.Triple;
+        if (string.IsNullOrWhiteSpace(triple)
+            ? OperatingSystem.IsLinux()
+            : triple.Contains("linux", StringComparison.OrdinalIgnoreCase))
+        {
+            attributes.Add("\"no-builtin-strlen\"");
+        }
+
         // Stark's x86-64 baseline includes cmpxchg16b (every x86-64 CPU since ~2006):
         // 128-bit atomics (System.Threading.AtomicI96/I128/U96/U128) lower to it. The
         // feature must be stamped on every function — not just the atomic builtins — so
