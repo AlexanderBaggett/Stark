@@ -57,8 +57,11 @@ internal static partial class PackageImageBuilder
             var functionSemantics = new List<StarkPackageFunctionSemanticManifest>();
             var genericTemplates = new List<StarkPackageFunctionTemplateManifest>();
 
+            // Published inline bodies still need module-private constant values.
+            // Preserve their visibility; the source surface keeps its own API filter.
             foreach (var declaration in module.SyntaxModel.Declarations
-                         .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility))
+                         .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility)
+                             || declaration.Kind == DeclarationKind.GlobalConstant)
                          .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
             {
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);

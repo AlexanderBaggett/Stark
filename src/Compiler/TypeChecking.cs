@@ -4006,7 +4006,10 @@ internal sealed class TypeChecker
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration =>
                              declaration.Kind is DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable))
                 {
-                    if (!IsDeclarationVisible(module, declaration))
+                    // Inline package bodies need private constant facts too;
+                    // lookup still enforces the declaration's source visibility.
+                    if (!IsDeclarationVisible(module, declaration)
+                        && declaration.Kind != DeclarationKind.GlobalConstant)
                     {
                         continue;
                     }

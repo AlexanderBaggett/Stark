@@ -442,6 +442,9 @@ the following are true:
 Internal inline bodies support separately packaged modules of the same logical
 package, including SDK modules. Their source visibility stays internal.
 
+Module-private constants retain their typed initializers for published bodies.
+Their visibility stays private and they do not enter the source API surface.
+
 Each body retains `IsGeneric`; older generic-only images default it to true.
 Closed bodies lower directly from typed facts. Unsupported closed bodies and
 private helper closures retain their original native wrapper fallback, without

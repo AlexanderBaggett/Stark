@@ -331,8 +331,12 @@ internal static partial class PackageImageLoader
 
         foreach (var global in globals.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
-            builder.Append(global.Visibility);
-            builder.Append(' ');
+            // Module-private declarations use the language's implicit visibility.
+            if (!string.Equals(global.Visibility, "module", StringComparison.Ordinal))
+            {
+                builder.Append(global.Visibility);
+                builder.Append(' ');
+            }
 
             if (string.Equals(global.Kind, "globalconstant", StringComparison.Ordinal))
             {
