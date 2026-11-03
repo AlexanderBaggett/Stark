@@ -27,7 +27,7 @@ module BenchmarkSourceTests
 internal fn bool BenchmarkSourcesCompileImpl()
 {
     // PORT-NOTE: the C# oracle enumerates every `*.stark` under benchmarks/ from
-    // disk, asserts each compiles, has no fallback logs, emits an LlvmIrModule,
+    // disk as separate test cases, asserts each compiles, has no fallback logs, emits an LlvmIrModule,
     // and that the module text contains no `@malloc(`/`@realloc(`/`@free(`. The
     // host bridge cannot walk the filesystem, so this is reduced to compiling a
     // representative set of embedded benchmark sources and asserting success

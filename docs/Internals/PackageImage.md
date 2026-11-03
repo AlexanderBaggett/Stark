@@ -450,6 +450,8 @@ package, including SDK modules. Their source visibility stays internal.
 
 Module-private constants retain their typed initializers for published bodies.
 Their visibility stays private and they do not enter the source API surface.
+Module-private named-type layouts likewise remain available to published bodies,
+while source type lookup continues to enforce their original visibility.
 Modules containing assembly declarations retain those typed facts as well;
 assembly bodies and register constraints load alongside the typed interface.
 

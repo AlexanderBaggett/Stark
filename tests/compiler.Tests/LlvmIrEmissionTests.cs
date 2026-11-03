@@ -15571,6 +15571,7 @@ public sealed partial class LlvmIrEmissionTests
     [Fact]
     public void ConfiguredTargetInfoIsEmittedInHeader()
     {
+        var target = new LlvmTargetInfo("x86_64-unknown-linux-gnu", "e-p:64:64-i64:64-n8:16:32:64-S128");
         var result = Compile(
             """
             module Demo
@@ -15582,15 +15583,13 @@ public sealed partial class LlvmIrEmissionTests
             """,
             new CompilerOptions(
                 EmitLlvmIr: true,
-                TargetInfo: new LlvmTargetInfo(
-                    "test-triple",
-                    "e-test-layout")));
+                TargetInfo: target));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("target datalayout = \"e-test-layout\"", llvm);
-        Assert.Contains("target triple = \"test-triple\"", llvm);
+        Assert.Contains($"target datalayout = \"{target.DataLayout}\"", llvm);
+        Assert.Contains($"target triple = \"{target.Triple}\"", llvm);
     }
 
     [Fact]

@@ -37,6 +37,16 @@ public sealed class PackageImagePrivateConstantTests
             await File.WriteAllTextAsync(source, $$"""
                 module PrivateConstants
                 const EventMask = {{eventMask}};
+                struct PrivatePair { i64[min max] Value; i32[min max] Offset; }
+                internal noinline finite law i64[min max] ReadPrivatePair(PrivatePair pair)
+                {
+                    return pair.Value + (i64[min max])pair.Offset;
+                }
+                public noinline finite law i64[min max] InspectPair<T>(i64[min max] value)
+                {
+                    stack PrivatePair pair = new PrivatePair() { Value = value, Offset = 3 };
+                    return ReadPrivatePair(pair);
+                }
                 {{assemblyIdentity}}
                 public static mut u32[0 max] Calls = 0;
                 internal noinline finite i32[min max] Apply(i16[min max] mask, i32[min max] value)
@@ -65,6 +75,7 @@ public sealed class PackageImagePrivateConstantTests
                     if (Observe(5) != {{eventMask + 5}}) { return 1; }
                     if (Calls != 1) { return 3; }
                     if (Shadow(21) != 21) { return 2; }
+                    if (InspectPair<i32[min max]>((i64[min max])Calls + 4294967302) != 4294967306) { return 6; }
                     {{(assembly ? "if (Identity64(4294967303) != 4294967303) { return 4; } if (InvokeCallback(Identity64, 4294967303) != 4294967303) { return 5; }" : "")}}
                     return 0;
                 }
@@ -91,6 +102,16 @@ public sealed class PackageImagePrivateConstantTests
                 new CompilerOptions(TargetInfo: target, ModuleResolver: new FileSystemModuleResolver(directory.FullName)));
             Assert.False(inaccessible.Succeeded);
             Assert.Contains(inaccessible.Diagnostics, diagnostic => diagnostic.Code == "STK3015");
+
+            var inaccessibleType = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput("""
+                    import PrivateConstants
+                    module Consumer
+                    finite law void Reject(PrivateConstants.PrivatePair value) { }
+                    """, app),
+                new CompilerOptions(TargetInfo: target, ModuleResolver: new FileSystemModuleResolver(directory.FullName)));
+            Assert.False(inaccessibleType.Succeeded);
+            Assert.Contains(inaccessibleType.Diagnostics, diagnostic => diagnostic.Code == "STK3015");
         }
         finally { directory.Delete(recursive: true); }
     }

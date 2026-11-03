@@ -13741,9 +13741,9 @@ unsafe fn i32[min max] Run()
     return 1;
 }
 """,
-        "test-triple",
-        "e-test-layout",
-        "test-cpu",
+        "x86_64-unknown-linux-gnu",
+        "e-p:64:64-i64:64-n8:16:32:64-S128",
+        "generic",
         "+sse2",
         "+popcnt",
         "",
@@ -13756,8 +13756,8 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "target datalayout = \"e-test-layout\"")
-        && Contains(llvm, "target triple = \"test-triple\"");
+    return Contains(llvm, "target datalayout = \"e-p:64:64-i64:64-n8:16:32:64-S128\"")
+        && Contains(llvm, "target triple = \"x86_64-unknown-linux-gnu\"");
 }
 
 // Verifies the host-test request's `importedInlineCloneSeedFunctions` field
