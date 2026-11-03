@@ -607,6 +607,71 @@ public sealed class ReleaseBackendPackagingScriptTests
         }
     }
 
+    [Fact]
+    public async Task PackagingSourceIdentityUsesCheckoutRatherThanWorkflowCommit()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var powershell = await FindPowerShellAsync(repositoryRoot);
+        if (powershell is null) return;
+        var directory = Directory.CreateTempSubdirectory("stark-release-source-identity-");
+        var probe = Path.Combine(directory.FullName, "probe.ps1");
+        var fixture = Path.Combine(directory.FullName, "checkout");
+        Directory.CreateDirectory(fixture);
+        try
+        {
+            await File.WriteAllTextAsync(probe, """
+                param([string] $PackageScript, [string] $Checkout)
+                $ErrorActionPreference = 'Stop'
+                $tokens = $null
+                $errors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($PackageScript, [ref] $tokens, [ref] $errors)
+                if ($errors.Count -ne 0) { throw $errors[0] }
+                $function = $ast.Find({ param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-CurrentCommit'
+                }, $true)
+                Invoke-Expression $function.Extent.Text
+                & git -C $Checkout init --quiet
+                Set-Content (Join-Path $Checkout 'input.txt') 'workflow'
+                & git -C $Checkout add input.txt
+                & git -C $Checkout -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgSign=false commit --quiet -m workflow
+                if ($LASTEXITCODE -ne 0) { throw 'Fixture commit failed.' }
+                $workflowCommit = (& git -C $Checkout rev-parse HEAD).Trim()
+                Set-Content (Join-Path $Checkout 'input.txt') 'source'
+                & git -C $Checkout -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgSign=false commit --quiet -am source
+                if ($LASTEXITCODE -ne 0) { throw 'Fixture commit failed.' }
+                $sourceCommit = (& git -C $Checkout rev-parse HEAD).Trim()
+                $repositoryRoot = $Checkout
+                $env:GITHUB_SHA = $workflowCommit
+                $CommitSha = $sourceCommit
+                $explicit = Get-CurrentCommit
+                $CommitSha = ''
+                $implicit = Get-CurrentCommit
+                $CommitSha = $workflowCommit
+                $mismatchRejected = $false
+                try { [void](Get-CurrentCommit) } catch { $mismatchRejected = $true }
+                [ordered]@{
+                    source = $sourceCommit
+                    workflow = $workflowCommit
+                    explicit = $explicit
+                    implicit = $implicit
+                    mismatchRejected = $mismatchRejected
+                } | ConvertTo-Json -Compress
+                """);
+            var result = await RunProcessAsync(powershell,
+                ["-NoProfile", "-NonInteractive", "-File", probe,
+                    Path.Combine(repositoryRoot, "scripts", "package-release.ps1"), fixture], repositoryRoot);
+            Assert.True(result.ExitCode == 0, result.Stdout + result.Stderr);
+            using var document = JsonDocument.Parse(result.Stdout);
+            var root = document.RootElement;
+            var source = root.GetProperty("source").GetString();
+            Assert.NotEqual(root.GetProperty("workflow").GetString(), source);
+            Assert.Equal(source, root.GetProperty("explicit").GetString());
+            Assert.Equal(source, root.GetProperty("implicit").GetString());
+            Assert.True(root.GetProperty("mismatchRejected").GetBoolean());
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     private static async Task<string?> FindPowerShellAsync(string workingDirectory)
     {
         var explicitPowerShell = Environment.GetEnvironmentVariable("POWERSHELL_EXE");
