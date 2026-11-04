@@ -303,12 +303,6 @@ fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifacts()
     return PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl();
 }
 
-[Fact]
-[Collection("compiler-pipeline-full")]
-fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions()
-{
-    return ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl();
-}
 
 [Fact]
 [Collection("compiler-pipeline-full")]

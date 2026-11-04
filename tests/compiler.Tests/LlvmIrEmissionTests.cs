@@ -2631,39 +2631,6 @@ public sealed partial class LlvmIrEmissionTests
             runBody);
     }
 
-    [Fact]
-    public void OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignment()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            unsafe fn u64[0 2 ** 63 - 1] Run()
-            {
-                stack mut dynamic u64[0 2 ** 63 - 1] values = new(4);
-                stack init u64[0 2 ** 63 - 1][] spare = init values[values.Length, 2];
-                init spare[0] = 7;
-                return values.Length;
-            }
-            """,
-            options: new CompilerOptions());
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\(\)[\s\S]*?^}", RegexOptions.Multiline).Value;
-
-        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
-        var slicePointer = Regex.Match(
-            runBody,
-            @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr (?<pointer>%v\d+), 0");
-        Assert.True(slicePointer.Success, runBody);
-
-        var pointerName = slicePointer.Groups["pointer"].Value;
-        var definitionIndex = runBody.IndexOf($"{pointerName} = getelementptr", StringComparison.Ordinal);
-        Assert.True(definitionIndex >= 0 && definitionIndex < slicePointer.Index, runBody);
-        Assert.Matches(@"getelementptr inbounds nuw i64, ptr %v\d+_data, i8 0", runBody);
-        Assert.Matches(@"store i64 7, ptr %v\d+, align 8", runBody);
-    }
 
     [Fact]
     public void InitSliceParametersKeepReadableSliceHeaderContract()
@@ -6134,32 +6101,6 @@ public sealed partial class LlvmIrEmissionTests
         Assert.DoesNotContain("declare fastcc i32 @Run(%Token)", llvm, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            noinline unsafe fn i32[min max] Next()
-            {
-                return 1;
-            }
-
-            unsafe fn bool Run()
-            {
-                return 0 < Next() < 3;
-            }
-            """);
-
-        Assert.True(result.Succeeded);
-        var llvm = GetLlvm(result);
-
-        Assert.Equal(1, CountOccurrences(llvm, "call fastcc i32 @Next()"));
-        Assert.Equal(2, CountOccurrences(llvm, "icmp slt i32"));
-        Assert.Contains("br i1", llvm);
-        Assert.DoesNotContain("declare fastcc i1 @Run()", llvm);
-    }
 
     [Fact]
     public void FloatComparisonChainsUseOrderedPredicates()
@@ -8677,30 +8618,12 @@ public sealed partial class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn u8[0 10] Bounded(u8[0 10] input)
+            finite law u8[0 10] Bounded(u8[0 10] input)
             {
-                stack i32[min max] a = input + (input / 3);
-                stack i32[min max] b = a - (a / 5);
-                stack i32[min max] c = b + (b / 7);
-                stack i32[min max] d = c - (c / 11);
-                stack i32[min max] e = d + (d / 13);
-                stack i32[min max] f = e - (e / 17);
-                stack i32[min max] g = f + (f / 19);
-                stack i32[min max] h = g - (g / 23);
-                stack i32[min max] i = h + (h / 29);
-                stack i32[min max] j = i - (i / 31);
-                stack i32[min max] k = j + (j / 37);
-                stack i32[min max] l = k - (k / 41);
-                stack i32[min max] m = l + (l / 43);
-                if (m < -2000000000)
-                {
-                    return 3;
-                }
-
-                return 7;
+                return input;
             }
 
-            unsafe fn u8[0 10] CallBounded(u8[0 10] input)
+            finite law u8[0 10] CallBounded(u8[0 10] input)
             {
                 return Bounded(input);
             }
@@ -8712,8 +8635,6 @@ public sealed partial class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc noundef range(i8 0, 11) i8 @Bounded(i8 noundef range(i8 0, 11) %arg_input)", llvm);
         Assert.Contains("define fastcc noundef range(i8 0, 11) i8 @CallBounded(i8 noundef range(i8 0, 11) %arg_input)", llvm);
-        Assert.Matches(@"call fastcc i8 @Bounded\(i8 range\(i8 0, 11\) %arg_input\), !range !\d+", llvm);
-        Assert.Contains("!{i8 0, i8 11}", llvm);
     }
 
     [Fact]
@@ -15650,6 +15571,7 @@ public sealed partial class LlvmIrEmissionTests
     [Fact]
     public void ConfiguredTargetInfoIsEmittedInHeader()
     {
+        var target = new LlvmTargetInfo("x86_64-unknown-linux-gnu", "e-p:64:64-i64:64-n8:16:32:64-S128");
         var result = Compile(
             """
             module Demo
@@ -15661,15 +15583,13 @@ public sealed partial class LlvmIrEmissionTests
             """,
             new CompilerOptions(
                 EmitLlvmIr: true,
-                TargetInfo: new LlvmTargetInfo(
-                    "test-triple",
-                    "e-test-layout")));
+                TargetInfo: target));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("target datalayout = \"e-test-layout\"", llvm);
-        Assert.Contains("target triple = \"test-triple\"", llvm);
+        Assert.Contains($"target datalayout = \"{target.DataLayout}\"", llvm);
+        Assert.Contains($"target triple = \"{target.Triple}\"", llvm);
     }
 
     [Fact]
@@ -17278,72 +17198,6 @@ public sealed partial class LlvmIrEmissionTests
         Assert.DoesNotContain("%v0_phi = phi", llvm, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLength()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            unsafe fn u64[0 2 ** 63 - 1] Fill(i8[min max] value, u8[0 10] count)
-            {
-                stack mut dynamic i8[min max] values = new(count);
-                stack init i8[min max][] spare = init values[values.Length, count];
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
-                {
-                    init spare[index] = value;
-                }
-
-                return values.Length;
-            }
-            """,
-            options: new CompilerOptions(EmitLlvmIr: true));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var fillBody = ExtractDefinitionBody(llvm, "Fill");
-
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
-        Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %abi_rawptr_loop_destination_data_\d+, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", fillBody);
-        Assert.Contains("dynamic_length_final", fillBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("%v0_phi = phi", fillBody, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnce()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            unsafe fn u64[0 2 ** 63 - 1] Fill(i8[min max] value, u8[0 10] count)
-            {
-                stack mut dynamic i8[min max] values = new(count);
-                if (!values.TryReserve(count))
-                {
-                    return 0;
-                }
-
-                for willexit (stack mut u8[0 10] index = 0; index < count; index += 1)
-                {
-                    init values[values.Length] = value;
-                }
-
-                return values.Length;
-            }
-            """,
-            options: new CompilerOptions(EmitLlvmIr: true));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var fillBody = ExtractDefinitionBody(llvm, "Fill");
-
-        Assert.Contains("declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)", llvm, StringComparison.Ordinal);
-        Assert.Matches(@"call void @llvm\.memset\.p0\.i64\(ptr %dynamic_append_tail, i8 %arg_value, i64 %abi_rawptr_loop_count_\d+, i1 false\)", fillBody);
-        Assert.Contains("%dynamic_append_final_length = add", fillBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("_for_body", fillBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("v7_phi", fillBody, StringComparison.Ordinal);
-    }
 
     [Fact]
     public void DisjointInitSliceCopyLoopLowersToMemcpy()

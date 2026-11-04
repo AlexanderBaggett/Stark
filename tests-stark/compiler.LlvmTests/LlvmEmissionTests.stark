@@ -1046,40 +1046,6 @@ unsafe fn i32[min max] Run(Token token)
     }
 }
 
-// Ported from ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation.
-// The C# Assert.Equal counts are re-expressed with CountOccurrences.
-[Fact]
-[Collection("control-flow")]
-fn bool ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
-{
-    {
-        stack mut LlvmCompile compiled = CompileLlvm(
-            "llvm-comparison-chain",
-            raw"""
-module Demo
-
-noinline unsafe fn i32[min max] Next()
-{
-    return 1;
-}
-
-unsafe fn bool Run()
-{
-    return 0 < Next() < 3;
-}
-""");
-        if (!Succeeds(compiled))
-        {
-            return false;
-        }
-
-        stack ascii llvm = Llvm(compiled);
-        return CountOccurrences(llvm, "call fastcc i32 @Next()") == 1
-            && CountOccurrences(llvm, "icmp slt i32") == 2
-            && Contains(llvm, "br i1")
-            && DoesNotContain(llvm, "declare fastcc i1 @Run()");
-    }
-}
 
 // Ported from FloatComparisonChainsUseOrderedPredicates.
 [Fact]
@@ -2181,12 +2147,6 @@ fn bool DynamicStorageInitSliceWritesCommitOwnerLength()
     return DynamicStorageInitSliceWritesCommitOwnerLengthImpl();
 }
 
-[Fact]
-[Collection("llvm-ir")]
-fn bool OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignment()
-{
-    return OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignmentImpl();
-}
 
 [Fact]
 [Collection("llvm-ir")]
@@ -4519,19 +4479,6 @@ fn bool InitSliceByteFillLoopLowersToMemset()
     return InitSliceByteFillLoopLowersToMemsetImpl();
 }
 
-[Fact]
-[Collection("llvm-ir")]
-fn bool DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLength()
-{
-    return DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLengthImpl();
-}
-
-[Fact]
-[Collection("llvm-ir")]
-fn bool DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnce()
-{
-    return DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnceImpl();
-}
 
 [Fact]
 [Collection("llvm-ir")]

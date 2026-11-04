@@ -645,12 +645,6 @@ function Normalize-CompilerCommand {
 
 function Get-CurrentCommit {
     $explicitCommit = if ([string]::IsNullOrWhiteSpace($CommitSha)) { $null } else { $CommitSha.Trim().ToLowerInvariant() }
-    $githubCommit = if ([string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) { $null } else { $env:GITHUB_SHA.Trim().ToLowerInvariant() }
-    if ($null -ne $explicitCommit -and $null -ne $githubCommit -and
-        -not [string]::Equals($explicitCommit, $githubCommit, [StringComparison]::Ordinal)) {
-        throw "Requested source commit '$explicitCommit' does not match GitHub source commit '$githubCommit'."
-    }
-
     $gitCommit = $null
     if (Get-Command git -ErrorAction SilentlyContinue) {
         $gitOutput = (& git -C $repositoryRoot rev-parse HEAD 2>$null)
@@ -660,8 +654,6 @@ function Get-CurrentCommit {
     }
     $commit = if ($null -ne $explicitCommit) {
         $explicitCommit
-    } elseif ($null -ne $githubCommit) {
-        $githubCommit
     } else {
         $gitCommit
     }

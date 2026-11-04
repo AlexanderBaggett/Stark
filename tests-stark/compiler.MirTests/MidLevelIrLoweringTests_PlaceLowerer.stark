@@ -577,8 +577,7 @@ unsafe fn i32[min max] Run(i64[min max] bits)
 // Ported from MidLevelIrLoweringTests.PlaceLowerer.FieldAndGlobalAddressExpressionsLowerToMirAddresses.
 internal fn bool FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl()
 {
-    // PORT-NOTE: the FieldAddressRValue, StoreIndirect, and LoadIndirectRValue-through
-    // -GlobalAddressOperand{Counter} checks are reduced to: direct codegen, the
+    // PORT-NOTE: field-address, indirect-store, and indirect-load checks are reduced to: direct codegen, the
     // addressable "box" local, address temps for &box/.Value, a store-indirect, and
     // the global address operand through *(&Counter).
     stack mut MirCompile c = CompileMir(

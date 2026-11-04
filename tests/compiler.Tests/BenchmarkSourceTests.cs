@@ -5,41 +5,41 @@ namespace compiler.Tests;
 
 public sealed class BenchmarkSourceTests
 {
-    [Fact]
-    public void BenchmarkSourcesCompile()
+    public static IEnumerable<object[]> BenchmarkSources()
+    {
+        var benchmarkRoot = Path.Combine(FindRepositoryRoot(), "benchmarks");
+        return Directory.GetFiles(benchmarkRoot, "*.stark", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .Select(path => new object[] { Path.GetRelativePath(benchmarkRoot, path) });
+    }
+
+    [Theory]
+    [MemberData(nameof(BenchmarkSources))]
+    public void BenchmarkSourcesCompile(string relativePath)
     {
         var repositoryRoot = FindRepositoryRoot();
-        var benchmarkRoot = Path.Combine(repositoryRoot, "benchmarks");
+        var benchmarkSource = Path.Combine(repositoryRoot, "benchmarks", relativePath);
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
-        var benchmarkSources = Directory.GetFiles(benchmarkRoot, "*.stark", SearchOption.AllDirectories)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
 
-        Assert.NotEmpty(benchmarkSources);
-
-        foreach (var benchmarkSource in benchmarkSources)
-        {
-            var result = DefaultCompilerPipeline.Create().Run(
-                new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
-                new CompilerOptions(
-                    EmitLlvmIr: true,
-                    TargetInfo: targetInfo,
-                    ModuleResolver: new TargetAwareStdLibModuleResolver(
-                        new FileSystemModuleResolver(sourceRoot),
-                        [sourceRoot],
-                        targetInfo)));
-
-            Assert.True(
-                result.Succeeded,
-                $"{benchmarkSource}{Environment.NewLine}{string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
-            FallbackLogAssertions.AssertNoFallbackLogs(result, "Normal benchmark builds", benchmarkSource);
-            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
-            Assert.NotNull(llvmModule);
-            Assert.DoesNotContain("@malloc(", llvmModule.Text, StringComparison.Ordinal);
-            Assert.DoesNotContain("@realloc(", llvmModule.Text, StringComparison.Ordinal);
-            Assert.DoesNotContain("@free(", llvmModule.Text, StringComparison.Ordinal);
-        }
+        Assert.True(
+            result.Succeeded,
+            $"{benchmarkSource}{Environment.NewLine}{string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
+        FallbackLogAssertions.AssertNoFallbackLogs(result, "Normal benchmark builds", benchmarkSource);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+        Assert.NotNull(llvmModule);
+        Assert.DoesNotContain("@malloc(", llvmModule.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvmModule.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvmModule.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -501,8 +501,9 @@ public sealed class BenchmarkSourceTests
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
-        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+        var bodyMatch = System.Text.RegularExpressions.Regex.Match(llvm[functionStart..], @"(?m)\{\r?$");
+        var bodyStart = functionStart + bodyMatch.Index;
+        Assert.True(bodyMatch.Success, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;
         for (var index = bodyStart; index < llvm.Length; index++)

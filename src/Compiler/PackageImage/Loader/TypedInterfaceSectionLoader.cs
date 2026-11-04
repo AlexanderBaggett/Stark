@@ -190,7 +190,7 @@ internal static partial class PackageImageLoader
                     function.Asm,
                     function.GenericParameters,
                     comptimeGenericParameters: function.ComptimeGenericParameters,
-                    hasBody: function.HasGenericTemplateBody
+                    hasBody: function.Asm is not null || function.HasGenericTemplateBody
                     || HasPublishedGenericTemplateBody(
                         module.Module,
                         module.Module.ModuleName,

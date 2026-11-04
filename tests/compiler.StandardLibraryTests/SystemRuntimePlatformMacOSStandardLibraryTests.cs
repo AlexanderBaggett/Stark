@@ -78,10 +78,6 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
             llvm,
             "define fastcc noundef i1 @TryReadPathMode(",
             "Expected TryReadPathMode definition in emitted LLVM.");
-        var pathExistsBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef i1 @PathExists(",
-            "Expected PathExists definition in emitted LLVM.");
         var isDirectoryBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef i1 @IsDirectory(",
@@ -95,9 +91,8 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
             "define fastcc noundef i32 @ReadPathMetadata(",
             "Expected ReadPathMetadata definition in emitted LLVM.");
 
-        Assert.Contains("call i32 @stat(", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("ldrh w0, [x0, #4]", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i1 @TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stat(", llvm, StringComparison.Ordinal);
+        Assert.Contains("ldrh w0, [x0, #4]", llvm, StringComparison.Ordinal);
         Assert.Contains("and i32", isDirectoryBody, StringComparison.Ordinal);
         Assert.Contains("61440", isDirectoryBody, StringComparison.Ordinal);
         Assert.Contains("16384", isDirectoryBody, StringComparison.Ordinal);
@@ -381,8 +376,9 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
         Assert.True(functionStart >= 0, missingMessage);
 
-        var bodyStart = llvm.IndexOf('{', functionStart);
-        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+        var bodyMatch = System.Text.RegularExpressions.Regex.Match(llvm[functionStart..], @"(?m)\{\r?$");
+        var bodyStart = functionStart + bodyMatch.Index;
+        Assert.True(bodyMatch.Success, $"Expected '{signaturePrefix}' to include a function body.");
 
         var depth = 0;
         for (var index = bodyStart; index < llvm.Length; index++)

@@ -72,7 +72,7 @@
         "rustc"
       ],
       "exit": 0,
-      "stdout": "/home/zadkey/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc\n",
+      "stdout": "${HOME}/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc\n",
       "stderr": ""
     },
     "dotnet": {
@@ -81,7 +81,7 @@
         "--info"
       ],
       "exit": 0,
-      "stdout": ".NET SDK:\n Version:           10.0.302\n Commit:            35b593bebf\n Workload version:  10.0.300-manifests.1641d827\n MSBuild version:   18.6.11+35b593beb\n\nRuntime Environment:\n OS Name:     cachyos\n OS Version:  \n OS Platform: Linux\n RID:         linux-x64\n Base Path:   /home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/sdk/10.0.302/\n\n.NET workloads installed:\nThere are no installed workloads to display.\nConfigured to use workload sets when installing new manifests.\nNo workload sets are installed. Run \"dotnet workload restore\" to install a workload set.\n\nHost:\n  Version:      10.0.10\n  Architecture: x64\n  Commit:       f7d90799ce\n\n.NET SDKs installed:\n  10.0.302 [/home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/sdk]\n\n.NET runtimes installed:\n  Microsoft.AspNetCore.App 10.0.10 [/home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/shared/Microsoft.AspNetCore.App]\n  Microsoft.NETCore.App 10.0.10 [/home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/shared/Microsoft.NETCore.App]\n\nOther architectures found:\n  None\n\nEnvironment variables:\n  DOTNET_CLI_HOME                          [/tmp/stark-dotnet-home]\n  DOTNET_GCHeapHardLimit                   [40000000]\n  DOTNET_PROCESSOR_COUNT                   [1]\n\nglobal.json file:\n  /home/zadkey/Projects/stark/global.json\n\nLearn more:\n  https://aka.ms/dotnet/info\n\nDownload .NET:\n  https://aka.ms/dotnet/download\n",
+      "stdout": ".NET SDK:\n Version:           10.0.302\n Commit:            35b593bebf\n Workload version:  10.0.300-manifests.1641d827\n MSBuild version:   18.6.11+35b593beb\n\nRuntime Environment:\n OS Name:     cachyos\n OS Version:  \n OS Platform: Linux\n RID:         linux-x64\n Base Path:   ${HOME}/Projects/stark/benchmarks/toolchains/dotnet/sdk/10.0.302/\n\n.NET workloads installed:\nThere are no installed workloads to display.\nConfigured to use workload sets when installing new manifests.\nNo workload sets are installed. Run \"dotnet workload restore\" to install a workload set.\n\nHost:\n  Version:      10.0.10\n  Architecture: x64\n  Commit:       f7d90799ce\n\n.NET SDKs installed:\n  10.0.302 [${HOME}/Projects/stark/benchmarks/toolchains/dotnet/sdk]\n\n.NET runtimes installed:\n  Microsoft.AspNetCore.App 10.0.10 [${HOME}/Projects/stark/benchmarks/toolchains/dotnet/shared/Microsoft.AspNetCore.App]\n  Microsoft.NETCore.App 10.0.10 [${HOME}/Projects/stark/benchmarks/toolchains/dotnet/shared/Microsoft.NETCore.App]\n\nOther architectures found:\n  None\n\nEnvironment variables:\n  DOTNET_CLI_HOME                          [/tmp/stark-dotnet-home]\n  DOTNET_GCHeapHardLimit                   [40000000]\n  DOTNET_PROCESSOR_COUNT                   [1]\n\nglobal.json file:\n  ${HOME}/Projects/stark/global.json\n\nLearn more:\n  https://aka.ms/dotnet/info\n\nDownload .NET:\n  https://aka.ms/dotnet/download\n",
       "stderr": ""
     },
     "opt": {
@@ -101,8 +101,8 @@
       "sha256": "3e9abb628a5e7ecb195c7c85ae13c44f3059a7fff093915682ebde3b30d2036d"
     },
     "rustc": {
-      "invocation": "/home/zadkey/.cargo/bin/rustc",
-      "resolved": "/home/zadkey/.cargo/bin/rustup",
+      "invocation": "${HOME}/.cargo/bin/rustc",
+      "resolved": "${HOME}/.cargo/bin/rustup",
       "sha256": "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4"
     },
     "opt": {
@@ -121,12 +121,12 @@
       "sha256": "5331d76c38f90955e18e74ef45bbd8ec12ae5040b172470f331b92bb492df58a"
     },
     "dotnet": {
-      "invocation": "/home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/dotnet",
-      "resolved": "/home/zadkey/Projects/stark/benchmarks/toolchains/dotnet/dotnet",
+      "invocation": "${HOME}/Projects/stark/benchmarks/toolchains/dotnet/dotnet",
+      "resolved": "${HOME}/Projects/stark/benchmarks/toolchains/dotnet/dotnet",
       "sha256": "55117d7d1f27537ee6e7a81b8b9f84f0b50c8cbd2d1d1e21684c31db1518230a"
     },
     "rustc_actual": {
-      "path": "/home/zadkey/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc",
+      "path": "${HOME}/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc",
       "sha256": "b53b780f77f952062f8ca8a3b70aef2390b1e45ad91939be94afdc9543026853"
     }
   }

@@ -565,23 +565,11 @@ internal sealed class TypeChecker
             if (!module.Reference.IsRoot
                 && module.PackageImageFacts is { NamedTypes.Count: > 0 } packageImageFacts)
             {
-                foreach (var declaration in module.SyntaxModel.Declarations)
+                // Published bodies need private aggregate layouts as compiler facts.
+                // Source type lookup independently enforces their original visibility.
+                foreach (var (qualifiedName, namedType) in packageImageFacts.NamedTypes)
                 {
-                    if (declaration.Kind is not (DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum or DeclarationKind.Trait or DeclarationKind.Doctrine))
-                    {
-                        continue;
-                    }
-
-                    if (!IsDeclarationVisible(module, declaration))
-                    {
-                        continue;
-                    }
-
-                    var qualifiedName = QualifyName(module, declaration.Name);
-                    if (packageImageFacts.NamedTypes.TryGetValue(qualifiedName, out var namedType))
-                    {
-                        _namedTypes[qualifiedName] = namedType;
-                    }
+                    _namedTypes[qualifiedName] = namedType;
                 }
 
                 continue;
@@ -4006,7 +3994,10 @@ internal sealed class TypeChecker
                 foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration =>
                              declaration.Kind is DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable))
                 {
-                    if (!IsDeclarationVisible(module, declaration))
+                    // Inline package bodies need private constant facts too;
+                    // lookup still enforces the declaration's source visibility.
+                    if (!IsDeclarationVisible(module, declaration)
+                        && declaration.Kind != DeclarationKind.GlobalConstant)
                     {
                         continue;
                     }
@@ -4126,8 +4117,8 @@ internal sealed class TypeChecker
     /// are planned at their concrete instantiations); references whose arguments
     /// are comptime values rather than types are also skipped here and still
     /// require a root-visible use today, as do instantiations of an imported
-    /// module's own module-private generics (private declarations are not in the
-    /// type catalog).
+    /// source module's own module-private generics (private source declarations
+    /// are not in the source type catalog).
     /// </summary>
     private void MaterializeImportedSourceInstantiations()
     {

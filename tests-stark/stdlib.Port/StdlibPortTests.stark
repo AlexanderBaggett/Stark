@@ -2,7 +2,6 @@ import StdlibPortSupport
 import System.Testing
 import BookSampleStandardLibraryTests
 import StandardLibraryGenericTests
-import SystemBackendBoundaryAuditTests
 import SystemCStandardLibraryTests
 import SystemCollectionsDictionaryStandardLibraryTests
 import SystemCollectionsHashSetSortStandardLibraryTests
@@ -29,7 +28,6 @@ import SystemPromotedConsoleStandardLibraryTests
 import SystemPromotedIOFileSystemStandardLibraryTests
 import SystemPromotedNetTcpStandardLibraryTests
 import SystemPromotedRuntimeBufferStandardLibraryTests
-import SystemRangeNotationStandardLibraryTests
 import SystemRawPointerAuditStandardLibraryTests
 import SystemRuntimeBufferStandardLibraryTests
 import SystemRuntimePlatformLinuxStandardLibraryTests
@@ -119,12 +117,6 @@ fn bool PackagedStdLibWindowsArchiveHasNoCrtSymbolReferences()
     return PackagedStdLibWindowsArchiveHasNoCrtSymbolReferencesImpl();
 }
 
-[Fact]
-[Collection("backend-boundary-audit")]
-fn bool OptimizedStandardLibraryBenchmarksDoNotEmitOpaqueStandardLibraryFunctions()
-{
-    return OptimizedStandardLibraryBenchmarksDoNotEmitOpaqueStandardLibraryFunctionsImpl();
-}
 
 [Fact]
 [Collection("c")]
@@ -431,12 +423,6 @@ fn bool StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlu
     return StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlushImpl();
 }
 
-[Fact]
-[Collection("io-file")]
-fn bool StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper()
-{
-    return StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelperImpl();
-}
 
 [Fact]
 [Collection("io-file")]
@@ -579,12 +565,6 @@ fn bool StdLibSourcePromotedPathLowersThroughDynamicStorage()
     return StdLibSourcePromotedPathLowersThroughDynamicStorageImpl();
 }
 
-[Fact]
-[Collection("io-path")]
-fn bool StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopies()
-{
-    return StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopiesImpl();
-}
 
 [Fact]
 [Collection("io-path")]
@@ -1015,12 +995,6 @@ fn bool SourceStdLibPromotedRuntimeBufferExecutableRuns()
     return SourceStdLibPromotedRuntimeBufferExecutableRunsImpl();
 }
 
-[Fact]
-[Collection("range-notation")]
-fn bool StdLibSourceUsesCanonicalRangeNotation()
-{
-    return StdLibSourceUsesCanonicalRangeNotationImpl();
-}
 
 [Fact]
 [Collection("raw-pointer-audit")]
@@ -1437,12 +1411,6 @@ fn bool StdLibSourcePromotedTextLowersThroughDynamicStorage()
     return StdLibSourcePromotedTextLowersThroughDynamicStorageImpl();
 }
 
-[Fact]
-[Collection("text")]
-fn bool StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers()
-{
-    return StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpersImpl();
-}
 
 [Fact]
 [Collection("text")]

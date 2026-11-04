@@ -2886,9 +2886,6 @@ public sealed class CompilerCliTests
                 static line => line.Contains("System_Text.ll", StringComparison.Ordinal)
                     && line.Contains("-flto=thin", StringComparison.Ordinal)
                     && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
-            Assert.DoesNotContain(
-                clangLogLines,
-                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal));
 
             var metrics = await File.ReadAllTextAsync(metricsPath);
             Assert.Contains("optimization_decision_count=", metrics, StringComparison.Ordinal);

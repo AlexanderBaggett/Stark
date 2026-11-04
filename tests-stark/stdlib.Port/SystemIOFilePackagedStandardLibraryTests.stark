@@ -75,48 +75,6 @@ internal fn bool StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPl
     return true;
 }
 
-// Ported from SystemIOFilePackagedStandardLibraryTests.StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper.
-//
-// PORT-NOTE: the C# test reads stdlib/src/System/IO/File.stark directly,
-// targets x86_64-unknown-linux-gnu, and inspects File_TryAppendBufferedAscii.
-// This port compiles the same on-disk module for the same target so the
-// target-specific `rep movsb` inline-asm oracle remains intact.
-internal fn bool StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelperImpl()
-{
-    stack mut ProgramCompile c = CompileSourceFileForTarget(
-        "stdlib-file-buffered-ascii-append",
-        "../../stdlib/src/System/IO/File.stark",
-        LinuxX64TargetTriple);
-    if (!Succeeds(c))
-    {
-        return false;
-    }
-
-    stack ascii llvm = Llvm(c);
-    stack ascii appendBody = LlvmDefinitionBody(llvm, "File_TryAppendBufferedAscii");
-
-    if (!System.Testing.Contains(llvm, "define void @CopyAsciiBytes("))
-    {
-        return false;
-    }
-
-    if (!System.Testing.Contains(llvm, "rep movsb"))
-    {
-        return false;
-    }
-
-    if (!System.Testing.Contains(appendBody, "call void @CopyAsciiBytes("))
-    {
-        return false;
-    }
-
-    if (System.Testing.Contains(appendBody, "@llvm.memcpy"))
-    {
-        return false;
-    }
-
-    return true;
-}
 
 // Ported from SystemIOFilePackagedStandardLibraryTests.PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop.
 //

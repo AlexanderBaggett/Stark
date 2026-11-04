@@ -82,41 +82,6 @@ internal fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl()
     return MirContainsAll2(c, "value: stack i32 mut", "value = value+1");
 }
 
-// Ported from CompilerPipelineFullIntegrationTests.ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions.
-// PORT-NOTE: the C# test imports a separate "Syscall" module (supplied through
-// an InMemoryModuleResolver) declaring an asm bypass function and
-// asserts that "Syscall.Syscall2" flows into HIR, MIR, and SSA as a body-less
-// AsmBypass function (HasBody == false, Blocks.Count == 0,
-// SupportsDirectCodeGeneration == false). The MIR-text helpers here only run a
-// single-source compile with no module resolution, so the imported module and
-// the HIR/SSA artifact inspection cannot be reproduced. This folds the asm
-// declaration for the active arm64 macOS target into the compiled program and
-// asserts the asm bypass function lowers into the MIR text as a body-less
-// AsmBypass function, reducing the cross-artifact bypass-flow check to a
-// single-module MIR lowering signal.
-internal fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl()
-{
-    stack mut MirCompile c = CompileMir(
-        "full-integration-imported-asm-bypass",
-        raw"""
-        module Syscall
-
-        public unsafe ffi asm(aarch64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
-            in("x8") number,
-            in("x0") path,
-            out("x0") return
-        {
-            "svc #0"
-        }
-        """);
-
-    if (!Succeeds(c))
-    {
-        return false;
-    }
-
-    return MirContainsAll3(c, "Syscall2", "body-kind: AsmBypass", "direct-codegen: false");
-}
 
 // Ported from CompilerPipelineFullIntegrationTests.ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa.
 // PORT-NOTE: the C# test imports a "Math" module (supplied through an

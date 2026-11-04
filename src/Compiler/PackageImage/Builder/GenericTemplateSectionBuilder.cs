@@ -509,18 +509,9 @@ internal static partial class PackageImageBuilder
         var enumCallOrdinals = CollectPublishedTemplateEnumCallReferences(module, functionBody, namedTypes, enumCalls)
             .Select((reference, ordinal) => (reference.Context, ordinal))
             .ToDictionary(static item => item.Context, static item => item.ordinal);
-        var enumValuesByLocation = (enumValues ?? [])
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var syntacticEnumValueReferences = CollectPublishedTemplateEnumValueReferences(module, functionBody, namedTypes);
-        var enumValueOrdinals = syntacticEnumValueReferences.Count > 0
-            ? syntacticEnumValueReferences
-                .Select((reference, ordinal) => (reference.Context, ordinal))
-                .ToDictionary(static item => item.Context, static item => item.ordinal)
-            : CollectTemplateEnumValueContexts(functionBody)
-                .Select((context, ordinal) => (context, ordinal))
-                .Where(item => enumValuesByLocation.ContainsKey(BuildTemplateEnumValueLookupKey(item.context)))
-                .ToDictionary(static item => item.context, static item => item.ordinal);
+        var enumValueOrdinals = CollectPublishedTemplateEnumValueReferences(module, functionBody, namedTypes, enumValues)
+            .Select((reference, ordinal) => (reference.Context, ordinal))
+            .ToDictionary(static item => item.Context, static item => item.ordinal);
         var functionAddressPromotionsByLocation = BuildFunctionAddressPromotionsByLocation(functionPointerPromotions);
         var functionAddressOrdinals = CollectTemplateFunctionAddressPrimaryExpressions(functionBody)
             .Select(primaryExpression => (
@@ -5228,36 +5219,11 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyList<EnumValueTypingRecord>? enumValues)
     {
-        var syntacticReferences = CollectPublishedTemplateEnumValueReferences(module, functionBody, namedTypes);
-        if (syntacticReferences.Count > 0)
-        {
-            return syntacticReferences
-                .Select((reference, ordinal) => new StarkPackageTemplateEnumValueManifest(
-                    ordinal,
-                    BuildPublishedAbiTypeReference(reference.EnumType, module),
-                    reference.VariantName))
-                .ToArray();
-        }
-
-        if (enumValues is not { Count: > 0 })
-        {
-            return null;
-        }
-
-        var enumValuesByLocation = enumValues
-            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var published = CollectTemplateEnumValueContexts(functionBody)
-            .Select((context, ordinal) => enumValuesByLocation.TryGetValue(
-                    BuildTemplateEnumValueLookupKey(context),
-                    out var record)
-                ? new StarkPackageTemplateEnumValueManifest(
-                    ordinal,
-                    BuildPublishedAbiTypeReference(record.EnumType, module),
-                    record.VariantName)
-                : null)
-            .Where(static enumValue => enumValue is not null)
-            .Cast<StarkPackageTemplateEnumValueManifest>()
+        var published = CollectPublishedTemplateEnumValueReferences(module, functionBody, namedTypes, enumValues)
+            .Select((reference, ordinal) => new StarkPackageTemplateEnumValueManifest(
+                ordinal,
+                BuildPublishedAbiTypeReference(reference.EnumType, module),
+                reference.VariantName))
             .ToArray();
 
         return published.Length == 0 ? null : published;
@@ -6954,39 +6920,42 @@ internal static partial class PackageImageBuilder
         return TemplateDirectCallFacts.BuildLookupKey(line, column);
     }
 
-    private static (int Line, int Column) GetTemplateEnumValueLineColumn(ParserRuleContext context)
-    {
-        if (context is StarkParser.PostfixPartContext postfixPart
-            && postfixPart.Identifier()?.Symbol is { } identifier)
-        {
-            return (identifier.Line, identifier.Column + 1);
-        }
-
-        return (context.Start.Line, context.Start.Column + 1);
-    }
+    private static (int Line, int Column) GetTemplateEnumValueLineColumn(ParserRuleContext context) =>
+        (context.Start.Line, context.Start.Column + 1);
 
     private static IReadOnlyList<PublishedTemplateEnumValueReference> CollectPublishedTemplateEnumValueReferences(
         LoadedModuleDocument module,
         ParserRuleContext node,
-        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyList<EnumValueTypingRecord>? enumValues)
     {
-        var references = new List<PublishedTemplateEnumValueReference>();
-        Collect(node, references);
-        return references;
+        var valuesByLocation = (enumValues ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var references = new Dictionary<ParserRuleContext, PublishedTemplateEnumValueReference>();
+        Collect(node);
+        return references.Values.OrderBy(static reference => reference.Context.Start.TokenIndex).ToArray();
 
-        void Collect(
-            Antlr4.Runtime.Tree.IParseTree current,
-            List<PublishedTemplateEnumValueReference> accumulator)
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
         {
             if (current is StarkParser.PostfixExpressionContext postfixExpression
                 && TryResolvePublishedTemplateEnumValueReference(module, postfixExpression, namedTypes, out var reference))
             {
-                accumulator.Add(reference);
+                references.TryAdd(reference.Context, reference);
+            }
+
+            // Typed values retain imported type identities that syntax-only
+            // lookup cannot recover from an unqualified enum name.
+            if (current is ParserRuleContext context
+                && context is StarkParser.PrimaryExpressionContext or StarkParser.PostfixPartContext
+                && valuesByLocation.TryGetValue(BuildTemplateEnumValueLookupKey(context), out var value))
+            {
+                references[context] = new PublishedTemplateEnumValueReference(context, value.EnumType, value.VariantName);
             }
 
             for (var index = 0; index < current.ChildCount; index++)
             {
-                Collect(current.GetChild(index), accumulator);
+                Collect(current.GetChild(index));
             }
         }
     }

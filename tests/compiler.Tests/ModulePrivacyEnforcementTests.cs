@@ -9,8 +9,9 @@ namespace compiler.Tests;
 /// A call-site visibility check (IsModuleMemberAccessible, mirroring IsFieldAccessible)
 /// then keeps a SIBLING source submodule from reaching another submodule's
 /// module-private functions/globals/types within a single whole-package build, while
-/// same-module, public, and internal-same-package access keep working. Privacy across
-/// the package-image boundary was already enforced (such members are never registered).
+/// same-module, public, and internal-same-package access keep working. Package images
+/// also retain private constant facts for inline bodies without making them accessible
+/// to importing modules.
 /// </summary>
 public sealed class ModulePrivacyEnforcementTests
 {

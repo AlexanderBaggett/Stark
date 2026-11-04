@@ -1588,6 +1588,23 @@ internal sealed class LlvmIrEmitter
             }
         }
 
+        // Weak copies of lowered bodies still call compiler-provided functions
+        // that have declarations rather than SSA bodies. Keep those ABI definitions.
+        var declarationOnlyFunctions = _ssa.Functions
+            .Where(static function => !function.HasBody)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var function in _ssa.Functions.Where(static function => function.HasBody && function.SupportsDirectCodeGeneration))
+        {
+            foreach (var callee in callsByFunction[function.Name])
+            {
+                if (declarationOnlyFunctions.Contains(callee))
+                {
+                    pending.Enqueue(callee);
+                }
+            }
+        }
+
         while (pending.Count != 0)
         {
             var functionName = pending.Dequeue();

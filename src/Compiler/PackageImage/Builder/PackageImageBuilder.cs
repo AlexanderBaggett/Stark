@@ -8,7 +8,8 @@ internal static partial class PackageImageBuilder
         CompilationResult result,
         string libraryOutputPath,
         StarkPackageNativeDependencyManifest? nativeDependencies = null,
-        string? buildProfile = null)
+        string? buildProfile = null,
+        IReadOnlyDictionary<string, PackageImageLinkageFacts>? compiledModuleLinkage = null)
     {
         var loadedModules = result.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
         var moduleGraph = result.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
@@ -57,8 +58,11 @@ internal static partial class PackageImageBuilder
             var functionSemantics = new List<StarkPackageFunctionSemanticManifest>();
             var genericTemplates = new List<StarkPackageFunctionTemplateManifest>();
 
+            // Published inline bodies still need module-private constant values.
+            // Preserve their visibility; the source surface keeps its own API filter.
             foreach (var declaration in module.SyntaxModel.Declarations
-                         .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility))
+                         .Where(static declaration => ShouldIncludeInPackageImageSurface(declaration.Visibility)
+                             || declaration.Kind == DeclarationKind.GlobalConstant)
                          .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
             {
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
@@ -260,7 +264,9 @@ internal static partial class PackageImageBuilder
                         ConcreteLayouts: concreteLayouts,
                         EnumLayouts: enumLayouts,
                         FunctionSemantics: functionSemantics,
-                        Linkage: BuildLinkageManifest(module, abiModel, abiFunctions, functionSemantics),
+                        Linkage: compiledModuleLinkage is null
+                            ? BuildLinkageManifest(module, abiModel, abiFunctions, functionSemantics)
+                            : BuildLinkageManifest(compiledModuleLinkage[module.SyntaxModel.ModuleName]),
                         BackendOptimizationMode: RenderBackendOptimizationMode(module.SyntaxModel.BackendOptimizationMode)),
                     GenericTemplates: genericTemplates.Count == 0
                         ? null
@@ -735,6 +741,14 @@ internal static partial class PackageImageBuilder
     private static string? RenderBackendOptimizationMode(ModuleBackendOptimizationMode mode)
     {
         return mode == ModuleBackendOptimizationMode.Opaque ? "opaque" : null;
+    }
+
+    private static StarkPackageLinkageManifest BuildLinkageManifest(PackageImageLinkageFacts linkage)
+    {
+        return new StarkPackageLinkageManifest(
+            linkage.ObjectFileName,
+            linkage.DefinedSymbols.Order(StringComparer.Ordinal).ToArray(),
+            linkage.ReferencedSymbols.Order(StringComparer.Ordinal).ToArray());
     }
 
     private static StarkPackageLinkageManifest BuildLinkageManifest(

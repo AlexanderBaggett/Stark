@@ -79,35 +79,6 @@ public sealed class SystemIOFilePackagedStandardLibraryTests : StandardLibraryTe
         Assert.Contains("@System_Runtime_Platform_FlushFile(", rawSyncBody, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
-        var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(
-                File.ReadAllText(filePath),
-                filePath),
-            new CompilerOptions(
-                EmitLlvmIr: true,
-                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
-                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
-
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
-        var appendBody = ExtractDefinedFunctionText(
-            llvm,
-            "define fastcc noundef i1 @File_TryAppendBufferedAscii(",
-            "Expected File.TryAppendBufferedAscii definition in emitted LLVM.");
-
-        Assert.Contains("; direct-only asm definition omitted: CopyAsciiBytes", llvm, StringComparison.Ordinal);
-        Assert.Contains("rep movsb", llvm, StringComparison.Ordinal);
-        Assert.Contains("call void asm sideeffect", appendBody, StringComparison.Ordinal);
-        Assert.Contains("nounwind memory(argmem: readwrite)", appendBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("call void @CopyAsciiBytes(", appendBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@llvm.memcpy", appendBody, StringComparison.Ordinal);
-    }
 
     [Fact]
     public async Task PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop()

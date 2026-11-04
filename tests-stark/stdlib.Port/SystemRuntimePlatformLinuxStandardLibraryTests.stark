@@ -133,9 +133,7 @@ internal fn bool StdLibSourceLinuxFileOperationsUseSyscallBackedPathImpl()
 internal fn bool StdLibSourceLinuxFileExistsUsesStatSyscallPathImpl()
 {
     // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
-    // x86_64-unknown-linux-gnu triple and walks the emitted LLVM: @FileExists delegates
-    // to @PathExists, which delegates to @TryReadPathMode, which delegates to the shared
-    // @StatPathInto helper that issues the architecture-selected statat syscall rather
+    // x86_64-unknown-linux-gnu triple and checks the native statat syscall ABI rather
     // than open/close or libc
     // @stat/@fstatat. The host bridge cannot read the on-disk module directly nor
     // extract balanced function bodies from the LLVM text, so this cross-targets a

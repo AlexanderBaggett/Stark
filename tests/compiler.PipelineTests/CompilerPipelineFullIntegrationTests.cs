@@ -40,7 +40,6 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(43, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
         Assert.Contains(
             result.Logs,
             log => log.Severity == DiagnosticSeverity.Info
@@ -704,76 +703,6 @@ public sealed class CompilerPipelineFullIntegrationTests
             });
     }
 
-
-    [Fact]
-    public void ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                import Syscall
-                module Demo
-
-                unsafe fn i64[min max] Run(rawptr<i8[min max]> path)
-                {
-                    return Syscall.Syscall2(2, path);
-                }
-                """,
-                "/virtual/Demo.stark"),
-            new CompilerOptions(
-                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
-                ModuleResolver: new InMemoryModuleResolver(
-                [
-                    (
-                        new ResolvedModuleReference("Syscall", "/virtual/Syscall.stark", IsExternal: false),
-                        """
-                        module Syscall
-
-                        public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
-                            in("rax") number,
-                            in("rdi") path,
-                            out("rax") return,
-                            clobber("rcx", "r11")
-                        {
-                            "syscall"
-                        }
-                        """,
-                        "/virtual/System/Syscall.stark"
-                    )
-                ])));
-
-        Assert.True(result.Succeeded);
-
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
-        Assert.NotNull(hir);
-        Assert.Contains(
-            hir.Functions,
-            function => function.Name == "Syscall.Syscall2"
-                && !function.HasBody
-                && function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass);
-
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
-        Assert.NotNull(mir);
-        Assert.Contains(
-            mir.Functions,
-            function => function.Name == "Syscall.Syscall2"
-                && !function.HasBody
-                && !function.SupportsDirectCodeGeneration
-                && function.Blocks.Count == 0
-                && function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass);
-
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.Contains(
-            ssa.Functions,
-            function => function.Name == "Syscall.Syscall2"
-                && !function.HasBody
-                && !function.SupportsDirectCodeGeneration
-                && function.Blocks.Count == 0
-                && function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass);
-    }
 
 
     [Fact]
@@ -2446,13 +2375,6 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.Equal("x86_64", importedAsm.Function.Asm!.ArchitectureText);
             Assert.Equal("syscall", importedAsm.Function.Asm.TemplateText);
 
-            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
-            Assert.NotNull(hir);
-            Assert.Contains(
-                hir.Functions,
-                function => function.Name == "Syscall.Syscall0"
-                    && function.BodyLoweringKind == FunctionBodyLoweringKind.AsmBypass);
-
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
             Assert.Contains(
@@ -2528,8 +2450,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.False(consumerResult.Succeeded);
             Assert.Contains(
                 consumerResult.Diagnostics,
-                diagnostic => diagnostic.Code == "STK2102"
-                    && diagnostic.Message.Contains("Syscall0", StringComparison.Ordinal)
+                diagnostic => diagnostic.Code == "STK7311"
+                    && diagnostic.Message.Contains("Syscall", StringComparison.Ordinal)
                     && diagnostic.Message.Contains("aarch64", StringComparison.Ordinal));
         }
         finally

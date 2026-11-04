@@ -89,11 +89,10 @@ public sealed class PackageInlineBodyTests
             Assert.True(facts.FunctionEffects.ContainsKey("InlineLibrary.Seed"),
                 "Effects: " + string.Join(", ", facts.FunctionEffects.Keys));
             var calls = ImportedTemplateCallFacts.GetReachableCallSignatures(facts.FunctionTemplates["InlineLibrary.Fill"]);
-            Assert.True(calls.Any(signature => signature.Name == "InlineLibrary.Seed"),
-                "Calls: " + string.Join(", ", calls.Select(signature => signature.Name + ":" + signature.TemplateName + ":" + signature.IsGeneric)));
+            Assert.Contains(calls, signature => signature.Name == "InlineLibrary.Seed");
             var mir = result.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
-            Assert.True(mir.Functions.Any(function => function.Name == "InlineLibrary.Fill" && function.HasBody));
-            Assert.True(mir.Functions.Any(function => function.Name == "InlineLibrary.Seed" && function.HasBody), "MIR: " + string.Join(", ", mir.Functions.Select(function => function.Name + ":" + function.HasBody)));
+            Assert.Contains(mir.Functions, function => function.Name == "InlineLibrary.Fill" && function.HasBody);
+            Assert.Contains(mir.Functions, function => function.Name == "InlineLibrary.Seed" && function.HasBody);
             output.GetStringBuilder().Clear();
             errors.GetStringBuilder().Clear();
             var exit = await CompilerCli.RunAsync(

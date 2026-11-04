@@ -306,6 +306,12 @@ package. If an advertised official package lacks a required archive or its
 checksum does not match, the compiler reports an SDK-integrity error and points
 to `stark doctor --strict`; it must not silently search the host for a substitute.
 
+Native archive publication retains symbol summaries from the LLVM generated
+for each root and dependency module. Source-object selection follows those
+recorded references of selected package archive members as well as references
+in the application's LLVM IR.
+This keeps source dependencies called only by packaged code in the native link.
+
 Package ABI facts and the compiled wrapper archive are a matched pair. Whenever
 the compiler's target C ABI classification changes, affected official package
 images and archives must be regenerated before SDK publication. This is
@@ -441,6 +447,13 @@ the following are true:
 
 Internal inline bodies support separately packaged modules of the same logical
 package, including SDK modules. Their source visibility stays internal.
+
+Module-private constants retain their typed initializers for published bodies.
+Their visibility stays private and they do not enter the source API surface.
+Module-private named-type layouts likewise remain available to published bodies,
+while source type lookup continues to enforce their original visibility.
+Modules containing assembly declarations retain those typed facts as well;
+assembly bodies and register constraints load alongside the typed interface.
 
 Each body retains `IsGeneric`; older generic-only images default it to true.
 Closed bodies lower directly from typed facts. Unsupported closed bodies and
